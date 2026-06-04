@@ -10,7 +10,7 @@ import {
   saveRunHistoryEntry,
   type HistoryStorage,
 } from '../src/app/runHistory';
-import { canAdvanceGame, togglePauseMode } from '../src/app/state';
+import { canAdvanceGame, requiresRunConfirmation, togglePauseMode } from '../src/app/state';
 import { createShuffledBag } from '../src/game/bag';
 import { clearCompletedLines, createBoard } from '../src/game/board';
 import { GameEngine } from '../src/game/engine';
@@ -125,6 +125,17 @@ describe('core stacker engine', () => {
     expect(togglePauseMode('playing', 'playing', 'menu')).toBe('paused');
     expect(togglePauseMode('paused', 'playing', 'menu')).toBe('playing');
     expect(togglePauseMode('settings', 'playing', 'paused')).toBe('paused');
+  });
+
+  it('requires confirmation only for destructive actions during active runs', () => {
+    expect(requiresRunConfirmation('restart', 'playing', 'playing')).toBe(true);
+    expect(requiresRunConfirmation('main-menu', 'paused', 'playing')).toBe(true);
+    expect(requiresRunConfirmation('import-replay', 'settings', 'playing')).toBe(true);
+
+    expect(requiresRunConfirmation('restart', 'menu', 'playing')).toBe(false);
+    expect(requiresRunConfirmation('restart', 'playing', 'finished')).toBe(false);
+    expect(requiresRunConfirmation('restart', 'paused', 'gameover')).toBe(false);
+    expect(requiresRunConfirmation('export-replay', 'paused', 'playing')).toBe(false);
   });
 
   it('exports replay metadata without mutating the replay log', () => {

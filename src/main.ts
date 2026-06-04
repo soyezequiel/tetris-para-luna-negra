@@ -10,7 +10,7 @@ import {
   saveRunHistoryEntry,
   type RunHistoryEntry,
 } from './app/runHistory';
-import { canAdvanceGame, terminalLabel, togglePauseMode, type AppMode } from './app/state';
+import { canAdvanceGame, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import { MUSIC_TRACKS } from './audio/music';
 import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
 import { GameEngine } from './game/engine';
@@ -77,6 +77,7 @@ let replayImportError: string | null = null;
 let libraryFilter: LibraryFilter = 'all';
 let selectedHistoryEntryId: string | null = null;
 let libraryError: string | null = null;
+let pendingConfirmAction: DestructiveRunAction | null = null;
 
 const replayFileInput = document.createElement('input');
 replayFileInput.type = 'file';
@@ -91,7 +92,7 @@ overlayElement.addEventListener('click', handleOverlayClick);
 
 function loop(): void {
   const beforeState = engine.getState();
-  const candidateFrame = canAdvanceGame(appMode, beforeState.status) ? gameFrame + 1 : gameFrame;
+  const candidateFrame = !pendingConfirmAction && canAdvanceGame(appMode, beforeState.status) ? gameFrame + 1 : gameFrame;
   input.advanceFrame(candidateFrame);
   const controlInputs = input.collect(candidateFrame);
   const consumedByApp = handleControlInputs(controlInputs);
@@ -129,6 +130,7 @@ Object.assign(window, {
     getReplay: () => replay,
     getPlayback: () => playback?.snapshot() ?? null,
     getAppMode: () => appMode,
+    getPendingConfirmAction: () => pendingConfirmAction,
     getInputSettings: () => cloneInputSettings(inputSettings),
     getRunHistory: () => runHistory,
     clearRunHistory: () => {
@@ -160,6 +162,13 @@ Object.assign(window, {
 });
 
 function handleGlobalKeyDown(event: KeyboardEvent): void {
+  if (pendingConfirmAction && event.code === 'Escape') {
+    cancelPendingConfirmation();
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    return;
+  }
+
   if (bindingCapture) {
     applyInputSettings(updateBinding(inputSettings, bindingCapture, event.code));
     bindingCapture = null;
@@ -186,6 +195,20 @@ function handleOverlayClick(event: MouseEvent): void {
   if (!control) return;
 
   const action = control.dataset.uiAction;
+  if (action === 'confirm-destructive') {
+    confirmPendingAction();
+    return;
+  }
+  if (action === 'cancel-confirm') {
+    cancelPendingConfirmation();
+    return;
+  }
+  if (pendingConfirmAction) return;
+  if (requiresRunConfirmation(action, appMode, engine.getState().status)) {
+    requestRunConfirmation(action);
+    return;
+  }
+
   if (action === 'start' || action === 'restart') startNewRun();
   if (action === 'resume') resumeGame();
   if (action === 'settings') openSettings();
@@ -251,6 +274,11 @@ function handleOverlayClick(event: MouseEvent): void {
 }
 
 function handleControlInputs(inputs: ControlInput[]): boolean {
+  if (pendingConfirmAction) {
+    input.releaseAll();
+    return true;
+  }
+
   if (inputs.some((event) => event.action === 'pause')) {
     if (appMode === 'replayPlayback') {
       playback?.togglePaused();
@@ -269,6 +297,11 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
   }
 
   if (appMode !== 'settings' && inputs.some((event) => event.action === 'retry')) {
+    if (requiresRunConfirmation('restart', appMode, engine.getState().status)) {
+      requestRunConfirmation('restart');
+      input.releaseAll();
+      return true;
+    }
     startNewRun();
     return true;
   }
@@ -279,6 +312,7 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
 function startNewRun(): void {
   input.releaseAll();
   bindingCapture = null;
+  pendingConfirmAction = null;
   lastExportName = null;
   replayImportError = null;
   libraryError = null;
@@ -302,12 +336,14 @@ function startNewRun(): void {
 function resumeGame(): void {
   if (engine.getState().status !== 'playing') return;
   bindingCapture = null;
+  pendingConfirmAction = null;
   appMode = 'playing';
   input.releaseAll();
 }
 
 function openSettings(): void {
   bindingCapture = null;
+  pendingConfirmAction = null;
   settingsReturnMode = appMode === 'playing' && engine.getState().status === 'playing' ? 'paused' : appMode;
   if (appMode === 'playing' && engine.getState().status === 'playing') appMode = 'paused';
   appMode = 'settings';
@@ -316,12 +352,14 @@ function openSettings(): void {
 
 function closeSettings(): void {
   bindingCapture = null;
+  pendingConfirmAction = null;
   appMode = settingsReturnMode;
   input.releaseAll();
 }
 
 function goToMenu(): void {
   bindingCapture = null;
+  pendingConfirmAction = null;
   appMode = 'menu';
   settingsReturnMode = 'menu';
   playback = null;
@@ -333,6 +371,7 @@ function goToMenu(): void {
 
 function openReplayLibrary(): void {
   bindingCapture = null;
+  pendingConfirmAction = null;
   runHistory = loadRunHistory();
   appMode = 'library';
   settingsReturnMode = 'menu';
@@ -366,6 +405,8 @@ function downloadReplayFile(exported: ExportedReplay): string {
 }
 
 function openReplayFilePicker(): void {
+  bindingCapture = null;
+  pendingConfirmAction = null;
   replayFileInput.value = '';
   replayFileInput.click();
 }
@@ -395,6 +436,7 @@ function importReplayText(raw: string, fileName = 'Imported replay.json'): boole
 function startReplayPlayback(importedReplay: ExportedReplay, fileName: string): void {
   input.releaseAll();
   bindingCapture = null;
+  pendingConfirmAction = null;
   lastExportName = null;
   replayImportError = null;
   importedReplayName = fileName;
@@ -459,6 +501,7 @@ function renderOverlay(state: GameState): void {
 }
 
 function renderScreenOverlay(state: GameState): string {
+  if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
   if (appMode === 'settings') return renderSettingsOverlay();
   if (appMode === 'library') return renderLibraryOverlay();
@@ -484,6 +527,7 @@ function renderScreenOverlay(state: GameState): string {
         ['resume', 'Resume'],
         ['restart', 'Restart'],
         ['settings', 'Input settings'],
+        ['import-replay', 'Import replay'],
         ['export-replay', 'Export replay'],
         ['main-menu', 'Main menu'],
       ],
@@ -503,6 +547,53 @@ function renderScreenOverlay(state: GameState): string {
       ['main-menu', 'Main menu'],
     ],
   });
+}
+
+function requestRunConfirmation(action: DestructiveRunAction): void {
+  pendingConfirmAction = action;
+  bindingCapture = null;
+  input.releaseAll();
+}
+
+function cancelPendingConfirmation(): void {
+  pendingConfirmAction = null;
+  bindingCapture = null;
+  input.releaseAll();
+}
+
+function confirmPendingAction(): void {
+  const action = pendingConfirmAction;
+  pendingConfirmAction = null;
+  if (action === 'restart') startNewRun();
+  if (action === 'main-menu') goToMenu();
+  if (action === 'import-replay') openReplayFilePicker();
+}
+
+function renderConfirmOverlay(action: DestructiveRunAction): string {
+  return `
+    <div class="menu-scrim confirm-scrim">
+      <section class="menu-panel confirm-panel" aria-label="Confirm destructive action">
+        <div class="panel-eyebrow">CONFIRM</div>
+        <h1>${escapeHtml(confirmTitle(action))}</h1>
+        <p>${escapeHtml(confirmMeta(action))}</p>
+        <div class="panel-actions confirm-actions">
+          <button type="button" data-ui-action="cancel-confirm">Cancel</button>
+          <button class="danger-action" type="button" data-ui-action="confirm-destructive">Confirm</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function confirmTitle(action: DestructiveRunAction): string {
+  if (action === 'restart') return 'Restart run?';
+  if (action === 'main-menu') return 'Exit run?';
+  return 'Import replay and abandon current run?';
+}
+
+function confirmMeta(action: DestructiveRunAction): string {
+  if (action === 'import-replay') return 'The current board and timer will be discarded if a replay is loaded.';
+  return 'The current board and timer will be discarded.';
 }
 
 function renderLibraryOverlay(): string {

@@ -174,6 +174,10 @@ canvas {
   width: min(620px, calc(100vw - 32px));
 }
 
+.confirm-panel {
+  width: min(500px, calc(100vw - 32px));
+}
+
 .history-panel {
   width: min(760px, calc(100vw - 32px));
 }
@@ -247,6 +251,20 @@ canvas {
 .panel-actions .button-active {
   background: rgba(57, 212, 154, 0.16);
   border-color: #39d49a;
+}
+
+.confirm-actions {
+  justify-content: flex-end;
+}
+
+.panel-actions .danger-action {
+  border-color: #eb445a;
+  background: rgba(235, 68, 90, 0.16);
+}
+
+.panel-actions .danger-action:hover {
+  border-color: #ff6b7d;
+  background: rgba(235, 68, 90, 0.28);
 }
 
 .panel-actions button:hover,
