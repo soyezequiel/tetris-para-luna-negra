@@ -18,6 +18,7 @@ import { createReplayLog, recordInput } from '../src/game/replay';
 import { SeededRng } from '../src/game/rng';
 import { DEFAULT_RULES } from '../src/game/rules';
 import { displayedElapsedFrames } from '../src/game/timing';
+import { createRunSummary, RunSplitTracker } from '../src/app/runStats';
 import {
   actionForCode,
   DEFAULT_INPUT_SETTINGS,
@@ -149,8 +150,69 @@ describe('core stacker engine', () => {
     expect(exported.version).toBe(1);
     expect(exported.seed).toBe(314);
     expect(exported.result.pieces).toBe(1);
+    expect(exported.summary.inputCount).toBe(1);
     expect(exported.inputs).toEqual([input]);
     expect(exported.inputs).not.toBe(log.inputs);
+  });
+
+  it('calculates advanced run summary metrics over elapsed frames', () => {
+    const summary = createRunSummary({
+      result: {
+        lines: 40,
+        pieces: 100,
+        frame: 1200,
+        finishFrame: 1200,
+        gameOverFrame: null,
+      },
+      inputs: [
+        { frame: 1, action: 'moveLeft' },
+        { frame: 2, action: 'hardDrop' },
+        { frame: 3, action: 'hold' },
+      ],
+      splits: [{ lines: 10, frame: 300, elapsedFrames: 300 }],
+    });
+
+    expect(summary.elapsedFrames).toBe(1200);
+    expect(summary.pps).toBe(5);
+    expect(summary.inputCount).toBe(3);
+    expect(summary.inputsPerPiece).toBe(0.03);
+    expect(summary.linesPerMinute).toBe(120);
+    expect(summary.splits).toEqual([{ lines: 10, frame: 300, elapsedFrames: 300 }]);
+  });
+
+  it('handles inputs per piece when no pieces were placed', () => {
+    const summary = createRunSummary({
+      result: {
+        lines: 0,
+        pieces: 0,
+        frame: 0,
+        finishFrame: null,
+        gameOverFrame: null,
+      },
+      inputs: [{ frame: 0, action: 'hold' }],
+    });
+
+    expect(summary.pps).toBe(0);
+    expect(summary.inputsPerPiece).toBe(0);
+    expect(summary.linesPerMinute).toBe(0);
+  });
+
+  it('records 10-line splits when line thresholds are crossed', () => {
+    const tracker = new RunSplitTracker([10, 20, 30, 40]);
+
+    tracker.record(createSplitState(9, 120));
+    expect(tracker.getSplits()).toEqual([]);
+
+    tracker.record(createSplitState(12, 180));
+    tracker.record(createSplitState(21, 360));
+    tracker.record(createSplitState(40, 720));
+
+    expect(tracker.getSplits()).toEqual([
+      { lines: 10, frame: 180, elapsedFrames: 180 },
+      { lines: 20, frame: 360, elapsedFrames: 360 },
+      { lines: 30, frame: 720, elapsedFrames: 720 },
+      { lines: 40, frame: 720, elapsedFrames: 720 },
+    ]);
   });
 
   it('imports exported replay JSON and rejects incompatible files', () => {
@@ -206,6 +268,8 @@ describe('core stacker engine', () => {
     expect(history[0].elapsedFrames).toBe(1200);
     expect(history[0].pps).toBe(5);
     expect(history[0].inputCount).toBe(replay.inputs.length);
+    expect(history[0].inputsPerPiece).toBe(replay.inputs.length / 100);
+    expect(history[0].linesPerMinute).toBe(120);
     expect(history[0].replay).toEqual(replay);
   });
 
@@ -335,6 +399,18 @@ function createRecordedTerminalReplay(seed: number) {
   }
   expect(state.status === 'finished' || state.status === 'gameover').toBe(true);
   return createExportedReplay(log, state, DEFAULT_INPUT_SETTINGS, '2026-06-04T21:00:00.000Z');
+}
+
+function createSplitState(lines: number, frame: number) {
+  const state = new GameEngine(123).getState();
+  return {
+    ...state,
+    stats: {
+      ...state.stats,
+      lines,
+      frame,
+    },
+  };
 }
 
 class MemoryStorage implements HistoryStorage {

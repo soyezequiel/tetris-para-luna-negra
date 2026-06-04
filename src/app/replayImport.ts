@@ -1,4 +1,5 @@
 import type { ExportedReplay } from './replayExport';
+import { createRunSummary, type LineSplit, type RunSummary } from './runStats';
 import type { GameInput, GameRules, InputAction } from '../game/types';
 import { GAME_ACTIONS, normalizeInputSettings } from '../input/settings';
 
@@ -28,6 +29,7 @@ export function importReplayValue(value: unknown): ReplayImportResult {
 
   const inputs = parseInputs(value.inputs);
   if (!inputs) return { ok: false, error: 'Replay inputs are missing or invalid.' };
+  const summary = parseSummary(value.summary, result, inputs);
 
   const createdAt = typeof value.createdAt === 'string' && value.createdAt.length > 0
     ? value.createdAt
@@ -43,6 +45,7 @@ export function importReplayValue(value: unknown): ReplayImportResult {
       rules,
       inputSettings: normalizeInputSettings(value.inputSettings),
       result,
+      summary,
       inputs,
     },
   };
@@ -110,6 +113,26 @@ function parseInputs(value: unknown): GameInput[] | null {
     inputs.push({ frame, action: action as InputAction });
   }
   return inputs.sort((a, b) => a.frame - b.frame);
+}
+
+function parseSummary(value: unknown, result: ExportedReplay['result'], inputs: GameInput[]): RunSummary {
+  if (!isObject(value)) return createRunSummary({ result, inputs });
+  const splits = parseSplits(value.splits);
+  return createRunSummary({ result, inputs, splits });
+}
+
+function parseSplits(value: unknown): LineSplit[] {
+  if (!Array.isArray(value)) return [];
+  const splits: LineSplit[] = [];
+  for (const item of value) {
+    if (!isObject(item)) continue;
+    const lines = readPositiveInteger(item.lines);
+    const frame = readNonNegativeInteger(item.frame);
+    const elapsedFrames = readNonNegativeInteger(item.elapsedFrames);
+    if (lines === null || frame === null || elapsedFrames === null) continue;
+    splits.push({ lines, frame, elapsedFrames });
+  }
+  return splits;
 }
 
 function readPositiveInteger(value: unknown): number | null {

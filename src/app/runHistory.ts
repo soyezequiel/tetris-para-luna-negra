@@ -1,5 +1,6 @@
 import { importReplayValue } from './replayImport';
 import type { ExportedReplay } from './replayExport';
+import { createRunSummary, type LineSplit } from './runStats';
 
 export interface RunHistoryEntry {
   id: string;
@@ -11,6 +12,9 @@ export interface RunHistoryEntry {
   elapsedFrames: number;
   pps: number;
   inputCount: number;
+  inputsPerPiece: number;
+  linesPerMinute: number;
+  splits: LineSplit[];
   replay: ExportedReplay;
 }
 
@@ -30,19 +34,20 @@ export const MAX_RUN_HISTORY_ENTRIES = 50;
 
 export function createRunHistoryEntry(replay: ExportedReplay): RunHistoryEntry | null {
   if (replay.result.status !== 'finished' && replay.result.status !== 'gameover') return null;
-  const elapsedFrames = replay.result.finishFrame ?? replay.result.gameOverFrame ?? replay.result.frame;
-  const seconds = elapsedFrames / 60;
-  const pps = seconds > 0 ? replay.result.pieces / seconds : 0;
+  const summary = createRunSummary({ result: replay.result, inputs: replay.inputs, splits: replay.summary?.splits });
   return {
-    id: `${replay.seed}-${replay.result.status}-${elapsedFrames}-${replay.inputs.length}`,
+    id: `${replay.seed}-${replay.result.status}-${summary.elapsedFrames}-${replay.inputs.length}`,
     createdAt: replay.createdAt,
     seed: replay.seed,
     status: replay.result.status,
     lines: replay.result.lines,
     pieces: replay.result.pieces,
-    elapsedFrames,
-    pps,
-    inputCount: replay.inputs.length,
+    elapsedFrames: summary.elapsedFrames,
+    pps: summary.pps,
+    inputCount: summary.inputCount,
+    inputsPerPiece: summary.inputsPerPiece,
+    linesPerMinute: summary.linesPerMinute,
+    splits: summary.splits,
     replay,
   };
 }

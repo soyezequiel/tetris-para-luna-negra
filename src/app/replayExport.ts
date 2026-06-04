@@ -1,6 +1,7 @@
 import type { ReplayLog } from '../game/replay';
 import type { GameState } from '../game/types';
 import { cloneInputSettings, type InputSettings } from '../input/settings';
+import { createRunSummary, type RunSummary } from './runStats';
 
 export interface ExportedReplay {
   version: 1;
@@ -17,6 +18,7 @@ export interface ExportedReplay {
     finishFrame: number | null;
     gameOverFrame: number | null;
   };
+  summary: RunSummary;
   inputs: ReplayLog['inputs'];
 }
 
@@ -25,7 +27,17 @@ export function createExportedReplay(
   state: GameState,
   inputSettings: InputSettings,
   createdAt = new Date().toISOString(),
+  summary?: RunSummary,
 ): ExportedReplay {
+  const result = {
+    status: state.status,
+    lines: state.stats.lines,
+    pieces: state.stats.pieces,
+    frame: state.stats.frame,
+    finishFrame: state.stats.finishFrame,
+    gameOverFrame: state.stats.gameOverFrame,
+  };
+  const inputs = log.inputs.map((input) => ({ ...input }));
   return {
     version: 1,
     game: 'stack40',
@@ -33,15 +45,9 @@ export function createExportedReplay(
     seed: log.seed,
     rules: { ...log.rules },
     inputSettings: cloneInputSettings(inputSettings),
-    result: {
-      status: state.status,
-      lines: state.stats.lines,
-      pieces: state.stats.pieces,
-      frame: state.stats.frame,
-      finishFrame: state.stats.finishFrame,
-      gameOverFrame: state.stats.gameOverFrame,
-    },
-    inputs: log.inputs.map((input) => ({ ...input })),
+    result,
+    summary: summary ?? createRunSummary({ result, inputs }),
+    inputs,
   };
 }
 

@@ -10,6 +10,7 @@ import {
   saveRunHistoryEntry,
   type RunHistoryEntry,
 } from './app/runHistory';
+import { createRunSummary, RunSplitTracker, type LineSplit, type RunSummary } from './app/runStats';
 import { canAdvanceGame, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import { MUSIC_TRACKS } from './audio/music';
 import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
@@ -64,6 +65,7 @@ let settingsReturnMode: AppMode = 'menu';
 let gameFrame = 0;
 let savedFinish = false;
 let savedRunHistoryEntry = false;
+let runSplitTracker = new RunSplitTracker();
 let lastPieces = 0;
 let lastLines = 0;
 let lastStatus = engine.getState().status;
@@ -325,6 +327,7 @@ function startNewRun(): void {
   gameFrame = 0;
   savedFinish = false;
   savedRunHistoryEntry = false;
+  runSplitTracker = new RunSplitTracker();
   lastPieces = 0;
   lastLines = 0;
   lastStatus = engine.getState().status;
@@ -388,7 +391,8 @@ function applyInputSettings(settings: InputSettings): void {
 }
 
 function exportReplay(): void {
-  const exported = createExportedReplay(replay, engine.getState(), inputSettings);
+  const state = engine.getState();
+  const exported = createExportedReplay(replay, state, inputSettings, undefined, currentRunSummary(state));
   lastExportName = downloadReplayFile(exported);
 }
 
@@ -452,6 +456,7 @@ function toGameInputs(inputs: ControlInput[], frame: number): GameInput[] {
 }
 
 function syncRunEffects(state: GameState): void {
+  runSplitTracker.record(state);
   if (state.stats.lines > lastLines) sound.play('lineClear');
   else if (state.stats.pieces > lastPieces) sound.play('lock');
   if (state.status !== lastStatus) {
@@ -466,7 +471,7 @@ function syncRunEffects(state: GameState): void {
     savedFinish = true;
   }
   if ((state.status === 'finished' || state.status === 'gameover') && !savedRunHistoryEntry) {
-    const entry = createRunHistoryEntry(createExportedReplay(replay, state, inputSettings));
+    const entry = createRunHistoryEntry(createExportedReplay(replay, state, inputSettings, undefined, currentRunSummary(state)));
     if (entry) runHistory = saveRunHistoryEntry(entry);
     savedRunHistoryEntry = true;
   }
@@ -540,6 +545,7 @@ function renderScreenOverlay(state: GameState): string {
     eyebrow: terminal,
     title: formatRunSummary(state),
     meta: state.status === 'finished' ? 'Saved if this beats your local best.' : 'The stack topped out.',
+    details: renderAdvancedRunStats(currentRunSummary(state)),
     actions: [
       ['restart', 'Restart'],
       ['export-replay', 'Export replay'],
@@ -647,7 +653,7 @@ function renderLibraryRow(entry: RunHistoryEntry, selected: boolean): string {
         <span>${entry.lines}L</span>
         <span>${entry.pieces} pieces</span>
         <span>${entry.pps.toFixed(2)} PPS</span>
-        <span>${entry.inputCount} inputs</span>
+        <span>${entry.inputsPerPiece.toFixed(2)} IPP</span>
       </div>
       <button type="button" data-ui-action="select-history-entry" data-history-id="${escapeHtml(entry.id)}">${selected ? 'Selected' : 'Details'}</button>
     </article>
@@ -674,8 +680,11 @@ function renderLibraryDetails(entry: RunHistoryEntry | null): string {
         <div><dt>Lines</dt><dd>${entry.lines}/40</dd></div>
         <div><dt>Pieces</dt><dd>${entry.pieces}</dd></div>
         <div><dt>PPS</dt><dd>${entry.pps.toFixed(2)}</dd></div>
+        <div><dt>LPM</dt><dd>${entry.linesPerMinute.toFixed(1)}</dd></div>
         <div><dt>Inputs</dt><dd>${entry.inputCount}</dd></div>
+        <div><dt>IPP</dt><dd>${entry.inputsPerPiece.toFixed(2)}</dd></div>
       </dl>
+      ${renderSplitList(entry.splits)}
       <div class="panel-actions replay-actions">
         <button type="button" data-ui-action="play-history-replay" data-history-id="${id}">Play replay</button>
         <button type="button" data-ui-action="export-history-replay" data-history-id="${id}">Export</button>
@@ -790,6 +799,7 @@ function renderPanel(options: {
   eyebrow: string;
   title: string;
   meta: string;
+  details?: string;
   actions: [string, string][];
 }): string {
   const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
@@ -803,10 +813,51 @@ function renderPanel(options: {
         <div class="panel-eyebrow">${escapeHtml(options.eyebrow)}</div>
         <h1>${escapeHtml(options.title)}</h1>
         <p>${escapeHtml(options.meta)}</p>
+        ${options.details ?? ''}
         ${exported}
         ${importError}
         <div class="panel-actions">${actions}</div>
       </section>
+    </div>
+  `;
+}
+
+function currentRunSummary(state: GameState): RunSummary {
+  return createRunSummary({
+    result: {
+      lines: state.stats.lines,
+      pieces: state.stats.pieces,
+      frame: state.stats.frame,
+      finishFrame: state.stats.finishFrame,
+      gameOverFrame: state.stats.gameOverFrame,
+    },
+    inputs: replay.inputs,
+    splits: runSplitTracker.getSplits(),
+  });
+}
+
+function renderAdvancedRunStats(summary: RunSummary): string {
+  return `
+    <div class="run-stats-grid" aria-label="Run stats">
+      <div><span>PPS</span><strong>${summary.pps.toFixed(2)}</strong></div>
+      <div><span>IPP</span><strong>${summary.inputsPerPiece.toFixed(2)}</strong></div>
+      <div><span>LPM</span><strong>${summary.linesPerMinute.toFixed(1)}</strong></div>
+      <div><span>Inputs</span><strong>${summary.inputCount}</strong></div>
+    </div>
+    ${renderSplitList(summary.splits)}
+  `;
+}
+
+function renderSplitList(splits: LineSplit[]): string {
+  if (splits.length === 0) return '<div class="split-list split-list-empty">No 10-line split yet.</div>';
+  return `
+    <div class="split-list" aria-label="Line splits">
+      ${splits.map((split) => `
+        <div>
+          <span>${split.lines}L</span>
+          <strong>${escapeHtml(formatFrames(split.elapsedFrames))}</strong>
+        </div>
+      `).join('')}
     </div>
   `;
 }
