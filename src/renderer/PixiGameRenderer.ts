@@ -1,4 +1,7 @@
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application } from '@pixi/app';
+import { Container } from '@pixi/display';
+import { Graphics } from '@pixi/graphics';
+import { Text, TextStyle } from '@pixi/text';
 import { cellsFor, PIECE_COLORS } from '../game/pieces';
 import { DEFAULT_RULES } from '../game/rules';
 import { displayedElapsedFrames } from '../game/timing';
