@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { importReplayJson, importReplayValue } from '../src/app/replayImport';
-import { createExportedReplay } from '../src/app/replayExport';
+import { createExportedReplay, replayFileName } from '../src/app/replayExport';
 import { ReplayPlayback } from '../src/app/replayPlayback';
+import {
+  createRunHistoryEntry,
+  deleteRunHistoryEntry,
+  loadRunHistory,
+  MAX_RUN_HISTORY_ENTRIES,
+  saveRunHistoryEntry,
+  type HistoryStorage,
+} from '../src/app/runHistory';
 import { canAdvanceGame, togglePauseMode } from '../src/app/state';
 import { createShuffledBag } from '../src/game/bag';
 import { clearCompletedLines, createBoard } from '../src/game/board';
@@ -162,6 +170,109 @@ describe('core stacker engine', () => {
     expect(playback.snapshot().frame).toBe(0);
     expect(playback.snapshot().validation).toBe('pending');
   });
+
+  it('normalizes corrupt run history storage', () => {
+    const storage = new MemoryStorage();
+    storage.setItem('stack40.runHistory.v1', '{nope');
+    expect(loadRunHistory(storage)).toEqual([]);
+
+    storage.setItem('stack40.runHistory.v1', JSON.stringify({ version: 1, entries: [{ replay: { version: 1 } }] }));
+    expect(loadRunHistory(storage)).toEqual([]);
+  });
+
+  it('saves terminal runs with embedded replays and derived stats', () => {
+    const storage = new MemoryStorage();
+    const replay = createTerminalReplayFixture('finished', 1200);
+    const entry = createRunHistoryEntry(replay);
+
+    expect(entry).not.toBeNull();
+    if (!entry) return;
+    const history = saveRunHistoryEntry(entry, storage);
+
+    expect(history).toHaveLength(1);
+    expect(history[0].seed).toBe(replay.seed);
+    expect(history[0].status).toBe('finished');
+    expect(history[0].elapsedFrames).toBe(1200);
+    expect(history[0].pps).toBe(5);
+    expect(history[0].inputCount).toBe(replay.inputs.length);
+    expect(history[0].replay).toEqual(replay);
+  });
+
+  it('limits run history and replaces duplicate entries', () => {
+    const storage = new MemoryStorage();
+    const firstReplay = createTerminalReplayFixture('finished', 600);
+    const firstEntry = createRunHistoryEntry(firstReplay);
+    expect(firstEntry).not.toBeNull();
+    if (!firstEntry) return;
+
+    saveRunHistoryEntry(firstEntry, storage);
+    saveRunHistoryEntry(firstEntry, storage);
+    expect(loadRunHistory(storage)).toHaveLength(1);
+
+    for (let index = 0; index < MAX_RUN_HISTORY_ENTRIES + 5; index += 1) {
+      const replay = createTerminalReplayFixture('gameover', 900 + index, 1000 + index);
+      const entry = createRunHistoryEntry(replay);
+      expect(entry).not.toBeNull();
+      if (entry) saveRunHistoryEntry(entry, storage);
+    }
+
+    const history = loadRunHistory(storage);
+    expect(history).toHaveLength(MAX_RUN_HISTORY_ENTRIES);
+    expect(history[0].seed).toBe(1000 + MAX_RUN_HISTORY_ENTRIES + 4);
+  });
+
+  it('deletes one run history entry without breaking the others', () => {
+    const storage = new MemoryStorage();
+    const firstEntry = createRunHistoryEntry(createTerminalReplayFixture('finished', 600, 1));
+    const secondEntry = createRunHistoryEntry(createTerminalReplayFixture('gameover', 900, 2));
+    expect(firstEntry).not.toBeNull();
+    expect(secondEntry).not.toBeNull();
+    if (!firstEntry || !secondEntry) return;
+
+    saveRunHistoryEntry(firstEntry, storage);
+    saveRunHistoryEntry(secondEntry, storage);
+    const history = deleteRunHistoryEntry(firstEntry.id, storage);
+
+    expect(history).toHaveLength(1);
+    expect(history[0].id).toBe(secondEntry.id);
+    expect(loadRunHistory(storage)).toEqual(history);
+  });
+
+  it('exports a historical replay without changing seed, rules, or inputs', () => {
+    const replay = createTerminalReplayFixture('finished', 720, 444);
+    const entry = createRunHistoryEntry(replay);
+    expect(entry).not.toBeNull();
+    if (!entry) return;
+
+    const fileName = replayFileName(entry.replay);
+    const imported = importReplayJson(JSON.stringify(entry.replay));
+
+    expect(fileName).toContain(`-${replay.seed}-`);
+    expect(imported.ok).toBe(true);
+    if (!imported.ok) return;
+    expect(imported.replay.seed).toBe(replay.seed);
+    expect(imported.replay.rules).toEqual(replay.rules);
+    expect(imported.replay.inputs).toEqual(replay.inputs);
+  });
+
+  it('plays a replay loaded from local history to the recorded result', () => {
+    const storage = new MemoryStorage();
+    const replay = createRecordedTerminalReplay(2026);
+    const entry = createRunHistoryEntry(replay);
+    expect(entry).not.toBeNull();
+    if (!entry) return;
+
+    saveRunHistoryEntry(entry, storage);
+    const [loadedEntry] = loadRunHistory(storage);
+    const playback = new ReplayPlayback(loadedEntry.replay);
+    let snapshot = playback.snapshot();
+    while (!snapshot.done) snapshot = playback.tick();
+
+    expect(snapshot.validation).toBe('match');
+    expect(snapshot.state.status).toBe(loadedEntry.replay.result.status);
+    expect(snapshot.state.stats.lines).toBe(loadedEntry.replay.result.lines);
+    expect(snapshot.state.stats.pieces).toBe(loadedEntry.replay.result.pieces);
+  });
 });
 
 function runReplay(inputs: GameInput[]) {
@@ -183,4 +294,50 @@ function createReplayFixture(seed: number, inputs: GameInput[], targetFrame: num
     state = engine.tick(frame, frameInputs);
   }
   return createExportedReplay(log, state, DEFAULT_INPUT_SETTINGS, '2026-06-04T21:00:00.000Z');
+}
+
+function createTerminalReplayFixture(status: 'finished' | 'gameover', terminalFrame: number, seed = 314) {
+  const replay = createReplayFixture(seed, [{ frame: 1, action: 'hardDrop' }], 1);
+  return {
+    ...replay,
+    createdAt: `2026-06-04T21:00:${String(seed % 60).padStart(2, '0')}.000Z`,
+    result: {
+      ...replay.result,
+      status,
+      lines: status === 'finished' ? 40 : 12,
+      pieces: status === 'finished' ? 100 : 24,
+      frame: terminalFrame,
+      finishFrame: status === 'finished' ? terminalFrame : null,
+      gameOverFrame: status === 'gameover' ? terminalFrame : null,
+    },
+  };
+}
+
+function createRecordedTerminalReplay(seed: number) {
+  const engine = new GameEngine(seed, DEFAULT_RULES);
+  const log = createReplayLog(seed, DEFAULT_RULES);
+  let state = engine.getState();
+  for (let frame = 1; frame <= 5000 && state.status === 'playing'; frame += 1) {
+    const input: GameInput = { frame, action: 'hardDrop' };
+    recordInput(log, input);
+    state = engine.tick(frame, [input]);
+  }
+  expect(state.status === 'finished' || state.status === 'gameover').toBe(true);
+  return createExportedReplay(log, state, DEFAULT_INPUT_SETTINGS, '2026-06-04T21:00:00.000Z');
+}
+
+class MemoryStorage implements HistoryStorage {
+  private readonly values = new Map<string, string>();
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
+
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
 }

@@ -2,6 +2,14 @@ import './styles.css';
 import { importReplayJson } from './app/replayImport';
 import { createExportedReplay, replayFileName, type ExportedReplay } from './app/replayExport';
 import { ReplayPlayback, type PlaybackSpeed, type ReplayPlaybackSnapshot } from './app/replayPlayback';
+import {
+  clearRunHistory as clearStoredRunHistory,
+  createRunHistoryEntry,
+  deleteRunHistoryEntry,
+  loadRunHistory,
+  saveRunHistoryEntry,
+  type RunHistoryEntry,
+} from './app/runHistory';
 import { canAdvanceGame, terminalLabel, togglePauseMode, type AppMode } from './app/state';
 import { MUSIC_TRACKS } from './audio/music';
 import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
@@ -36,6 +44,9 @@ if (!root || !overlay) throw new Error('Missing application root.');
 const overlayElement = overlay;
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
+const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
+
+type LibraryFilter = typeof LIBRARY_FILTERS[number];
 
 let inputSettings = loadInputSettings();
 let gameRules = rulesFromSettings(inputSettings);
@@ -47,10 +58,12 @@ const renderer = new PixiGameRenderer(root);
 const sound = new SoundEngine(loadRecord().soundMuted, MUSIC_TRACKS, loadRecord().sfxVolume, loadRecord().musicVolume);
 
 let best = loadRecord();
+let runHistory = loadRunHistory();
 let appMode: AppMode = 'menu';
 let settingsReturnMode: AppMode = 'menu';
 let gameFrame = 0;
 let savedFinish = false;
+let savedRunHistoryEntry = false;
 let lastPieces = 0;
 let lastLines = 0;
 let lastStatus = engine.getState().status;
@@ -61,6 +74,9 @@ let lastOverlayHtml = '';
 let playback: ReplayPlayback | null = null;
 let importedReplayName: string | null = null;
 let replayImportError: string | null = null;
+let libraryFilter: LibraryFilter = 'all';
+let selectedHistoryEntryId: string | null = null;
+let libraryError: string | null = null;
 
 const replayFileInput = document.createElement('input');
 replayFileInput.type = 'file';
@@ -114,6 +130,13 @@ Object.assign(window, {
     getPlayback: () => playback?.snapshot() ?? null,
     getAppMode: () => appMode,
     getInputSettings: () => cloneInputSettings(inputSettings),
+    getRunHistory: () => runHistory,
+    clearRunHistory: () => {
+      clearStoredRunHistory();
+      runHistory = [];
+      selectedHistoryEntryId = null;
+      return runHistory;
+    },
     isSoundMuted: () => sound.isMuted(),
     toggleSound: () => {
       best = saveSoundMuted(sound.toggleMuted());
@@ -170,6 +193,42 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'settings-reset') applyInputSettings(resetInputSettings());
   if (action === 'export-replay') exportReplay();
   if (action === 'import-replay') openReplayFilePicker();
+  if (action === 'replay-library' || action === 'run-history') openReplayLibrary();
+  if (action === 'library-back' || action === 'history-back') goToMenu();
+  if (action === 'library-filter') setLibraryFilter(control.dataset.filter);
+  if (action === 'select-history-entry') selectHistoryEntry(control.dataset.historyId);
+  if (action === 'clear-history') {
+    clearStoredRunHistory();
+    runHistory = [];
+    selectedHistoryEntryId = null;
+    libraryError = null;
+  }
+  if (action === 'play-history-replay') {
+    const entry = findHistoryEntry(control.dataset.historyId);
+    if (entry) startReplayPlayback(entry.replay, `History ${formatDateTime(entry.createdAt)}`);
+    else libraryError = 'Replay entry was not found.';
+  }
+  if (action === 'export-history-replay') {
+    const entry = findHistoryEntry(control.dataset.historyId);
+    if (entry) {
+      lastExportName = downloadReplayFile(entry.replay);
+      libraryError = null;
+    } else {
+      libraryError = 'Replay entry was not found.';
+    }
+  }
+  if (action === 'delete-history-entry') {
+    const entry = findHistoryEntry(control.dataset.historyId);
+    if (entry) {
+      runHistory = deleteRunHistoryEntry(entry.id);
+      selectedHistoryEntryId = selectedHistoryEntryId === entry.id ? null : selectedHistoryEntryId;
+      syncLibrarySelection();
+      libraryError = null;
+      lastExportName = null;
+    } else {
+      libraryError = 'Replay entry was not found.';
+    }
+  }
   if (action === 'replay-toggle') playback?.togglePaused();
   if (action === 'replay-restart') playback?.restart();
   if (action === 'replay-exit') goToMenu();
@@ -222,6 +281,7 @@ function startNewRun(): void {
   bindingCapture = null;
   lastExportName = null;
   replayImportError = null;
+  libraryError = null;
   importedReplayName = null;
   playback = null;
   gameRules = rulesFromSettings(inputSettings);
@@ -230,6 +290,7 @@ function startNewRun(): void {
   replay = createReplayLog(seed, gameRules);
   gameFrame = 0;
   savedFinish = false;
+  savedRunHistoryEntry = false;
   lastPieces = 0;
   lastLines = 0;
   lastStatus = engine.getState().status;
@@ -265,6 +326,19 @@ function goToMenu(): void {
   settingsReturnMode = 'menu';
   playback = null;
   importedReplayName = null;
+  libraryError = null;
+  runHistory = loadRunHistory();
+  input.releaseAll();
+}
+
+function openReplayLibrary(): void {
+  bindingCapture = null;
+  runHistory = loadRunHistory();
+  appMode = 'library';
+  settingsReturnMode = 'menu';
+  libraryError = null;
+  lastExportName = null;
+  syncLibrarySelection();
   input.releaseAll();
 }
 
@@ -276,6 +350,10 @@ function applyInputSettings(settings: InputSettings): void {
 
 function exportReplay(): void {
   const exported = createExportedReplay(replay, engine.getState(), inputSettings);
+  lastExportName = downloadReplayFile(exported);
+}
+
+function downloadReplayFile(exported: ExportedReplay): string {
   const fileName = replayFileName(exported);
   const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -284,7 +362,7 @@ function exportReplay(): void {
   link.download = fileName;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  lastExportName = fileName;
+  return fileName;
 }
 
 function openReplayFilePicker(): void {
@@ -345,6 +423,11 @@ function syncRunEffects(state: GameState): void {
     best = saveBest40LineFrames(state.stats.finishFrame);
     savedFinish = true;
   }
+  if ((state.status === 'finished' || state.status === 'gameover') && !savedRunHistoryEntry) {
+    const entry = createRunHistoryEntry(createExportedReplay(replay, state, inputSettings));
+    if (entry) runHistory = saveRunHistoryEntry(entry);
+    savedRunHistoryEntry = true;
+  }
 }
 
 function renderOverlay(state: GameState): void {
@@ -378,6 +461,7 @@ function renderOverlay(state: GameState): void {
 function renderScreenOverlay(state: GameState): string {
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
   if (appMode === 'settings') return renderSettingsOverlay();
+  if (appMode === 'library') return renderLibraryOverlay();
   if (appMode === 'menu') {
     return renderPanel({
       eyebrow: '40 LINES',
@@ -385,6 +469,7 @@ function renderScreenOverlay(state: GameState): string {
       meta: `${formatActionBinding('pause')} pause - ${formatActionBinding('hardDrop')} hard drop`,
       actions: [
         ['start', 'Start run'],
+        ['replay-library', 'Replay library'],
         ['import-replay', 'Import replay'],
         ['settings', 'Input settings'],
       ],
@@ -418,6 +503,95 @@ function renderScreenOverlay(state: GameState): string {
       ['main-menu', 'Main menu'],
     ],
   });
+}
+
+function renderLibraryOverlay(): string {
+  syncLibrarySelection();
+  const visibleEntries = getVisibleLibraryEntries();
+  const selectedEntry = getSelectedLibraryEntry(visibleEntries);
+  const rows = visibleEntries.length === 0
+    ? `<div class="history-empty">${escapeHtml(libraryEmptyText())}</div>`
+    : visibleEntries.map((entry) => renderLibraryRow(entry, selectedEntry?.id === entry.id)).join('');
+  const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
+  const error = libraryError ? `<div class="panel-note panel-error">${escapeHtml(libraryError)}</div>` : '';
+  return `
+    <div class="menu-scrim">
+      <section class="menu-panel history-panel library-panel" aria-label="Replay library">
+        <div class="panel-eyebrow">REPLAY LIBRARY</div>
+        <h1>Runs</h1>
+        <div class="library-toolbar" aria-label="Replay filters">
+          ${renderLibraryFilterButton('all', 'All')}
+          ${renderLibraryFilterButton('clear', 'Clears')}
+          ${renderLibraryFilterButton('topout', 'Top outs')}
+          ${renderLibraryFilterButton('best', 'Best times')}
+        </div>
+        ${exported}
+        ${error}
+        <div class="library-layout">
+          <div class="history-list">${rows}</div>
+          ${renderLibraryDetails(selectedEntry)}
+        </div>
+        <div class="panel-actions">
+          <button type="button" data-ui-action="library-back">Back</button>
+          <button type="button" data-ui-action="clear-history"${runHistory.length === 0 ? ' disabled' : ''}>Clear</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderLibraryFilterButton(filter: LibraryFilter, label: string): string {
+  const activeClass = libraryFilter === filter ? ' button-active' : '';
+  return `<button class="${activeClass}" type="button" data-ui-action="library-filter" data-filter="${filter}">${label}</button>`;
+}
+
+function renderLibraryRow(entry: RunHistoryEntry, selected: boolean): string {
+  return `
+    <article class="history-row library-row ${selected ? 'library-row-selected' : ''}">
+      <div>
+        <strong>${escapeHtml(formatHistoryStatus(entry.status))} ${escapeHtml(formatFrames(entry.elapsedFrames))}</strong>
+        <span>${escapeHtml(formatDateTime(entry.createdAt))} - seed ${entry.seed}</span>
+      </div>
+      <div class="history-stats">
+        <span>${entry.lines}L</span>
+        <span>${entry.pieces} pieces</span>
+        <span>${entry.pps.toFixed(2)} PPS</span>
+        <span>${entry.inputCount} inputs</span>
+      </div>
+      <button type="button" data-ui-action="select-history-entry" data-history-id="${escapeHtml(entry.id)}">${selected ? 'Selected' : 'Details'}</button>
+    </article>
+  `;
+}
+
+function renderLibraryDetails(entry: RunHistoryEntry | null): string {
+  if (!entry) {
+    return `
+      <aside class="library-details">
+        <div class="panel-eyebrow">NO REPLAY</div>
+        <p>Saved terminal runs will appear here after a clear or top out.</p>
+      </aside>
+    `;
+  }
+  const id = escapeHtml(entry.id);
+  return `
+    <aside class="library-details">
+      <div class="panel-eyebrow">SELECTED REPLAY</div>
+      <h2>${escapeHtml(formatHistoryStatus(entry.status))} ${escapeHtml(formatFrames(entry.elapsedFrames))}</h2>
+      <dl>
+        <div><dt>Date</dt><dd>${escapeHtml(formatDateTime(entry.createdAt))}</dd></div>
+        <div><dt>Seed</dt><dd>${entry.seed}</dd></div>
+        <div><dt>Lines</dt><dd>${entry.lines}/40</dd></div>
+        <div><dt>Pieces</dt><dd>${entry.pieces}</dd></div>
+        <div><dt>PPS</dt><dd>${entry.pps.toFixed(2)}</dd></div>
+        <div><dt>Inputs</dt><dd>${entry.inputCount}</dd></div>
+      </dl>
+      <div class="panel-actions replay-actions">
+        <button type="button" data-ui-action="play-history-replay" data-history-id="${id}">Play replay</button>
+        <button type="button" data-ui-action="export-history-replay" data-history-id="${id}">Export</button>
+        <button type="button" data-ui-action="delete-history-entry" data-history-id="${id}">Delete</button>
+      </div>
+    </aside>
+  `;
 }
 
 function renderReplayOverlayShell(): string {
@@ -611,6 +785,66 @@ function parseControlAction(value: string | undefined): ControlAction | null {
   return CONTROL_ACTIONS.includes(value as ControlAction) ? value as ControlAction : null;
 }
 
+function setLibraryFilter(value: string | undefined): void {
+  if (!isLibraryFilter(value)) return;
+  libraryFilter = value;
+  libraryError = null;
+  syncLibrarySelection();
+}
+
+function selectHistoryEntry(id: string | undefined): void {
+  const entry = findHistoryEntry(id);
+  if (!entry) {
+    libraryError = 'Replay entry was not found.';
+    return;
+  }
+  selectedHistoryEntryId = entry.id;
+  libraryError = null;
+}
+
+function findHistoryEntry(id: string | undefined): RunHistoryEntry | null {
+  if (!id) return null;
+  return runHistory.find((entry) => entry.id === id) ?? null;
+}
+
+function syncLibrarySelection(): void {
+  const visibleEntries = getVisibleLibraryEntries();
+  if (visibleEntries.length === 0) {
+    selectedHistoryEntryId = null;
+    return;
+  }
+  if (!visibleEntries.some((entry) => entry.id === selectedHistoryEntryId)) {
+    selectedHistoryEntryId = visibleEntries[0].id;
+  }
+}
+
+function getSelectedLibraryEntry(visibleEntries = getVisibleLibraryEntries()): RunHistoryEntry | null {
+  return visibleEntries.find((entry) => entry.id === selectedHistoryEntryId) ?? visibleEntries[0] ?? null;
+}
+
+function getVisibleLibraryEntries(): RunHistoryEntry[] {
+  const entries = runHistory.filter((entry) => {
+    if (libraryFilter === 'clear' || libraryFilter === 'best') return entry.status === 'finished';
+    if (libraryFilter === 'topout') return entry.status === 'gameover';
+    return true;
+  });
+  if (libraryFilter === 'best') {
+    return [...entries].sort((a, b) => a.elapsedFrames - b.elapsedFrames || a.createdAt.localeCompare(b.createdAt));
+  }
+  return entries;
+}
+
+function libraryEmptyText(): string {
+  if (runHistory.length === 0) return 'No saved runs yet.';
+  if (libraryFilter === 'clear' || libraryFilter === 'best') return 'No clears saved yet.';
+  if (libraryFilter === 'topout') return 'No top outs saved yet.';
+  return 'No matching replays.';
+}
+
+function isLibraryFilter(value: string | undefined): value is LibraryFilter {
+  return LIBRARY_FILTERS.includes(value as LibraryFilter);
+}
+
 function randomSeed(): number {
   return Math.floor(Math.random() * 0xffffffff);
 }
@@ -630,6 +864,16 @@ function replayProgressPercent(snapshot: ReplayPlaybackSnapshot): string {
 
 function formatPercent(volume: number): string {
   return Math.round(volume * 100).toString().padStart(3, ' ');
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatHistoryStatus(status: RunHistoryEntry['status']): string {
+  return status === 'finished' ? 'CLEAR' : 'TOP OUT';
 }
 
 function escapeHtml(value: string): string {

@@ -1,6 +1,6 @@
 import type { GameState } from '../game/types';
 
-export type AppMode = 'menu' | 'playing' | 'paused' | 'settings' | 'replayPlayback';
+export type AppMode = 'menu' | 'playing' | 'paused' | 'settings' | 'replayPlayback' | 'library';
 
 export function canAdvanceGame(mode: AppMode, status: GameState['status']): boolean {
   return mode === 'playing' && status === 'playing';

@@ -12,6 +12,7 @@ https://tetris-para-luna-negra.vercel.app/
 - Controles configurables desde la pantalla del juego.
 - Ajustes de DAS (Delayed Auto Shift, desplazamiento automatico retrasado) y ARR (Auto Repeat Rate, velocidad de repeticion automatica).
 - Guardado local de mejor tiempo, volumen y configuracion.
+- Historial local de partidas con replays reproducibles.
 - Sonidos, musica y cambio de pista.
 - Exportacion de replay (repeticion) en JSON.
 
@@ -62,4 +63,4 @@ npm run preview
 
 ## Replays
 
-El juego permite exportar una repeticion en formato JSON. El archivo incluye semilla, reglas, configuracion de controles, resultado y entradas registradas por frame. Esto permite auditar una corrida y deja una base preparada para ranking, validacion o reproduccion futura.
+El juego guarda localmente las partidas terminadas y top outs con sus replays. Tambien permite exportar una repeticion en formato JSON. El archivo incluye semilla, reglas, configuracion de controles, resultado y entradas registradas por frame. Esto permite auditar una corrida y deja una base preparada para ranking, validacion o reproduccion futura.
