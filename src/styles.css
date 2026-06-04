@@ -1,0 +1,348 @@
+:root {
+  color: #f7f7f2;
+  background: #05080c;
+  font-family: Arial, Helvetica, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app,
+#game-root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 320px;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#hud-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.brand {
+  position: absolute;
+  top: 22px;
+  left: 28px;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: clamp(18px, 3vw, 42px);
+  font-weight: 900;
+  line-height: 1;
+  color: #f7f7f2;
+  text-shadow: 0 3px 18px rgba(0, 0, 0, 0.55);
+}
+
+.help {
+  position: absolute;
+  right: 28px;
+  bottom: 22px;
+  max-width: min(560px, calc(100vw - 48px));
+  font-size: clamp(11px, 1.4vw, 14px);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-align: right;
+  color: rgba(247, 247, 242, 0.76);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.68);
+}
+
+.best {
+  position: absolute;
+  top: 28px;
+  right: 28px;
+  font-size: clamp(12px, 1.4vw, 15px);
+  font-weight: 800;
+  color: rgba(247, 247, 242, 0.82);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+}
+
+.audio-panel {
+  position: absolute;
+  top: 52px;
+  right: 28px;
+  width: min(260px, calc(100vw - 56px));
+  text-align: right;
+}
+
+.sound {
+  display: block;
+  margin: 0 0 0 auto;
+  color: rgba(247, 247, 242, 0.62);
+  font-size: clamp(11px, 1.2vw, 13px);
+  font-weight: 800;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+}
+
+.volume-control {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+  width: 132px;
+  margin: 4px 0 0 auto;
+  padding: 3px 0;
+  color: rgba(247, 247, 242, 0.72);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  pointer-events: auto;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+  user-select: none;
+}
+
+.volume-control:hover,
+.volume-control-active {
+  color: #f7f7f2;
+}
+
+.volume-control-active {
+  text-shadow:
+    0 0 10px rgba(217, 74, 232, 0.72),
+    0 2px 12px rgba(0, 0, 0, 0.7);
+}
+
+.music {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 0 auto;
+  overflow: hidden;
+  color: rgba(247, 247, 242, 0.7);
+  font-size: clamp(10px, 1.1vw, 12px);
+  font-weight: 800;
+  text-align: right;
+  text-overflow: ellipsis;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+}
+
+.hud-action {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  pointer-events: auto;
+}
+
+.hud-action:hover {
+  color: #f7f7f2;
+}
+
+.menu-scrim {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(3, 5, 8, 0.28), rgba(3, 5, 8, 0.58)),
+    rgba(3, 5, 8, 0.18);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+}
+
+.menu-panel {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 28px;
+  border: 2px solid rgba(247, 247, 242, 0.92);
+  border-radius: 8px;
+  background: rgba(4, 5, 7, 0.88);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.48);
+}
+
+.settings-panel {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.panel-eyebrow {
+  color: rgba(247, 247, 242, 0.62);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.menu-panel h1 {
+  margin: 8px 0 0;
+  color: #f7f7f2;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.menu-panel p {
+  margin: 12px 0 0;
+  color: rgba(247, 247, 242, 0.74);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.panel-note {
+  margin-top: 14px;
+  color: #39d49a;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.panel-actions button,
+.binding-button,
+.timing-row button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 2px solid rgba(247, 247, 242, 0.88);
+  border-radius: 6px;
+  background: rgba(247, 247, 242, 0.08);
+  color: #f7f7f2;
+  cursor: pointer;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.panel-actions button:hover,
+.binding-button:hover,
+.timing-row button:hover {
+  background: rgba(217, 74, 232, 0.18);
+  border-color: #d94ae8;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.binding-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(150px, 220px);
+  gap: 12px;
+  align-items: center;
+  min-height: 42px;
+  border-bottom: 1px solid rgba(247, 247, 242, 0.11);
+}
+
+.binding-row span {
+  color: rgba(247, 247, 242, 0.78);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.binding-button {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binding-button-active {
+  background: rgba(57, 212, 154, 0.16);
+  border-color: #39d49a;
+  color: #f7f7f2;
+}
+
+.timing-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.timing-row {
+  display: grid;
+  grid-template-columns: 1fr 42px 64px 42px;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+}
+
+.timing-row span,
+.timing-row strong {
+  color: rgba(247, 247, 242, 0.82);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.timing-row strong {
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .brand {
+    top: 12px;
+    left: 14px;
+  }
+
+  .best {
+    top: 16px;
+    right: 14px;
+  }
+
+  .audio-panel {
+    top: 36px;
+    right: 14px;
+    width: min(220px, calc(100vw - 28px));
+  }
+
+  .volume-control {
+    width: 118px;
+    gap: 12px;
+  }
+
+  .help {
+    right: 14px;
+    bottom: 12px;
+  }
+
+  .menu-panel {
+    padding: 22px;
+  }
+
+  .menu-panel h1 {
+    font-size: 28px;
+  }
+
+  .binding-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding-bottom: 8px;
+  }
+}
+
+@media (max-height: 520px) {
+  .help {
+    display: none;
+  }
+}

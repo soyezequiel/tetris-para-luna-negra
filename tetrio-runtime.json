@@ -1,0 +1,77 @@
+{
+  "scripts": [
+    "https://prebid.wurflcloud.com/wurfl.js?mode=prebid2&bidders=appnexus%2CcriteoFsClientAux%2Ccriteo%2CixFsClientAux%2Cix%2Cinsticator%2Cnativo%2CopenxFsClientAux%2Copenx%2CpubmaticFsClientAux%2Cpubmatic%2CrubiconFsClientAux%2Crubicon%2CsovrnFsClientAux%2Csovrn%2Cttd%2CtripleliftFsClientAux%2Ctriplelift%2CyieldmoFsClientAux%2Cyieldmo&sua=%7B%22source%22%3A2%2C%22platform%22%3A%7B%22brand%22%3A%22Windows%22%2C%22version%22%3A%5B%2219%22%2C%220%22%2C%220%22%5D%7D%2C%22browsers%22%3A%5B%7B%22brand%22%3A%22Chromium%22%2C%22version%22%3A%5B%22148%22%2C%220%22%2C%227778%22%2C%22218%22%5D%7D%2C%7B%22brand%22%3A%22Google+Chrome%22%2C%22version%22%3A%5B%22148%22%2C%220%22%2C%227778%22%2C%22218%22%5D%7D%2C%7B%22brand%22%3A%22Not%2FA%29Brand%22%2C%22version%22%3A%5B%2299%22%2C%220%22%2C%220%22%2C%220%22%5D%7D%5D%2C%22mobile%22%3A0%2C%22model%22%3A%22%22%2C%22bitness%22%3A%2264%22%2C%22architecture%22%3A%22x86%22%7D",
+    "https://cdn.hadronid.net/hadron.js?partner_id=474&_it=prebid",
+    "https://cdn.hadronid.net/hadron.js?url=https%3A%2F%2Ftetr.io%2F&ref=&_it=freestar&partner_id=474&ha=_hadron",
+    "https://browser.sentry-cdn.com/8.26.0/bundle.tracing.replay.min.js",
+    "https://moon.kagari.moe/lander.php",
+    "https://tetr.io/bootstrap.js?hv=7e647a5d9.507fe115b47d.20260526T235340",
+    "https://tetr.io/js/moon.js",
+    "https://cdn.xsolla.net/payments-bucket-prod/embed/1.3.4/widget.min.js",
+    "blob:https://tetr.io/03988c01-94d9-4e4f-a410-684591a89ee1",
+    "[inline]",
+    "https://a.pub.network/tetr-io/pubfig.min.js",
+    "https://a.pub.network/tetr-io/prod/history/230dc2f1-1c8a-4ba7-8a2c-769584ab772f/pubfig.min.js?bypass=true",
+    "[inline]",
+    "https://a.pub.network/tetr-io/prod/history/230dc2f1-1c8a-4ba7-8a2c-769584ab772f/prebid.js",
+    "https://securepubads.g.doubleclick.net/tag/js/gpt.js",
+    "https://a.pub.network/tetr-io/prod/history/230dc2f1-1c8a-4ba7-8a2c-769584ab772f/pubfig.engine.js",
+    "https://securepubads.g.doubleclick.net/pagead/managed/js/gpt/m202606030101/pubads_impl.js?cb=31098955",
+    "https://fundingchoicesmessages.google.com/i/154013155?ers=3",
+    "https://fundingchoicesmessages.google.com/f/AGSKWxU8ypfRPnYWpaNSQ5McaNXg0KfMdsREOX8p8zxh4KPppuFIROhXjiA6tC12mYkoCFYVYXcbKlW26l9k5mlxDZsPKqzV6H-a85PkS3R52tSiuP4Gi4lUxyquFcQuxzXvGNmfRIgFhw==?fccs=W251bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLFsxNzgwNjAyMzEyLDg5OTAwMDAwMF0sbnVsbCxudWxsLG51bGwsW251bGwsWzddXSwiaHR0cHM6Ly90ZXRyLmlvLyIsbnVsbCxbWzgsImw3UkFJOU9pRW40Il0sWzksImVzLTQxOSJdLFsxOCwiW1tbbnVsbCwyMzE2XV1dIl0sWzM1LCIxNzgwNjAyMzEyIl0sWzE5LCIyIl0sWzE3LCJbMF0iXSxbMjQsIiJdLFsyOSwiZmFsc2UiXV1d",
+    "https://fundingchoicesmessages.google.com/f/AGSKWxWqUXxsvBi9dRMoOnYo6dKwhTa30SJMP1OmXrexw9o-CgxB7Ls-BHactB4BY9MIixsla6El2SBDWDjWr0CtaKLbdHtIGas2n74QEZdOURQq7vAMir7FfstCJAsbnhQ9CQ9qbCVkPA==?fccs=W251bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLFsxNzgwNjAyMzEzLDg4MDAwMDAwXSxudWxsLG51bGwsbnVsbCxbbnVsbCxbNyw5XSxudWxsLDIsbnVsbCwiZW4iXSwiaHR0cHM6Ly90ZXRyLmlvLyIsbnVsbCxbWzgsImw3UkFJOU9pRW40Il0sWzksImVzLTQxOSJdLFsxOCwiW1tbbnVsbCwyMzE2XV1dIl0sWzM1LCIxNzgwNjAyMzEyIl0sWzE5LCIyIl0sWzE3LCJbMF0iXSxbMjQsIiJdLFsyOSwiZmFsc2UiXV1d",
+    "https://c.amazon-adsystem.com/aax2/apstag.js",
+    "https://config.aps.amazon-adsystem.com/configs/0ab198dd-b265-462a-ae36-74e163ad6159",
+    "https://secure.cdn.fastclick.net/js/pubcid/latest/pubcid.min.js",
+    "https://cdn.id5-sync.com/api/1.0/id5-api.js",
+    "https://fundingchoicesmessages.google.com/f/AGSKWxXsACbGWR5QJifhU5bFG4RMbnIsWGnxKP-W-Uof9fgonTSjh4Gq-qqYfz6m5i34Jk0aLgzsFXAts19AWI9Oe7jy-o2eiC4CNWxOzBGZhWf2IAikPz_ITmC_d9q7LBEmqER557n6Jw==?fccs=W251bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLFsxNzgwNjAyMzE0LDYwMDAwMDAwXSxudWxsLG51bGwsbnVsbCxbbnVsbCxbNyw5LDZdLG51bGwsMixudWxsLCJlbiIsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLDFdLCJodHRwczovL3RldHIuaW8vIixudWxsLFtbOCwibDdSQUk5T2lFbjQiXSxbOSwiZXMtNDE5Il0sWzE4LCJbW1tudWxsLDIzMTZdXV0iXSxbMzUsIjE3ODA2MDIzMTIiXSxbMTksIjIiXSxbMTcsIlswXSJdLFsyNCwiIl0sWzI5LCJmYWxzZSJdXV0",
+    "[inline]",
+    "https://metrics.rapidedge.io/gamera.js?ltv=1&audience=1&tpcs=1&partner=freestar",
+    "https://live.primis.tech/live/liveView.php?s=120890&cbuster=1780602313&pubUrl=https%3A%2F%2Ftetr.io%2F&x=400&y=272&playerApiId=freestarPrimisPlayer&schain=1.0,1!freestar.com,1992,1"
+  ],
+  "links": [
+    "https://tetr.io/css/tetrio.css?hv=7e647a5d9.507fe115b47d.20260526T235340",
+    "https://live.primis.tech/content/video/css/primisslate.css"
+  ],
+  "canvases": [
+    {
+      "id": "pixi",
+      "width": 1920,
+      "height": 893,
+      "className": "",
+      "contexts": [
+        "webgl2"
+      ]
+    },
+    {
+      "id": "pixi-fg",
+      "width": 256,
+      "height": 256,
+      "className": "",
+      "contexts": [
+        "webgl2"
+      ]
+    }
+  ],
+  "present": {
+    "PIXI": "undefined",
+    "React": "undefined",
+    "ReactDOM": "undefined",
+    "Vue": "undefined",
+    "Svelte": "undefined",
+    "Phaser": "undefined",
+    "Howl": "undefined",
+    "Howler": "undefined",
+    "io": "undefined",
+    "THREE": "undefined",
+    "Matter": "undefined",
+    "createjs": "undefined",
+    "TWEEN": "undefined",
+    "IS_ELECTRON": "undefined",
+    "CLIENT_VERSION": "undefined",
+    "PixiPlugin": "undefined"
+  },
+  "bodyClass": "anon chatbg mpmpu-mounted idlemouse",
+  "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+  "title": "TETR.IO"
+}
