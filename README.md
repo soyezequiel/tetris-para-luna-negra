@@ -22,6 +22,7 @@ https://tetris-para-luna-negra.vercel.app/
 - TypeScript para tipado estatico.
 - PixiJS para render 2D.
 - Vitest para pruebas automatizadas.
+- Playwright para pruebas E2E (End-to-End, de punta a punta).
 
 ## Instalacion
 
@@ -41,8 +42,15 @@ Vite levanta el sitio en `127.0.0.1`. La terminal muestra el puerto disponible.
 
 ```bash
 npm run test
+npm run test:e2e
 npm run build
 npm run preview
+```
+
+Si Playwright no encuentra un navegador local, instalalo con:
+
+```bash
+npx playwright install chromium
 ```
 
 ## Controles por defecto
