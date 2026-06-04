@@ -10,16 +10,18 @@ export class InputController {
   private readonly pressed = new Map<string, { frame: number; action: ControlAction }>();
   private readonly queue: ControlInput[] = [];
   private settings: InputSettings;
+  private readonly eventTarget: Window | null;
 
-  constructor(settings: InputSettings) {
+  constructor(settings: InputSettings, eventTarget: Window | null = typeof window === 'undefined' ? null : window) {
     this.settings = settings;
-    window.addEventListener('keydown', this.onKeyDown);
-    window.addEventListener('keyup', this.onKeyUp);
+    this.eventTarget = eventTarget;
+    this.eventTarget?.addEventListener('keydown', this.onKeyDown);
+    this.eventTarget?.addEventListener('keyup', this.onKeyUp);
   }
 
   destroy(): void {
-    window.removeEventListener('keydown', this.onKeyDown);
-    window.removeEventListener('keyup', this.onKeyUp);
+    this.eventTarget?.removeEventListener('keydown', this.onKeyDown);
+    this.eventTarget?.removeEventListener('keyup', this.onKeyUp);
   }
 
   updateSettings(settings: InputSettings): void {
@@ -30,6 +32,16 @@ export class InputController {
   releaseAll(): void {
     this.pressed.clear();
     this.queue.length = 0;
+  }
+
+  pressControl(sourceId: string, action: ControlAction): void {
+    if (this.pressed.has(sourceId)) return;
+    this.queue.push({ frame: 0, action });
+    if (isHeldAction(action)) this.pressed.set(sourceId, { frame: 0, action });
+  }
+
+  releaseControl(sourceId: string): void {
+    this.pressed.delete(sourceId);
   }
 
   collect(frame: number): ControlInput[] {
@@ -53,12 +65,11 @@ export class InputController {
     const action = actionForCode(this.settings, event.code);
     if (!action) return;
     event.preventDefault();
-    this.queue.push({ frame: 0, action });
-    if (action === 'moveLeft' || action === 'moveRight' || action === 'softDrop') this.pressed.set(event.code, { frame: 0, action });
+    this.pressControl(`key:${event.code}`, action);
   };
 
   private onKeyUp = (event: KeyboardEvent): void => {
-    this.pressed.delete(event.code);
+    this.releaseControl(`key:${event.code}`);
   };
 
   advanceFrame(frame: number): void {
@@ -70,4 +81,8 @@ export class InputController {
 
 export function toGameInput(input: ControlInput): GameInput {
   return input as GameInput;
+}
+
+function isHeldAction(action: ControlAction): boolean {
+  return action === 'moveLeft' || action === 'moveRight' || action === 'softDrop';
 }

@@ -76,4 +76,42 @@ test.describe('STACK/40 browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.stack40.getPlayback()?.paused)).toBe(false);
     await expect(action(page, 'replay-toggle')).toHaveText('Pause');
   });
+
+  test('maps touch buttons to gameplay input and clears held state on pointer cancel', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openFreshApp(page);
+
+    await action(page, 'start').click();
+    await expect.poll(() => appMode(page)).toBe('playing');
+
+    const moveLeft = page.locator('[data-touch-action="moveLeft"]');
+    await expect(moveLeft).toBeVisible();
+    const box = await moveLeft.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box) return;
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+
+    await expect.poll(
+      () => page.evaluate(() => window.stack40.getReplay().inputs.filter((input) => input.action === 'moveLeft').length),
+      { timeout: 1000 },
+    ).toBeGreaterThan(1);
+
+    await moveLeft.dispatchEvent('pointercancel', {
+      pointerId: 1,
+      pointerType: 'mouse',
+      bubbles: true,
+      cancelable: true,
+    });
+    await page.mouse.up();
+
+    const countAfterCancel = await page.evaluate(() => (
+      window.stack40.getReplay().inputs.filter((input) => input.action === 'moveLeft').length
+    ));
+    await page.waitForTimeout(180);
+    await expect.poll(() => page.evaluate(() => (
+      window.stack40.getReplay().inputs.filter((input) => input.action === 'moveLeft').length
+    ))).toBe(countAfterCancel);
+  });
 });

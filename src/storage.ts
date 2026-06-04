@@ -3,6 +3,7 @@ export interface LocalRecord {
   soundMuted: boolean;
   sfxVolume: number;
   musicVolume: number;
+  touchControlsHidden: boolean;
 }
 
 const KEY = 'stack40.records';
@@ -43,12 +44,19 @@ export function saveAudioVolumes(sfxVolume: number, musicVolume: number): LocalR
   return record;
 }
 
+export function saveTouchControlsHidden(touchControlsHidden: boolean): LocalRecord {
+  const record = { ...loadRecord(), touchControlsHidden };
+  localStorage.setItem(KEY, JSON.stringify(record));
+  return record;
+}
+
 function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
   return {
     best40LineFrames: record.best40LineFrames ?? null,
     soundMuted: record.soundMuted ?? false,
     sfxVolume: normalizeVolume(record.sfxVolume, DEFAULT_SFX_VOLUME),
     musicVolume: normalizeVolume(record.musicVolume, DEFAULT_MUSIC_VOLUME),
+    touchControlsHidden: record.touchControlsHidden ?? false,
   };
 }
 

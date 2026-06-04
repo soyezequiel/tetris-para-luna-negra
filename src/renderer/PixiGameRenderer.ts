@@ -102,13 +102,17 @@ export class PixiGameRenderer {
   private layout(): void {
     this.width = window.innerWidth;
     this.height = window.innerHeight;
+    const touchControlsInset = window.matchMedia('(pointer: coarse)').matches
+      ? this.width > this.height ? 96 : 164
+      : 0;
+    const availableHeight = Math.max(360, this.height - touchControlsInset);
     const horizontalBudget = this.width < 760 ? this.width * 0.58 : this.width * 0.2;
-    const verticalBudget = this.height * 0.86 / DEFAULT_RULES.visibleRows;
+    const verticalBudget = availableHeight * 0.86 / DEFAULT_RULES.visibleRows;
     this.cell = Math.max(15, Math.min(34, horizontalBudget / DEFAULT_RULES.boardWidth, verticalBudget));
     const boardW = this.cell * DEFAULT_RULES.boardWidth;
     const boardH = this.cell * DEFAULT_RULES.visibleRows;
     this.boardX = Math.round(this.width / 2 - boardW / 2);
-    this.boardY = Math.round(this.height / 2 - boardH / 2 + 8);
+    this.boardY = Math.round(availableHeight / 2 - boardH / 2 + 8);
   }
 
   private drawBackground(): void {

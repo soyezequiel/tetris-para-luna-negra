@@ -19,6 +19,7 @@ import { SeededRng } from '../src/game/rng';
 import { DEFAULT_RULES } from '../src/game/rules';
 import { displayedElapsedFrames } from '../src/game/timing';
 import { createRunSummary, RunSplitTracker } from '../src/app/runStats';
+import { InputController } from '../src/input';
 import {
   actionForCode,
   DEFAULT_INPUT_SETTINGS,
@@ -117,6 +118,43 @@ describe('core stacker engine', () => {
 
     const slower = updateInputTiming(DEFAULT_INPUT_SETTINGS, 'dasFrames', 2);
     expect(slower.dasFrames).toBe(DEFAULT_INPUT_SETTINGS.dasFrames + 2);
+  });
+
+  it('reuses DAS and ARR timing for held touch controls', () => {
+    const input = new InputController({
+      ...DEFAULT_INPUT_SETTINGS,
+      dasFrames: 2,
+      arrFrames: 1,
+    }, null);
+
+    input.pressControl('touch:1', 'moveLeft');
+    input.advanceFrame(1);
+    expect(input.collect(1)).toEqual([{ frame: 0, action: 'moveLeft' }]);
+
+    input.advanceFrame(2);
+    expect(input.collect(2)).toEqual([]);
+
+    input.advanceFrame(3);
+    expect(input.collect(3)).toEqual([{ frame: 3, action: 'moveLeft' }]);
+
+    input.advanceFrame(4);
+    expect(input.collect(4)).toEqual([{ frame: 4, action: 'moveLeft' }]);
+  });
+
+  it('stops held touch controls on release or pointer cancel', () => {
+    const input = new InputController({
+      ...DEFAULT_INPUT_SETTINGS,
+      dasFrames: 1,
+      arrFrames: 1,
+    }, null);
+
+    input.pressControl('touch:7', 'moveRight');
+    input.advanceFrame(1);
+    expect(input.collect(1)).toEqual([{ frame: 0, action: 'moveRight' }]);
+
+    input.releaseControl('touch:7');
+    input.advanceFrame(2);
+    expect(input.collect(2)).toEqual([]);
   });
 
   it('keeps app pause state separate from engine status', () => {

@@ -34,7 +34,7 @@ import {
   updateBinding,
   updateInputTiming,
 } from './input/settings';
-import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted } from './storage';
+import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
 const root = document.getElementById('game-root');
@@ -80,6 +80,9 @@ let libraryFilter: LibraryFilter = 'all';
 let selectedHistoryEntryId: string | null = null;
 let libraryError: string | null = null;
 let pendingConfirmAction: DestructiveRunAction | null = null;
+let touchControlsHidden = best.touchControlsHidden;
+
+const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
 const replayFileInput = document.createElement('input');
 replayFileInput.type = 'file';
@@ -91,6 +94,10 @@ window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
 window.addEventListener('wheel', handleVolumeWheel, { passive: false });
 replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
+overlayElement.addEventListener('pointerdown', handleTouchControlPointerDown);
+overlayElement.addEventListener('pointerup', handleTouchControlPointerEnd);
+overlayElement.addEventListener('pointercancel', handleTouchControlPointerEnd);
+overlayElement.addEventListener('lostpointercapture', handleTouchControlPointerEnd);
 
 function loop(): void {
   const beforeState = engine.getState();
@@ -134,6 +141,7 @@ Object.assign(window, {
     getAppMode: () => appMode,
     getPendingConfirmAction: () => pendingConfirmAction,
     getInputSettings: () => cloneInputSettings(inputSettings),
+    getTouchControlsHidden: () => touchControlsHidden,
     getRunHistory: () => runHistory,
     clearRunHistory: () => {
       clearStoredRunHistory();
@@ -197,6 +205,10 @@ function handleOverlayClick(event: MouseEvent): void {
   if (!control) return;
 
   const action = control.dataset.uiAction;
+  if (action === 'toggle-touch-controls') {
+    toggleTouchControls();
+    return;
+  }
   if (action === 'confirm-destructive') {
     confirmPendingAction();
     return;
@@ -273,6 +285,34 @@ function handleOverlayClick(event: MouseEvent): void {
     const delta = Number(control.dataset.delta ?? 0);
     applyInputSettings(updateInputTiming(inputSettings, setting, delta));
   }
+}
+
+function handleTouchControlPointerDown(event: PointerEvent): void {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const control = target.closest<HTMLElement>('[data-touch-action]');
+  const action = parseControlAction(control?.dataset.touchAction);
+  if (!control || !action || appMode !== 'playing' || touchControlsHidden || pendingConfirmAction) return;
+
+  const sourceId = touchSourceId(event.pointerId);
+  activeTouchInputs.set(event.pointerId, { sourceId, control });
+  input.pressControl(sourceId, action);
+  control.classList.add('touch-button-active');
+  try {
+    control.setPointerCapture(event.pointerId);
+  } catch {
+    // Some synthetic pointer events do not support capture; release still works through delegated events.
+  }
+  event.preventDefault();
+}
+
+function handleTouchControlPointerEnd(event: PointerEvent): void {
+  const active = activeTouchInputs.get(event.pointerId);
+  if (!active) return;
+  activeTouchInputs.delete(event.pointerId);
+  input.releaseControl(active.sourceId);
+  active.control.classList.remove('touch-button-active');
+  event.preventDefault();
 }
 
 function handleControlInputs(inputs: ControlInput[]): boolean {
@@ -370,6 +410,16 @@ function goToMenu(): void {
   libraryError = null;
   runHistory = loadRunHistory();
   input.releaseAll();
+}
+
+function toggleTouchControls(): void {
+  touchControlsHidden = !touchControlsHidden;
+  best = saveTouchControlsHidden(touchControlsHidden);
+  for (const active of activeTouchInputs.values()) {
+    input.releaseControl(active.sourceId);
+    active.control.classList.remove('touch-button-active');
+  }
+  activeTouchInputs.clear();
 }
 
 function openReplayLibrary(): void {
@@ -497,6 +547,7 @@ function renderOverlay(state: GameState): void {
       <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
     </div>
     ${renderScreenOverlay(state)}
+    ${renderTouchControls()}
   `;
   if (html !== lastOverlayHtml) {
     overlayElement.innerHTML = html;
@@ -553,6 +604,45 @@ function renderScreenOverlay(state: GameState): string {
       ['main-menu', 'Main menu'],
     ],
   });
+}
+
+function renderTouchControls(): string {
+  if (appMode !== 'playing' || pendingConfirmAction) return '';
+  if (touchControlsHidden) {
+    return `
+      <button class="touch-controls-toggle touch-controls-restore" type="button" data-ui-action="toggle-touch-controls">
+        Touch controls
+      </button>
+    `;
+  }
+
+  return `
+    <nav class="touch-controls" aria-label="Touch controls">
+      <div class="touch-cluster touch-cluster-move">
+        ${renderTouchButton('moveLeft', 'Left')}
+        ${renderTouchButton('moveRight', 'Right')}
+        ${renderTouchButton('softDrop', 'Down')}
+      </div>
+      <div class="touch-cluster touch-cluster-system">
+        ${renderTouchButton('hold', 'Hold')}
+        ${renderTouchButton('pause', 'Pause')}
+        <button class="touch-controls-toggle" type="button" data-ui-action="toggle-touch-controls">Hide</button>
+      </div>
+      <div class="touch-cluster touch-cluster-actions">
+        ${renderTouchButton('rotateCCW', 'CCW')}
+        ${renderTouchButton('rotateCW', 'CW')}
+        ${renderTouchButton('hardDrop', 'Drop')}
+      </div>
+    </nav>
+  `;
+}
+
+function renderTouchButton(action: ControlAction, label: string): string {
+  return `
+    <button class="touch-button touch-button-${action}" type="button" data-touch-action="${action}" aria-label="${CONTROL_ACTION_LABELS[action]}">
+      ${label}
+    </button>
+  `;
 }
 
 function requestRunConfirmation(action: DestructiveRunAction): void {
@@ -925,6 +1015,10 @@ function rulesFromSettings(settings: InputSettings): GameRules {
 function parseControlAction(value: string | undefined): ControlAction | null {
   if (!value) return null;
   return CONTROL_ACTIONS.includes(value as ControlAction) ? value as ControlAction : null;
+}
+
+function touchSourceId(pointerId: number): string {
+  return `touch:${pointerId}`;
 }
 
 function setLibraryFilter(value: string | undefined): void {

@@ -22,6 +22,8 @@ export type PlaybackSnapshot = {
 export type Stack40Api = {
   getAppMode: () => AppMode;
   getInputSettings: () => InputSettings;
+  getReplay: () => { inputs: GameInput[] };
+  getTouchControlsHidden: () => boolean;
   getPlayback: () => PlaybackSnapshot | null;
 };
 
