@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { importReplayJson, importReplayValue } from '../src/app/replayImport';
 import { createExportedReplay } from '../src/app/replayExport';
+import { ReplayPlayback } from '../src/app/replayPlayback';
 import { canAdvanceGame, togglePauseMode } from '../src/app/state';
 import { createShuffledBag } from '../src/game/bag';
 import { clearCompletedLines, createBoard } from '../src/game/board';
 import { GameEngine } from '../src/game/engine';
 import { createReplayLog, recordInput } from '../src/game/replay';
 import { SeededRng } from '../src/game/rng';
+import { DEFAULT_RULES } from '../src/game/rules';
 import { displayedElapsedFrames } from '../src/game/timing';
 import {
   actionForCode,
@@ -130,6 +133,35 @@ describe('core stacker engine', () => {
     expect(exported.inputs).toEqual([input]);
     expect(exported.inputs).not.toBe(log.inputs);
   });
+
+  it('imports exported replay JSON and rejects incompatible files', () => {
+    const exported = createReplayFixture(314, [{ frame: 1, action: 'hardDrop' }], 1);
+    const imported = importReplayJson(JSON.stringify(exported));
+    expect(imported.ok).toBe(true);
+    if (imported.ok) {
+      expect(imported.replay.seed).toBe(314);
+      expect(imported.replay.inputs).toEqual(exported.inputs);
+    }
+
+    expect(importReplayJson('{nope').ok).toBe(false);
+    expect(importReplayValue({ ...exported, game: 'other' }).ok).toBe(false);
+  });
+
+  it('plays imported replays deterministically and supports speed and restart', () => {
+    const exported = createReplayFixture(2718, [{ frame: 1, action: 'hardDrop' }], 4);
+    const playback = new ReplayPlayback(exported);
+
+    playback.setSpeed(2);
+    expect(playback.tick().frame).toBe(2);
+    const done = playback.tick();
+    expect(done.frame).toBe(4);
+    expect(done.done).toBe(true);
+    expect(done.validation).toBe('match');
+
+    playback.restart();
+    expect(playback.snapshot().frame).toBe(0);
+    expect(playback.snapshot().validation).toBe('pending');
+  });
 });
 
 function runReplay(inputs: GameInput[]) {
@@ -139,4 +171,16 @@ function runReplay(inputs: GameInput[]) {
     state = engine.tick(input.frame, [input]);
   }
   return state;
+}
+
+function createReplayFixture(seed: number, inputs: GameInput[], targetFrame: number) {
+  const engine = new GameEngine(seed, DEFAULT_RULES);
+  const log = createReplayLog(seed, DEFAULT_RULES);
+  let state = engine.getState();
+  for (let frame = 1; frame <= targetFrame; frame += 1) {
+    const frameInputs = inputs.filter((input) => input.frame === frame);
+    for (const input of frameInputs) recordInput(log, input);
+    state = engine.tick(frame, frameInputs);
+  }
+  return createExportedReplay(log, state, DEFAULT_INPUT_SETTINGS, '2026-06-04T21:00:00.000Z');
 }

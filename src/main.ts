@@ -1,5 +1,7 @@
 import './styles.css';
-import { createExportedReplay, replayFileName } from './app/replayExport';
+import { importReplayJson } from './app/replayImport';
+import { createExportedReplay, replayFileName, type ExportedReplay } from './app/replayExport';
+import { ReplayPlayback, type PlaybackSpeed, type ReplayPlaybackSnapshot } from './app/replayPlayback';
 import { canAdvanceGame, terminalLabel, togglePauseMode, type AppMode } from './app/state';
 import { MUSIC_TRACKS } from './audio/music';
 import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
@@ -33,6 +35,7 @@ if (!root || !overlay) throw new Error('Missing application root.');
 
 const overlayElement = overlay;
 const VOLUME_WHEEL_STEP = 0.05;
+const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 
 let inputSettings = loadInputSettings();
 let gameRules = rulesFromSettings(inputSettings);
@@ -55,9 +58,19 @@ let volumeFeedback: { channel: VolumeChannel; expiresAt: number } | null = null;
 let bindingCapture: ControlAction | null = null;
 let lastExportName: string | null = null;
 let lastOverlayHtml = '';
+let playback: ReplayPlayback | null = null;
+let importedReplayName: string | null = null;
+let replayImportError: string | null = null;
+
+const replayFileInput = document.createElement('input');
+replayFileInput.type = 'file';
+replayFileInput.accept = 'application/json,.json';
+replayFileInput.hidden = true;
+document.body.appendChild(replayFileInput);
 
 window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
 window.addEventListener('wheel', handleVolumeWheel, { passive: false });
+replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
 
 function loop(): void {
@@ -66,6 +79,14 @@ function loop(): void {
   input.advanceFrame(candidateFrame);
   const controlInputs = input.collect(candidateFrame);
   const consumedByApp = handleControlInputs(controlInputs);
+
+  if (appMode === 'replayPlayback' && playback) {
+    const snapshot = playback.tick();
+    renderer.render(snapshot.state);
+    renderOverlay(snapshot.state);
+    requestAnimationFrame(loop);
+    return;
+  }
 
   let state = engine.getState();
   if (!consumedByApp && canAdvanceGame(appMode, state.status)) {
@@ -90,6 +111,7 @@ Object.assign(window, {
   stack40: {
     getState: () => engine.getState(),
     getReplay: () => replay,
+    getPlayback: () => playback?.snapshot() ?? null,
     getAppMode: () => appMode,
     getInputSettings: () => cloneInputSettings(inputSettings),
     isSoundMuted: () => sound.isMuted(),
@@ -110,6 +132,7 @@ Object.assign(window, {
     },
     startNewRun,
     exportReplay,
+    importReplayText,
   },
 });
 
@@ -146,6 +169,14 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'settings-back') closeSettings();
   if (action === 'settings-reset') applyInputSettings(resetInputSettings());
   if (action === 'export-replay') exportReplay();
+  if (action === 'import-replay') openReplayFilePicker();
+  if (action === 'replay-toggle') playback?.togglePaused();
+  if (action === 'replay-restart') playback?.restart();
+  if (action === 'replay-exit') goToMenu();
+  if (action === 'replay-speed') {
+    const speed = Number(control.dataset.speed);
+    if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) playback?.setSpeed(speed as PlaybackSpeed);
+  }
   if (action === 'main-menu') goToMenu();
   if (action === 'toggle-sound') best = saveSoundMuted(sound.toggleMuted());
   if (action === 'next-music') sound.nextMusicTrack();
@@ -162,7 +193,18 @@ function handleOverlayClick(event: MouseEvent): void {
 
 function handleControlInputs(inputs: ControlInput[]): boolean {
   if (inputs.some((event) => event.action === 'pause')) {
+    if (appMode === 'replayPlayback') {
+      playback?.togglePaused();
+      input.releaseAll();
+      return true;
+    }
     appMode = togglePauseMode(appMode, engine.getState().status, settingsReturnMode);
+    input.releaseAll();
+    return true;
+  }
+
+  if (appMode === 'replayPlayback' && inputs.some((event) => event.action === 'retry')) {
+    playback?.restart();
     input.releaseAll();
     return true;
   }
@@ -179,6 +221,9 @@ function startNewRun(): void {
   input.releaseAll();
   bindingCapture = null;
   lastExportName = null;
+  replayImportError = null;
+  importedReplayName = null;
+  playback = null;
   gameRules = rulesFromSettings(inputSettings);
   seed = randomSeed();
   engine = new GameEngine(seed, gameRules);
@@ -218,6 +263,8 @@ function goToMenu(): void {
   bindingCapture = null;
   appMode = 'menu';
   settingsReturnMode = 'menu';
+  playback = null;
+  importedReplayName = null;
   input.releaseAll();
 }
 
@@ -238,6 +285,44 @@ function exportReplay(): void {
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
   lastExportName = fileName;
+}
+
+function openReplayFilePicker(): void {
+  replayFileInput.value = '';
+  replayFileInput.click();
+}
+
+async function handleReplayFileChange(): Promise<void> {
+  const file = replayFileInput.files?.[0];
+  if (!file) return;
+  try {
+    importReplayText(await file.text(), file.name);
+  } catch {
+    replayImportError = 'Replay file could not be read.';
+    appMode = 'menu';
+  }
+}
+
+function importReplayText(raw: string, fileName = 'Imported replay.json'): boolean {
+  const result = importReplayJson(raw);
+  if (!result.ok) {
+    replayImportError = result.error;
+    appMode = 'menu';
+    return false;
+  }
+  startReplayPlayback(result.replay, fileName);
+  return true;
+}
+
+function startReplayPlayback(importedReplay: ExportedReplay, fileName: string): void {
+  input.releaseAll();
+  bindingCapture = null;
+  lastExportName = null;
+  replayImportError = null;
+  importedReplayName = fileName;
+  playback = new ReplayPlayback(importedReplay);
+  appMode = 'replayPlayback';
+  settingsReturnMode = 'menu';
 }
 
 function toGameInputs(inputs: ControlInput[], frame: number): GameInput[] {
@@ -287,9 +372,11 @@ function renderOverlay(state: GameState): void {
     overlayElement.innerHTML = html;
     lastOverlayHtml = html;
   }
+  if (appMode === 'replayPlayback' && playback) updateReplayOverlay(playback.snapshot());
 }
 
 function renderScreenOverlay(state: GameState): string {
+  if (appMode === 'replayPlayback') return renderReplayOverlayShell();
   if (appMode === 'settings') return renderSettingsOverlay();
   if (appMode === 'menu') {
     return renderPanel({
@@ -298,6 +385,7 @@ function renderScreenOverlay(state: GameState): string {
       meta: `${formatActionBinding('pause')} pause - ${formatActionBinding('hardDrop')} hard drop`,
       actions: [
         ['start', 'Start run'],
+        ['import-replay', 'Import replay'],
         ['settings', 'Input settings'],
       ],
     });
@@ -330,6 +418,66 @@ function renderScreenOverlay(state: GameState): string {
       ['main-menu', 'Main menu'],
     ],
   });
+}
+
+function renderReplayOverlayShell(): string {
+  const speedButtons = REPLAY_SPEEDS.map((speed) => (
+    `<button type="button" data-ui-action="replay-speed" data-speed="${speed}">${speed}x</button>`
+  )).join('');
+  return `
+    <div class="replay-strip">
+      <div>
+        <span>REPLAY</span>
+        <strong data-replay-time>0:00.000 / 0:00.000</strong>
+      </div>
+      <div data-replay-validation>Validation pending</div>
+    </div>
+      <section class="replay-panel" aria-label="Replay playback">
+        <div class="panel-eyebrow">REPLAY PLAYBACK</div>
+        <h1 data-replay-title>Playback</h1>
+        <p>${escapeHtml(importedReplayName ?? 'Imported replay')} - seed ${playback?.getReplay().seed ?? 0}</p>
+        <div class="replay-progress" aria-hidden="true">
+          <div data-replay-progress></div>
+        </div>
+        <div class="panel-note" data-replay-panel-validation>Validation pending</div>
+        <div class="panel-actions replay-actions">
+          <button type="button" data-ui-action="replay-toggle" data-replay-toggle-label>Pause</button>
+          <button type="button" data-ui-action="replay-restart">Restart replay</button>
+          ${speedButtons}
+          <button type="button" data-ui-action="replay-exit">Exit</button>
+        </div>
+      </section>
+  `;
+}
+
+function updateReplayOverlay(snapshot: ReplayPlaybackSnapshot): void {
+  const validationText = replayValidationText(snapshot);
+  const title = snapshot.paused ? 'Paused' : snapshot.done ? 'Complete' : `${snapshot.speed}x playback`;
+  setText('[data-replay-time]', `${formatFrames(snapshot.frame)} / ${formatFrames(snapshot.targetFrame)}`);
+  setText('[data-replay-validation]', validationText);
+  setText('[data-replay-title]', title);
+  setText('[data-replay-panel-validation]', validationText);
+  setText('[data-replay-toggle-label]', snapshot.paused ? 'Resume' : 'Pause');
+
+  const progress = overlayElement.querySelector<HTMLElement>('[data-replay-progress]');
+  if (progress) progress.style.width = `${replayProgressPercent(snapshot)}%`;
+
+  const validation = overlayElement.querySelector<HTMLElement>('[data-replay-panel-validation]');
+  validation?.classList.toggle('panel-error', snapshot.validation === 'mismatch');
+
+  for (const button of overlayElement.querySelectorAll<HTMLElement>('[data-ui-action="replay-speed"]')) {
+    button.classList.toggle('button-active', button.dataset.speed === String(snapshot.speed));
+  }
+}
+
+function replayValidationText(snapshot: ReplayPlaybackSnapshot): string {
+  if (snapshot.validation === 'pending') return 'Validation pending';
+  return snapshot.validation === 'match' ? 'Replay matches result' : 'Replay mismatch';
+}
+
+function setText(selector: string, value: string): void {
+  const element = overlayElement.querySelector(selector);
+  if (element && element.textContent !== value) element.textContent = value;
 }
 
 function renderSettingsOverlay(): string {
@@ -380,6 +528,7 @@ function renderPanel(options: {
   actions: [string, string][];
 }): string {
   const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
+  const importError = replayImportError ? `<div class="panel-note panel-error">${escapeHtml(replayImportError)}</div>` : '';
   const actions = options.actions.map(([action, label]) => (
     `<button type="button" data-ui-action="${action}">${label}</button>`
   )).join('');
@@ -390,6 +539,7 @@ function renderPanel(options: {
         <h1>${escapeHtml(options.title)}</h1>
         <p>${escapeHtml(options.meta)}</p>
         ${exported}
+        ${importError}
         <div class="panel-actions">${actions}</div>
       </section>
     </div>
@@ -397,6 +547,7 @@ function renderPanel(options: {
 }
 
 function helpText(): string {
+  if (appMode === 'replayPlayback') return `${formatActionBinding('pause')} pause replay - ${formatActionBinding('retry')} restart replay - M sound - N music`;
   return `Move ${formatActionBinding('moveLeft')}/${formatActionBinding('moveRight')} - Rotate ${formatActionBinding('rotateCW')}/${formatActionBinding('rotateCCW')} - Drop ${formatActionBinding('softDrop')}/${formatActionBinding('hardDrop')} - Hold ${formatActionBinding('hold')} - Pause ${formatActionBinding('pause')} - Retry ${formatActionBinding('retry')} - M sound - N music`;
 }
 
@@ -470,6 +621,11 @@ function formatFrames(frames: number): string {
   const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
   const millis = Math.floor((seconds % 1) * 1000).toString().padStart(3, '0');
   return `${minutes}:${secs}.${millis}`;
+}
+
+function replayProgressPercent(snapshot: ReplayPlaybackSnapshot): string {
+  if (snapshot.targetFrame <= 0) return '100';
+  return Math.min(100, Math.max(0, (snapshot.frame / snapshot.targetFrame) * 100)).toFixed(2);
 }
 
 function formatPercent(volume: number): string {

@@ -209,6 +209,10 @@ canvas {
   word-break: break-word;
 }
 
+.panel-error {
+  color: #eb445a;
+}
+
 .panel-actions {
   display: flex;
   flex-wrap: wrap;
@@ -230,6 +234,11 @@ canvas {
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0;
+}
+
+.panel-actions .button-active {
+  background: rgba(57, 212, 154, 0.16);
+  border-color: #39d49a;
 }
 
 .panel-actions button:hover,
@@ -299,6 +308,86 @@ canvas {
   text-align: center;
 }
 
+.replay-strip {
+  position: fixed;
+  left: 28px;
+  bottom: 22px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  max-width: min(560px, calc(100vw - 56px));
+  color: rgba(247, 247, 242, 0.82);
+  font-size: 12px;
+  font-weight: 900;
+  pointer-events: none;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.68);
+}
+
+.replay-strip div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.replay-strip span {
+  color: rgba(247, 247, 242, 0.56);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 10px;
+}
+
+.replay-strip strong {
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 14px;
+}
+
+.replay-panel {
+  position: fixed;
+  right: 28px;
+  bottom: 72px;
+  width: min(420px, calc(100vw - 56px));
+  padding: 18px;
+  border: 2px solid rgba(247, 247, 242, 0.86);
+  border-radius: 8px;
+  background: rgba(4, 5, 7, 0.88);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.48);
+  pointer-events: auto;
+}
+
+.replay-panel h1 {
+  margin: 6px 0 0;
+  color: #f7f7f2;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.replay-panel p {
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: rgba(247, 247, 242, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replay-progress {
+  height: 5px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(247, 247, 242, 0.14);
+}
+
+.replay-progress div {
+  height: 100%;
+  background: #39d49a;
+}
+
+.replay-actions {
+  margin-top: 14px;
+}
+
 @media (max-width: 760px) {
   .brand {
     top: 12px;
@@ -324,6 +413,19 @@ canvas {
   .help {
     right: 14px;
     bottom: 12px;
+  }
+
+  .replay-strip {
+    left: 14px;
+    bottom: 12px;
+    max-width: calc(100vw - 28px);
+  }
+
+  .replay-panel {
+    right: 14px;
+    bottom: 58px;
+    width: min(360px, calc(100vw - 28px));
+    padding: 16px;
   }
 
   .menu-panel {
