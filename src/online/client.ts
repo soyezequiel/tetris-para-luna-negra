@@ -59,11 +59,23 @@ export class OnlineClient {
 
   private async request<T>(path: string, init: RequestInit): Promise<T> {
     const response = await fetch(`${this.basePath}${path}`, init);
-    const payload = await response.json() as T | OnlineErrorResponse;
+    const payload = await readResponsePayload<T | OnlineErrorResponse>(response);
     if (!response.ok) {
       throw new Error(isErrorResponse(payload) ? payload.error : 'Online request failed.');
     }
+    if (payload === null) throw new Error('Online API returned an empty response.');
     return payload as T;
+  }
+}
+
+async function readResponsePayload<T>(response: Response): Promise<T | null> {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const preview = text.slice(0, 120).replace(/\s+/g, ' ').trim();
+    throw new Error(`Online API returned non-JSON response (${response.status}): ${preview}`);
   }
 }
 
