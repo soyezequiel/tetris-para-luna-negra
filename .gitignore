@@ -5,3 +5,5 @@ coverage/
 *.log
 stack40-*.png
 .codex-output/
+
+.vercel
