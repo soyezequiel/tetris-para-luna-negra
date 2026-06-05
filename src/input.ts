@@ -62,6 +62,7 @@ export class InputController {
 
   private onKeyDown = (event: KeyboardEvent): void => {
     if (isEditableKeyboardTarget(event.target)) return;
+    if (isBrowserShortcutKeyDown(event)) return;
     if (event.repeat) return;
     const action = actionForCode(this.settings, event.code);
     if (!action) return;
@@ -90,6 +91,13 @@ export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   if (typeof HTMLTextAreaElement !== 'undefined' && target instanceof HTMLTextAreaElement) return true;
   if (typeof HTMLSelectElement !== 'undefined' && target instanceof HTMLSelectElement) return true;
   return typeof HTMLElement !== 'undefined' && target instanceof HTMLElement && target.isContentEditable;
+}
+
+export function isBrowserShortcutKeyDown(event: KeyboardEvent): boolean {
+  if (event.ctrlKey && event.code !== 'ControlLeft' && event.code !== 'ControlRight') return true;
+  if (event.metaKey && event.code !== 'MetaLeft' && event.code !== 'MetaRight') return true;
+  if (event.altKey && event.code !== 'AltLeft' && event.code !== 'AltRight') return true;
+  return false;
 }
 
 function isHeldAction(action: ControlAction): boolean {

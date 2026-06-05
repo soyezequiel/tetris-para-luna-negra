@@ -20,7 +20,7 @@ import { createReplayLog, recordInput } from './game/replay';
 import { DEFAULT_RULES } from './game/rules';
 import { displayedElapsedFrames } from './game/timing';
 import type { GameInput, GameRules, GameState, InputAction } from './game/types';
-import { InputController, isEditableKeyboardTarget, type ControlInput } from './input';
+import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
 import {
   CONTROL_ACTION_LABELS,
   CONTROL_ACTIONS,
@@ -220,6 +220,7 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
   }
 
   if (isEditableKeyboardTarget(event.target)) return;
+  if (isBrowserShortcutKeyDown(event)) return;
   if (event.repeat) return;
   if (event.code === 'KeyM') {
     event.preventDefault();

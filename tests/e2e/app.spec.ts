@@ -161,6 +161,22 @@ test.describe('STACK/40 browser flows', () => {
     await expect.poll(() => appMode(page)).toBe('onlineMenu');
   });
 
+  test('allows browser copy shortcut when UI text is selected', async ({ page }) => {
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await openFreshApp(page);
+
+    await page.locator('section h1').evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await page.keyboard.press('Control+C');
+
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('STACK/40');
+  });
+
   test('creates an online room, readies, and starts countdown', async ({ page }) => {
     await mockOnlineApi(page);
     await openFreshApp(page);
