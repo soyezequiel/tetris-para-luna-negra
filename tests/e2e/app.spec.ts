@@ -4,6 +4,10 @@ import { action, appMode, openFreshApp, writeReplayFixture } from './fixtures';
 test.describe('STACK/40 browser flows', () => {
   test('serves online API during local Vite dev', async ({ page }) => {
     await openFreshApp(page);
+    const health = await page.request.get('/api/health');
+    expect(health.ok()).toBe(true);
+    expect((await health.json() as { ok?: boolean }).ok).toBe(true);
+
     const response = await page.request.get('/api/rooms/public');
     expect(response.ok()).toBe(true);
     expect((await response.json() as { rooms?: unknown[] }).rooms).toEqual([]);

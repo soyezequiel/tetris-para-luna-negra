@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import * as createRoom from './api/rooms/create';
+import * as health from './api/health';
 import * as joinRoom from './api/rooms/join';
 import * as progressRoom from './api/rooms/progress';
 import * as publicRooms from './api/rooms/public';
@@ -12,6 +13,7 @@ type LocalApiHandler = (request: Request) => Response | Promise<Response>;
 type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
 
 const localApiHandlers = new Map<string, LocalApiModule>([
+  ['/api/health', health],
   ['/api/rooms/create', createRoom],
   ['/api/rooms/join', joinRoom],
   ['/api/rooms/progress', progressRoom],
