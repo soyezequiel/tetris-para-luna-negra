@@ -20,9 +20,11 @@ import { DEFAULT_RULES } from '../src/game/rules';
 import { displayedElapsedFrames } from '../src/game/timing';
 import { createRunSummary, RunSplitTracker } from '../src/app/runStats';
 import {
+  addPeerSignal,
   createRoom,
   createRoomCode,
   getRoomState,
+  joinRoom,
   listPublicRooms,
   MemoryRoomStore,
   rankPlayers,
@@ -475,6 +477,37 @@ describe('core stacker engine', () => {
     expect(state.players[0].elapsedFrames).toBe(3600);
   });
 
+  it('stores peer connection signals between room players', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-host-3',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, {
+      roomId: room.id,
+      playerId: 'player-guest-3',
+      name: 'Guest',
+    }, 1200);
+
+    const signaled = await addPeerSignal(store, {
+      roomId: room.id,
+      fromPlayerId: 'player-host-3',
+      toPlayerId: 'player-guest-3',
+      type: 'offer',
+      data: { type: 'offer', sdp: 'test' },
+    }, 1300);
+
+    expect(signaled.peerSignals).toHaveLength(1);
+    expect(signaled.peerSignals[0]).toMatchObject({
+      roomId: room.id,
+      fromPlayerId: 'player-host-3',
+      toPlayerId: 'player-guest-3',
+      type: 'offer',
+      data: { type: 'offer', sdp: 'test' },
+    });
+  });
+
   it('ranks online players by result, elapsed frames, lines, and finish timestamp', () => {
     const ranked = rankPlayers([
       createOnlinePlayerFixture('lost-low', 'lost', 18, 5000, 10_000),
@@ -567,6 +600,7 @@ function createOnlinePlayerFixture(
     elapsedFrames,
     updatedAtServerMs: finishedAtServerMs,
     finishedAtServerMs,
+    game: null,
   };
 }
 

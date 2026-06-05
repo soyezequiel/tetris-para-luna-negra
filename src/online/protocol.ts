@@ -1,6 +1,28 @@
+import type { ActivePiece, Cell } from '../game/types';
+
 export type RoomVisibility = 'public' | 'private';
 export type OnlineRoomStatus = 'lobby' | 'countdown' | 'playing' | 'finished';
 export type OnlinePlayerStatus = 'joined' | 'ready' | 'playing' | 'won' | 'lost' | 'disconnected';
+
+export interface OnlineGameSnapshot {
+  board: Cell[][];
+  active: ActivePiece | null;
+  visibleRows: number;
+  boardWidth: number;
+  elapsedFrames: number;
+}
+
+export type OnlinePeerSignalType = 'offer' | 'answer' | 'ice';
+
+export interface OnlinePeerSignal {
+  id: string;
+  roomId: string;
+  fromPlayerId: string;
+  toPlayerId: string;
+  type: OnlinePeerSignalType;
+  data: unknown;
+  createdAtServerMs: number;
+}
 
 export interface OnlinePlayer {
   id: string;
@@ -12,6 +34,7 @@ export interface OnlinePlayer {
   elapsedFrames: number;
   updatedAtServerMs: number;
   finishedAtServerMs: number | null;
+  game: OnlineGameSnapshot | null;
 }
 
 export interface OnlineRoom {
@@ -24,6 +47,7 @@ export interface OnlineRoom {
   startsAtServerMs: number | null;
   seed: number;
   players: OnlinePlayer[];
+  peerSignals: OnlinePeerSignal[];
 }
 
 export interface OnlineRoomSummary {
@@ -63,10 +87,19 @@ export interface ProgressRequest {
   lines: number;
   pieces: number;
   elapsedFrames: number;
+  game?: OnlineGameSnapshot | null;
 }
 
 export interface ResultRequest extends ProgressRequest {
   result: 'won' | 'lost';
+}
+
+export interface PeerSignalRequest {
+  roomId: string;
+  fromPlayerId: string;
+  toPlayerId: string;
+  type: OnlinePeerSignalType;
+  data: unknown;
 }
 
 export interface OnlineErrorResponse {

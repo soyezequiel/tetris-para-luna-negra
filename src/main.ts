@@ -15,6 +15,7 @@ import { canAdvanceGame, requiresRunConfirmation, terminalLabel, togglePauseMode
 import { MUSIC_TRACKS } from './audio/music';
 import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
 import { GameEngine } from './game/engine';
+import { cellsFor } from './game/pieces';
 import { createReplayLog, recordInput } from './game/replay';
 import { DEFAULT_RULES } from './game/rules';
 import { displayedElapsedFrames } from './game/timing';
@@ -36,8 +37,9 @@ import {
 } from './input/settings';
 import { OnlineClient } from './online/client';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
+import { OnlinePeerBroadcaster } from './online/peerBroadcast';
 import { normalizeRoomId, rankPlayers } from './online/roomService';
-import type { OnlinePlayer, OnlineRoom, OnlineRoomSummary, RoomVisibility } from './online/protocol';
+import type { OnlineGameSnapshot, OnlinePlayer, OnlineRoom, OnlineRoomSummary, RoomVisibility } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -51,6 +53,7 @@ const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
+const ONLINE_PEER_BROADCAST_MS = 100;
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 
@@ -98,9 +101,12 @@ let onlinePollInFlight = false;
 let onlineProgressInFlight = false;
 let onlineLastPollAt = 0;
 let onlineLastProgressAt = 0;
+let onlineLastPeerBroadcastAt = 0;
 let onlineServerOffsetMs = 0;
 let onlineResultSubmitted = false;
 let onlineRunStarted = false;
+let onlinePeerBroadcaster: OnlinePeerBroadcaster | null = null;
+let onlinePeerStates = new Map<string, string>();
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -580,17 +586,22 @@ async function startOnlineRoom(): Promise<void> {
 }
 
 function leaveOnlineRoom(): void {
+  onlinePeerBroadcaster?.close();
+  onlinePeerBroadcaster = null;
+  onlinePeerStates = new Map();
   onlineRoom = null;
   onlineError = null;
   onlineResultSubmitted = false;
   onlineRunStarted = false;
   onlineLastPollAt = 0;
   onlineLastProgressAt = 0;
+  onlineLastPeerBroadcastAt = 0;
   goToMenu();
 }
 
 function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
   onlineRoom = room;
+  syncOnlinePeers(room);
   onlineError = null;
   onlineLastPollAt = 0;
   if (room.status === 'finished') appMode = 'onlineResults';
@@ -698,6 +709,7 @@ function syncOnline(state: GameState): void {
   if (shouldPollOnline(now)) pollOnlineRoom();
   if (appMode === 'onlineCountdown') maybeStartOnlineRun();
   if (appMode === 'onlinePlaying') {
+    if (state.status === 'playing' && shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(state);
     if (state.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(state);
     if ((state.status === 'finished' || state.status === 'gameover') && !onlineResultSubmitted) postOnlineResult(state);
   }
@@ -714,6 +726,11 @@ function shouldPostOnlineProgress(now: number): boolean {
   return now - onlineLastProgressAt >= ONLINE_POLL_MS;
 }
 
+function shouldBroadcastPeerSnapshot(now: number): boolean {
+  if (!onlinePeerBroadcaster) return false;
+  return now - onlineLastPeerBroadcastAt >= ONLINE_PEER_BROADCAST_MS;
+}
+
 async function pollOnlineRoom(): Promise<void> {
   if (!onlineRoom) return;
   onlinePollInFlight = true;
@@ -722,6 +739,7 @@ async function pollOnlineRoom(): Promise<void> {
     const response = await onlineClient.getRoomState(onlineRoom.id);
     syncOnlineClock(response.serverNowMs);
     onlineRoom = response.room;
+    syncOnlinePeers(onlineRoom);
     if (onlineRoom.status === 'finished') appMode = 'onlineResults';
     if (onlineRoom.status === 'countdown' && appMode === 'roomLobby') appMode = 'onlineCountdown';
     if (onlineRoom.status === 'playing' && appMode === 'roomLobby') appMode = 'onlineCountdown';
@@ -744,9 +762,11 @@ async function postOnlineProgress(state: GameState): Promise<void> {
       lines: state.stats.lines,
       pieces: state.stats.pieces,
       elapsedFrames: displayedElapsedFrames(state.stats),
+      game: createOnlineGameSnapshot(state),
     });
     syncOnlineClock(response.serverNowMs);
     onlineRoom = response.room;
+    syncOnlinePeers(onlineRoom);
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -766,9 +786,11 @@ async function postOnlineResult(state: GameState): Promise<void> {
       lines: state.stats.lines,
       pieces: state.stats.pieces,
       elapsedFrames: displayedElapsedFrames(state.stats),
+      game: createOnlineGameSnapshot(state),
     });
     syncOnlineClock(response.serverNowMs);
     onlineRoom = response.room;
+    syncOnlinePeers(onlineRoom);
     appMode = 'onlineResults';
     onlineError = null;
   } catch (error) {
@@ -783,7 +805,60 @@ function maybeStartOnlineRun(): void {
   onlineRunStarted = true;
   onlineResultSubmitted = false;
   onlineLastProgressAt = 0;
+  onlineLastPeerBroadcastAt = 0;
   startNewRun(onlineRoom.seed, 'onlinePlaying');
+}
+
+function syncOnlinePeers(room: OnlineRoom): void {
+  if (!('RTCPeerConnection' in window)) return;
+  onlinePeerBroadcaster ??= new OnlinePeerBroadcaster({
+    playerId: onlinePlayer.id,
+    sendSignal: (signal) => {
+      if (!onlineRoom) return;
+      void onlineClient.sendPeerSignal({
+        roomId: onlineRoom.id,
+        fromPlayerId: onlinePlayer.id,
+        toPlayerId: signal.toPlayerId,
+        type: signal.type,
+        data: signal.data,
+      }).then((response) => {
+        syncOnlineClock(response.serverNowMs);
+        onlineRoom = response.room;
+      }).catch((error) => {
+        onlineError = onlineErrorText(error);
+      });
+    },
+    onSnapshot: (playerId, game) => applyPeerSnapshot(playerId, game),
+    onPeerState: (playerId, state) => {
+      onlinePeerStates = new Map(onlinePeerStates).set(playerId, state);
+    },
+  });
+  onlinePeerBroadcaster.syncRoom(room);
+}
+
+function broadcastOnlineSnapshot(state: GameState): void {
+  const snapshot = createOnlineGameSnapshot(state);
+  onlineLastPeerBroadcastAt = performance.now();
+  onlinePeerBroadcaster?.broadcast(snapshot);
+  applyPeerSnapshot(onlinePlayer.id, snapshot);
+}
+
+function applyPeerSnapshot(playerId: string, game: OnlineGameSnapshot): void {
+  if (!onlineRoom) return;
+  onlineRoom = {
+    ...onlineRoom,
+    players: onlineRoom.players.map((player) => player.id === playerId ? { ...player, game } : player),
+  };
+}
+
+function createOnlineGameSnapshot(state: GameState): OnlineGameSnapshot {
+  return {
+    board: state.board.map((row) => [...row]),
+    active: state.active ? { ...state.active } : null,
+    visibleRows: gameRules.visibleRows,
+    boardWidth: gameRules.boardWidth,
+    elapsedFrames: displayedElapsedFrames(state.stats),
+  };
 }
 
 function renderOverlay(state: GameState): void {
@@ -964,7 +1039,7 @@ function renderOnlineMenuOverlay(): string {
       <section class="menu-panel online-panel" aria-label="Online rooms">
         <div class="panel-eyebrow">ONLINE ROOMS</div>
         <h1>Rooms</h1>
-        <p>Local race, shared start, 1s progress polling.</p>
+        <p>Local race, shared start, peer board broadcast.</p>
         ${renderOnlineError()}
         <label class="online-field">
           <span>Name</span>
@@ -1059,6 +1134,7 @@ function renderOnlinePlayingOverlay(): string {
     <aside class="online-race-panel" aria-label="Online race status">
       <div class="panel-eyebrow">ROOM ${escapeHtml(onlineRoom.id)}</div>
       ${renderOnlineStandings()}
+      ${renderOnlinePeerBoards()}
       <button type="button" data-ui-action="online-leave">Leave</button>
     </aside>
   `;
@@ -1087,6 +1163,59 @@ function renderLobbyPlayer(player: OnlinePlayer): string {
       <span>${player.ready ? 'Ready' : 'Not ready'}</span>
     </div>
   `;
+}
+
+function renderOnlinePeerBoards(): string {
+  if (!onlineRoom) return '';
+  const remotePlayers = onlineRoom.players.filter((player) => player.id !== onlinePlayer.id);
+  if (remotePlayers.length === 0) return '<div class="online-empty">Waiting for another board.</div>';
+  return `
+    <div class="online-peer-boards" aria-label="Remote player boards">
+      ${remotePlayers.map(renderOnlinePeerBoard).join('')}
+    </div>
+  `;
+}
+
+function renderOnlinePeerBoard(player: OnlinePlayer): string {
+  const peerState = onlinePeerStates.get(player.id) ?? 'server';
+  const stateLabel = player.game ? `${formatFrames(player.game.elapsedFrames)} - ${peerState}` : peerState;
+  return `
+    <section class="online-peer-board">
+      <div class="online-peer-board-head">
+        <strong>${escapeHtml(player.name)}</strong>
+        <span>${escapeHtml(stateLabel)}</span>
+      </div>
+      ${player.game ? renderOnlineMiniBoard(player.game) : '<div class="online-mini-board online-mini-board-empty">No board yet</div>'}
+    </section>
+  `;
+}
+
+function renderOnlineMiniBoard(snapshot: OnlineGameSnapshot): string {
+  const cells = onlineVisibleCells(snapshot);
+  const columns = Math.max(1, snapshot.boardWidth);
+  return `
+    <div class="online-mini-board" style="grid-template-columns: repeat(${columns}, minmax(0, 1fr));">
+      ${cells.map((cell) => `<span class="online-mini-cell online-mini-cell-${cell ?? 'empty'}"></span>`).join('')}
+    </div>
+  `;
+}
+
+function onlineVisibleCells(snapshot: OnlineGameSnapshot): (string | null)[] {
+  const hiddenRows = Math.max(0, snapshot.board.length - snapshot.visibleRows);
+  const board = Array.from({ length: snapshot.visibleRows }, (_, y) => {
+    const sourceRow = snapshot.board[y + hiddenRows] ?? [];
+    return Array.from({ length: snapshot.boardWidth }, (_, x) => sourceRow[x] ?? null);
+  });
+  if (snapshot.active) {
+    for (const cell of cellsFor(snapshot.active.type, snapshot.active.rotation)) {
+      const x = snapshot.active.x + cell.x;
+      const y = snapshot.active.y + cell.y - hiddenRows;
+      if (y >= 0 && y < board.length && x >= 0 && x < snapshot.boardWidth) {
+        board[y][x] = snapshot.active.type;
+      }
+    }
+  }
+  return board.flat();
 }
 
 function renderOnlineError(): string {

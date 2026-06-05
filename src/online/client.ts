@@ -3,6 +3,7 @@ import type {
   JoinRoomRequest,
   OnlineErrorResponse,
   OnlineRoomResponse,
+  PeerSignalRequest,
   ProgressRequest,
   PublicRoomsResponse,
   ReadyRequest,
@@ -35,6 +36,10 @@ export class OnlineClient {
 
   submitResult(request: ResultRequest): Promise<OnlineRoomResponse> {
     return this.post('/result', request);
+  }
+
+  sendPeerSignal(request: PeerSignalRequest): Promise<OnlineRoomResponse> {
+    return this.post('/signal', request);
   }
 
   getRoomState(roomId: string): Promise<OnlineRoomResponse> {

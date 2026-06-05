@@ -2,8 +2,10 @@ import type {
   CreateRoomRequest,
   JoinRoomRequest,
   OnlinePlayer,
+  OnlinePeerSignal,
   OnlineRoom,
   OnlineRoomSummary,
+  PeerSignalRequest,
   ProgressRequest,
   ReadyRequest,
   ResultRequest,
@@ -16,6 +18,7 @@ export const ROOM_CODE_LENGTH = 4;
 export const ROOM_START_DELAY_MS = 5_000;
 export const PLAYER_STALE_MS = 10_000;
 export const ROOM_TTL_SECONDS = 2 * 60 * 60;
+export const MAX_PEER_SIGNALS_PER_ROOM = 200;
 
 export interface RoomStore {
   getRoom(id: string): Promise<OnlineRoom | null>;
@@ -50,6 +53,7 @@ export async function createRoom(
     startsAtServerMs: null,
     seed: randomSeed(),
     players: [player],
+    peerSignals: [],
   };
   await persistRoom(store, room);
   return room;
@@ -125,6 +129,7 @@ export async function updateProgress(
   player.lines = normalizeNonNegativeInteger(request.lines);
   player.pieces = normalizeNonNegativeInteger(request.pieces);
   player.elapsedFrames = normalizeNonNegativeInteger(request.elapsedFrames);
+  player.game = request.game ?? null;
   player.updatedAtServerMs = nowMs;
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
@@ -144,6 +149,7 @@ export async function submitResult(
   player.lines = normalizeNonNegativeInteger(request.lines);
   player.pieces = normalizeNonNegativeInteger(request.pieces);
   player.elapsedFrames = normalizeNonNegativeInteger(request.elapsedFrames);
+  player.game = request.game ?? null;
   player.updatedAtServerMs = nowMs;
   player.finishedAtServerMs = nowMs;
   room.updatedAtServerMs = nowMs;
@@ -174,6 +180,29 @@ export async function getRoomState(store: RoomStore, roomId: string, nowMs = Dat
     await persistRoom(store, room);
   }
   return applyStalePlayers(room, nowMs);
+}
+
+export async function addPeerSignal(
+  store: RoomStore,
+  request: PeerSignalRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, request.roomId);
+  requirePlayer(room, request.fromPlayerId);
+  requirePlayer(room, request.toPlayerId);
+  const signal: OnlinePeerSignal = {
+    id: `${nowMs}-${Math.random().toString(36).slice(2, 10)}`,
+    roomId: room.id,
+    fromPlayerId: request.fromPlayerId,
+    toPlayerId: request.toPlayerId,
+    type: normalizePeerSignalType(request.type),
+    data: request.data,
+    createdAtServerMs: nowMs,
+  };
+  room.peerSignals = [...(room.peerSignals ?? []), signal].slice(-MAX_PEER_SIGNALS_PER_ROOM);
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return room;
 }
 
 export function rankPlayers(players: OnlinePlayer[]): OnlinePlayer[] {
@@ -265,6 +294,7 @@ function createPlayer(id: string, name: string, nowMs: number): OnlinePlayer {
     elapsedFrames: 0,
     updatedAtServerMs: nowMs,
     finishedAtServerMs: null,
+    game: null,
   };
 }
 
@@ -287,7 +317,13 @@ function applyStalePlayers(room: OnlineRoom, nowMs: number): OnlineRoom {
       if (nowMs - player.updatedAtServerMs <= PLAYER_STALE_MS) return { ...player };
       return { ...player, status: 'disconnected' };
     }),
+    peerSignals: room.peerSignals ?? [],
   };
+}
+
+function normalizePeerSignalType(value: string): OnlinePeerSignal['type'] {
+  if (value === 'offer' || value === 'answer' || value === 'ice') return value;
+  throw new OnlineRoomError('Invalid peer signal type.');
 }
 
 function resultRank(status: OnlinePlayer['status']): number {

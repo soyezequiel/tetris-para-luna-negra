@@ -6,6 +6,7 @@ import * as progressRoom from './api/rooms/progress';
 import * as publicRooms from './api/rooms/public';
 import * as readyRoom from './api/rooms/ready';
 import * as resultRoom from './api/rooms/result';
+import * as signalRoom from './api/rooms/signal';
 import * as startRoom from './api/rooms/start';
 import * as stateRoom from './api/rooms/state';
 
@@ -20,6 +21,7 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/rooms/public', publicRooms],
   ['/api/rooms/ready', readyRoom],
   ['/api/rooms/result', resultRoom],
+  ['/api/rooms/signal', signalRoom],
   ['/api/rooms/start', startRoom],
   ['/api/rooms/state', stateRoom],
 ]);
