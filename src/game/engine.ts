@@ -1,9 +1,10 @@
 import { createShuffledBag } from './bag';
-import { clearCompletedLines, createBoard } from './board';
+import { attackLinesForClear, garbageHoleColumn, resolveAttack } from './battle';
+import { addGarbageLines, clearCompletedLines, createBoard } from './board';
 import { cellsFor, kicksFor, nextRotation } from './pieces';
 import { SeededRng } from './rng';
 import { DEFAULT_RULES } from './rules';
-import type { ActivePiece, Cell, GameInput, GameRules, GameState, InputAction, PieceType } from './types';
+import type { ActivePiece, Cell, GameEvent, GameInput, GameRules, GameState, InputAction, PendingGarbage, PieceType } from './types';
 
 export class GameEngine {
   private readonly rules: GameRules;
@@ -21,6 +22,10 @@ export class GameEngine {
   private startFrame = 0;
   private finishFrame: number | null = null;
   private gameOverFrame: number | null = null;
+  private sentGarbage = 0;
+  private receivedGarbage = 0;
+  private pendingGarbage: PendingGarbage[] = [];
+  private events: GameEvent[] = [];
   private fallAccumulator = 0;
   private lockFrames = 0;
 
@@ -46,6 +51,10 @@ export class GameEngine {
         frame: this.frame,
         pieces: this.pieces,
         lines: this.lines,
+        sentGarbage: this.sentGarbage,
+        receivedGarbage: this.receivedGarbage,
+        pendingGarbage: this.pendingGarbage.reduce((total, garbage) => total + garbage.lines, 0),
+        targetLines: this.rules.targetLines,
         startFrame: this.startFrame,
         finishFrame: this.finishFrame,
         gameOverFrame: this.gameOverFrame,
@@ -59,8 +68,30 @@ export class GameEngine {
     if (frame < this.frame) return this.getState();
     this.frame = frame;
     for (const input of inputs) this.applyInput(input.action);
+    if (this.status === 'playing') this.applyPendingGarbage(frame);
     if (this.status === 'playing') this.applyGravity();
     return this.getState();
+  }
+
+  queueGarbage(lines: number, holeSeed: number, frame = this.frame, id = `${frame}-${holeSeed}-${lines}`): void {
+    const normalizedLines = Math.max(0, Math.floor(lines));
+    if (normalizedLines <= 0 || this.status !== 'playing') return;
+    const pending: PendingGarbage = {
+      id,
+      lines: normalizedLines,
+      holeColumn: garbageHoleColumn(holeSeed, this.rules.boardWidth),
+      receivedFrame: frame,
+      applyFrame: frame + this.rules.garbageDelayFrames,
+    };
+    this.pendingGarbage.push(pending);
+    this.receivedGarbage += normalizedLines;
+    this.events.push({ type: 'incomingGarbage', frame, lines: normalizedLines });
+  }
+
+  drainEvents(): GameEvent[] {
+    const drained = this.events;
+    this.events = [];
+    return drained;
   }
 
   applyInput(action: InputAction): void {
@@ -104,6 +135,10 @@ export class GameEngine {
     this.startFrame = 0;
     this.finishFrame = null;
     this.gameOverFrame = null;
+    this.sentGarbage = 0;
+    this.receivedGarbage = 0;
+    this.pendingGarbage = [];
+    this.events = [];
     this.fallAccumulator = 0;
     this.lockFrames = 0;
     this.rng = new SeededRng(this.seed);
@@ -245,7 +280,7 @@ export class GameEngine {
     }
     this.pieces += 1;
     this.clearLines();
-    if (this.lines >= this.rules.targetLines) {
+    if (this.rules.targetLines !== null && this.lines >= this.rules.targetLines) {
       this.status = 'finished';
       this.finishFrame = this.frame;
       this.active = null;
@@ -260,5 +295,40 @@ export class GameEngine {
     if (cleared === 0) return;
     this.board = result.board;
     this.lines += cleared;
+    const attackLines = attackLinesForClear(cleared);
+    const resolved = resolveAttack(attackLines, this.pendingGarbage);
+    this.pendingGarbage = resolved.remainingIncoming;
+    this.sentGarbage += resolved.outgoingAfterCancel;
+    this.events.push({
+      type: 'lineClear',
+      frame: this.frame,
+      cleared,
+      attackLines,
+      outgoingLines: resolved.outgoingAfterCancel,
+    });
+  }
+
+  private applyPendingGarbage(frame: number): void {
+    const due = this.pendingGarbage.filter((garbage) => garbage.applyFrame <= frame);
+    if (due.length === 0) return;
+    this.pendingGarbage = this.pendingGarbage.filter((garbage) => garbage.applyFrame > frame);
+    let appliedLines = 0;
+    for (const garbage of due) {
+      const result = addGarbageLines(this.board, this.rules.boardWidth, garbage.lines, garbage.holeColumn);
+      this.board = result.board;
+      appliedLines += garbage.lines;
+      if (result.toppedOut) {
+        this.status = 'gameover';
+        this.gameOverFrame = frame;
+        this.active = null;
+        break;
+      }
+    }
+    if (this.status === 'playing' && this.active && this.collides(this.active)) {
+      this.status = 'gameover';
+      this.gameOverFrame = frame;
+      this.active = null;
+    }
+    this.events.push({ type: 'appliedGarbage', frame, lines: appliedLines });
   }
 }

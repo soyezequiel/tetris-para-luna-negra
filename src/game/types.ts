@@ -36,18 +36,53 @@ export interface GameRules {
   visibleRows: number;
   hiddenRows: number;
   nextPreview: number;
-  targetLines: number;
+  targetLines: number | null;
   gravityCellsPerFrame: number;
   softDropCellsPerFrame: number;
   lockDelayFrames: number;
   dasFrames: number;
   arrFrames: number;
+  garbageDelayFrames: number;
 }
+
+export interface PendingGarbage {
+  id: string;
+  lines: number;
+  holeColumn: number;
+  receivedFrame: number;
+  applyFrame: number;
+}
+
+export interface LineClearEvent {
+  type: 'lineClear';
+  frame: number;
+  cleared: number;
+  attackLines: number;
+  outgoingLines: number;
+}
+
+export interface IncomingGarbageEvent {
+  type: 'incomingGarbage';
+  frame: number;
+  lines: number;
+}
+
+export interface AppliedGarbageEvent {
+  type: 'appliedGarbage';
+  frame: number;
+  lines: number;
+}
+
+export type GameEvent = LineClearEvent | IncomingGarbageEvent | AppliedGarbageEvent;
 
 export interface GameStats {
   frame: number;
   pieces: number;
   lines: number;
+  sentGarbage: number;
+  receivedGarbage: number;
+  pendingGarbage: number;
+  targetLines: number | null;
   startFrame: number;
   finishFrame: number | null;
   gameOverFrame: number | null;

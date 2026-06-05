@@ -721,6 +721,55 @@ canvas {
   pointer-events: auto;
 }
 
+.online-battle-meta {
+  margin-top: 8px;
+  color: #39d49a;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.online-garbage-meter {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 10px;
+  align-items: center;
+  margin-top: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(247, 247, 242, 0.12);
+}
+
+.online-garbage-meter span,
+.online-garbage-meter strong {
+  color: rgba(247, 247, 242, 0.72);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.online-garbage-meter strong {
+  color: #eb445a;
+  font-size: 13px;
+}
+
+.online-garbage-meter div {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.online-garbage-meter i {
+  display: block;
+  height: 7px;
+  background: rgba(247, 247, 242, 0.1);
+}
+
+.online-garbage-meter .online-garbage-cell-active {
+  background: #eb445a;
+}
+
 .online-standing-row {
   grid-template-columns: 24px minmax(0, 1fr) auto auto;
   padding: 8px 0;

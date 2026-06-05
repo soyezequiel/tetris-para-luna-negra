@@ -1,4 +1,4 @@
-import type { OnlineGameSnapshot, OnlinePeerSignal, OnlinePeerSignalType, OnlineRoom } from './protocol';
+import type { AttackRequest, OnlineGameSnapshot, OnlinePeerSignal, OnlinePeerSignalType, OnlineRoom } from './protocol';
 
 type SendSignal = (signal: {
   toPlayerId: string;
@@ -14,10 +14,21 @@ export interface OnlinePeerSnapshotMessage {
   game: OnlineGameSnapshot;
 }
 
+export type OnlinePeerAttackMessage = Omit<AttackRequest, 'roomId'> & { type: 'attack' };
+export interface OnlinePeerKoMessage {
+  type: 'ko';
+  playerId: string;
+  frame: number;
+}
+
+type OnlinePeerMessage = OnlinePeerSnapshotMessage | OnlinePeerAttackMessage | OnlinePeerKoMessage;
+
 interface OnlinePeerBroadcasterOptions {
   playerId: string;
   sendSignal: SendSignal;
   onSnapshot: (playerId: string, game: OnlineGameSnapshot) => void;
+  onAttack?: (attack: OnlinePeerAttackMessage) => void;
+  onKo?: (message: OnlinePeerKoMessage) => void;
   onPeerState?: (playerId: string, state: PeerConnectionState) => void;
 }
 
@@ -48,6 +59,20 @@ export class OnlinePeerBroadcaster {
 
   broadcast(game: OnlineGameSnapshot): void {
     const message = JSON.stringify({ type: 'snapshot', playerId: this.options.playerId, game } satisfies OnlinePeerSnapshotMessage);
+    for (const peer of this.peers.values()) {
+      if (peer.channel?.readyState === 'open') peer.channel.send(message);
+    }
+  }
+
+  sendAttack(toPlayerId: string, attack: Omit<OnlinePeerAttackMessage, 'type' | 'toPlayerId'>): boolean {
+    const peer = this.peers.get(toPlayerId);
+    if (peer?.channel?.readyState !== 'open') return false;
+    peer.channel.send(JSON.stringify({ ...attack, type: 'attack', toPlayerId } satisfies OnlinePeerAttackMessage));
+    return true;
+  }
+
+  broadcastKo(frame: number): void {
+    const message = JSON.stringify({ type: 'ko', playerId: this.options.playerId, frame } satisfies OnlinePeerKoMessage);
     for (const peer of this.peers.values()) {
       if (peer.channel?.readyState === 'open') peer.channel.send(message);
     }
@@ -164,9 +189,19 @@ export class OnlinePeerBroadcaster {
   private handleChannelMessage(data: unknown): void {
     if (typeof data !== 'string') return;
     try {
-      const message = JSON.parse(data) as OnlinePeerSnapshotMessage;
-      if (message.type !== 'snapshot' || !message.playerId || !message.game) return;
-      this.options.onSnapshot(message.playerId, message.game);
+      const message = JSON.parse(data) as OnlinePeerMessage;
+      if (message.type === 'snapshot') {
+        if (!message.playerId || !message.game) return;
+        this.options.onSnapshot(message.playerId, message.game);
+      }
+      if (message.type === 'attack') {
+        if (!message.attackId || !message.fromPlayerId || !message.toPlayerId || !Number.isFinite(message.lines)) return;
+        this.options.onAttack?.(message);
+      }
+      if (message.type === 'ko') {
+        if (!message.playerId || !Number.isFinite(message.frame)) return;
+        this.options.onKo?.(message);
+      }
     } catch {
       // Ignore malformed peer messages. The server polling fallback remains authoritative for room state.
     }

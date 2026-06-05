@@ -183,9 +183,11 @@ test.describe('STACK/40 browser flows', () => {
 
     await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Host');
+    await expect(page.getByText('Battle - last player standing')).toBeVisible();
     await action(page, 'online-create-private').click();
     await expect.poll(() => appMode(page)).toBe('roomLobby');
     await expect(page.getByRole('heading', { name: 'ROOM' })).toBeVisible();
+    await expect(page.getByText('Battle mode: survive')).toBeVisible();
 
     await action(page, 'online-ready').click();
     await expect(page.locator('.online-lobby-player span')).toHaveText('Ready');
@@ -193,6 +195,7 @@ test.describe('STACK/40 browser flows', () => {
     await action(page, 'online-start').click();
     await expect.poll(() => appMode(page)).toBe('onlineCountdown');
     await expect(page.getByRole('heading', { name: /[1-5]/ })).toBeVisible();
+    await expect(page.getByText('Last player standing wins')).toBeVisible();
   });
 });
 
@@ -256,6 +259,36 @@ async function mockOnlineApi(page: Page): Promise<void> {
       await fulfillRoom(route, room);
       return;
     }
+    if (path.endsWith('/signal')) {
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/progress')) {
+      const body = route.request().postDataJSON() as Partial<MockPlayer> & { playerId: string };
+      room = {
+        ...room,
+        players: room.players.map((player) => player.id === body.playerId ? { ...player, ...body, status: 'playing' } : player),
+      };
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/attack')) {
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/eliminate')) {
+      const body = route.request().postDataJSON() as { playerId: string; frame: number };
+      room = {
+        ...room,
+        players: room.players.map((player) => player.id === body.playerId
+          ? { ...player, status: 'eliminated', alive: false, eliminatedAtFrame: body.frame, eliminatedAtServerMs: Date.now(), finishedAtServerMs: Date.now() }
+          : { ...player, status: 'winner', alive: true, finishedAtServerMs: Date.now() }),
+        status: 'finished',
+        winnerPlayerId: room.players.find((player) => player.id !== body.playerId)?.id ?? null,
+      };
+      await fulfillRoom(route, room);
+      return;
+    }
     await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Not mocked.' }) });
   });
 }
@@ -283,7 +316,10 @@ function createMockRoom(
     updatedAtServerMs: now,
     startsAtServerMs: null,
     seed: 12345,
+    winnerPlayerId: null,
     players: [createMockPlayer(playerId, name, now)],
+    peerSignals: [],
+    attacks: [],
   };
 }
 
@@ -296,7 +332,10 @@ type MockRoom = {
   updatedAtServerMs: number;
   startsAtServerMs: number | null;
   seed: number;
+  winnerPlayerId: string | null;
   players: MockPlayer[];
+  peerSignals: unknown[];
+  attacks: unknown[];
 };
 
 function createMockPlayer(id: string, name: string, now: number): MockPlayer {
@@ -308,8 +347,15 @@ function createMockPlayer(id: string, name: string, now: number): MockPlayer {
     lines: 0,
     pieces: 0,
     elapsedFrames: 0,
+    sentGarbage: 0,
+    receivedGarbage: 0,
+    pendingGarbage: 0,
+    alive: true,
     updatedAtServerMs: now,
     finishedAtServerMs: null,
+    eliminatedAtFrame: null,
+    eliminatedAtServerMs: null,
+    game: null,
   };
 }
 
@@ -321,6 +367,13 @@ type MockPlayer = {
   lines: number;
   pieces: number;
   elapsedFrames: number;
+  sentGarbage: number;
+  receivedGarbage: number;
+  pendingGarbage: number;
+  alive: boolean;
   updatedAtServerMs: number;
   finishedAtServerMs: number | null;
+  eliminatedAtFrame: number | null;
+  eliminatedAtServerMs: number | null;
+  game: unknown;
 };

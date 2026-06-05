@@ -209,7 +209,9 @@ export class PixiGameRenderer {
     const seconds = elapsedFrames / 60;
     const pps = seconds > 0 ? state.stats.pieces / seconds : 0;
     const finish = state.status === 'finished' ? '\nCLEAR - R TO RETRY' : state.status === 'gameover' ? '\nTOP OUT - R TO RETRY' : '';
-    this.hudText.text = `PIECES\n${state.stats.pieces}  ${pps.toFixed(2)}/S\n\nLINES\n${state.stats.lines}/40\n\nTIME\n${formatTime(seconds)}${finish}`;
+    const lines = state.stats.targetLines === null ? `${state.stats.lines}` : `${state.stats.lines}/${state.stats.targetLines}`;
+    const garbage = state.stats.targetLines === null ? `\n\nGARBAGE\n${state.stats.pendingGarbage} IN  ${state.stats.sentGarbage} OUT` : '';
+    this.hudText.text = `PIECES\n${state.stats.pieces}  ${pps.toFixed(2)}/S\n\nLINES\n${lines}${garbage}\n\nTIME\n${formatTime(seconds)}${finish}`;
     this.hudText.style.fontSize = Math.max(14, Math.min(22, this.cell * 0.68));
     this.hudText.style.align = 'right';
     this.hudText.anchor.set(1, 1);

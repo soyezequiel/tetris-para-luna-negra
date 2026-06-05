@@ -1,6 +1,9 @@
 import type {
+  AttackRequest,
   CreateRoomRequest,
+  EliminateRequest,
   JoinRoomRequest,
+  OnlineAttack,
   OnlinePlayer,
   OnlinePeerSignal,
   OnlineRoom,
@@ -19,6 +22,7 @@ export const ROOM_START_DELAY_MS = 5_000;
 export const PLAYER_STALE_MS = 10_000;
 export const ROOM_TTL_SECONDS = 2 * 60 * 60;
 export const MAX_PEER_SIGNALS_PER_ROOM = 200;
+export const MAX_ATTACKS_PER_ROOM = 300;
 
 export interface RoomStore {
   getRoom(id: string): Promise<OnlineRoom | null>;
@@ -52,8 +56,10 @@ export async function createRoom(
     updatedAtServerMs: nowMs,
     startsAtServerMs: null,
     seed: randomSeed(),
+    winnerPlayerId: null,
     players: [player],
     peerSignals: [],
+    attacks: [],
   };
   await persistRoom(store, room);
   return room;
@@ -109,6 +115,13 @@ export async function startRoom(
   }
   room.status = 'countdown';
   room.startsAtServerMs = nowMs + ROOM_START_DELAY_MS;
+  room.winnerPlayerId = null;
+  room.players.forEach((player) => {
+    player.alive = true;
+    player.eliminatedAtFrame = null;
+    player.eliminatedAtServerMs = null;
+    player.finishedAtServerMs = null;
+  });
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
   return room;
@@ -121,14 +134,17 @@ export async function updateProgress(
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
   const player = requirePlayer(room, request.playerId);
-  if (player.finishedAtServerMs !== null) return room;
+  if (isTerminalPlayer(player)) return room;
   if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
     room.status = 'playing';
   }
-  player.status = 'playing';
+  player.status = player.alive ? 'playing' : player.status;
   player.lines = normalizeNonNegativeInteger(request.lines);
   player.pieces = normalizeNonNegativeInteger(request.pieces);
   player.elapsedFrames = normalizeNonNegativeInteger(request.elapsedFrames);
+  player.sentGarbage = normalizeNonNegativeInteger(request.sentGarbage ?? player.sentGarbage);
+  player.receivedGarbage = normalizeNonNegativeInteger(request.receivedGarbage ?? player.receivedGarbage);
+  player.pendingGarbage = normalizeNonNegativeInteger(request.pendingGarbage ?? player.pendingGarbage);
   player.game = request.game ?? null;
   player.updatedAtServerMs = nowMs;
   room.updatedAtServerMs = nowMs;
@@ -143,26 +159,92 @@ export async function submitResult(
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
   const player = requirePlayer(room, request.playerId);
-  if (player.finishedAtServerMs !== null) return room;
+  if (isTerminalPlayer(player)) return room;
   player.status = request.result;
   player.ready = true;
+  player.alive = request.result === 'won';
   player.lines = normalizeNonNegativeInteger(request.lines);
   player.pieces = normalizeNonNegativeInteger(request.pieces);
   player.elapsedFrames = normalizeNonNegativeInteger(request.elapsedFrames);
+  player.sentGarbage = normalizeNonNegativeInteger(request.sentGarbage ?? player.sentGarbage);
+  player.receivedGarbage = normalizeNonNegativeInteger(request.receivedGarbage ?? player.receivedGarbage);
+  player.pendingGarbage = normalizeNonNegativeInteger(request.pendingGarbage ?? player.pendingGarbage);
   player.game = request.game ?? null;
   player.updatedAtServerMs = nowMs;
   player.finishedAtServerMs = nowMs;
   room.updatedAtServerMs = nowMs;
   if (room.players.every((candidate) => candidate.status === 'won' || candidate.status === 'lost')) {
     room.status = 'finished';
+    room.winnerPlayerId = room.players.find((candidate) => candidate.status === 'won')?.id ?? null;
   }
+  await persistRoom(store, room);
+  return room;
+}
+
+export async function addAttack(
+  store: RoomStore,
+  request: AttackRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, request.roomId);
+  const from = requirePlayer(room, request.fromPlayerId);
+  const to = requirePlayer(room, request.toPlayerId);
+  if (!from.alive || !to.alive || room.status === 'finished') return room;
+  const id = normalizeAttackId(request.attackId);
+  if ((room.attacks ?? []).some((attack) => attack.id === id)) return room;
+  const attack: OnlineAttack = {
+    id,
+    roomId: room.id,
+    fromPlayerId: from.id,
+    toPlayerId: to.id,
+    lines: normalizeNonNegativeInteger(request.lines),
+    holeSeed: normalizeNonNegativeInteger(request.holeSeed),
+    frame: normalizeNonNegativeInteger(request.frame),
+    createdAtServerMs: nowMs,
+  };
+  if (attack.lines <= 0) return room;
+  room.attacks = [...(room.attacks ?? []), attack].slice(-MAX_ATTACKS_PER_ROOM);
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return room;
+}
+
+export async function eliminatePlayer(
+  store: RoomStore,
+  request: EliminateRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, request.roomId);
+  const player = requirePlayer(room, request.playerId);
+  if (player.status === 'winner' || room.winnerPlayerId === player.id) return room;
+  if (player.status !== 'eliminated') {
+    player.status = 'eliminated';
+    player.ready = true;
+    player.alive = false;
+    player.eliminatedAtFrame = normalizeNonNegativeInteger(request.frame);
+    player.eliminatedAtServerMs = nowMs;
+    player.finishedAtServerMs = nowMs;
+  }
+  player.lines = normalizeNonNegativeInteger(request.lines);
+  player.pieces = normalizeNonNegativeInteger(request.pieces);
+  player.elapsedFrames = normalizeNonNegativeInteger(request.elapsedFrames);
+  player.sentGarbage = normalizeNonNegativeInteger(request.sentGarbage ?? player.sentGarbage);
+  player.receivedGarbage = normalizeNonNegativeInteger(request.receivedGarbage ?? player.receivedGarbage);
+  player.pendingGarbage = normalizeNonNegativeInteger(request.pendingGarbage ?? player.pendingGarbage);
+  player.game = request.game ?? null;
+  player.updatedAtServerMs = nowMs;
+  finishRoomIfOnlyOneAlive(room, nowMs);
+  room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
   return room;
 }
 
 export async function listPublicRooms(store: RoomStore, nowMs = Date.now()): Promise<OnlineRoomSummary[]> {
   const ids = await store.listPublicRoomIds();
-  const rooms = await Promise.all(ids.map((id) => store.getRoom(id)));
+  const rooms = await Promise.all(ids.map(async (id) => {
+    const room = await store.getRoom(id);
+    return room ? normalizeRoomShape(room) : null;
+  }));
   const visible = rooms
     .filter((room): room is OnlineRoom => room !== null && room.visibility === 'public')
     .map((room) => applyStalePlayers(room, nowMs))
@@ -209,6 +291,10 @@ export function rankPlayers(players: OnlinePlayer[]): OnlinePlayer[] {
   return [...players].sort((a, b) => {
     const resultDelta = resultRank(a.status) - resultRank(b.status);
     if (resultDelta !== 0) return resultDelta;
+    if (a.status === 'eliminated' && b.status === 'eliminated') {
+      const frameDelta = (b.eliminatedAtFrame ?? b.elapsedFrames) - (a.eliminatedAtFrame ?? a.elapsedFrames);
+      if (frameDelta !== 0) return frameDelta;
+    }
     if (a.status === 'won' && b.status === 'won') return a.elapsedFrames - b.elapsedFrames;
     if (a.status === 'lost' && b.status === 'lost') return b.lines - a.lines;
     const finishedDelta = (a.finishedAtServerMs ?? Number.MAX_SAFE_INTEGER) - (b.finishedAtServerMs ?? Number.MAX_SAFE_INTEGER);
@@ -272,7 +358,7 @@ async function persistRoom(store: RoomStore, room: OnlineRoom): Promise<void> {
 async function requireRoom(store: RoomStore, roomId: string): Promise<OnlineRoom> {
   const room = await store.getRoom(normalizeRoomId(roomId));
   if (!room) throw new OnlineRoomError('Room not found.', 404);
-  return room;
+  return normalizeRoomShape(room);
 }
 
 function requirePlayer(room: OnlineRoom, playerId: string): OnlinePlayer {
@@ -292,8 +378,14 @@ function createPlayer(id: string, name: string, nowMs: number): OnlinePlayer {
     lines: 0,
     pieces: 0,
     elapsedFrames: 0,
+    sentGarbage: 0,
+    receivedGarbage: 0,
+    pendingGarbage: 0,
+    alive: true,
     updatedAtServerMs: nowMs,
     finishedAtServerMs: null,
+    eliminatedAtFrame: null,
+    eliminatedAtServerMs: null,
     game: null,
   };
 }
@@ -313,11 +405,12 @@ function applyStalePlayers(room: OnlineRoom, nowMs: number): OnlineRoom {
   return {
     ...room,
     players: room.players.map((player) => {
-      if (player.status === 'won' || player.status === 'lost') return { ...player };
+      if (isTerminalPlayer(player)) return { ...player };
       if (nowMs - player.updatedAtServerMs <= PLAYER_STALE_MS) return { ...player };
       return { ...player, status: 'disconnected' };
     }),
     peerSignals: room.peerSignals ?? [],
+    attacks: room.attacks ?? [],
   };
 }
 
@@ -326,8 +419,37 @@ function normalizePeerSignalType(value: string): OnlinePeerSignal['type'] {
   throw new OnlineRoomError('Invalid peer signal type.');
 }
 
+function finishRoomIfOnlyOneAlive(room: OnlineRoom, nowMs: number): void {
+  if (room.status !== 'playing' && room.status !== 'countdown') return;
+  const alive = room.players.filter((player) => player.alive && player.status !== 'eliminated');
+  if (alive.length !== 1 || room.players.length < 2) return;
+  const winner = alive[0];
+  winner.status = 'winner';
+  winner.alive = true;
+  winner.finishedAtServerMs = nowMs;
+  winner.updatedAtServerMs = nowMs;
+  room.winnerPlayerId = winner.id;
+  room.status = 'finished';
+}
+
+function isTerminalPlayer(player: OnlinePlayer): boolean {
+  return player.status === 'winner'
+    || player.status === 'eliminated'
+    || player.status === 'won'
+    || player.status === 'lost'
+    || player.finishedAtServerMs !== null;
+}
+
+function normalizeAttackId(value: string): string {
+  const normalized = value.trim().slice(0, 120);
+  if (normalized.length < 4) throw new OnlineRoomError('Invalid attack id.');
+  return normalized;
+}
+
 function resultRank(status: OnlinePlayer['status']): number {
+  if (status === 'winner') return 0;
   if (status === 'won') return 0;
+  if (status === 'eliminated') return 1;
   if (status === 'lost') return 1;
   return 2;
 }
@@ -362,4 +484,23 @@ function randomSeed(): number {
 
 function cloneRoom(room: OnlineRoom | null): OnlineRoom | null {
   return room ? JSON.parse(JSON.stringify(room)) as OnlineRoom : null;
+}
+
+function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
+  return {
+    ...room,
+    winnerPlayerId: room.winnerPlayerId ?? null,
+    peerSignals: room.peerSignals ?? [],
+    attacks: room.attacks ?? [],
+    players: room.players.map((player) => ({
+      ...player,
+      sentGarbage: player.sentGarbage ?? 0,
+      receivedGarbage: player.receivedGarbage ?? 0,
+      pendingGarbage: player.pendingGarbage ?? 0,
+      alive: player.alive ?? !isTerminalPlayer(player),
+      eliminatedAtFrame: player.eliminatedAtFrame ?? null,
+      eliminatedAtServerMs: player.eliminatedAtServerMs ?? null,
+      game: player.game ?? null,
+    })),
+  };
 }

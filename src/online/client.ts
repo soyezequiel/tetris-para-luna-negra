@@ -1,5 +1,7 @@
 import type {
+  AttackRequest,
   CreateRoomRequest,
+  EliminateRequest,
   JoinRoomRequest,
   OnlineErrorResponse,
   OnlineRoomResponse,
@@ -32,6 +34,14 @@ export class OnlineClient {
 
   updateProgress(request: ProgressRequest): Promise<OnlineRoomResponse> {
     return this.post('/progress', request);
+  }
+
+  sendAttack(request: AttackRequest): Promise<OnlineRoomResponse> {
+    return this.post('/attack', request);
+  }
+
+  eliminatePlayer(request: EliminateRequest): Promise<OnlineRoomResponse> {
+    return this.post('/eliminate', request);
   }
 
   submitResult(request: ResultRequest): Promise<OnlineRoomResponse> {

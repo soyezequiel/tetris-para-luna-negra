@@ -2,7 +2,7 @@ import type { ActivePiece, Cell } from '../game/types';
 
 export type RoomVisibility = 'public' | 'private';
 export type OnlineRoomStatus = 'lobby' | 'countdown' | 'playing' | 'finished';
-export type OnlinePlayerStatus = 'joined' | 'ready' | 'playing' | 'won' | 'lost' | 'disconnected';
+export type OnlinePlayerStatus = 'joined' | 'ready' | 'playing' | 'eliminated' | 'winner' | 'won' | 'lost' | 'disconnected';
 
 export interface OnlineGameSnapshot {
   board: Cell[][];
@@ -24,6 +24,17 @@ export interface OnlinePeerSignal {
   createdAtServerMs: number;
 }
 
+export interface OnlineAttack {
+  id: string;
+  roomId: string;
+  fromPlayerId: string;
+  toPlayerId: string;
+  lines: number;
+  holeSeed: number;
+  frame: number;
+  createdAtServerMs: number;
+}
+
 export interface OnlinePlayer {
   id: string;
   name: string;
@@ -32,8 +43,14 @@ export interface OnlinePlayer {
   lines: number;
   pieces: number;
   elapsedFrames: number;
+  sentGarbage: number;
+  receivedGarbage: number;
+  pendingGarbage: number;
+  alive: boolean;
   updatedAtServerMs: number;
   finishedAtServerMs: number | null;
+  eliminatedAtFrame: number | null;
+  eliminatedAtServerMs: number | null;
   game: OnlineGameSnapshot | null;
 }
 
@@ -46,8 +63,10 @@ export interface OnlineRoom {
   updatedAtServerMs: number;
   startsAtServerMs: number | null;
   seed: number;
+  winnerPlayerId: string | null;
   players: OnlinePlayer[];
   peerSignals: OnlinePeerSignal[];
+  attacks: OnlineAttack[];
 }
 
 export interface OnlineRoomSummary {
@@ -87,6 +106,9 @@ export interface ProgressRequest {
   lines: number;
   pieces: number;
   elapsedFrames: number;
+  sentGarbage?: number;
+  receivedGarbage?: number;
+  pendingGarbage?: number;
   game?: OnlineGameSnapshot | null;
 }
 
@@ -100,6 +122,20 @@ export interface PeerSignalRequest {
   toPlayerId: string;
   type: OnlinePeerSignalType;
   data: unknown;
+}
+
+export interface AttackRequest {
+  roomId: string;
+  attackId: string;
+  fromPlayerId: string;
+  toPlayerId: string;
+  lines: number;
+  holeSeed: number;
+  frame: number;
+}
+
+export interface EliminateRequest extends ProgressRequest {
+  frame: number;
 }
 
 export interface OnlineErrorResponse {

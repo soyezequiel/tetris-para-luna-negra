@@ -11,4 +11,10 @@ export const DEFAULT_RULES: GameRules = {
   lockDelayFrames: 30,
   dasFrames: 9,
   arrFrames: 1,
+  garbageDelayFrames: 90,
+};
+
+export const BATTLE_RULES: GameRules = {
+  ...DEFAULT_RULES,
+  targetLines: null,
 };

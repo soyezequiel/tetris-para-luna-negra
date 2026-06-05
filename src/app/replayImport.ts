@@ -1,5 +1,6 @@
 import type { ExportedReplay } from './replayExport';
 import { createRunSummary, type LineSplit, type RunSummary } from './runStats';
+import { DEFAULT_RULES } from '../game/rules';
 import type { GameInput, GameRules, InputAction } from '../game/types';
 import { GAME_ACTIONS, normalizeInputSettings } from '../input/settings';
 
@@ -57,23 +58,27 @@ function parseRules(value: unknown): GameRules | null {
   const visibleRows = readPositiveInteger(value.visibleRows);
   const hiddenRows = readNonNegativeInteger(value.hiddenRows);
   const nextPreview = readPositiveInteger(value.nextPreview);
-  const targetLines = readPositiveInteger(value.targetLines);
+  const targetLines = readNullablePositiveInteger(value.targetLines);
   const gravityCellsPerFrame = readPositiveNumber(value.gravityCellsPerFrame);
   const softDropCellsPerFrame = readPositiveNumber(value.softDropCellsPerFrame);
   const lockDelayFrames = readPositiveInteger(value.lockDelayFrames);
   const dasFrames = readNonNegativeInteger(value.dasFrames);
   const arrFrames = readPositiveInteger(value.arrFrames);
+  const garbageDelayFrames = value.garbageDelayFrames === undefined
+    ? DEFAULT_RULES.garbageDelayFrames
+    : readNonNegativeInteger(value.garbageDelayFrames);
   if (
     boardWidth === null
     || visibleRows === null
     || hiddenRows === null
     || nextPreview === null
-    || targetLines === null
+    || targetLines === undefined
     || gravityCellsPerFrame === null
     || softDropCellsPerFrame === null
     || lockDelayFrames === null
     || dasFrames === null
     || arrFrames === null
+    || garbageDelayFrames === null
   ) return null;
   return {
     boardWidth,
@@ -86,6 +91,7 @@ function parseRules(value: unknown): GameRules | null {
     lockDelayFrames,
     dasFrames,
     arrFrames,
+    garbageDelayFrames,
   };
 }
 
@@ -137,6 +143,11 @@ function parseSplits(value: unknown): LineSplit[] {
 
 function readPositiveInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function readNullablePositiveInteger(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return readPositiveInteger(value) ?? undefined;
 }
 
 function readNonNegativeInteger(value: unknown): number | null {

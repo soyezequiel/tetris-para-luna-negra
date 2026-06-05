@@ -17,9 +17,9 @@ import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
 import { GameEngine } from './game/engine';
 import { cellsFor } from './game/pieces';
 import { createReplayLog, recordInput } from './game/replay';
-import { DEFAULT_RULES } from './game/rules';
+import { BATTLE_RULES, DEFAULT_RULES } from './game/rules';
 import { displayedElapsedFrames } from './game/timing';
-import type { GameInput, GameRules, GameState, InputAction } from './game/types';
+import type { GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
 import {
   CONTROL_ACTION_LABELS,
@@ -39,7 +39,7 @@ import { OnlineClient } from './online/client';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { OnlinePeerBroadcaster } from './online/peerBroadcast';
 import { normalizeRoomId, rankPlayers } from './online/roomService';
-import type { OnlineGameSnapshot, OnlinePlayer, OnlineRoom, OnlineRoomSummary, RoomVisibility } from './online/protocol';
+import type { AttackRequest, OnlineAttack, OnlineGameSnapshot, OnlinePlayer, OnlineRoom, OnlineRoomSummary, RoomVisibility } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -107,6 +107,8 @@ let onlineResultSubmitted = false;
 let onlineRunStarted = false;
 let onlinePeerBroadcaster: OnlinePeerBroadcaster | null = null;
 let onlinePeerStates = new Map<string, string>();
+let onlineAttackSequence = 0;
+let onlineAppliedAttackIds = new Set<string>();
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -152,6 +154,7 @@ function loop(): void {
     state = engine.tick(gameFrame, gameInputs);
     playAcceptedMoveSound(beforeTickState.active, state.active, gameInputs.map((event) => event.action));
     syncRunEffects(state);
+    syncOnlineBattleEvents(engine.drainEvents(), state);
   }
 
   syncOnline(state);
@@ -418,7 +421,7 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing'): vo
   libraryError = null;
   importedReplayName = null;
   playback = null;
-  gameRules = rulesFromSettings(inputSettings);
+  gameRules = nextMode === 'onlinePlaying' ? battleRulesFromSettings(inputSettings) : rulesFromSettings(inputSettings);
   seed = nextSeed;
   engine = new GameEngine(seed, gameRules);
   replay = createReplayLog(seed, gameRules);
@@ -595,6 +598,8 @@ function leaveOnlineRoom(): void {
   onlineError = null;
   onlineResultSubmitted = false;
   onlineRunStarted = false;
+  onlineAttackSequence = 0;
+  onlineAppliedAttackIds = new Set();
   onlineLastPollAt = 0;
   onlineLastProgressAt = 0;
   onlineLastPeerBroadcastAt = 0;
@@ -705,15 +710,67 @@ function syncRunEffects(state: GameState): void {
   }
 }
 
+function syncOnlineBattleEvents(events: GameEvent[], state: GameState): void {
+  if (appMode !== 'onlinePlaying' || !onlineRoom) return;
+  for (const event of events) {
+    if (event.type === 'lineClear' && event.outgoingLines > 0) sendOnlineAttack(event, state);
+  }
+}
+
+function sendOnlineAttack(event: LineClearEvent, state: GameState): void {
+  if (!onlineRoom) return;
+  const target = selectAttackTarget();
+  if (!target) return;
+  const attack: AttackRequest = {
+    roomId: onlineRoom.id,
+    attackId: `${onlinePlayer.id}-${gameFrame}-${onlineAttackSequence += 1}`,
+    fromPlayerId: onlinePlayer.id,
+    toPlayerId: target.id,
+    lines: event.outgoingLines,
+    holeSeed: (onlineRoom.seed + gameFrame + onlineAttackSequence * 97) >>> 0,
+    frame: displayedElapsedFrames(state.stats),
+  };
+  onlinePeerBroadcaster?.sendAttack(target.id, {
+    attackId: attack.attackId,
+    fromPlayerId: attack.fromPlayerId,
+    lines: attack.lines,
+    holeSeed: attack.holeSeed,
+    frame: attack.frame,
+  });
+  void onlineClient.sendAttack(attack)
+    .then((response) => {
+      syncOnlineClock(response.serverNowMs);
+      onlineRoom = response.room;
+      applyRoomAttacks(response.room);
+    })
+    .catch((error) => {
+      onlineError = onlineErrorText(error);
+    });
+}
+
+function selectAttackTarget(): OnlinePlayer | null {
+  if (!onlineRoom) return null;
+  const candidates = onlineRoom.players.filter((player) => (
+    player.id !== onlinePlayer.id
+    && player.alive
+    && player.status !== 'eliminated'
+    && player.status !== 'winner'
+    && player.status !== 'disconnected'
+  ));
+  if (candidates.length === 0) return null;
+  return candidates[onlineAttackSequence % candidates.length];
+}
+
 function syncOnline(state: GameState): void {
   if (!onlineRoom) return;
   const now = performance.now();
   if (shouldPollOnline(now)) pollOnlineRoom();
   if (appMode === 'onlineCountdown') maybeStartOnlineRun();
   if (appMode === 'onlinePlaying') {
+    applyRoomAttacks(onlineRoom);
     if (state.status === 'playing' && shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(state);
     if (state.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(state);
-    if ((state.status === 'finished' || state.status === 'gameover') && !onlineResultSubmitted) postOnlineResult(state);
+    if (state.status === 'gameover' && !onlineResultSubmitted) postOnlineElimination(state);
   }
 }
 
@@ -742,6 +799,7 @@ async function pollOnlineRoom(): Promise<void> {
     syncOnlineClock(response.serverNowMs);
     onlineRoom = response.room;
     syncOnlinePeers(onlineRoom);
+    applyRoomAttacks(onlineRoom);
     if (onlineRoom.status === 'finished') appMode = 'onlineResults';
     if (onlineRoom.status === 'countdown' && appMode === 'roomLobby') appMode = 'onlineCountdown';
     if (onlineRoom.status === 'playing' && appMode === 'roomLobby') appMode = 'onlineCountdown';
@@ -764,6 +822,9 @@ async function postOnlineProgress(state: GameState): Promise<void> {
       lines: state.stats.lines,
       pieces: state.stats.pieces,
       elapsedFrames: displayedElapsedFrames(state.stats),
+      sentGarbage: state.stats.sentGarbage,
+      receivedGarbage: state.stats.receivedGarbage,
+      pendingGarbage: state.stats.pendingGarbage,
       game: createOnlineGameSnapshot(state),
     });
     syncOnlineClock(response.serverNowMs);
@@ -777,17 +838,21 @@ async function postOnlineProgress(state: GameState): Promise<void> {
   }
 }
 
-async function postOnlineResult(state: GameState): Promise<void> {
+async function postOnlineElimination(state: GameState): Promise<void> {
   if (!onlineRoom) return;
   onlineResultSubmitted = true;
+  onlinePeerBroadcaster?.broadcastKo(displayedElapsedFrames(state.stats));
   try {
-    const response = await onlineClient.submitResult({
+    const response = await onlineClient.eliminatePlayer({
       roomId: onlineRoom.id,
       playerId: onlinePlayer.id,
-      result: state.status === 'finished' ? 'won' : 'lost',
+      frame: displayedElapsedFrames(state.stats),
       lines: state.stats.lines,
       pieces: state.stats.pieces,
       elapsedFrames: displayedElapsedFrames(state.stats),
+      sentGarbage: state.stats.sentGarbage,
+      receivedGarbage: state.stats.receivedGarbage,
+      pendingGarbage: state.stats.pendingGarbage,
       game: createOnlineGameSnapshot(state),
     });
     syncOnlineClock(response.serverNowMs);
@@ -806,6 +871,8 @@ function maybeStartOnlineRun(): void {
   if (onlineNowMs() < onlineRoom.startsAtServerMs) return;
   onlineRunStarted = true;
   onlineResultSubmitted = false;
+  onlineAttackSequence = 0;
+  onlineAppliedAttackIds = new Set();
   onlineLastProgressAt = 0;
   onlineLastPeerBroadcastAt = 0;
   startNewRun(onlineRoom.seed, 'onlinePlaying');
@@ -831,6 +898,17 @@ function syncOnlinePeers(room: OnlineRoom): void {
       });
     },
     onSnapshot: (playerId, game) => applyPeerSnapshot(playerId, game),
+    onAttack: (attack) => applyOnlineAttack({
+      id: attack.attackId,
+      roomId: onlineRoom?.id ?? '',
+      fromPlayerId: attack.fromPlayerId,
+      toPlayerId: attack.toPlayerId,
+      lines: attack.lines,
+      holeSeed: attack.holeSeed,
+      frame: attack.frame,
+      createdAtServerMs: onlineNowMs(),
+    }),
+    onKo: (message) => applyPeerKo(message.playerId, message.frame),
     onPeerState: (playerId, state) => {
       onlinePeerStates = new Map(onlinePeerStates).set(playerId, state);
     },
@@ -851,6 +929,33 @@ function applyPeerSnapshot(playerId: string, game: OnlineGameSnapshot): void {
     ...onlineRoom,
     players: onlineRoom.players.map((player) => player.id === playerId ? { ...player, game } : player),
   };
+}
+
+function applyPeerKo(playerId: string, frame: number): void {
+  if (!onlineRoom || playerId === onlinePlayer.id) return;
+  onlineRoom = {
+    ...onlineRoom,
+    players: onlineRoom.players.map((player) => player.id === playerId
+      ? {
+        ...player,
+        status: 'eliminated',
+        alive: false,
+        elapsedFrames: Math.max(player.elapsedFrames, frame),
+        eliminatedAtFrame: frame,
+        eliminatedAtServerMs: player.eliminatedAtServerMs ?? onlineNowMs(),
+      }
+      : player),
+  };
+}
+
+function applyRoomAttacks(room: OnlineRoom): void {
+  for (const attack of room.attacks ?? []) applyOnlineAttack(attack);
+}
+
+function applyOnlineAttack(attack: OnlineAttack): void {
+  if (attack.toPlayerId !== onlinePlayer.id || onlineAppliedAttackIds.has(attack.id)) return;
+  onlineAppliedAttackIds.add(attack.id);
+      engine.queueGarbage(attack.lines, attack.holeSeed, gameFrame, attack.id);
 }
 
 function createOnlineGameSnapshot(state: GameState): OnlineGameSnapshot {
@@ -1072,7 +1177,7 @@ function renderOnlineMenuOverlay(): string {
       <section class="menu-panel online-panel" aria-label="Online rooms">
         <div class="panel-eyebrow">ONLINE ROOMS</div>
         <h1>Rooms</h1>
-        <p>Local race, shared start, peer board broadcast.</p>
+        <p>Battle - last player standing. Clears send garbage; top out and you are eliminated.</p>
         ${renderOnlineError()}
         <label class="online-field">
           <span>Name</span>
@@ -1112,7 +1217,7 @@ function renderOnlineLobbyOverlay(): string {
       <section class="menu-panel online-panel" aria-label="Online lobby">
         <div class="panel-eyebrow">${onlineRoom.visibility.toUpperCase()} ROOM</div>
         <h1>${escapeHtml(onlineRoom.id)}</h1>
-        <p>${host ? 'You are host.' : 'Waiting for host.'} Everyone plays locally from the same countdown.</p>
+        <p>${host ? 'You are host.' : 'Waiting for host.'} Battle mode: survive, send garbage, and be the last player standing.</p>
         ${renderOnlineError()}
         <div class="online-lobby-list">${onlineRoom.players.map(renderLobbyPlayer).join('')}</div>
         <div class="panel-actions">
@@ -1133,9 +1238,9 @@ function renderOnlineCountdownOverlay(): string {
   return `
     <div class="menu-scrim">
       <section class="menu-panel online-panel online-countdown" aria-label="Online countdown">
-        <div class="panel-eyebrow">RACE START</div>
+        <div class="panel-eyebrow">BATTLE START</div>
         <h1>${Math.ceil(remainingMs / 1000)}</h1>
-        <p>Room ${escapeHtml(onlineRoom.id)} starts from seed ${onlineRoom.seed}.</p>
+        <p>Room ${escapeHtml(onlineRoom.id)} starts from seed ${onlineRoom.seed}. Last player standing wins.</p>
       </section>
     </div>
   `;
@@ -1143,14 +1248,15 @@ function renderOnlineCountdownOverlay(): string {
 
 function renderOnlineResultsOverlay(state: GameState): string {
   const ownSummary = terminalLabel(state.status)
-    ? `<div class="panel-note">${escapeHtml(formatRunSummary(state))}</div>`
+    ? `<div class="panel-note">${escapeHtml(formatRunSummary(state, appMode === 'onlineResults' || appMode === 'onlinePlaying'))}</div>`
     : '';
+  const winner = onlineRoom?.players.find((player) => player.status === 'winner' || player.id === onlineRoom?.winnerPlayerId);
   return `
     <div class="menu-scrim">
       <section class="menu-panel online-panel" aria-label="Online results">
         <div class="panel-eyebrow">ONLINE RESULTS</div>
         <h1>${onlineRoom ? escapeHtml(onlineRoom.id) : 'Room'}</h1>
-        <p>Ranking uses elapsed frames reported by each local game.</p>
+        <p>${winner ? `${escapeHtml(winner.name)} wins. ` : ''}Ranking is based on survival, then elapsed frames.</p>
         ${ownSummary}
         ${renderOnlineStandings()}
         <div class="panel-actions">
@@ -1166,6 +1272,8 @@ function renderOnlinePlayingOverlay(): string {
   return `
     <aside class="online-race-panel" aria-label="Online race status">
       <div class="panel-eyebrow">ROOM ${escapeHtml(onlineRoom.id)}</div>
+      <div class="online-battle-meta">${escapeHtml(onlineAliveText())}</div>
+      ${renderIncomingGarbage()}
       ${renderOnlineStandings()}
       ${renderOnlinePeerBoards()}
       <button type="button" data-ui-action="online-leave">Leave</button>
@@ -1182,9 +1290,27 @@ function renderOnlineStandings(): string {
           <span>${index + 1}</span>
           <strong>${escapeHtml(player.name)}</strong>
           <em>${escapeHtml(formatOnlinePlayerState(player))}</em>
-          <b>${player.lines}L</b>
+          <b>${player.sentGarbage}G</b>
         </div>
       `).join('')}
+    </div>
+  `;
+}
+
+function onlineAliveText(): string {
+  if (!onlineRoom) return 'Alive 0/0';
+  const alive = onlineRoom.players.filter((player) => player.alive && player.status !== 'eliminated').length;
+  return `Alive ${alive}/${onlineRoom.players.length}`;
+}
+
+function renderIncomingGarbage(): string {
+  const pending = engine.getState().stats.pendingGarbage;
+  const capped = Math.min(12, pending);
+  return `
+    <div class="online-garbage-meter" aria-label="Incoming garbage">
+      <span>Incoming</span>
+      <strong>${pending}</strong>
+      <div>${Array.from({ length: 12 }, (_, index) => `<i class="${index < capped ? 'online-garbage-cell-active' : ''}"></i>`).join('')}</div>
     </div>
   `;
 }
@@ -1538,8 +1664,11 @@ function formatActionBinding(action: ControlAction): string {
   return bindings.length > 0 ? bindings.map(keyLabel).join('/') : 'Unbound';
 }
 
-function formatRunSummary(state: GameState): string {
+function formatRunSummary(state: GameState, battle = false): string {
   const elapsedFrames = displayedElapsedFrames(state.stats);
+  if (battle) {
+    return `${formatFrames(elapsedFrames)} survived - ${state.stats.lines} lines - ${state.stats.sentGarbage} sent`;
+  }
   return `${state.stats.lines}/40 - ${formatFrames(elapsedFrames)} - ${state.stats.pieces} pieces`;
 }
 
@@ -1583,6 +1712,14 @@ function playAcceptedMoveSound(before: { type: string; x: number } | null, after
 function rulesFromSettings(settings: InputSettings): GameRules {
   return {
     ...DEFAULT_RULES,
+    dasFrames: settings.dasFrames,
+    arrFrames: settings.arrFrames,
+  };
+}
+
+function battleRulesFromSettings(settings: InputSettings): GameRules {
+  return {
+    ...BATTLE_RULES,
     dasFrames: settings.dasFrames,
     arrFrames: settings.arrFrames,
   };
@@ -1693,11 +1830,13 @@ function currentOnlinePlayer(): OnlinePlayer | null {
 }
 
 function formatOnlinePlayerState(player: OnlinePlayer): string {
+  if (player.status === 'winner') return `${formatFrames(player.elapsedFrames)} winner`;
+  if (player.status === 'eliminated') return `${formatFrames(player.elapsedFrames)} eliminated`;
   if (player.status === 'won') return `${formatFrames(player.elapsedFrames)} clear`;
   if (player.status === 'lost') return `${formatFrames(player.elapsedFrames)} top out`;
   if (player.status === 'disconnected') return 'stale';
   if (player.status === 'ready') return 'ready';
-  if (player.status === 'playing') return formatFrames(player.elapsedFrames);
+  if (player.status === 'playing') return `${formatFrames(player.elapsedFrames)} alive`;
   return 'joined';
 }
 
