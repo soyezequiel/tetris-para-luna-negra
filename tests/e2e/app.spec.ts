@@ -140,6 +140,27 @@ test.describe('STACK/40 browser flows', () => {
     await expect(page.getByRole('heading', { name: 'PUB1' })).toBeVisible();
   });
 
+  test('keeps online text fields focused and treats R as text input', async ({ page }) => {
+    await mockOnlineApi(page);
+    await openFreshApp(page);
+
+    await action(page, 'online-open').click();
+    await expect.poll(() => appMode(page)).toBe('onlineMenu');
+
+    const nameField = page.locator('[data-online-field="name"]');
+    await nameField.fill('');
+    await nameField.click();
+    await page.keyboard.type('ar', { delay: 50 });
+
+    await expect(nameField).toHaveValue('ar');
+    await expect.poll(() => page.evaluate(() => (
+      document.activeElement instanceof HTMLInputElement
+        ? document.activeElement.dataset.onlineField ?? null
+        : null
+    ))).toBe('name');
+    await expect.poll(() => appMode(page)).toBe('onlineMenu');
+  });
+
   test('creates an online room, readies, and starts countdown', async ({ page }) => {
     await mockOnlineApi(page);
     await openFreshApp(page);

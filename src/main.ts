@@ -20,7 +20,7 @@ import { createReplayLog, recordInput } from './game/replay';
 import { DEFAULT_RULES } from './game/rules';
 import { displayedElapsedFrames } from './game/timing';
 import type { GameInput, GameRules, GameState, InputAction } from './game/types';
-import { InputController, type ControlInput } from './input';
+import { InputController, isEditableKeyboardTarget, type ControlInput } from './input';
 import {
   CONTROL_ACTION_LABELS,
   CONTROL_ACTIONS,
@@ -219,6 +219,7 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
     return;
   }
 
+  if (isEditableKeyboardTarget(event.target)) return;
   if (event.repeat) return;
   if (event.code === 'KeyM') {
     event.preventDefault();
@@ -885,10 +886,41 @@ function renderOverlay(state: GameState): void {
     ${renderTouchControls()}
   `;
   if (html !== lastOverlayHtml) {
+    const focusSnapshot = captureOnlineFieldFocus();
     overlayElement.innerHTML = html;
     lastOverlayHtml = html;
+    restoreOnlineFieldFocus(focusSnapshot);
   }
   if (appMode === 'replayPlayback' && playback) updateReplayOverlay(playback.snapshot());
+}
+
+type OnlineFieldFocusSnapshot = {
+  field: string;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+};
+
+function captureOnlineFieldFocus(): OnlineFieldFocusSnapshot | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLInputElement)) return null;
+  const field = active.dataset.onlineField;
+  if (!field) return null;
+  return {
+    field,
+    selectionStart: active.selectionStart,
+    selectionEnd: active.selectionEnd,
+  };
+}
+
+function restoreOnlineFieldFocus(snapshot: OnlineFieldFocusSnapshot | null): void {
+  if (!snapshot) return;
+  const field = Array.from(overlayElement.querySelectorAll<HTMLInputElement>('[data-online-field]'))
+    .find((candidate) => candidate.dataset.onlineField === snapshot.field);
+  if (!field) return;
+  field.focus({ preventScroll: true });
+  if (snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
+    field.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+  }
 }
 
 function renderScreenOverlay(state: GameState): string {

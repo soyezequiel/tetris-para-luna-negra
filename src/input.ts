@@ -61,6 +61,7 @@ export class InputController {
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
+    if (isEditableKeyboardTarget(event.target)) return;
     if (event.repeat) return;
     const action = actionForCode(this.settings, event.code);
     if (!action) return;
@@ -81,6 +82,14 @@ export class InputController {
 
 export function toGameInput(input: ControlInput): GameInput {
   return input as GameInput;
+}
+
+export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (typeof Element === 'undefined' || !(target instanceof Element)) return false;
+  if (typeof HTMLInputElement !== 'undefined' && target instanceof HTMLInputElement) return true;
+  if (typeof HTMLTextAreaElement !== 'undefined' && target instanceof HTMLTextAreaElement) return true;
+  if (typeof HTMLSelectElement !== 'undefined' && target instanceof HTMLSelectElement) return true;
+  return typeof HTMLElement !== 'undefined' && target instanceof HTMLElement && target.isContentEditable;
 }
 
 function isHeldAction(action: ControlAction): boolean {
