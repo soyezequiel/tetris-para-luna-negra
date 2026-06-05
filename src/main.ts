@@ -54,6 +54,7 @@ const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
 const ONLINE_PEER_BROADCAST_MS = 100;
+const ONLINE_BACKGROUND_SYNC_MS = 1000;
 const GAME_FRAME_MS = 1000 / 60;
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
@@ -122,6 +123,8 @@ document.body.appendChild(replayFileInput);
 
 window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
 window.addEventListener('wheel', handleVolumeWheel, { passive: false });
+window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
+document.addEventListener('visibilitychange', syncOnlineVisibilityChange);
 replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
 overlayElement.addEventListener('input', handleOverlayInput);
@@ -982,7 +985,31 @@ function applyRoomAttacks(room: OnlineRoom): void {
 function applyOnlineAttack(attack: OnlineAttack): void {
   if (attack.toPlayerId !== onlinePlayer.id || onlineAppliedAttackIds.has(attack.id)) return;
   onlineAppliedAttackIds.add(attack.id);
-      engine.queueGarbage(attack.lines, attack.holeSeed, gameFrame, attack.id);
+  engine.queueGarbage(attack.lines, attack.holeSeed, gameFrame, attack.id);
+}
+
+function syncOnlineVisibilityChange(): void {
+  if (document.hidden) {
+    syncOnlineBackground();
+    return;
+  }
+  if (!onlineRoom) return;
+  syncOnline(engine.getState());
+}
+
+function syncOnlineBackground(): void {
+  if (!document.hidden || !onlineRoom) return;
+  if (!['roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return;
+
+  let state = engine.getState();
+  if (appMode === 'onlinePlaying') {
+    if (!pendingConfirmAction && canAdvanceGame(appMode, state.status)) {
+      state = advanceGameToFrame(targetGameplayFrame(), []);
+    } else {
+      syncGameplayClockToCurrentFrame();
+    }
+  }
+  syncOnline(state);
 }
 
 function createOnlineGameSnapshot(state: GameState): OnlineGameSnapshot {
