@@ -1,8 +1,8 @@
-import type { ReadyRequest } from '../../src/online/protocol';
-import { setPlayerReady } from '../../src/online/roomService';
-import { getRoomStore, handleApiError, readJsonBody, sendJson } from '../../src/online/vercelApi';
+import type { ReadyRequest } from '../../src/online/protocol.js';
+import { setPlayerReady } from '../../src/online/roomService.js';
+import { getRoomStore, handleApiError, readJsonBody, sendJson } from '../../src/online/vercelApi.js';
 
-export { config } from '../../src/online/vercelApi';
+export { config } from '../../src/online/vercelApi.js';
 
 export async function POST(request: Request): Promise<Response> {
   try {

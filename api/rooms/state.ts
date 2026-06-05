@@ -1,7 +1,7 @@
-import { getRoomState } from '../../src/online/roomService';
-import { getRoomStore, handleApiError, queryParam, sendJson } from '../../src/online/vercelApi';
+import { getRoomState } from '../../src/online/roomService.js';
+import { getRoomStore, handleApiError, queryParam, sendJson } from '../../src/online/vercelApi.js';
 
-export { config } from '../../src/online/vercelApi';
+export { config } from '../../src/online/vercelApi.js';
 
 export async function GET(request: Request): Promise<Response> {
   try {

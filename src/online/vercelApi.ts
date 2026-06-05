@@ -1,4 +1,4 @@
-import { MemoryRoomStore, OnlineRoomError, type RoomStore } from './roomService';
+import { MemoryRoomStore, OnlineRoomError, type RoomStore } from './roomService.js';
 
 export const config = {
   regions: ['gru1'],

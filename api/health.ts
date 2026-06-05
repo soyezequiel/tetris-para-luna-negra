@@ -14,7 +14,7 @@ export async function GET(request: Request): Promise<Response> {
 async function runRoomsDiagnostics(): Promise<Record<string, unknown>> {
   const diagnostics: Record<string, unknown> = {};
   try {
-    const roomService = await import('../src/online/roomService');
+    const roomService = await import('../src/online/roomService.js');
     diagnostics.roomServiceImport = 'ok';
     diagnostics.roomCode = roomService.createRoomCode(() => 0);
   } catch (error) {
@@ -22,7 +22,7 @@ async function runRoomsDiagnostics(): Promise<Record<string, unknown>> {
   }
 
   try {
-    const vercelApi = await import('../src/online/vercelApi');
+    const vercelApi = await import('../src/online/vercelApi.js');
     diagnostics.vercelApiImport = 'ok';
     diagnostics.env = {
       hasUpstashUrl: Boolean(process.env.UPSTASH_REDIS_REST_URL),
@@ -36,7 +36,7 @@ async function runRoomsDiagnostics(): Promise<Record<string, unknown>> {
   }
 
   try {
-    const publicRoute = await import('./rooms/public');
+    const publicRoute = await import('./rooms/public.js');
     diagnostics.publicRouteImport = 'ok';
     const response = await publicRoute.GET();
     diagnostics.publicRouteStatus = response.status;
