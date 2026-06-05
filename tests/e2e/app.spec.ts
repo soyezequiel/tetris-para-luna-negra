@@ -1,7 +1,14 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, type Route, test } from '@playwright/test';
 import { action, appMode, openFreshApp, writeReplayFixture } from './fixtures';
 
 test.describe('STACK/40 browser flows', () => {
+  test('serves online API during local Vite dev', async ({ page }) => {
+    await openFreshApp(page);
+    const response = await page.request.get('/api/rooms/public');
+    expect(response.ok()).toBe(true);
+    expect((await response.json() as { rooms?: unknown[] }).rooms).toEqual([]);
+  });
+
   test('starts a run and pauses/resumes from the HUD', async ({ page }) => {
     await openFreshApp(page);
 
@@ -114,4 +121,165 @@ test.describe('STACK/40 browser flows', () => {
       window.stack40.getReplay().inputs.filter((input) => input.action === 'moveLeft').length
     ))).toBe(countAfterCancel);
   });
+
+  test('shows public rooms, joins by listing, and keeps private rooms hidden', async ({ page }) => {
+    await mockOnlineApi(page);
+    await openFreshApp(page);
+
+    await action(page, 'online-open').click();
+    await expect.poll(() => appMode(page)).toBe('onlineMenu');
+    await expect(page.getByText('PUB1')).toBeVisible();
+    await expect(page.getByText('PRV1')).toBeHidden();
+
+    await action(page, 'online-join-public').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect(page.getByRole('heading', { name: 'PUB1' })).toBeVisible();
+  });
+
+  test('creates an online room, readies, and starts countdown', async ({ page }) => {
+    await mockOnlineApi(page);
+    await openFreshApp(page);
+
+    await action(page, 'online-open').click();
+    await page.locator('[data-online-field="name"]').fill('Host');
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect(page.getByRole('heading', { name: 'ROOM' })).toBeVisible();
+
+    await action(page, 'online-ready').click();
+    await expect(page.locator('.online-lobby-player span')).toHaveText('Ready');
+
+    await action(page, 'online-start').click();
+    await expect.poll(() => appMode(page)).toBe('onlineCountdown');
+    await expect(page.getByRole('heading', { name: /[1-5]/ })).toBeVisible();
+  });
 });
+
+async function mockOnlineApi(page: Page): Promise<void> {
+  const now = Date.now();
+  let room = createMockRoom('ROOM', 'private', now);
+  const publicRoom = createMockRoom('PUB1', 'public', now);
+
+  await page.route('**/api/rooms/**', async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    if (path.endsWith('/public')) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          rooms: [{
+            id: publicRoom.id,
+            hostName: 'Public host',
+            playerCount: 1,
+            status: 'lobby',
+            createdAtServerMs: publicRoom.createdAtServerMs,
+          }],
+          serverNowMs: Date.now(),
+        }),
+      });
+      return;
+    }
+    if (path.endsWith('/create')) {
+      const body = route.request().postDataJSON() as { playerId: string; name: string; visibility: 'public' | 'private' };
+      room = createMockRoom('ROOM', body.visibility, Date.now(), body.playerId, body.name);
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/join')) {
+      const body = route.request().postDataJSON() as { playerId: string; name: string };
+      room = {
+        ...publicRoom,
+        players: [{ ...publicRoom.players[0] }, createMockPlayer(body.playerId, body.name, Date.now())],
+      };
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/ready')) {
+      room = {
+        ...room,
+        players: room.players.map((player) => ({ ...player, ready: true, status: 'ready' })),
+      };
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/start')) {
+      room = {
+        ...room,
+        status: 'countdown',
+        startsAtServerMs: Date.now() + 5000,
+      };
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/state')) {
+      await fulfillRoom(route, room);
+      return;
+    }
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Not mocked.' }) });
+  });
+}
+
+async function fulfillRoom(route: Route, room: MockRoom): Promise<void> {
+  await route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ room, serverNowMs: Date.now() }),
+  });
+}
+
+function createMockRoom(
+  id: string,
+  visibility: 'public' | 'private',
+  now: number,
+  playerId = 'player-host-mock',
+  name = 'Host',
+): MockRoom {
+  return {
+    id,
+    visibility,
+    status: 'lobby',
+    hostPlayerId: playerId,
+    createdAtServerMs: now,
+    updatedAtServerMs: now,
+    startsAtServerMs: null,
+    seed: 12345,
+    players: [createMockPlayer(playerId, name, now)],
+  };
+}
+
+type MockRoom = {
+  id: string;
+  visibility: 'public' | 'private';
+  status: string;
+  hostPlayerId: string;
+  createdAtServerMs: number;
+  updatedAtServerMs: number;
+  startsAtServerMs: number | null;
+  seed: number;
+  players: MockPlayer[];
+};
+
+function createMockPlayer(id: string, name: string, now: number): MockPlayer {
+  return {
+    id,
+    name,
+    ready: false,
+    status: 'joined',
+    lines: 0,
+    pieces: 0,
+    elapsedFrames: 0,
+    updatedAtServerMs: now,
+    finishedAtServerMs: null,
+  };
+}
+
+type MockPlayer = {
+  id: string;
+  name: string;
+  ready: boolean;
+  status: string;
+  lines: number;
+  pieces: number;
+  elapsedFrames: number;
+  updatedAtServerMs: number;
+  finishedAtServerMs: number | null;
+};

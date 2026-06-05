@@ -34,6 +34,10 @@ import {
   updateBinding,
   updateInputTiming,
 } from './input/settings';
+import { OnlineClient } from './online/client';
+import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
+import { normalizeRoomId, rankPlayers } from './online/roomService';
+import type { OnlinePlayer, OnlineRoom, OnlineRoomSummary, RoomVisibility } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -46,6 +50,7 @@ const overlayElement = overlay;
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
+const ONLINE_POLL_MS = 1000;
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 
@@ -57,6 +62,7 @@ let replay = createReplayLog(seed, gameRules);
 const input = new InputController(inputSettings);
 const renderer = new PixiGameRenderer(root);
 const sound = new SoundEngine(loadRecord().soundMuted, MUSIC_TRACKS, loadRecord().sfxVolume, loadRecord().musicVolume);
+const onlineClient = new OnlineClient();
 
 let best = loadRecord();
 let runHistory = loadRunHistory();
@@ -81,6 +87,20 @@ let selectedHistoryEntryId: string | null = null;
 let libraryError: string | null = null;
 let pendingConfirmAction: DestructiveRunAction | null = null;
 let touchControlsHidden = best.touchControlsHidden;
+let onlinePlayer = loadOnlinePlayer();
+let onlineName = onlinePlayer.name;
+let onlineJoinCode = '';
+let onlineRoom: OnlineRoom | null = null;
+let onlinePublicRooms: OnlineRoomSummary[] = [];
+let onlineError: string | null = null;
+let onlineBusy = false;
+let onlinePollInFlight = false;
+let onlineProgressInFlight = false;
+let onlineLastPollAt = 0;
+let onlineLastProgressAt = 0;
+let onlineServerOffsetMs = 0;
+let onlineResultSubmitted = false;
+let onlineRunStarted = false;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -94,6 +114,8 @@ window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
 window.addEventListener('wheel', handleVolumeWheel, { passive: false });
 replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
+overlayElement.addEventListener('input', handleOverlayInput);
+overlayElement.addEventListener('change', handleOverlayInput);
 overlayElement.addEventListener('pointerdown', handleTouchControlPointerDown);
 overlayElement.addEventListener('pointerup', handleTouchControlPointerEnd);
 overlayElement.addEventListener('pointercancel', handleTouchControlPointerEnd);
@@ -126,6 +148,7 @@ function loop(): void {
     syncRunEffects(state);
   }
 
+  syncOnline(state);
   renderer.render(state);
   renderOverlay(state);
   requestAnimationFrame(loop);
@@ -143,6 +166,9 @@ Object.assign(window, {
     getInputSettings: () => cloneInputSettings(inputSettings),
     getTouchControlsHidden: () => touchControlsHidden,
     getRunHistory: () => runHistory,
+    getOnlineRoom: () => onlineRoom,
+    getOnlinePublicRooms: () => onlinePublicRooms,
+    getOnlinePlayer: () => onlinePlayer,
     clearRunHistory: () => {
       clearStoredRunHistory();
       runHistory = [];
@@ -198,6 +224,14 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
   }
 }
 
+function handleOverlayInput(event: Event): void {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  const field = target.dataset.onlineField;
+  if (field === 'name') onlineName = target.value;
+  if (field === 'join-code') onlineJoinCode = normalizeRoomId(target.value);
+}
+
 function handleOverlayClick(event: MouseEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
@@ -224,6 +258,16 @@ function handleOverlayClick(event: MouseEvent): void {
   }
 
   if (action === 'start' || action === 'restart') startNewRun();
+  if (action === 'online-open') openOnlineMenu();
+  if (action === 'online-refresh') refreshPublicRooms();
+  if (action === 'online-create-public') createOnlineRoom('public');
+  if (action === 'online-create-private') createOnlineRoom('private');
+  if (action === 'online-join') joinOnlineRoom(onlineJoinCode);
+  if (action === 'online-join-public') joinOnlineRoom(control.dataset.roomId ?? '');
+  if (action === 'online-ready') setOnlineReady(true);
+  if (action === 'online-unready') setOnlineReady(false);
+  if (action === 'online-start') startOnlineRoom();
+  if (action === 'online-leave') leaveOnlineRoom();
   if (action === 'resume') resumeGame();
   if (action === 'settings') openSettings();
   if (action === 'settings-back') closeSettings();
@@ -292,7 +336,7 @@ function handleTouchControlPointerDown(event: PointerEvent): void {
   if (!(target instanceof Element)) return;
   const control = target.closest<HTMLElement>('[data-touch-action]');
   const action = parseControlAction(control?.dataset.touchAction);
-  if (!control || !action || appMode !== 'playing' || touchControlsHidden || pendingConfirmAction) return;
+  if (!control || !action || (appMode !== 'playing' && appMode !== 'onlinePlaying') || touchControlsHidden || pendingConfirmAction) return;
 
   const sourceId = touchSourceId(event.pointerId);
   activeTouchInputs.set(event.pointerId, { sourceId, control });
@@ -338,6 +382,12 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
     return true;
   }
 
+  if (appMode === 'onlinePlaying' && inputs.some((event) => event.action === 'retry')) {
+    onlineError = 'Retry is disabled during online races.';
+    input.releaseAll();
+    return true;
+  }
+
   if (appMode !== 'settings' && inputs.some((event) => event.action === 'retry')) {
     if (requiresRunConfirmation('restart', appMode, engine.getState().status)) {
       requestRunConfirmation('restart');
@@ -351,7 +401,7 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
   return false;
 }
 
-function startNewRun(): void {
+function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing'): void {
   input.releaseAll();
   bindingCapture = null;
   pendingConfirmAction = null;
@@ -361,7 +411,7 @@ function startNewRun(): void {
   importedReplayName = null;
   playback = null;
   gameRules = rulesFromSettings(inputSettings);
-  seed = randomSeed();
+  seed = nextSeed;
   engine = new GameEngine(seed, gameRules);
   replay = createReplayLog(seed, gameRules);
   gameFrame = 0;
@@ -371,7 +421,7 @@ function startNewRun(): void {
   lastPieces = 0;
   lastLines = 0;
   lastStatus = engine.getState().status;
-  appMode = 'playing';
+  appMode = nextMode;
   settingsReturnMode = 'menu';
   sound.play('retry');
 }
@@ -432,6 +482,121 @@ function openReplayLibrary(): void {
   lastExportName = null;
   syncLibrarySelection();
   input.releaseAll();
+}
+
+function openOnlineMenu(): void {
+  bindingCapture = null;
+  pendingConfirmAction = null;
+  onlineError = null;
+  appMode = 'onlineMenu';
+  settingsReturnMode = 'menu';
+  input.releaseAll();
+  refreshPublicRooms();
+}
+
+async function refreshPublicRooms(): Promise<void> {
+  if (onlineBusy) return;
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.listPublicRooms();
+    syncOnlineClock(response.serverNowMs);
+    onlinePublicRooms = response.rooms;
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function createOnlineRoom(visibility: RoomVisibility): Promise<void> {
+  if (onlineBusy) return;
+  onlineBusy = true;
+  try {
+    onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
+    const response = await onlineClient.createRoom({
+      playerId: onlinePlayer.id,
+      name: onlinePlayer.name,
+      visibility,
+    });
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'roomLobby');
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function joinOnlineRoom(roomId: string): Promise<void> {
+  const normalizedRoomId = normalizeRoomId(roomId);
+  if (onlineBusy || normalizedRoomId.length !== 4) {
+    onlineError = 'Enter a 4-character room code.';
+    return;
+  }
+  onlineBusy = true;
+  try {
+    onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
+    const response = await onlineClient.joinRoom({
+      roomId: normalizedRoomId,
+      playerId: onlinePlayer.id,
+      name: onlinePlayer.name,
+    });
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'roomLobby');
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function setOnlineReady(ready: boolean): Promise<void> {
+  if (!onlineRoom || onlineBusy) return;
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.setReady({ roomId: onlineRoom.id, playerId: onlinePlayer.id, ready });
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'roomLobby');
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function startOnlineRoom(): Promise<void> {
+  if (!onlineRoom || onlineBusy) return;
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.startRoom({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'onlineCountdown');
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+function leaveOnlineRoom(): void {
+  onlineRoom = null;
+  onlineError = null;
+  onlineResultSubmitted = false;
+  onlineRunStarted = false;
+  onlineLastPollAt = 0;
+  onlineLastProgressAt = 0;
+  goToMenu();
+}
+
+function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
+  onlineRoom = room;
+  onlineError = null;
+  onlineLastPollAt = 0;
+  if (room.status === 'finished') appMode = 'onlineResults';
+  else if (room.status === 'playing') appMode = onlineRunStarted ? 'onlinePlaying' : 'onlineCountdown';
+  else if (room.status === 'countdown') appMode = 'onlineCountdown';
+  else appMode = preferredMode;
 }
 
 function applyInputSettings(settings: InputSettings): void {
@@ -527,6 +692,100 @@ function syncRunEffects(state: GameState): void {
   }
 }
 
+function syncOnline(state: GameState): void {
+  if (!onlineRoom) return;
+  const now = performance.now();
+  if (shouldPollOnline(now)) pollOnlineRoom();
+  if (appMode === 'onlineCountdown') maybeStartOnlineRun();
+  if (appMode === 'onlinePlaying') {
+    if (state.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(state);
+    if ((state.status === 'finished' || state.status === 'gameover') && !onlineResultSubmitted) postOnlineResult(state);
+  }
+}
+
+function shouldPollOnline(now: number): boolean {
+  if (onlinePollInFlight) return false;
+  if (!['roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return false;
+  return now - onlineLastPollAt >= ONLINE_POLL_MS;
+}
+
+function shouldPostOnlineProgress(now: number): boolean {
+  if (onlineProgressInFlight) return false;
+  return now - onlineLastProgressAt >= ONLINE_POLL_MS;
+}
+
+async function pollOnlineRoom(): Promise<void> {
+  if (!onlineRoom) return;
+  onlinePollInFlight = true;
+  onlineLastPollAt = performance.now();
+  try {
+    const response = await onlineClient.getRoomState(onlineRoom.id);
+    syncOnlineClock(response.serverNowMs);
+    onlineRoom = response.room;
+    if (onlineRoom.status === 'finished') appMode = 'onlineResults';
+    if (onlineRoom.status === 'countdown' && appMode === 'roomLobby') appMode = 'onlineCountdown';
+    if (onlineRoom.status === 'playing' && appMode === 'roomLobby') appMode = 'onlineCountdown';
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlinePollInFlight = false;
+  }
+}
+
+async function postOnlineProgress(state: GameState): Promise<void> {
+  if (!onlineRoom) return;
+  onlineProgressInFlight = true;
+  onlineLastProgressAt = performance.now();
+  try {
+    const response = await onlineClient.updateProgress({
+      roomId: onlineRoom.id,
+      playerId: onlinePlayer.id,
+      lines: state.stats.lines,
+      pieces: state.stats.pieces,
+      elapsedFrames: displayedElapsedFrames(state.stats),
+    });
+    syncOnlineClock(response.serverNowMs);
+    onlineRoom = response.room;
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineProgressInFlight = false;
+  }
+}
+
+async function postOnlineResult(state: GameState): Promise<void> {
+  if (!onlineRoom) return;
+  onlineResultSubmitted = true;
+  try {
+    const response = await onlineClient.submitResult({
+      roomId: onlineRoom.id,
+      playerId: onlinePlayer.id,
+      result: state.status === 'finished' ? 'won' : 'lost',
+      lines: state.stats.lines,
+      pieces: state.stats.pieces,
+      elapsedFrames: displayedElapsedFrames(state.stats),
+    });
+    syncOnlineClock(response.serverNowMs);
+    onlineRoom = response.room;
+    appMode = 'onlineResults';
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+    onlineResultSubmitted = false;
+  }
+}
+
+function maybeStartOnlineRun(): void {
+  if (!onlineRoom?.startsAtServerMs || onlineRunStarted) return;
+  if (onlineNowMs() < onlineRoom.startsAtServerMs) return;
+  onlineRunStarted = true;
+  onlineResultSubmitted = false;
+  onlineLastProgressAt = 0;
+  startNewRun(onlineRoom.seed, 'onlinePlaying');
+}
+
 function renderOverlay(state: GameState): void {
   const currentMusicTrack = sound.getCurrentMusicTrack()?.title ?? 'No music';
   const activeVolumeChannel = getActiveVolumeChannel();
@@ -546,6 +805,7 @@ function renderOverlay(state: GameState): void {
       </div>
       <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
     </div>
+    ${appMode === 'onlinePlaying' ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
     ${renderTouchControls()}
   `;
@@ -561,6 +821,10 @@ function renderScreenOverlay(state: GameState): string {
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
   if (appMode === 'settings') return renderSettingsOverlay();
   if (appMode === 'library') return renderLibraryOverlay();
+  if (appMode === 'onlineMenu') return renderOnlineMenuOverlay();
+  if (appMode === 'roomLobby') return renderOnlineLobbyOverlay();
+  if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
+  if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
   if (appMode === 'menu') {
     return renderPanel({
       eyebrow: '40 LINES',
@@ -568,6 +832,7 @@ function renderScreenOverlay(state: GameState): string {
       meta: `${formatActionBinding('pause')} pause - ${formatActionBinding('hardDrop')} hard drop`,
       actions: [
         ['start', 'Start run'],
+        ['online-open', 'Online rooms'],
         ['replay-library', 'Replay library'],
         ['import-replay', 'Import replay'],
         ['settings', 'Input settings'],
@@ -607,7 +872,7 @@ function renderScreenOverlay(state: GameState): string {
 }
 
 function renderTouchControls(): string {
-  if (appMode !== 'playing' || pendingConfirmAction) return '';
+  if ((appMode !== 'playing' && appMode !== 'onlinePlaying') || pendingConfirmAction) return '';
   if (touchControlsHidden) {
     return `
       <button class="touch-controls-toggle touch-controls-restore" type="button" data-ui-action="toggle-touch-controls">
@@ -663,6 +928,7 @@ function confirmPendingAction(): void {
   if (action === 'restart') startNewRun();
   if (action === 'main-menu') goToMenu();
   if (action === 'import-replay') openReplayFilePicker();
+  if (action === 'online-leave') leaveOnlineRoom();
 }
 
 function renderConfirmOverlay(action: DestructiveRunAction): string {
@@ -681,14 +947,162 @@ function renderConfirmOverlay(action: DestructiveRunAction): string {
   `;
 }
 
+function renderOnlineMenuOverlay(): string {
+  const publicRooms = onlinePublicRooms.length === 0
+    ? '<div class="online-empty">No public rooms yet.</div>'
+    : onlinePublicRooms.map((room) => `
+      <article class="online-room-row">
+        <div>
+          <strong>${escapeHtml(room.id)}</strong>
+          <span>${escapeHtml(room.hostName)} - ${room.playerCount} player${room.playerCount === 1 ? '' : 's'} - ${escapeHtml(room.status)}</span>
+        </div>
+        <button type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}">Join</button>
+      </article>
+    `).join('');
+  return `
+    <div class="menu-scrim">
+      <section class="menu-panel online-panel" aria-label="Online rooms">
+        <div class="panel-eyebrow">ONLINE ROOMS</div>
+        <h1>Rooms</h1>
+        <p>Local race, shared start, 1s progress polling.</p>
+        ${renderOnlineError()}
+        <label class="online-field">
+          <span>Name</span>
+          <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
+        </label>
+        <div class="online-create-actions">
+          <button type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Create private</button>
+          <button type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Create public</button>
+        </div>
+        <div class="online-join-row">
+          <label class="online-field">
+            <span>Room code</span>
+            <input type="text" maxlength="4" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
+          </label>
+          <button type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Join code</button>
+        </div>
+        <div class="online-public-heading">
+          <span>Public rooms</span>
+          <button type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Refresh</button>
+        </div>
+        <div class="online-room-list">${publicRooms}</div>
+        <div class="panel-actions">
+          <button type="button" data-ui-action="main-menu">Back</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderOnlineLobbyOverlay(): string {
+  if (!onlineRoom) return renderOnlineMenuOverlay();
+  const player = currentOnlinePlayer();
+  const host = onlineRoom.hostPlayerId === onlinePlayer.id;
+  const allReady = onlineRoom.players.length > 0 && onlineRoom.players.every((candidate) => candidate.ready);
+  return `
+    <div class="menu-scrim">
+      <section class="menu-panel online-panel" aria-label="Online lobby">
+        <div class="panel-eyebrow">${onlineRoom.visibility.toUpperCase()} ROOM</div>
+        <h1>${escapeHtml(onlineRoom.id)}</h1>
+        <p>${host ? 'You are host.' : 'Waiting for host.'} Everyone plays locally from the same countdown.</p>
+        ${renderOnlineError()}
+        <div class="online-lobby-list">${onlineRoom.players.map(renderLobbyPlayer).join('')}</div>
+        <div class="panel-actions">
+          ${player?.ready
+            ? '<button type="button" data-ui-action="online-unready">Unready</button>'
+            : '<button type="button" data-ui-action="online-ready">Ready</button>'}
+          ${host ? `<button type="button" data-ui-action="online-start"${allReady && !onlineBusy ? '' : ' disabled'}>Start</button>` : ''}
+          <button type="button" data-ui-action="online-leave">Leave</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderOnlineCountdownOverlay(): string {
+  if (!onlineRoom?.startsAtServerMs) return renderOnlineLobbyOverlay();
+  const remainingMs = Math.max(0, onlineRoom.startsAtServerMs - onlineNowMs());
+  return `
+    <div class="menu-scrim">
+      <section class="menu-panel online-panel online-countdown" aria-label="Online countdown">
+        <div class="panel-eyebrow">RACE START</div>
+        <h1>${Math.ceil(remainingMs / 1000)}</h1>
+        <p>Room ${escapeHtml(onlineRoom.id)} starts from seed ${onlineRoom.seed}.</p>
+      </section>
+    </div>
+  `;
+}
+
+function renderOnlineResultsOverlay(state: GameState): string {
+  const ownSummary = terminalLabel(state.status)
+    ? `<div class="panel-note">${escapeHtml(formatRunSummary(state))}</div>`
+    : '';
+  return `
+    <div class="menu-scrim">
+      <section class="menu-panel online-panel" aria-label="Online results">
+        <div class="panel-eyebrow">ONLINE RESULTS</div>
+        <h1>${onlineRoom ? escapeHtml(onlineRoom.id) : 'Room'}</h1>
+        <p>Ranking uses elapsed frames reported by each local game.</p>
+        ${ownSummary}
+        ${renderOnlineStandings()}
+        <div class="panel-actions">
+          <button type="button" data-ui-action="online-leave">Main menu</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderOnlinePlayingOverlay(): string {
+  if (!onlineRoom) return '';
+  return `
+    <aside class="online-race-panel" aria-label="Online race status">
+      <div class="panel-eyebrow">ROOM ${escapeHtml(onlineRoom.id)}</div>
+      ${renderOnlineStandings()}
+      <button type="button" data-ui-action="online-leave">Leave</button>
+    </aside>
+  `;
+}
+
+function renderOnlineStandings(): string {
+  if (!onlineRoom) return '<div class="online-empty">No room state.</div>';
+  return `
+    <div class="online-standings">
+      ${rankPlayers(onlineRoom.players).map((player, index) => `
+        <div class="online-standing-row ${player.id === onlinePlayer.id ? 'online-standing-self' : ''}">
+          <span>${index + 1}</span>
+          <strong>${escapeHtml(player.name)}</strong>
+          <em>${escapeHtml(formatOnlinePlayerState(player))}</em>
+          <b>${player.lines}L</b>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderLobbyPlayer(player: OnlinePlayer): string {
+  return `
+    <div class="online-lobby-player ${player.id === onlinePlayer.id ? 'online-standing-self' : ''}">
+      <strong>${escapeHtml(player.name)}${player.id === onlineRoom?.hostPlayerId ? ' HOST' : ''}</strong>
+      <span>${player.ready ? 'Ready' : 'Not ready'}</span>
+    </div>
+  `;
+}
+
+function renderOnlineError(): string {
+  return onlineError ? `<div class="panel-note panel-error">${escapeHtml(onlineError)}</div>` : '';
+}
+
 function confirmTitle(action: DestructiveRunAction): string {
   if (action === 'restart') return 'Restart run?';
   if (action === 'main-menu') return 'Exit run?';
+  if (action === 'online-leave') return 'Leave online room?';
   return 'Import replay and abandon current run?';
 }
 
 function confirmMeta(action: DestructiveRunAction): string {
   if (action === 'import-replay') return 'The current board and timer will be discarded if a replay is loaded.';
+  if (action === 'online-leave') return 'Your local online run will stop on this device.';
   return 'The current board and timer will be discarded.';
 }
 
@@ -1110,6 +1524,32 @@ function formatDateTime(value: string): string {
 
 function formatHistoryStatus(status: RunHistoryEntry['status']): string {
   return status === 'finished' ? 'CLEAR' : 'TOP OUT';
+}
+
+function currentOnlinePlayer(): OnlinePlayer | null {
+  return onlineRoom?.players.find((player) => player.id === onlinePlayer.id) ?? null;
+}
+
+function formatOnlinePlayerState(player: OnlinePlayer): string {
+  if (player.status === 'won') return `${formatFrames(player.elapsedFrames)} clear`;
+  if (player.status === 'lost') return `${formatFrames(player.elapsedFrames)} top out`;
+  if (player.status === 'disconnected') return 'stale';
+  if (player.status === 'ready') return 'ready';
+  if (player.status === 'playing') return formatFrames(player.elapsedFrames);
+  return 'joined';
+}
+
+function onlineErrorText(error: unknown): string {
+  return error instanceof Error ? error.message : 'Online request failed.';
+}
+
+function syncOnlineClock(serverNowMs: number): void {
+  if (!Number.isFinite(serverNowMs)) return;
+  onlineServerOffsetMs = serverNowMs - Date.now();
+}
+
+function onlineNowMs(): number {
+  return Date.now() + onlineServerOffsetMs;
 }
 
 function escapeHtml(value: string): string {

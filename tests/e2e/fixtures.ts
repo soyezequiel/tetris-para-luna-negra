@@ -8,7 +8,18 @@ import { DEFAULT_RULES } from '../../src/game/rules';
 import type { GameInput } from '../../src/game/types';
 import { DEFAULT_INPUT_SETTINGS, type InputSettings } from '../../src/input/settings';
 
-export type AppMode = 'menu' | 'playing' | 'paused' | 'settings' | 'library' | 'replayPlayback';
+export type AppMode =
+  | 'menu'
+  | 'playing'
+  | 'paused'
+  | 'settings'
+  | 'library'
+  | 'replayPlayback'
+  | 'onlineMenu'
+  | 'roomLobby'
+  | 'onlineCountdown'
+  | 'onlinePlaying'
+  | 'onlineResults';
 
 export type PlaybackSnapshot = {
   frame: number;

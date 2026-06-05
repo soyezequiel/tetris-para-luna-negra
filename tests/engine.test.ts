@@ -19,6 +19,18 @@ import { SeededRng } from '../src/game/rng';
 import { DEFAULT_RULES } from '../src/game/rules';
 import { displayedElapsedFrames } from '../src/game/timing';
 import { createRunSummary, RunSplitTracker } from '../src/app/runStats';
+import {
+  createRoom,
+  createRoomCode,
+  getRoomState,
+  listPublicRooms,
+  MemoryRoomStore,
+  rankPlayers,
+  setPlayerReady,
+  startRoom,
+  submitResult,
+  updateProgress,
+} from '../src/online/roomService';
 import { InputController } from '../src/input';
 import {
   actionForCode,
@@ -28,6 +40,7 @@ import {
   updateInputTiming,
 } from '../src/input/settings';
 import type { GameInput } from '../src/game/types';
+import type { OnlinePlayer, OnlinePlayerStatus } from '../src/online/protocol';
 
 describe('core stacker engine', () => {
   it('creates deterministic 7-bags with all pieces once', () => {
@@ -386,6 +399,92 @@ describe('core stacker engine', () => {
     expect(snapshot.state.stats.lines).toBe(loadedEntry.replay.result.lines);
     expect(snapshot.state.stats.pieces).toBe(loadedEntry.replay.result.pieces);
   });
+
+  it('creates short readable online room codes', () => {
+    expect(createRoomCode(() => 0)).toBe('AAAA');
+    expect(createRoomCode(() => 0.999)).toHaveLength(4);
+    expect(createRoomCode(() => 0.5)).toMatch(/^[A-HJ-NP-Z2-9]{4}$/);
+  });
+
+  it('lists public online rooms but keeps private rooms hidden', async () => {
+    const store = new MemoryRoomStore();
+    const publicRoom = await createRoom(store, {
+      playerId: 'player-public-1',
+      name: 'Public',
+      visibility: 'public',
+    }, 1000);
+    await createRoom(store, {
+      playerId: 'player-private-1',
+      name: 'Private',
+      visibility: 'private',
+    }, 2000);
+
+    const rooms = await listPublicRooms(store, 2500);
+
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0].id).toBe(publicRoom.id);
+    expect(rooms[0].hostName).toBe('Public');
+  });
+
+  it('allows only the host to start an online room and keeps the start timestamp fixed', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-host-1',
+      name: 'Host',
+      visibility: 'public',
+    }, 1000);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-1', ready: true }, 1200);
+
+    await expect(startRoom(store, { roomId: room.id, playerId: 'player-other-1' }, 1300)).rejects.toThrow('Only the host');
+
+    const started = await startRoom(store, { roomId: room.id, playerId: 'player-host-1' }, 1400);
+    const startedAgain = await startRoom(store, { roomId: room.id, playerId: 'player-host-1' }, 9000);
+
+    expect(started.status).toBe('countdown');
+    expect(started.startsAtServerMs).toBe(6400);
+    expect(startedAgain.startsAtServerMs).toBe(6400);
+  });
+
+  it('does not overwrite final online results with late progress', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-host-2',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+
+    await submitResult(store, {
+      roomId: room.id,
+      playerId: 'player-host-2',
+      result: 'won',
+      lines: 40,
+      pieces: 100,
+      elapsedFrames: 3600,
+    }, 5000);
+    await updateProgress(store, {
+      roomId: room.id,
+      playerId: 'player-host-2',
+      lines: 4,
+      pieces: 10,
+      elapsedFrames: 9999,
+    }, 6000);
+
+    const state = await getRoomState(store, room.id, 7000);
+    expect(state.players[0].status).toBe('won');
+    expect(state.players[0].lines).toBe(40);
+    expect(state.players[0].elapsedFrames).toBe(3600);
+  });
+
+  it('ranks online players by result, elapsed frames, lines, and finish timestamp', () => {
+    const ranked = rankPlayers([
+      createOnlinePlayerFixture('lost-low', 'lost', 18, 5000, 10_000),
+      createOnlinePlayerFixture('won-slow', 'won', 40, 4200, 9000),
+      createOnlinePlayerFixture('won-fast', 'won', 40, 3600, 8000),
+      createOnlinePlayerFixture('lost-high', 'lost', 24, 6200, 11_000),
+    ]);
+
+    expect(ranked.map((player) => player.id)).toEqual(['won-fast', 'won-slow', 'lost-high', 'lost-low']);
+  });
 });
 
 function runReplay(inputs: GameInput[]) {
@@ -448,6 +547,26 @@ function createSplitState(lines: number, frame: number) {
       lines,
       frame,
     },
+  };
+}
+
+function createOnlinePlayerFixture(
+  id: string,
+  status: OnlinePlayerStatus,
+  lines: number,
+  elapsedFrames: number,
+  finishedAtServerMs: number,
+): OnlinePlayer {
+  return {
+    id,
+    name: id,
+    ready: true,
+    status,
+    lines,
+    pieces: 100,
+    elapsedFrames,
+    updatedAtServerMs: finishedAtServerMs,
+    finishedAtServerMs,
   };
 }
 

@@ -186,6 +186,10 @@ canvas {
   width: min(980px, calc(100vw - 32px));
 }
 
+.online-panel {
+  width: min(680px, calc(100vw - 32px));
+}
+
 .panel-eyebrow {
   color: rgba(247, 247, 242, 0.62);
   font-family: "Arial Black", Arial, sans-serif;
@@ -585,6 +589,176 @@ canvas {
   color: rgba(247, 247, 242, 0.86);
 }
 
+.online-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.online-field span,
+.online-public-heading span {
+  color: rgba(247, 247, 242, 0.58);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.online-field input {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 2px solid rgba(247, 247, 242, 0.72);
+  border-radius: 6px;
+  background: rgba(247, 247, 242, 0.08);
+  color: #f7f7f2;
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.online-create-actions,
+.online-join-row,
+.online-public-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin-top: 14px;
+}
+
+.online-create-actions button,
+.online-join-row button,
+.online-public-heading button,
+.online-room-row button,
+.online-race-panel button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 2px solid rgba(247, 247, 242, 0.82);
+  border-radius: 6px;
+  background: rgba(247, 247, 242, 0.08);
+  color: #f7f7f2;
+  cursor: pointer;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.online-create-actions button:hover,
+.online-join-row button:hover,
+.online-public-heading button:hover,
+.online-room-row button:hover,
+.online-race-panel button:hover {
+  background: rgba(57, 212, 154, 0.16);
+  border-color: #39d49a;
+}
+
+.online-join-row .online-field {
+  flex: 1 1 180px;
+  margin-top: 0;
+}
+
+.online-public-heading {
+  justify-content: space-between;
+  margin-top: 22px;
+}
+
+.online-room-list,
+.online-lobby-list,
+.online-standings {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.online-room-row,
+.online-lobby-player,
+.online-standing-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(247, 247, 242, 0.12);
+}
+
+.online-room-row strong,
+.online-lobby-player strong {
+  display: block;
+  color: #f7f7f2;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.online-room-row span,
+.online-lobby-player span,
+.online-empty {
+  display: block;
+  margin-top: 4px;
+  color: rgba(247, 247, 242, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.online-countdown {
+  text-align: center;
+}
+
+.online-countdown h1 {
+  font-size: 92px;
+}
+
+.online-race-panel {
+  position: fixed;
+  left: 28px;
+  top: 86px;
+  width: min(330px, calc(100vw - 56px));
+  padding: 16px;
+  border: 2px solid rgba(247, 247, 242, 0.72);
+  border-radius: 8px;
+  background: rgba(4, 5, 7, 0.82);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+  pointer-events: auto;
+}
+
+.online-standing-row {
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  padding: 8px 0;
+}
+
+.online-standing-row span,
+.online-standing-row strong,
+.online-standing-row em,
+.online-standing-row b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-standing-row span,
+.online-standing-row em {
+  color: rgba(247, 247, 242, 0.58);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.online-standing-row strong,
+.online-standing-row b {
+  color: rgba(247, 247, 242, 0.9);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.online-standing-self {
+  color: #39d49a;
+}
+
+.online-standing-self strong,
+.online-standing-self b {
+  color: #39d49a;
+}
+
 .replay-strip {
   position: fixed;
   left: 28px;
@@ -816,6 +990,13 @@ canvas {
     padding: 16px;
   }
 
+  .online-race-panel {
+    top: 82px;
+    left: 14px;
+    width: min(300px, calc(100vw - 28px));
+    padding: 14px;
+  }
+
   .menu-panel {
     padding: 22px;
   }
@@ -848,6 +1029,14 @@ canvas {
   .run-stats-grid,
   .split-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .online-standing-row {
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+  }
+
+  .online-standing-row em {
+    display: none;
   }
 }
 

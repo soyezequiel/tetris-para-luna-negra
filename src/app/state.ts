@@ -1,10 +1,21 @@
 import type { GameState } from '../game/types';
 
-export type AppMode = 'menu' | 'playing' | 'paused' | 'settings' | 'replayPlayback' | 'library';
-export type DestructiveRunAction = 'restart' | 'main-menu' | 'import-replay';
+export type AppMode =
+  | 'menu'
+  | 'playing'
+  | 'paused'
+  | 'settings'
+  | 'replayPlayback'
+  | 'library'
+  | 'onlineMenu'
+  | 'roomLobby'
+  | 'onlineCountdown'
+  | 'onlinePlaying'
+  | 'onlineResults';
+export type DestructiveRunAction = 'restart' | 'main-menu' | 'import-replay' | 'online-leave';
 
 export function canAdvanceGame(mode: AppMode, status: GameState['status']): boolean {
-  return mode === 'playing' && status === 'playing';
+  return (mode === 'playing' || mode === 'onlinePlaying') && status === 'playing';
 }
 
 export function togglePauseMode(mode: AppMode, status: GameState['status'], settingsReturnMode: AppMode): AppMode {
@@ -20,8 +31,8 @@ export function requiresRunConfirmation(
   status: GameState['status'],
 ): action is DestructiveRunAction {
   if (status !== 'playing') return false;
-  if (mode === 'menu' || mode === 'replayPlayback' || mode === 'library') return false;
-  return action === 'restart' || action === 'main-menu' || action === 'import-replay';
+  if (mode === 'menu' || mode === 'replayPlayback' || mode === 'library' || mode === 'onlineMenu' || mode === 'roomLobby' || mode === 'onlineCountdown' || mode === 'onlineResults') return false;
+  return action === 'restart' || action === 'main-menu' || action === 'import-replay' || action === 'online-leave';
 }
 
 export function terminalLabel(status: GameState['status']): string | null {
