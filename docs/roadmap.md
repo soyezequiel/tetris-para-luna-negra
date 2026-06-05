@@ -2,6 +2,8 @@
 
 Este documento ignora el README y parte del estado actual del codigo: juego 40L jugable, menu/pausa, input settings, export/import de replay y playback basico.
 
+Para el plan de multiplayer versus de ultimo en pie, ver `docs/multiplayer-versus-plan.md`.
+
 ## Criterio De Prioridad
 
 1. Primero, persistir valor del gameplay que ya existe.
