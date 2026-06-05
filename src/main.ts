@@ -54,6 +54,7 @@ const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
 const ONLINE_PEER_BROADCAST_MS = 100;
+const GAME_FRAME_MS = 1000 / 60;
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 
@@ -72,6 +73,7 @@ let runHistory = loadRunHistory();
 let appMode: AppMode = 'menu';
 let settingsReturnMode: AppMode = 'menu';
 let gameFrame = 0;
+let gameClockOriginMs = performance.now();
 let savedFinish = false;
 let savedRunHistoryEntry = false;
 let runSplitTracker = new RunSplitTracker();
@@ -131,7 +133,9 @@ overlayElement.addEventListener('lostpointercapture', handleTouchControlPointerE
 
 function loop(): void {
   const beforeState = engine.getState();
-  const candidateFrame = !pendingConfirmAction && canAdvanceGame(appMode, beforeState.status) ? gameFrame + 1 : gameFrame;
+  const canAdvanceThisLoop = !pendingConfirmAction && canAdvanceGame(appMode, beforeState.status);
+  if (!canAdvanceThisLoop) syncGameplayClockToCurrentFrame();
+  const candidateFrame = canAdvanceThisLoop ? targetGameplayFrame() : gameFrame;
   input.advanceFrame(candidateFrame);
   const controlInputs = input.collect(candidateFrame);
   const consumedByApp = handleControlInputs(controlInputs);
@@ -146,15 +150,12 @@ function loop(): void {
 
   let state = engine.getState();
   if (!consumedByApp && canAdvanceGame(appMode, state.status)) {
-    gameFrame = candidateFrame;
     const beforeTickState = engine.getState();
-    const gameInputs = toGameInputs(controlInputs, gameFrame);
+    const gameInputs = toGameInputs(controlInputs, candidateFrame);
     playImmediateInputSounds(gameInputs.map((event) => event.action));
     for (const event of gameInputs) recordInput(replay, event);
-    state = engine.tick(gameFrame, gameInputs);
+    state = advanceGameToFrame(candidateFrame, gameInputs);
     playAcceptedMoveSound(beforeTickState.active, state.active, gameInputs.map((event) => event.action));
-    syncRunEffects(state);
-    syncOnlineBattleEvents(engine.drainEvents(), state);
   }
 
   syncOnline(state);
@@ -205,6 +206,27 @@ Object.assign(window, {
     importReplayText,
   },
 });
+
+function targetGameplayFrame(now = performance.now()): number {
+  const elapsedFrames = Math.floor((now - gameClockOriginMs) / GAME_FRAME_MS);
+  return Math.max(gameFrame + 1, elapsedFrames);
+}
+
+function syncGameplayClockToCurrentFrame(): void {
+  gameClockOriginMs = performance.now() - gameFrame * GAME_FRAME_MS;
+}
+
+function advanceGameToFrame(targetFrame: number, finalFrameInputs: GameInput[]): GameState {
+  let state = engine.getState();
+  for (let frame = gameFrame + 1; frame <= targetFrame && canAdvanceGame(appMode, state.status); frame += 1) {
+    const inputs = frame === targetFrame ? finalFrameInputs : [];
+    state = engine.tick(frame, inputs);
+    gameFrame = frame;
+    syncRunEffects(state);
+    syncOnlineBattleEvents(engine.drainEvents(), state);
+  }
+  return state;
+}
 
 function handleGlobalKeyDown(event: KeyboardEvent): void {
   if (pendingConfirmAction && event.code === 'Escape') {
@@ -383,6 +405,7 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
       return true;
     }
     appMode = togglePauseMode(appMode, engine.getState().status, settingsReturnMode);
+    if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
     input.releaseAll();
     return true;
   }
@@ -426,6 +449,7 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing'): vo
   engine = new GameEngine(seed, gameRules);
   replay = createReplayLog(seed, gameRules);
   gameFrame = 0;
+  gameClockOriginMs = performance.now();
   savedFinish = false;
   savedRunHistoryEntry = false;
   runSplitTracker = new RunSplitTracker();
@@ -442,6 +466,7 @@ function resumeGame(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
   appMode = 'playing';
+  syncGameplayClockToCurrentFrame();
   input.releaseAll();
 }
 
@@ -458,6 +483,7 @@ function closeSettings(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
   appMode = settingsReturnMode;
+  if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
   input.releaseAll();
 }
 
@@ -465,6 +491,7 @@ function goToMenu(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
   appMode = 'menu';
+  syncGameplayClockToCurrentFrame();
   settingsReturnMode = 'menu';
   playback = null;
   importedReplayName = null;
@@ -1132,6 +1159,7 @@ function requestRunConfirmation(action: DestructiveRunAction): void {
 function cancelPendingConfirmation(): void {
   pendingConfirmAction = null;
   bindingCapture = null;
+  if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
   input.releaseAll();
 }
 
@@ -1142,6 +1170,7 @@ function confirmPendingAction(): void {
   if (action === 'main-menu') goToMenu();
   if (action === 'import-replay') openReplayFilePicker();
   if (action === 'online-leave') leaveOnlineRoom();
+  if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
 }
 
 function renderConfirmOverlay(action: DestructiveRunAction): string {
