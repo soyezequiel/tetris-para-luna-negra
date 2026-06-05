@@ -1,5 +1,3 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import { URL } from 'node:url';
 import { MemoryRoomStore, OnlineRoomError, type RoomStore } from './roomService';
 
 export const config = {
@@ -74,36 +72,35 @@ export function getRoomStore(): RoomStore {
   return globalThis.stack40MemoryRoomStore;
 }
 
-export async function readJsonBody<T = Record<string, unknown>>(req: IncomingMessage): Promise<T> {
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-  if (chunks.length === 0) return {} as T;
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
+export async function readJsonBody<T = Record<string, unknown>>(request: Request): Promise<T> {
+  const text = await request.text();
+  if (!text) return {} as T;
+  return JSON.parse(text) as T;
 }
 
-export function queryParam(req: IncomingMessage, name: string): string {
-  const host = req.headers.host ?? 'localhost';
-  const url = new URL(req.url ?? '/', `http://${host}`);
+export function queryParam(request: Request, name: string): string {
+  const url = new URL(request.url);
   return url.searchParams.get(name) ?? '';
 }
 
-export function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.statusCode = status;
-  res.setHeader('content-type', 'application/json; charset=utf-8');
-  res.setHeader('cache-control', 'no-store');
-  res.end(JSON.stringify(body));
+export function sendJson(status: number, body: unknown): Response {
+  return Response.json(body, {
+    status,
+    headers: {
+      'cache-control': 'no-store',
+    },
+  });
 }
 
-export function sendMethodNotAllowed(res: ServerResponse): void {
-  sendJson(res, 405, { error: 'Method not allowed.' });
+export function sendMethodNotAllowed(): Response {
+  return sendJson(405, { error: 'Method not allowed.' });
 }
 
-export function handleApiError(res: ServerResponse, error: unknown): void {
+export function handleApiError(error: unknown): Response {
   if (error instanceof OnlineRoomError) {
-    sendJson(res, error.status, { error: error.message });
-    return;
+    return sendJson(error.status, { error: error.message });
   }
-  sendJson(res, 500, { error: error instanceof Error ? error.message : 'Unexpected server error.' });
+  return sendJson(500, { error: error instanceof Error ? error.message : 'Unexpected server error.' });
 }
 
 function roomKey(id: string): string {

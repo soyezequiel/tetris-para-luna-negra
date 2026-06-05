@@ -1,18 +1,13 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import { listPublicRooms } from '../../src/online/roomService';
-import { getRoomStore, handleApiError, sendJson, sendMethodNotAllowed } from '../../src/online/vercelApi';
+import { getRoomStore, handleApiError, sendJson } from '../../src/online/vercelApi';
 
 export { config } from '../../src/online/vercelApi';
 
-export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'GET') {
-    sendMethodNotAllowed(res);
-    return;
-  }
+export async function GET(): Promise<Response> {
   try {
     const rooms = await listPublicRooms(getRoomStore());
-    sendJson(res, 200, { rooms, serverNowMs: Date.now() });
+    return sendJson(200, { rooms, serverNowMs: Date.now() });
   } catch (error) {
-    handleApiError(res, error);
+    return handleApiError(error);
   }
 }
