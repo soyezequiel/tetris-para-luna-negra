@@ -341,6 +341,10 @@ function handleOverlayClick(event: MouseEvent): void {
 
   if (action === 'start') startNewRun();
   if (action === 'restart') restartCurrentRun();
+  if (action === 'solo-menu') openModeMenu('soloMenu');
+  if (action === 'multiplayer-menu') openModeMenu('multiplayerMenu');
+  if (action === 'history-menu') openModeMenu('historyMenu');
+  if (action === 'config-menu') openModeMenu('configMenu');
   if (action === 'custom-open') openCustomMode();
   if (action === 'custom-back') goToMenu();
   if (action === 'custom-start') startCustomRun();
@@ -552,6 +556,14 @@ function openCustomMode(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
   appMode = 'custom';
+  settingsReturnMode = 'menu';
+  input.releaseAll();
+}
+
+function openModeMenu(mode: AppMode): void {
+  bindingCapture = null;
+  pendingConfirmAction = null;
+  appMode = mode;
   settingsReturnMode = 'menu';
   input.releaseAll();
 }
@@ -1471,17 +1483,66 @@ function renderScreenOverlay(state: GameState): string {
   if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
   if (appMode === 'menu') {
     return renderPanel({
-      eyebrow: '40 LINES',
+      eyebrow: 'MENU',
       title: 'STACK/40',
-      meta: `${formatActionBinding('pause')} pause - ${formatActionBinding('hardDrop')} hard drop`,
+      meta: 'Elegí dónde querés jugar, revisar o configurar.',
       actions: [
-        ['start', 'Start run'],
+        ['solo-menu', 'SOLO'],
+        ['multiplayer-menu', 'Multi jugador'],
+        ['history-menu', 'Historial'],
+        ['config-menu', 'config'],
+      ],
+      actionsClass: 'main-menu-actions',
+    });
+  }
+  if (appMode === 'soloMenu') {
+    return renderPanel({
+      eyebrow: 'SOLO',
+      title: 'Modos solo',
+      meta: 'Todos los modos disponibles para jugar local.',
+      actions: [
+        ['start', '40 líneas'],
         ['custom-open', 'Custom'],
-        ['online-open', 'Online rooms'],
+        ['main-menu', 'Volver'],
+      ],
+      actionsClass: 'mode-menu-actions',
+    });
+  }
+  if (appMode === 'multiplayerMenu') {
+    return renderPanel({
+      eyebrow: 'MULTI JUGADOR',
+      title: 'Multijugador',
+      meta: 'Todos los modos disponibles para jugar con otras personas.',
+      actions: [
+        ['online-open', 'Salas online'],
+        ['main-menu', 'Volver'],
+      ],
+      actionsClass: 'mode-menu-actions',
+    });
+  }
+  if (appMode === 'historyMenu') {
+    return renderPanel({
+      eyebrow: 'HISTORIAL',
+      title: 'Historial',
+      meta: 'Replays guardados e importación de partidas.',
+      actions: [
         ['replay-library', 'Replay library'],
         ['import-replay', 'Import replay'],
-        ['settings', 'Input settings'],
+        ['main-menu', 'Volver'],
       ],
+      actionsClass: 'mode-menu-actions',
+    });
+  }
+  if (appMode === 'configMenu') {
+    return renderPanel({
+      eyebrow: 'CONFIG',
+      title: 'config',
+      meta: 'Configuración disponible del juego.',
+      actions: [
+        ['settings', 'Input settings'],
+        ['main-menu', 'Volver'],
+      ],
+      actionsClass: 'mode-menu-actions',
     });
   }
   if (appMode === 'paused') {
@@ -2219,6 +2280,7 @@ function renderPanel(options: {
   meta: string;
   details?: string;
   actions: [string, string][];
+  actionsClass?: string;
 }): string {
   const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
   const importError = replayImportError ? `<div class="panel-note panel-error">${escapeHtml(replayImportError)}</div>` : '';
@@ -2234,7 +2296,7 @@ function renderPanel(options: {
         ${options.details ?? ''}
         ${exported}
         ${importError}
-        <div class="panel-actions">${actions}</div>
+        <div class="panel-actions ${options.actionsClass ?? ''}">${actions}</div>
       </section>
     </div>
   `;

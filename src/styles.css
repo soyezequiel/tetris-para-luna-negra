@@ -349,6 +349,28 @@ canvas {
   justify-content: flex-end;
 }
 
+.main-menu-actions,
+.mode-menu-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.main-menu-actions button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 54px;
+  justify-content: flex-start;
+  padding: 0 18px;
+  text-align: left;
+}
+
+.mode-menu-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+}
+
 .panel-actions .danger-action {
   border-color: #eb445a;
   background: rgba(235, 68, 90, 0.16);

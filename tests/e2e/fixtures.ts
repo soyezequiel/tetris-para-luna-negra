@@ -11,6 +11,10 @@ import { DEFAULT_INPUT_SETTINGS, type InputSettings } from '../../src/input/sett
 
 export type AppMode =
   | 'menu'
+  | 'soloMenu'
+  | 'multiplayerMenu'
+  | 'historyMenu'
+  | 'configMenu'
   | 'custom'
   | 'playing'
   | 'paused'

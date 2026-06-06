@@ -16,7 +16,10 @@ test.describe('STACK/40 browser flows', () => {
   test('starts a run and pauses/resumes from the HUD', async ({ page }) => {
     await openFreshApp(page);
 
-    await expect(action(page, 'start')).toHaveText('Start run');
+    await expect(action(page, 'solo-menu')).toHaveText('SOLO');
+    await action(page, 'solo-menu').click();
+    await expect.poll(() => appMode(page)).toBe('soloMenu');
+    await expect(action(page, 'start')).toHaveText('40 líneas');
     await action(page, 'start').click();
     await expect.poll(() => appMode(page)).toBe('playing');
 
@@ -33,6 +36,8 @@ test.describe('STACK/40 browser flows', () => {
   test('configures and starts a custom run from the visible menu', async ({ page }) => {
     await openFreshApp(page);
 
+    await action(page, 'solo-menu').click();
+    await expect.poll(() => appMode(page)).toBe('soloMenu');
     await action(page, 'custom-open').click();
     await expect.poll(() => appMode(page)).toBe('custom');
     await expect(page.getByRole('heading', { name: 'Custom' })).toBeVisible();
@@ -55,6 +60,8 @@ test.describe('STACK/40 browser flows', () => {
   test('rebinds input settings and resets them to defaults', async ({ page }) => {
     await openFreshApp(page);
 
+    await action(page, 'config-menu').click();
+    await expect.poll(() => appMode(page)).toBe('configMenu');
     await action(page, 'settings').click();
     await expect.poll(() => appMode(page)).toBe('settings');
     await expect(page.getByRole('heading', { name: 'Controls' })).toBeVisible();
@@ -76,6 +83,7 @@ test.describe('STACK/40 browser flows', () => {
     const replayPath = await writeReplayFixture('imported-replay.json');
     await openFreshApp(page);
 
+    await action(page, 'solo-menu').click();
     await action(page, 'start').click();
     await expect.poll(() => appMode(page)).toBe('playing');
     await page.keyboard.press('Space');
@@ -92,6 +100,8 @@ test.describe('STACK/40 browser flows', () => {
     await action(page, 'confirm-destructive').click();
     await expect.poll(() => appMode(page)).toBe('menu');
 
+    await action(page, 'history-menu').click();
+    await expect.poll(() => appMode(page)).toBe('historyMenu');
     const fileChooserPromise = page.waitForEvent('filechooser');
     await action(page, 'import-replay').click();
     const fileChooser = await fileChooserPromise;
@@ -114,6 +124,7 @@ test.describe('STACK/40 browser flows', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openFreshApp(page);
 
+    await action(page, 'solo-menu').click();
     await action(page, 'start').click();
     await expect.poll(() => appMode(page)).toBe('playing');
 
@@ -151,6 +162,7 @@ test.describe('STACK/40 browser flows', () => {
   test('repeats held keyboard controls after the input debounce', async ({ page }) => {
     await openFreshApp(page);
 
+    await action(page, 'solo-menu').click();
     await action(page, 'start').click();
     await expect.poll(() => appMode(page)).toBe('playing');
 
@@ -174,6 +186,8 @@ test.describe('STACK/40 browser flows', () => {
     await mockOnlineApi(page);
     await openFreshApp(page);
 
+    await action(page, 'multiplayer-menu').click();
+    await expect.poll(() => appMode(page)).toBe('multiplayerMenu');
     await action(page, 'online-open').click();
     await expect.poll(() => appMode(page)).toBe('onlineMenu');
     await expect(page.getByText('PUB1')).toBeVisible();
@@ -188,6 +202,7 @@ test.describe('STACK/40 browser flows', () => {
     await mockOnlineApi(page);
     await openFreshApp(page);
 
+    await action(page, 'multiplayer-menu').click();
     await action(page, 'online-open').click();
     await expect.poll(() => appMode(page)).toBe('onlineMenu');
 
@@ -225,6 +240,7 @@ test.describe('STACK/40 browser flows', () => {
     await mockOnlineApi(page);
     await openFreshApp(page);
 
+    await action(page, 'multiplayer-menu').click();
     await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Host');
     await expect(page.getByText('Battle - last player standing')).toBeVisible();
