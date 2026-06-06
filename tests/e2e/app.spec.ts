@@ -326,6 +326,24 @@ test.describe('STACK/40 browser flows', () => {
     await expect(page.getByText('Last player standing wins')).toBeVisible();
   });
 
+  test('enters a Luna Negra room from invite query and cleans the token', async ({ page }) => {
+    await mockOnlineApi(page);
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?inviteToken=fake-token&room=abc12345');
+
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect(page.getByRole('heading', { name: 'ABC12345' })).toBeVisible();
+    await expect(page.locator('.online-lobby-player strong')).toContainText('Nostr Host');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer())).toEqual({
+      id: 'pubkey-host-luna',
+      name: 'Nostr Host',
+    });
+    await expect.poll(() => page.evaluate(() => window.location.search.includes('inviteToken'))).toBe(false);
+  });
+
   test('creates a custom online room from the multiplayer menu', async ({ page }) => {
     const requests = await mockOnlineApi(page);
     await openFreshApp(page);
@@ -420,6 +438,27 @@ async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateReques
   await page.route('**/api/rooms/**', async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
+    if (path.endsWith('/luna-negra/enter')) {
+      const body = route.request().postDataJSON() as { roomId: string };
+      const serverNowMs = Date.now();
+      const player = {
+        id: 'pubkey-host-luna',
+        npub: 'npub-host-luna',
+        pubkey: 'pubkey-host-luna',
+        name: 'Nostr Host',
+        displayName: 'Nostr Host',
+        avatarUrl: null,
+        host: true,
+        hostPubkey: 'pubkey-host-luna',
+        expiresAt: '2026-06-06T21:00:00.000Z',
+      };
+      room = createMockRoom(body.roomId.toUpperCase(), 'private', serverNowMs, player.id, player.name);
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ room, player, serverNowMs }),
+      });
+      return;
+    }
     if (path.endsWith('/public')) {
       await route.fulfill({
         contentType: 'application/json',

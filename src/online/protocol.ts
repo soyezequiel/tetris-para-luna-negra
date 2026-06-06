@@ -214,6 +214,7 @@ export interface PublicRoomsFilters {
 }
 
 export interface CreateRoomRequest {
+  roomId?: string;
   playerId: string;
   name: string;
   visibility: RoomVisibility;
@@ -295,6 +296,27 @@ export interface OnlineErrorResponse {
 export interface OnlineRoomResponse {
   room: OnlineRoom;
   serverNowMs: number;
+}
+
+export interface LunaNegraEnterRequest {
+  inviteToken: string;
+  roomId: string;
+}
+
+export interface LunaNegraPlayer {
+  id: string;
+  npub: string;
+  pubkey: string;
+  name: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  host: boolean;
+  hostPubkey: string | null;
+  expiresAt: string | null;
+}
+
+export interface LunaNegraEnterResponse extends OnlineRoomResponse {
+  player: LunaNegraPlayer;
 }
 
 export interface PublicRoomsResponse {

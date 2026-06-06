@@ -46,6 +46,7 @@ export type Stack40Api = {
   getTouchControlsHidden: () => boolean;
   getPlayback: () => PlaybackSnapshot | null;
   getOnlineRoom: () => OnlineRoom | null;
+  getOnlinePlayer: () => { id: string; name: string };
 };
 
 declare global {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { importReplayJson, importReplayValue } from '../src/app/replayImport';
 import { createExportedReplay, replayFileName } from '../src/app/replayExport';
 import { ReplayPlayback } from '../src/app/replayPlayback';
@@ -34,6 +34,7 @@ import {
   createRoom,
   createRoomCode,
   enqueueMatchmaking,
+  enterLunaNegraRoom,
   enterQuickPlay,
   getQuickPlayLeaderboard,
   getRoomState,
@@ -43,6 +44,7 @@ import {
   joinRoom,
   listPublicRooms,
   MemoryRoomStore,
+  normalizeRoomId,
   rankPlayers,
   setPlayerTargeting,
   setPlayerReady,
@@ -50,6 +52,7 @@ import {
   submitResult,
   updateProgress,
 } from '../src/online/roomService';
+import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
 import { selectAttackTarget } from '../src/online/targeting';
 import { InputController } from '../src/input';
 import { HostAuthoritySimulator } from '../src/online/hostAuthority';
@@ -1138,6 +1141,118 @@ describe('core stacker engine', () => {
     expect(createRoomCode(() => 0)).toBe('AAAA');
     expect(createRoomCode(() => 0.999)).toHaveLength(4);
     expect(createRoomCode(() => 0.5)).toMatch(/^[A-HJ-NP-Z2-9]{4}$/);
+  });
+
+  it('normalizes long Luna Negra room ids while preserving manual short code generation', () => {
+    expect(normalizeRoomId('abc12345')).toBe('ABC12345');
+    expect(normalizeRoomId('room_1-abc')).toBe('ROOM_1-ABC');
+    expect(normalizeRoomId('a'.repeat(80))).toHaveLength(64);
+    expect(createRoomCode(() => 0.25)).toHaveLength(4);
+  });
+
+  it('creates a Luna Negra host room with the verified pubkey as host authority', async () => {
+    const store = new MemoryRoomStore();
+    const host = await enterLunaNegraRoom(store, {
+      npub: 'npub-host-player',
+      pubkey: 'pubkey-host-player',
+      displayName: 'Nostr Host',
+      avatarUrl: null,
+      roomId: 'lnroom123',
+      host: true,
+      hostPubkey: 'pubkey-host-player',
+      expiresAt: '2026-06-06T21:00:00.000Z',
+    }, 1000);
+
+    expect(host.player).toMatchObject({
+      id: 'pubkey-host-player',
+      name: 'Nostr Host',
+      host: true,
+    });
+    expect(host.room.id).toBe('LNROOM123');
+    expect(host.room.hostPlayerId).toBe('pubkey-host-player');
+    expect(host.room.visibility).toBe('private');
+    expect(host.room.matchType).toBe('battle');
+  });
+
+  it('joins a Luna Negra guest using the verified pubkey and display name', async () => {
+    const store = new MemoryRoomStore();
+    await enterLunaNegraRoom(store, {
+      npub: 'npub-host-player',
+      pubkey: 'pubkey-host-player',
+      displayName: 'Nostr Host',
+      avatarUrl: null,
+      roomId: 'lnroom124',
+      host: true,
+      hostPubkey: 'pubkey-host-player',
+      expiresAt: null,
+    }, 1000);
+
+    const guest = await enterLunaNegraRoom(store, {
+      npub: 'npub-guest-player',
+      pubkey: 'pubkey-guest-player',
+      displayName: 'Guest Name',
+      avatarUrl: null,
+      roomId: 'lnroom124',
+      host: false,
+      hostPubkey: 'pubkey-host-player',
+      expiresAt: null,
+    }, 1100);
+
+    expect(guest.player.id).toBe('pubkey-guest-player');
+    expect(guest.room.players.map((player) => [player.id, player.name])).toEqual([
+      ['pubkey-host-player', 'Nostr Host'],
+      ['pubkey-guest-player', 'Guest Name'],
+    ]);
+  });
+
+  it('rejects Luna Negra guests when the verified host does not match the room host', async () => {
+    const store = new MemoryRoomStore();
+    await enterLunaNegraRoom(store, {
+      npub: 'npub-host-player',
+      pubkey: 'pubkey-host-player',
+      displayName: 'Nostr Host',
+      avatarUrl: null,
+      roomId: 'lnroom125',
+      host: true,
+      hostPubkey: 'pubkey-host-player',
+      expiresAt: null,
+    }, 1000);
+
+    await expect(enterLunaNegraRoom(store, {
+      npub: 'npub-guest-player',
+      pubkey: 'pubkey-guest-player',
+      displayName: 'Guest Name',
+      avatarUrl: null,
+      roomId: 'lnroom125',
+      host: false,
+      hostPubkey: 'different-host-pubkey',
+      expiresAt: null,
+    }, 1100)).rejects.toThrow('Luna Negra host does not match this room.');
+  });
+
+  it('returns clear Luna Negra API errors for missing config and invalid tokens', async () => {
+    const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_BASE_URL;
+
+    const missingConfig = await enterLunaNegraRoomApi(new Request('http://local/api/rooms/luna-negra/enter', {
+      method: 'POST',
+      body: JSON.stringify({ inviteToken: 'token', roomId: 'lnroom126' }),
+    }));
+    expect(missingConfig.status).toBe(500);
+    expect(await missingConfig.json()).toEqual({ error: 'LUNA_NEGRA_BASE_URL is not configured.' });
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ valid: false })));
+    const invalidToken = await enterLunaNegraRoomApi(new Request('http://local/api/rooms/luna-negra/enter', {
+      method: 'POST',
+      body: JSON.stringify({ inviteToken: 'token', roomId: 'lnroom126' }),
+    }));
+    expect(invalidToken.status).toBe(401);
+    expect(await invalidToken.json()).toEqual({ error: 'Luna Negra invite token is invalid or expired.' });
+    vi.unstubAllGlobals();
+
+    if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
+    else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
   });
 
   it('simulates remote player inputs on the host authority engine', () => {

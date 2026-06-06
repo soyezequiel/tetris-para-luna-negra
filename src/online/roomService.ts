@@ -5,6 +5,7 @@ import type {
   EliminateRequest,
   JoinRoomRequest,
   LeaveMatchmakingRequest,
+  LunaNegraPlayer,
   MatchmakingHeartbeatRequest,
   MatchmakingQueue,
   MatchmakingTicket,
@@ -37,6 +38,8 @@ import type { GameRules } from '../game/types';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const ROOM_CODE_LENGTH = 4;
+export const ROOM_ID_MIN_LENGTH = 4;
+export const ROOM_ID_MAX_LENGTH = 64;
 export const ROOM_START_DELAY_MS = 5_000;
 export const PLAYER_STALE_MS = 10_000;
 export const ROOM_TTL_SECONDS = 2 * 60 * 60;
@@ -83,7 +86,10 @@ export async function createRoom(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const player = createPlayer(request.playerId, request.name, nowMs);
-  const id = await generateUniqueRoomId((candidate) => store.getRoom(candidate));
+  const id = request.roomId
+    ? normalizeRoomIdStrict(request.roomId)
+    : await generateUniqueRoomId((candidate) => store.getRoom(candidate));
+  if (await store.getRoom(id)) throw new OnlineRoomError('Room already exists.', 409);
   const mode = normalizeRoomMode(request.mode);
   const matchType = normalizeMatchType(request.matchType, mode);
   const ruleset = normalizeRuleset(request.ruleset, matchType, true);
@@ -110,6 +116,53 @@ export async function createRoom(
   };
   await persistRoom(store, room);
   return room;
+}
+
+export interface VerifiedLunaNegraInvite {
+  npub: string;
+  pubkey: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  roomId: string;
+  host: boolean;
+  hostPubkey: string | null;
+  expiresAt: string | null;
+}
+
+export async function enterLunaNegraRoom(
+  store: RoomStore,
+  invite: VerifiedLunaNegraInvite,
+  nowMs = Date.now(),
+): Promise<{ room: OnlineRoom; player: LunaNegraPlayer }> {
+  const player = lunaNegraPlayerFromInvite(invite);
+  const roomId = normalizeRoomIdStrict(invite.roomId);
+  const existing = await store.getRoom(roomId).then((value) => value ? normalizeRoomShape(value) : null);
+
+  if (existing) {
+    if (invite.hostPubkey && existing.hostPlayerId !== invite.hostPubkey) {
+      throw new OnlineRoomError('Luna Negra host does not match this room.', 403);
+    }
+    if (invite.host && existing.hostPlayerId !== player.id) {
+      throw new OnlineRoomError('Only the original Luna Negra host can reopen this room.', 403);
+    }
+    const room = await enterExistingLunaNegraRoom(store, existing, player, nowMs);
+    return { room, player };
+  }
+
+  if (!invite.host) {
+    throw new OnlineRoomError('La sala todavia no fue abierta por el host.', 404);
+  }
+
+  const room = await createRoom(store, {
+    roomId,
+    playerId: player.id,
+    name: player.name,
+    visibility: 'private',
+    mode: 'battle',
+    matchType: 'battle',
+    rules: BATTLE_RULES,
+  }, nowMs);
+  return { room, player };
 }
 
 export async function joinRoom(
@@ -818,6 +871,26 @@ export function createRoomCode(random = Math.random): string {
   return code;
 }
 
+function enterExistingLunaNegraRoom(
+  store: RoomStore,
+  room: OnlineRoom,
+  lunaPlayer: LunaNegraPlayer,
+  nowMs: number,
+): Promise<OnlineRoom> {
+  const existing = room.players.find((candidate) => candidate.id === lunaPlayer.id);
+  if (existing) {
+    existing.name = normalizePlayerName(lunaPlayer.name);
+    existing.updatedAtServerMs = nowMs;
+    if (room.status === 'lobby') existing.status = existing.ready ? 'ready' : 'joined';
+    room.updatedAtServerMs = nowMs;
+    return persistRoom(store, room).then(() => room);
+  }
+  if (room.status !== 'lobby') throw new OnlineRoomError('Room already started.', 409);
+  room.players.push(createPlayer(lunaPlayer.id, lunaPlayer.name, nowMs));
+  room.updatedAtServerMs = nowMs;
+  return persistRoom(store, room).then(() => room);
+}
+
 export class MemoryRoomStore implements RoomStore {
   private rooms = new Map<string, OnlineRoom>();
   private publicIds: string[] = [];
@@ -1503,7 +1576,13 @@ function targetLinesForObjective(objective: OnlineRuleset['objective']): number 
 }
 
 export function normalizeRoomId(value: string): string {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, ROOM_CODE_LENGTH);
+  return value.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, ROOM_ID_MAX_LENGTH);
+}
+
+function normalizeRoomIdStrict(value: string): string {
+  const normalized = normalizeRoomId(value);
+  if (normalized.length < ROOM_ID_MIN_LENGTH) throw new OnlineRoomError('Invalid room id.');
+  return normalized;
 }
 
 function normalizePlayerId(value: string): string {
@@ -1515,6 +1594,29 @@ function normalizePlayerId(value: string): string {
 function normalizePlayerName(value: string): string {
   const normalized = value.trim().slice(0, 18);
   return normalized.length > 0 ? normalized : 'Player';
+}
+
+function lunaNegraPlayerFromInvite(invite: VerifiedLunaNegraInvite): LunaNegraPlayer {
+  const pubkey = normalizePlayerId(invite.pubkey);
+  const npub = typeof invite.npub === 'string' ? invite.npub.trim() : '';
+  return {
+    id: pubkey,
+    npub,
+    pubkey,
+    name: displayNameFromInvite(invite.displayName, npub),
+    displayName: invite.displayName,
+    avatarUrl: invite.avatarUrl,
+    host: invite.host,
+    hostPubkey: invite.hostPubkey,
+    expiresAt: invite.expiresAt,
+  };
+}
+
+function displayNameFromInvite(displayName: string | null, npub: string): string {
+  const normalized = normalizePlayerName(displayName ?? '');
+  if (normalized !== 'Player') return normalized;
+  if (npub.length > 12) return `${npub.slice(0, 8)}...${npub.slice(-4)}`;
+  return npub || 'Player';
 }
 
 function normalizeNonNegativeInteger(value: number): number {

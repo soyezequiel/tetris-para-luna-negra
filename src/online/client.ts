@@ -5,6 +5,8 @@ import type {
   EnqueueMatchmakingRequest,
   JoinRoomRequest,
   LeaveMatchmakingRequest,
+  LunaNegraEnterRequest,
+  LunaNegraEnterResponse,
   MatchmakingHeartbeatRequest,
   MatchmakingTicketResponse,
   OnlineErrorResponse,
@@ -35,6 +37,10 @@ export class OnlineClient {
 
   joinRoom(request: JoinRoomRequest): Promise<OnlineRoomResponse> {
     return this.post('/join', request);
+  }
+
+  enterLunaNegraRoom(request: LunaNegraEnterRequest): Promise<LunaNegraEnterResponse> {
+    return this.post('/luna-negra/enter', request);
   }
 
   setReady(request: ReadyRequest): Promise<OnlineRoomResponse> {

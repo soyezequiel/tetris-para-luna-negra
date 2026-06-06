@@ -61,7 +61,7 @@ import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostA
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBroadcast';
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
-import { normalizeRoomId, rankPlayers, TARGETING_MODES } from './online/roomService';
+import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
@@ -264,6 +264,8 @@ Object.assign(window, {
     importReplayText,
   },
 });
+
+void bootstrapLunaNegraEntry();
 
 function targetGameplayFrame(now = performance.now()): number {
   const elapsedFrames = Math.floor((now - gameClockOriginMs) / GAME_FRAME_MS);
@@ -674,6 +676,40 @@ function openOnlineMenu(mode: OnlineRoomMode = 'battle'): void {
   refreshQuickPlayLeaderboard();
 }
 
+async function bootstrapLunaNegraEntry(): Promise<void> {
+  const params = new URLSearchParams(window.location.search);
+  const inviteToken = params.get('inviteToken')?.trim() ?? '';
+  if (!inviteToken) return;
+  const roomId = params.get('room')?.trim() ?? '';
+  appMode = 'onlineMenu';
+  settingsReturnMode = 'menu';
+  input.releaseAll();
+  if (!roomId) {
+    onlineError = 'Missing Luna Negra room id.';
+    return;
+  }
+  onlineBusy = true;
+  onlineError = null;
+  try {
+    const response = await onlineClient.enterLunaNegraRoom({ inviteToken, roomId });
+    onlinePlayer = { id: response.player.id, name: response.player.name };
+    onlineName = response.player.name;
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'roomLobby');
+    removeLunaNegraTokenFromUrl();
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+function removeLunaNegraTokenFromUrl(): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('inviteToken');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
 async function refreshPublicRooms(): Promise<void> {
   if (onlineBusy) return;
   onlineBusy = true;
@@ -815,8 +851,8 @@ async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: 
 
 async function joinOnlineRoom(roomId: string): Promise<void> {
   const normalizedRoomId = normalizeRoomId(roomId);
-  if (onlineBusy || normalizedRoomId.length !== 4) {
-    onlineError = 'Enter a 4-character room code.';
+  if (onlineBusy || normalizedRoomId.length < ROOM_ID_MIN_LENGTH) {
+    onlineError = `Enter a room ID with at least ${ROOM_ID_MIN_LENGTH} characters.`;
     return;
   }
   onlineBusy = true;
@@ -2008,10 +2044,10 @@ function renderOnlineMenuOverlay(): string {
         ${matchmakingStatus}
         <div class="online-join-row">
           <label class="online-field">
-            <span>Room code</span>
-            <input type="text" maxlength="4" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
+            <span>Room ID</span>
+            <input type="text" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
           </label>
-          <button type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Join code</button>
+          <button type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Join ID</button>
         </div>
         <div class="online-public-heading">
           <span>Public rooms</span>

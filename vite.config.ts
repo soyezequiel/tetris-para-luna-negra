@@ -4,6 +4,7 @@ import * as createRoom from './api/rooms/create';
 import * as eliminateRoom from './api/rooms/eliminate';
 import * as health from './api/health';
 import * as joinRoom from './api/rooms/join';
+import * as lunaNegraEnter from './api/rooms/luna-negra/enter';
 import * as progressRoom from './api/rooms/progress';
 import * as publicRooms from './api/rooms/public';
 import * as readyRoom from './api/rooms/ready';
@@ -21,6 +22,7 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/rooms/create', createRoom],
   ['/api/rooms/eliminate', eliminateRoom],
   ['/api/rooms/join', joinRoom],
+  ['/api/rooms/luna-negra/enter', lunaNegraEnter],
   ['/api/rooms/progress', progressRoom],
   ['/api/rooms/public', publicRooms],
   ['/api/rooms/ready', readyRoom],
