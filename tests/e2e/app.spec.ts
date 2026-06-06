@@ -1,5 +1,8 @@
 import { expect, type Page, type Route, test } from '@playwright/test';
 import { action, appMode, openFreshApp, writeReplayFixture } from './fixtures';
+import { BATTLE_RULES } from '../../src/game/rules';
+import type { GameRules } from '../../src/game/types';
+import type { OnlineRoomMode } from '../../src/online/protocol';
 
 test.describe('STACK/40 browser flows', () => {
   test('serves online API during local Vite dev', async ({ page }) => {
@@ -243,11 +246,11 @@ test.describe('STACK/40 browser flows', () => {
     await action(page, 'multiplayer-menu').click();
     await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Host');
-    await expect(page.getByText('Battle - last player standing')).toBeVisible();
+    await expect(page.getByText('Battle room - last player standing')).toBeVisible();
     await action(page, 'online-create-private').click();
     await expect.poll(() => appMode(page)).toBe('roomLobby');
     await expect(page.getByRole('heading', { name: 'ROOM' })).toBeVisible();
-    await expect(page.getByText('Battle mode: survive')).toBeVisible();
+    await expect(page.getByText('Battle room: survive')).toBeVisible();
 
     await action(page, 'online-ready').click();
     await expect(page.locator('.online-lobby-player span')).toHaveText('Ready');
@@ -257,10 +260,31 @@ test.describe('STACK/40 browser flows', () => {
     await expect(page.getByRole('heading', { name: /[1-5]/ })).toBeVisible();
     await expect(page.getByText('Last player standing wins')).toBeVisible();
   });
+
+  test('creates a custom online room from the multiplayer menu', async ({ page }) => {
+    const requests = await mockOnlineApi(page);
+    await openFreshApp(page);
+
+    await action(page, 'multiplayer-menu').click();
+    await expect(action(page, 'online-custom-open')).toHaveText('Custom room');
+    await action(page, 'online-custom-open').click();
+    await expect.poll(() => appMode(page)).toBe('onlineMenu');
+    await expect(page.getByRole('heading', { name: 'Custom room' })).toBeVisible();
+    await expect(page.getByText('Custom room - usa la configuracion custom del host')).toBeVisible();
+
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect(page.getByText('Custom room: survive')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.mode)).toBe('custom');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.rules.gravityCellsPerFrame)).toBe(0.02);
+    expect(requests.lastCreate?.mode).toBe('custom');
+    expect(requests.lastCreate?.rules?.targetLines).toBeNull();
+  });
 });
 
-async function mockOnlineApi(page: Page): Promise<void> {
+async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateRequest | null }> {
   const now = Date.now();
+  const requests: { lastCreate: MockCreateRequest | null } = { lastCreate: null };
   let room = createMockRoom('ROOM', 'private', now);
   const publicRoom = createMockRoom('PUB1', 'public', now);
 
@@ -275,6 +299,7 @@ async function mockOnlineApi(page: Page): Promise<void> {
             id: publicRoom.id,
             hostName: 'Public host',
             playerCount: 1,
+            mode: publicRoom.mode,
             status: 'lobby',
             createdAtServerMs: publicRoom.createdAtServerMs,
           }],
@@ -284,8 +309,9 @@ async function mockOnlineApi(page: Page): Promise<void> {
       return;
     }
     if (path.endsWith('/create')) {
-      const body = route.request().postDataJSON() as { playerId: string; name: string; visibility: 'public' | 'private' };
-      room = createMockRoom('ROOM', body.visibility, Date.now(), body.playerId, body.name);
+      const body = route.request().postDataJSON() as MockCreateRequest;
+      requests.lastCreate = body;
+      room = createMockRoom('ROOM', body.visibility, Date.now(), body.playerId, body.name, body.mode, body.rules);
       await fulfillRoom(route, room);
       return;
     }
@@ -351,6 +377,7 @@ async function mockOnlineApi(page: Page): Promise<void> {
     }
     await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Not mocked.' }) });
   });
+  return requests;
 }
 
 async function fulfillRoom(route: Route, room: MockRoom): Promise<void> {
@@ -366,10 +393,14 @@ function createMockRoom(
   now: number,
   playerId = 'player-host-mock',
   name = 'Host',
+  mode: OnlineRoomMode = 'battle',
+  rules: GameRules = BATTLE_RULES,
 ): MockRoom {
   return {
     id,
     visibility,
+    mode,
+    rules: { ...rules, targetLines: null },
     status: 'lobby',
     hostPlayerId: playerId,
     createdAtServerMs: now,
@@ -386,6 +417,8 @@ function createMockRoom(
 type MockRoom = {
   id: string;
   visibility: 'public' | 'private';
+  mode: OnlineRoomMode;
+  rules: GameRules;
   status: string;
   hostPlayerId: string;
   createdAtServerMs: number;
@@ -436,4 +469,12 @@ type MockPlayer = {
   eliminatedAtFrame: number | null;
   eliminatedAtServerMs: number | null;
   game: unknown;
+};
+
+type MockCreateRequest = {
+  playerId: string;
+  name: string;
+  visibility: 'public' | 'private';
+  mode: OnlineRoomMode;
+  rules?: GameRules;
 };

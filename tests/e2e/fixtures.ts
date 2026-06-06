@@ -8,6 +8,7 @@ import { createReplayLog, recordInput } from '../../src/game/replay';
 import { DEFAULT_RULES } from '../../src/game/rules';
 import type { GameInput, GameState } from '../../src/game/types';
 import { DEFAULT_INPUT_SETTINGS, type InputSettings } from '../../src/input/settings';
+import type { OnlineRoom } from '../../src/online/protocol';
 
 export type AppMode =
   | 'menu'
@@ -44,6 +45,7 @@ export type Stack40Api = {
   getReplay: () => { seed: number; inputs: GameInput[] };
   getTouchControlsHidden: () => boolean;
   getPlayback: () => PlaybackSnapshot | null;
+  getOnlineRoom: () => OnlineRoom | null;
 };
 
 declare global {

@@ -1,6 +1,7 @@
-import type { ActivePiece, Cell, GameEngineSnapshot } from '../game/types';
+import type { ActivePiece, Cell, GameEngineSnapshot, GameRules } from '../game/types';
 
 export type RoomVisibility = 'public' | 'private';
+export type OnlineRoomMode = 'battle' | 'custom';
 export type OnlineRoomStatus = 'lobby' | 'countdown' | 'playing' | 'finished';
 export type OnlinePlayerStatus = 'joined' | 'ready' | 'playing' | 'eliminated' | 'winner' | 'won' | 'lost' | 'disconnected';
 
@@ -66,6 +67,8 @@ export interface OnlinePlayer {
 export interface OnlineRoom {
   id: string;
   visibility: RoomVisibility;
+  mode: OnlineRoomMode;
+  rules: GameRules;
   status: OnlineRoomStatus;
   hostPlayerId: string;
   createdAtServerMs: number;
@@ -82,6 +85,7 @@ export interface OnlineRoomSummary {
   id: string;
   hostName: string;
   playerCount: number;
+  mode: OnlineRoomMode;
   status: OnlineRoomStatus;
   createdAtServerMs: number;
 }
@@ -90,6 +94,8 @@ export interface CreateRoomRequest {
   playerId: string;
   name: string;
   visibility: RoomVisibility;
+  mode?: OnlineRoomMode;
+  rules?: GameRules;
 }
 
 export interface JoinRoomRequest {

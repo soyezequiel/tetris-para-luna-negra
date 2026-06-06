@@ -60,7 +60,7 @@ import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBroadcast';
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers } from './online/roomService';
-import type { AttackRequest, OnlineAttack, OnlineGameSnapshot, OnlinePlayer, OnlineRoom, OnlineRoomSummary, ProgressRequest, RoomVisibility } from './online/protocol';
+import type { AttackRequest, OnlineAttack, OnlineGameSnapshot, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, RoomVisibility } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -123,6 +123,7 @@ let touchControlsHidden = best.touchControlsHidden;
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
+let onlineRoomMode: OnlineRoomMode = 'battle';
 let onlineRoom: OnlineRoom | null = null;
 let onlinePublicRooms: OnlineRoomSummary[] = [];
 let onlineError: string | null = null;
@@ -367,7 +368,8 @@ function handleOverlayClick(event: MouseEvent): void {
       customSettings = saveCustomSettings(updateCustomSettingByDelta(customSettings, setting, delta));
     }
   }
-  if (action === 'online-open') openOnlineMenu();
+  if (action === 'online-open') openOnlineMenu('battle');
+  if (action === 'online-custom-open') openOnlineMenu('custom');
   if (action === 'online-refresh') refreshPublicRooms();
   if (action === 'online-create-public') createOnlineRoom('public');
   if (action === 'online-create-private') createOnlineRoom('private');
@@ -630,9 +632,10 @@ function openReplayLibrary(): void {
   input.releaseAll();
 }
 
-function openOnlineMenu(): void {
+function openOnlineMenu(mode: OnlineRoomMode = 'battle'): void {
   bindingCapture = null;
   pendingConfirmAction = null;
+  onlineRoomMode = mode;
   onlineError = null;
   appMode = 'onlineMenu';
   settingsReturnMode = 'menu';
@@ -664,6 +667,8 @@ async function createOnlineRoom(visibility: RoomVisibility): Promise<void> {
       playerId: onlinePlayer.id,
       name: onlinePlayer.name,
       visibility,
+      mode: onlineRoomMode,
+      rules: onlineRoomMode === 'custom' ? onlineCustomRulesFromSettings() : battleRulesFromSettings(inputSettings),
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
@@ -750,6 +755,7 @@ function leaveOnlineRoom(): void {
 
 function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
   onlineRoom = room;
+  onlineRoomMode = room.mode === 'custom' ? 'custom' : 'battle';
   syncOnlinePeers(room);
   onlineError = null;
   onlineLastPollAt = 0;
@@ -1150,7 +1156,7 @@ function maybeStartOnlineRun(): void {
   onlineAttackSequence = 0;
   onlineAppliedAttackIds = new Set();
   onlineHostAuthority = isOnlineHost() && onlineRoom
-    ? new HostAuthoritySimulator(onlineRoom.seed, battleRulesFromSettings(inputSettings))
+    ? new HostAuthoritySimulator(onlineRoom.seed, onlineRulesFromRoom(onlineRoom))
     : null;
   onlineHostProgressInFlight = new Set();
   onlineHostLastProgressAt = new Map();
@@ -1514,7 +1520,8 @@ function renderScreenOverlay(state: GameState): string {
       title: 'Multijugador',
       meta: 'Todos los modos disponibles para jugar con otras personas.',
       actions: [
-        ['online-open', 'Salas online'],
+        ['online-open', 'Battle room'],
+        ['online-custom-open', 'Custom room'],
         ['main-menu', 'Volver'],
       ],
       actionsClass: 'mode-menu-actions',
@@ -1662,13 +1669,17 @@ function renderConfirmOverlay(action: DestructiveRunAction): string {
 }
 
 function renderOnlineMenuOverlay(): string {
+  const modeLabel = roomModeLabel(onlineRoomMode);
+  const modeDescription = onlineRoomMode === 'custom'
+    ? 'Custom room - usa la configuracion custom del host, con victoria por supervivencia online.'
+    : 'Battle room - last player standing. Clears send garbage; top out and you are eliminated.';
   const publicRooms = onlinePublicRooms.length === 0
     ? '<div class="online-empty">No public rooms yet.</div>'
     : onlinePublicRooms.map((room) => `
       <article class="online-room-row">
         <div>
           <strong>${escapeHtml(room.id)}</strong>
-          <span>${escapeHtml(room.hostName)} - ${room.playerCount} player${room.playerCount === 1 ? '' : 's'} - ${escapeHtml(room.status)}</span>
+          <span>${escapeHtml(room.hostName)} - ${escapeHtml(roomModeLabel(room.mode))} - ${room.playerCount} player${room.playerCount === 1 ? '' : 's'} - ${escapeHtml(room.status)}</span>
         </div>
         <button type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}">Join</button>
       </article>
@@ -1676,9 +1687,9 @@ function renderOnlineMenuOverlay(): string {
   return `
     <div class="menu-scrim">
       <section class="menu-panel online-panel" aria-label="Online rooms">
-        <div class="panel-eyebrow">ONLINE ROOMS</div>
-        <h1>Rooms</h1>
-        <p>Battle - last player standing. Clears send garbage; top out and you are eliminated.</p>
+        <div class="panel-eyebrow">${escapeHtml(modeLabel.toUpperCase())}</div>
+        <h1>${escapeHtml(modeLabel)}</h1>
+        <p>${escapeHtml(modeDescription)}</p>
         ${renderOnlineError()}
         <label class="online-field">
           <span>Name</span>
@@ -1713,12 +1724,13 @@ function renderOnlineLobbyOverlay(): string {
   const player = currentOnlinePlayer();
   const host = onlineRoom.hostPlayerId === onlinePlayer.id;
   const allReady = onlineRoom.players.length > 0 && onlineRoom.players.every((candidate) => candidate.ready);
+  const modeLabel = roomModeLabel(onlineRoom.mode);
   return `
     <div class="menu-scrim">
       <section class="menu-panel online-panel" aria-label="Online lobby">
-        <div class="panel-eyebrow">${onlineRoom.visibility.toUpperCase()} ROOM</div>
+        <div class="panel-eyebrow">${onlineRoom.visibility.toUpperCase()} ${escapeHtml(modeLabel.toUpperCase())}</div>
         <h1>${escapeHtml(onlineRoom.id)}</h1>
-        <p>${host ? 'You are host.' : 'Waiting for host.'} Battle mode: survive, send garbage, and be the last player standing.</p>
+        <p>${host ? 'You are host.' : 'Waiting for host.'} ${escapeHtml(modeLabel)}: survive, send garbage, and be the last player standing.</p>
         ${renderOnlineError()}
         <div class="online-lobby-list">${onlineRoom.players.map(renderLobbyPlayer).join('')}</div>
         <div class="panel-actions">
@@ -1736,10 +1748,11 @@ function renderOnlineLobbyOverlay(): string {
 function renderOnlineCountdownOverlay(): string {
   if (!onlineRoom?.startsAtServerMs) return renderOnlineLobbyOverlay();
   const remainingMs = Math.max(0, onlineRoom.startsAtServerMs - onlineNowMs());
+  const modeLabel = roomModeLabel(onlineRoom.mode);
   return `
     <div class="menu-scrim">
       <section class="menu-panel online-panel online-countdown" aria-label="Online countdown">
-        <div class="panel-eyebrow">BATTLE START</div>
+        <div class="panel-eyebrow">${escapeHtml(modeLabel.toUpperCase())} START</div>
         <h1>${Math.ceil(remainingMs / 1000)}</h1>
         <p>Room ${escapeHtml(onlineRoom.id)} starts from seed ${onlineRoom.seed}. Last player standing wins.</p>
       </section>
@@ -1802,6 +1815,10 @@ function onlineAliveText(): string {
   if (!onlineRoom) return 'Alive 0/0';
   const alive = onlineRoom.players.filter((player) => player.alive && player.status !== 'eliminated').length;
   return `Alive ${alive}/${onlineRoom.players.length}`;
+}
+
+function roomModeLabel(mode: OnlineRoomMode | undefined): string {
+  return mode === 'custom' ? 'Custom room' : 'Battle room';
 }
 
 function renderIncomingGarbage(): string {
@@ -2406,7 +2423,7 @@ function rulesFromSettings(settings: InputSettings): GameRules {
 }
 
 function rulesForRun(mode: AppMode, runKind: RunKind): GameRules {
-  if (mode === 'onlinePlaying') return battleRulesFromSettings(inputSettings);
+  if (mode === 'onlinePlaying') return onlineRulesFromRoom();
   if (runKind === 'custom') return customRulesFromSettings(customSettings, inputSettings);
   return rulesFromSettings(inputSettings);
 }
@@ -2416,6 +2433,22 @@ function battleRulesFromSettings(settings: InputSettings): GameRules {
     ...BATTLE_RULES,
     dasFrames: settings.dasFrames,
     arrFrames: settings.arrFrames,
+  };
+}
+
+function onlineCustomRulesFromSettings(): GameRules {
+  return {
+    ...customRulesFromSettings(customSettings, inputSettings),
+    targetLines: null,
+  };
+}
+
+function onlineRulesFromRoom(room = onlineRoom): GameRules {
+  const sharedRules = room?.rules ?? battleRulesFromSettings(inputSettings);
+  return {
+    ...sharedRules,
+    dasFrames: inputSettings.dasFrames,
+    arrFrames: inputSettings.arrFrames,
   };
 }
 

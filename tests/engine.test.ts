@@ -693,6 +693,31 @@ describe('core stacker engine', () => {
     expect(rooms[0].hostName).toBe('Public');
   });
 
+  it('stores custom online room rules while keeping online survival as the objective', async () => {
+    const store = new MemoryRoomStore();
+    const rules = {
+      ...BATTLE_RULES,
+      boardWidth: 12,
+      visibleRows: 22,
+      gravityCellsPerFrame: 0.02,
+      targetLines: 40,
+    };
+
+    const room = await createRoom(store, {
+      playerId: 'player-custom-1',
+      name: 'Custom',
+      visibility: 'private',
+      mode: 'custom',
+      rules,
+    }, 1000);
+
+    expect(room.mode).toBe('custom');
+    expect(room.rules.boardWidth).toBe(12);
+    expect(room.rules.visibleRows).toBe(22);
+    expect(room.rules.gravityCellsPerFrame).toBe(0.02);
+    expect(room.rules.targetLines).toBeNull();
+  });
+
   it('allows only the host to start an online room and keeps the start timestamp fixed', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, {

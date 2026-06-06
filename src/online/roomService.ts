@@ -7,6 +7,7 @@ import type {
   OnlinePlayer,
   OnlinePeerSignal,
   OnlineRoom,
+  OnlineRoomMode,
   OnlineRoomSummary,
   PeerSignalRequest,
   ProgressRequest,
@@ -15,6 +16,8 @@ import type {
   RoomVisibility,
   StartRoomRequest,
 } from './protocol';
+import { BATTLE_RULES } from '../game/rules';
+import type { GameRules } from '../game/types';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const ROOM_CODE_LENGTH = 4;
@@ -47,9 +50,12 @@ export async function createRoom(
 ): Promise<OnlineRoom> {
   const player = createPlayer(request.playerId, request.name, nowMs);
   const id = await generateUniqueRoomId((candidate) => store.getRoom(candidate));
+  const mode = normalizeRoomMode(request.mode);
   const room: OnlineRoom = {
     id,
     visibility: normalizeVisibility(request.visibility),
+    mode,
+    rules: normalizeRoomRules(request.rules, mode),
     status: 'lobby',
     hostPlayerId: player.id,
     createdAtServerMs: nowMs,
@@ -409,6 +415,7 @@ function roomSummary(room: OnlineRoom): OnlineRoomSummary {
     id: room.id,
     hostName: host?.name ?? 'Host',
     playerCount: room.players.length,
+    mode: room.mode,
     status: room.status,
     createdAtServerMs: room.createdAtServerMs,
   };
@@ -471,6 +478,35 @@ function normalizeVisibility(value: RoomVisibility): RoomVisibility {
   return value === 'public' ? 'public' : 'private';
 }
 
+function normalizeRoomMode(value: unknown): OnlineRoomMode {
+  return value === 'custom' ? 'custom' : 'battle';
+}
+
+function normalizeRoomRules(value: unknown, mode: OnlineRoomMode): GameRules {
+  const base = cloneRules(BATTLE_RULES);
+  if (mode !== 'custom' || !isObject(value)) return base;
+  return {
+    ...base,
+    boardWidth: normalizeFiniteRuleNumber(value.boardWidth, base.boardWidth, { min: 4, max: 16, integer: true }),
+    visibleRows: normalizeFiniteRuleNumber(value.visibleRows, base.visibleRows, { min: 10, max: 40, integer: true }),
+    hiddenRows: normalizeFiniteRuleNumber(value.hiddenRows, base.hiddenRows, { min: 0, max: 10, integer: true }),
+    nextPreview: normalizeFiniteRuleNumber(value.nextPreview, base.nextPreview, { min: 0, max: 7, integer: true }),
+    targetLines: null,
+    gravityCellsPerFrame: normalizeFiniteRuleNumber(value.gravityCellsPerFrame, base.gravityCellsPerFrame, { min: 0.001, max: 5 }),
+    softDropCellsPerFrame: normalizeFiniteRuleNumber(value.softDropCellsPerFrame, base.softDropCellsPerFrame, { min: 0.001, max: 20 }),
+    lockDelayFrames: normalizeFiniteRuleNumber(value.lockDelayFrames, base.lockDelayFrames, { min: 0, max: 300, integer: true }),
+    dasFrames: normalizeFiniteRuleNumber(value.dasFrames, base.dasFrames, { min: 0, max: 60, integer: true }),
+    arrFrames: normalizeFiniteRuleNumber(value.arrFrames, base.arrFrames, { min: 0, max: 60, integer: true }),
+    garbageDelayFrames: normalizeFiniteRuleNumber(value.garbageDelayFrames, base.garbageDelayFrames, { min: 0, max: 600, integer: true }),
+    allowHardDrop: normalizeRuleBoolean(value.allowHardDrop, base.allowHardDrop),
+    allowHold: normalizeRuleBoolean(value.allowHold, base.allowHold),
+    showGhost: normalizeRuleBoolean(value.showGhost, base.showGhost),
+    infiniteHold: normalizeRuleBoolean(value.infiniteHold, base.infiniteHold),
+    infiniteMovement: normalizeRuleBoolean(value.infiniteMovement, base.infiniteMovement),
+    lockResetLimit: normalizeFiniteRuleNumber(value.lockResetLimit, base.lockResetLimit, { min: 0, max: 99, integer: true }),
+  };
+}
+
 export function normalizeRoomId(value: string): string {
   return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, ROOM_CODE_LENGTH);
 }
@@ -491,6 +527,32 @@ function normalizeNonNegativeInteger(value: number): number {
   return Math.max(0, Math.floor(value));
 }
 
+function normalizeFiniteRuleNumber(
+  value: unknown,
+  fallback: number,
+  options: { min: number; max: number; integer?: boolean },
+): number {
+  const numeric = typeof value === 'string' ? Number(value.trim().replace(',', '.')) : Number(value);
+  const finite = Number.isFinite(numeric) ? numeric : fallback;
+  const rounded = options.integer ? Math.round(finite) : finite;
+  return Math.min(options.max, Math.max(options.min, rounded));
+}
+
+function normalizeRuleBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return fallback;
+}
+
+function cloneRules(rules: GameRules): GameRules {
+  return { ...rules };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 function randomSeed(): number {
   return Math.floor(Math.random() * 0xffffffff);
 }
@@ -500,8 +562,11 @@ function cloneRoom(room: OnlineRoom | null): OnlineRoom | null {
 }
 
 function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
+  const mode = normalizeRoomMode(room.mode);
   return {
     ...room,
+    mode,
+    rules: normalizeRoomRules(room.rules, mode),
     winnerPlayerId: room.winnerPlayerId ?? null,
     peerSignals: room.peerSignals ?? [],
     attacks: (room.attacks ?? []).map((attack) => ({
