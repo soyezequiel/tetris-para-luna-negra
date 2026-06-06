@@ -6,6 +6,7 @@ export type SoundCue =
   | 'hold'
   | 'lock'
   | 'lineClear'
+  | 'tSpin'
   | 'finish'
   | 'gameOver'
   | 'retry';
@@ -130,6 +131,10 @@ export class SoundEngine {
         break;
       case 'lineClear':
         this.arpeggio([420, 560, 760, 980], 0.035, 0.09);
+        break;
+      case 'tSpin':
+        this.noise(0.035, 0.045, 1800);
+        this.arpeggio([740, 932, 1175, 1480], 0.03, 0.13);
         break;
       case 'finish':
         this.arpeggio([523, 659, 784, 1046], 0.08, 0.12);

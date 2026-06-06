@@ -7,6 +7,7 @@ import {
   customRulesFromSettings,
   normalizeCustomSettings,
 } from '../src/app/customSettings';
+import { soundCueForRunProgress } from '../src/app/runEffects';
 import {
   createRunHistoryEntry,
   deleteRunHistoryEntry,
@@ -59,7 +60,7 @@ import {
   updateBinding,
   updateInputTiming,
 } from '../src/input/settings';
-import type { ActivePiece, Cell, GameInput, PendingGarbage } from '../src/game/types';
+import type { ActivePiece, Cell, GameEvent, GameInput, PendingGarbage } from '../src/game/types';
 import type { OnlineGameSnapshot, OnlinePlayer, OnlinePlayerStatus } from '../src/online/protocol';
 
 describe('core stacker engine', () => {
@@ -499,6 +500,26 @@ describe('core stacker engine', () => {
       attackLines: 2,
       outgoingLines: 2,
     }]);
+  });
+
+  it('uses a distinct sound cue for T-Spin line clears', () => {
+    const state = createSplitState(1, 30);
+    const spinEvent: GameEvent = {
+      type: 'lineClear',
+      frame: 30,
+      cleared: 1,
+      difficult: true,
+      spin: 'full',
+      piece: 'T',
+      perfectClear: false,
+      combo: 0,
+      b2b: 1,
+      attackLines: 2,
+      outgoingLines: 2,
+    };
+
+    expect(soundCueForRunProgress(state, [spinEvent], 0, 0)).toBe('tSpin');
+    expect(soundCueForRunProgress(state, [{ ...spinEvent, spin: 'none', difficult: false }], 0, 0)).toBe('lineClear');
   });
 
   it('adds the modern perfect clear bonus when the board empties after a clear', () => {

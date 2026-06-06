@@ -10,6 +10,7 @@ import {
   saveRunHistoryEntry,
   type RunHistoryEntry,
 } from './app/runHistory';
+import { soundCueForRunProgress } from './app/runEffects';
 import { createRunSummary, RunSplitTracker, type LineSplit, type RunSummary } from './app/runStats';
 import { canAdvanceGame, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import {
@@ -279,8 +280,9 @@ function advanceGameToFrame(targetFrame: number, finalFrameInputs: GameInput[]):
     const inputs = frame === targetFrame ? finalFrameInputs : [];
     state = engine.tick(frame, inputs);
     gameFrame = frame;
-    syncRunEffects(state);
-    syncOnlineBattleEvents(engine.drainEvents(), state);
+    const events = engine.drainEvents();
+    syncRunEffects(state, events);
+    syncOnlineBattleEvents(events, state);
   }
   return state;
 }
@@ -1038,10 +1040,10 @@ function toGameInputs(inputs: ControlInput[], frame: number): GameInput[] {
     .map((event) => ({ frame, action: event.action }));
 }
 
-function syncRunEffects(state: GameState): void {
+function syncRunEffects(state: GameState, events: GameEvent[]): void {
   runSplitTracker.record(state);
-  if (state.stats.lines > lastLines) sound.play('lineClear');
-  else if (state.stats.pieces > lastPieces) sound.play('lock');
+  const progressCue = soundCueForRunProgress(state, events, lastLines, lastPieces);
+  if (progressCue) sound.play(progressCue);
   if (state.status !== lastStatus) {
     if (state.status === 'finished') sound.play('finish');
     if (state.status === 'gameover') sound.play('gameOver');
