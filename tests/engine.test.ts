@@ -22,6 +22,7 @@ import { calculateAttack, nextBackToBack, nextCombo } from '../src/game/attack';
 import { attackLinesForClear, garbageHoleColumn, resolveAttack } from '../src/game/battle';
 import { addGarbageLines, clearCompletedLines, createBoard } from '../src/game/board';
 import { GameEngine } from '../src/game/engine';
+import { currentGravityCellsPerFrame } from '../src/game/gravity';
 import { createReplayLog, recordInput } from '../src/game/replay';
 import { SeededRng } from '../src/game/rng';
 import { BATTLE_RULES, DEFAULT_RULES } from '../src/game/rules';
@@ -56,6 +57,7 @@ import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from '
 import {
   actionForCode,
   DEFAULT_INPUT_SETTINGS,
+  loadInputSettings,
   normalizeInputSettings,
   updateBinding,
   updateInputTiming,
@@ -98,6 +100,92 @@ describe('core stacker engine', () => {
       infiniteHold: false,
       infiniteMovement: false,
     });
+  });
+
+  it('uses base gravity when custom levelling is enabled', () => {
+    const settings = normalizeCustomSettings({
+      gravity: 0.02,
+      useLevelling: true,
+      baseGravity: 0.05,
+      gravityIncrease: 0.01,
+    });
+    const rules = customRulesFromSettings(settings, DEFAULT_INPUT_SETTINGS);
+
+    expect(rules.gravityCellsPerFrame).toBe(0.05);
+  });
+
+  it('uses fixed gravity when custom levelling is disabled', () => {
+    const settings = normalizeCustomSettings({
+      gravity: 0.04,
+      useLevelling: false,
+      baseGravity: 0.2,
+      gravityIncrease: 0.01,
+    });
+    const rules = customRulesFromSettings(settings, DEFAULT_INPUT_SETTINGS);
+
+    expect(rules.gravityCellsPerFrame).toBe(0.04);
+  });
+
+  it('increases custom gravity by cleared-line levels', () => {
+    const settings = normalizeCustomSettings({
+      useLevelling: true,
+      useStaticLevelling: true,
+      startingLevel: 2,
+      levelStaticSpeed: 2,
+      baseGravity: 0.05,
+      gravityIncrease: 0.01,
+    });
+    const rules = customRulesFromSettings(settings, DEFAULT_INPUT_SETTINGS);
+
+    expect(rules).toMatchObject({
+      gravityCellsPerFrame: 0.05,
+      gravityIncreaseCellsPerLevel: 0.01,
+      gravityLevelLines: 2,
+      gravityLevelPieces: 0,
+      gravityStartingLevel: 2,
+    });
+    expect(currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0 })).toBeCloseTo(0.06);
+    expect(currentGravityCellsPerFrame(rules, { lines: 4, pieces: 0 })).toBeCloseTo(0.08);
+  });
+
+  it('increases custom gravity by placed-piece levels when static levelling is disabled', () => {
+    const settings = normalizeCustomSettings({
+      useLevelling: true,
+      useStaticLevelling: false,
+      startingLevel: 1,
+      levelSpeed: 3,
+      baseGravity: 0.04,
+      gravityIncrease: 0.02,
+    });
+    const rules = customRulesFromSettings(settings, DEFAULT_INPUT_SETTINGS);
+
+    expect(rules).toMatchObject({
+      gravityCellsPerFrame: 0.04,
+      gravityIncreaseCellsPerLevel: 0.02,
+      gravityLevelLines: 0,
+      gravityLevelPieces: 3,
+      gravityStartingLevel: 1,
+    });
+    expect(currentGravityCellsPerFrame(rules, { lines: 0, pieces: 2 })).toBeCloseTo(0.04);
+    expect(currentGravityCellsPerFrame(rules, { lines: 0, pieces: 6 })).toBeCloseTo(0.08);
+  });
+
+  it('applies gravity increases during engine ticks', () => {
+    const engine = new GameEngine(123, {
+      ...DEFAULT_RULES,
+      gravityCellsPerFrame: 0,
+      gravityIncreaseCellsPerLevel: 1,
+      gravityLevelLines: 0,
+      gravityLevelPieces: 1,
+      gravityStartingLevel: 1,
+      softDropCellsPerFrame: 0,
+    });
+
+    expect(engine.tick(1).active?.y).toBe(0);
+
+    const afterLock = engine.tick(2, [{ frame: 2, action: 'hardDrop' }]);
+    expect(afterLock.stats.pieces).toBe(1);
+    expect(afterLock.active?.y).toBe(1);
   });
 
   it('applies custom control toggles inside the engine', () => {
@@ -660,6 +748,32 @@ describe('core stacker engine', () => {
     expect(slower.dasFrames).toBe(DEFAULT_INPUT_SETTINGS.dasFrames + 2);
   });
 
+  it('defaults to TETR.IO-like horizontal handling', () => {
+    expect(DEFAULT_INPUT_SETTINGS.dasFrames).toBe(12);
+    expect(DEFAULT_INPUT_SETTINGS.arrFrames).toBe(2);
+  });
+
+  it('defaults to a responsive soft drop speed', () => {
+    expect(DEFAULT_RULES.softDropCellsPerFrame + DEFAULT_RULES.gravityCellsPerFrame).toBeCloseTo(20 / 60);
+  });
+
+  it('migrates legacy saved default input timing to the current baseline', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: () => JSON.stringify({ dasFrames: 9, arrFrames: 1 }),
+      },
+    });
+
+    try {
+      expect(loadInputSettings()).toMatchObject({ dasFrames: 12, arrFrames: 2 });
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
+      else delete (globalThis as { localStorage?: Storage }).localStorage;
+    }
+  });
+
   it('reuses DAS and ARR timing for held touch controls', () => {
     const input = new InputController({
       ...DEFAULT_INPUT_SETTINGS,
@@ -703,6 +817,39 @@ describe('core stacker engine', () => {
 
     input.advanceFrame(5);
     expect(input.collect(5)).toEqual([{ frame: 5, action: 'moveLeft' }]);
+  });
+
+  it('keeps held soft drop independent from horizontal DAS and ARR', () => {
+    const input = new InputController({
+      ...DEFAULT_INPUT_SETTINGS,
+      dasFrames: 12,
+      arrFrames: 2,
+    }, null);
+
+    input.pressControl('key:ArrowDown', 'softDrop');
+    input.advanceFrame(1);
+    expect(input.collect(1)).toEqual([{ frame: 0, action: 'softDrop' }]);
+
+    input.advanceFrame(2);
+    expect(input.collect(2)).toEqual([{ frame: 2, action: 'softDrop' }]);
+
+    input.advanceFrame(3);
+    expect(input.collect(3)).toEqual([{ frame: 3, action: 'softDrop' }]);
+  });
+
+  it('accumulates fractional soft drop speed across frames', () => {
+    const engine = new GameEngine(123, {
+      ...DEFAULT_RULES,
+      gravityCellsPerFrame: 0,
+      softDropCellsPerFrame: 0.5,
+    });
+    const startY = engine.getState().active?.y;
+
+    engine.tick(1, [{ frame: 1, action: 'softDrop' }]);
+    expect(engine.getState().active?.y).toBe(startY);
+
+    engine.tick(2, [{ frame: 2, action: 'softDrop' }]);
+    expect(engine.getState().active?.y).toBe((startY ?? 0) + 1);
   });
 
   it('keeps rotation controls from repeating while held', () => {

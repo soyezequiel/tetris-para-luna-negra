@@ -123,7 +123,7 @@ export const CUSTOM_DEFAULT_SETTINGS: CustomSettings = {
   levelSpeed: 1,
   useStaticLevelling: true,
   levelStaticSpeed: 10,
-  baseGravity: 0.8,
+  baseGravity: 0.02,
   gravityIncrease: 0.007,
   lockDelayFrames: 30,
   objectiveMode: 'none',
@@ -148,7 +148,7 @@ export const CUSTOM_NUMBER_SETTING_META: Record<CustomNumberSettingKey, NumberSe
   startingLevel: { min: 1, max: 30, step: 1, integer: true },
   levelSpeed: { min: 1, max: 60, step: 1, integer: true },
   levelStaticSpeed: { min: 1, max: 60, step: 1, integer: true },
-  baseGravity: { min: 0.001, max: 20, step: 0.1 },
+  baseGravity: { min: 0.001, max: 20, step: 0.01 },
   gravityIncrease: { min: 0, max: 2, step: 0.001 },
   lockDelayFrames: { min: 1, max: 300, step: 1, integer: true },
   objectiveLineTarget: { min: 0, max: 999, step: 1, integer: true },
@@ -294,6 +294,7 @@ export function updateCustomSettingByDelta(
 
 export function customRulesFromSettings(settings: CustomSettings, inputSettings: InputSettings): GameRules {
   const normalized = normalizeCustomSettings(settings);
+  const usesLevelling = normalized.useLevelling;
   return {
     ...DEFAULT_RULES,
     boardWidth: normalized.boardWidth,
@@ -303,7 +304,11 @@ export function customRulesFromSettings(settings: CustomSettings, inputSettings:
     targetLines: normalized.objectiveMode === 'lines' && normalized.objectiveLineTarget > 0
       ? normalized.objectiveLineTarget
       : null,
-    gravityCellsPerFrame: normalized.gravity,
+    gravityCellsPerFrame: usesLevelling ? normalized.baseGravity : normalized.gravity,
+    gravityIncreaseCellsPerLevel: usesLevelling ? normalized.gravityIncrease : 0,
+    gravityLevelLines: usesLevelling && normalized.useStaticLevelling ? normalized.levelStaticSpeed : 0,
+    gravityLevelPieces: usesLevelling && !normalized.useStaticLevelling ? normalized.levelSpeed : 0,
+    gravityStartingLevel: usesLevelling ? normalized.startingLevel : 1,
     lockDelayFrames: normalized.lockDelayFrames,
     dasFrames: inputSettings.dasFrames,
     arrFrames: inputSettings.arrFrames,

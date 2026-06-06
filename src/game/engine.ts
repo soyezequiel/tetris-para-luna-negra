@@ -1,6 +1,7 @@
 import { createShuffledBag } from './bag';
 import { calculateAttack, garbageHoleColumn, nextBackToBack, nextCombo, resolveAttack } from './attack';
 import { addGarbageLines, clearCompletedLines, createBoard } from './board';
+import { currentGravityCellsPerFrame } from './gravity';
 import { cellsFor, kicksFor, nextRotation } from './pieces';
 import { SeededRng } from './rng';
 import { DEFAULT_RULES } from './rules';
@@ -295,8 +296,7 @@ export class GameEngine {
   }
 
   private softDrop(): void {
-    let remaining = this.rules.softDropCellsPerFrame;
-    while (remaining >= 1 && this.tryMove(0, 1)) remaining -= 1;
+    this.fallAccumulator += this.rules.softDropCellsPerFrame;
   }
 
   private hardDrop(): void {
@@ -331,16 +331,23 @@ export class GameEngine {
 
   private applyGravity(): void {
     if (!this.active) return;
-    this.fallAccumulator += this.rules.gravityCellsPerFrame;
-    while (this.fallAccumulator >= 1) {
-      this.fallAccumulator -= 1;
-      if (!this.tryMove(0, 1)) break;
-    }
+    this.fallAccumulator += currentGravityCellsPerFrame(this.rules, {
+      lines: this.lines,
+      pieces: this.pieces,
+    });
+    this.applyAccumulatedFall();
     if (this.isGrounded()) {
       this.lockFrames += 1;
       if (this.lockFrames >= this.rules.lockDelayFrames) this.lockPiece();
     } else {
       this.lockFrames = 0;
+    }
+  }
+
+  private applyAccumulatedFall(): void {
+    while (this.fallAccumulator >= 1) {
+      this.fallAccumulator -= 1;
+      if (!this.tryMove(0, 1)) break;
     }
   }
 

@@ -55,6 +55,8 @@ export const DEFAULT_INPUT_SETTINGS: InputSettings = {
 };
 
 const STORAGE_KEY = 'stack40.inputSettings';
+const LEGACY_DEFAULT_DAS_FRAMES = 9;
+const LEGACY_DEFAULT_ARR_FRAMES = 1;
 const MIN_DAS_FRAMES = 0;
 const MAX_DAS_FRAMES = 30;
 const MIN_ARR_FRAMES = 1;
@@ -62,7 +64,7 @@ const MAX_ARR_FRAMES = 10;
 
 export function loadInputSettings(): InputSettings {
   try {
-    return normalizeInputSettings(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'));
+    return normalizeInputSettings(migrateStoredInputSettings(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')));
   } catch {
     return normalizeInputSettings({});
   }
@@ -178,6 +180,18 @@ function cloneBindings(bindings: InputBindings): InputBindings {
 function normalizeInteger(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function migrateStoredInputSettings(value: unknown): unknown {
+  if (!isObject(value)) return value;
+  if (value.dasFrames === LEGACY_DEFAULT_DAS_FRAMES && value.arrFrames === LEGACY_DEFAULT_ARR_FRAMES) {
+    return {
+      ...value,
+      dasFrames: DEFAULT_INPUT_SETTINGS.dasFrames,
+      arrFrames: DEFAULT_INPUT_SETTINGS.arrFrames,
+    };
+  }
+  return value;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

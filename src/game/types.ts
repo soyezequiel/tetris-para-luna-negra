@@ -44,6 +44,10 @@ export interface GameRules {
   targetLines: number | null;
   attackTable: AttackTableId;
   gravityCellsPerFrame: number;
+  gravityIncreaseCellsPerLevel: number;
+  gravityLevelLines: number;
+  gravityLevelPieces: number;
+  gravityStartingLevel: number;
   softDropCellsPerFrame: number;
   lockDelayFrames: number;
   dasFrames: number;

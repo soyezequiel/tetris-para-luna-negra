@@ -61,6 +61,18 @@ function parseRules(value: unknown): GameRules | null {
   const targetLines = readNullablePositiveInteger(value.targetLines);
   const attackTable = value.attackTable === 'modern' ? 'modern' : DEFAULT_RULES.attackTable;
   const gravityCellsPerFrame = readPositiveNumber(value.gravityCellsPerFrame);
+  const gravityIncreaseCellsPerLevel = value.gravityIncreaseCellsPerLevel === undefined
+    ? DEFAULT_RULES.gravityIncreaseCellsPerLevel
+    : readNonNegativeNumber(value.gravityIncreaseCellsPerLevel);
+  const gravityLevelLines = value.gravityLevelLines === undefined
+    ? DEFAULT_RULES.gravityLevelLines
+    : readNonNegativeInteger(value.gravityLevelLines);
+  const gravityLevelPieces = value.gravityLevelPieces === undefined
+    ? DEFAULT_RULES.gravityLevelPieces
+    : readNonNegativeInteger(value.gravityLevelPieces);
+  const gravityStartingLevel = value.gravityStartingLevel === undefined
+    ? DEFAULT_RULES.gravityStartingLevel
+    : readPositiveInteger(value.gravityStartingLevel);
   const softDropCellsPerFrame = readPositiveNumber(value.softDropCellsPerFrame);
   const lockDelayFrames = readPositiveInteger(value.lockDelayFrames);
   const dasFrames = readNonNegativeInteger(value.dasFrames);
@@ -97,6 +109,10 @@ function parseRules(value: unknown): GameRules | null {
     || nextPreview === null
     || targetLines === undefined
     || gravityCellsPerFrame === null
+    || gravityIncreaseCellsPerLevel === null
+    || gravityLevelLines === null
+    || gravityLevelPieces === null
+    || gravityStartingLevel === null
     || softDropCellsPerFrame === null
     || lockDelayFrames === null
     || dasFrames === null
@@ -123,6 +139,10 @@ function parseRules(value: unknown): GameRules | null {
     targetLines,
     attackTable,
     gravityCellsPerFrame,
+    gravityIncreaseCellsPerLevel,
+    gravityLevelLines,
+    gravityLevelPieces,
+    gravityStartingLevel,
     softDropCellsPerFrame,
     lockDelayFrames,
     dasFrames,
@@ -213,6 +233,10 @@ function readNullableNonNegativeInteger(value: unknown): number | null | undefin
 
 function readPositiveNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function readNonNegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function readBoolean(value: unknown): boolean | null {
