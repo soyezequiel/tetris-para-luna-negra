@@ -1,8 +1,13 @@
 import type { LunaNegraEnterRequest } from '../../../src/online/protocol.js';
 import { enterLunaNegraRoom, normalizeRoomId, OnlineRoomError, type VerifiedLunaNegraInvite } from '../../../src/online/roomService.js';
-import { getRoomStore, handleApiError, readJsonBody, sendJson } from '../../../src/online/vercelApi.js';
+import { getRoomStore, handleApiError, handleNodeApi, readJsonBody, sendJson } from '../../../src/online/vercelApi.js';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../../../src/online/vercelApi.js';
+
+export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  return handleNodeApi(request, response, { POST });
+}
 
 interface LunaNegraVerifyResponse {
   valid?: boolean;

@@ -1,5 +1,6 @@
 import { MemoryRoomStore, OnlineRoomError, type RoomStore } from './roomService.js';
 import type { MatchmakingQueue, MatchmakingTicket, OnlineMatchResult, OnlineProfile, QuickPlayLeaderboardEntry } from './protocol.js';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export const config = {
   regions: ['gru1'],
@@ -187,6 +188,57 @@ export function handleApiError(error: unknown): Response {
     return sendJson(error.status, { error: error.message });
   }
   return sendJson(500, { error: error instanceof Error ? error.message : 'Unexpected server error.' });
+}
+
+export type WebApiHandlers = Partial<Record<'GET' | 'POST', (request: Request) => Response | Promise<Response>>>;
+
+export async function handleNodeApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  handlers: WebApiHandlers,
+): Promise<void> {
+  try {
+    const method = request.method === 'POST' ? 'POST' : 'GET';
+    const handler = handlers[method];
+    const webResponse = handler
+      ? await handler(await toWebRequest(request))
+      : sendMethodNotAllowed();
+    await writeNodeResponse(response, webResponse);
+  } catch (error) {
+    await writeNodeResponse(response, handleApiError(error));
+  }
+}
+
+async function toWebRequest(request: IncomingMessage): Promise<Request> {
+  const host = request.headers.host ?? '127.0.0.1';
+  const proto = firstHeader(request.headers['x-forwarded-proto']) ?? 'https';
+  const url = `${proto}://${host}${request.url ?? '/'}`;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (Array.isArray(value)) headers.set(key, value.join(', '));
+    else if (value !== undefined) headers.set(key, value);
+  }
+  const method = request.method ?? 'GET';
+  const rawBody = method === 'GET' || method === 'HEAD' ? undefined : await readNodeBody(request);
+  const body = rawBody ? Buffer.from(rawBody).toString('utf8') : undefined;
+  return new Request(url, { method, headers, body });
+}
+
+async function readNodeBody(request: IncomingMessage): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of request) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  return Buffer.concat(chunks);
+}
+
+async function writeNodeResponse(response: ServerResponse, webResponse: Response): Promise<void> {
+  response.statusCode = webResponse.status;
+  webResponse.headers.forEach((value, key) => response.setHeader(key, value));
+  response.end(Buffer.from(await webResponse.arrayBuffer()));
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
 }
 
 function roomKey(id: string): string {

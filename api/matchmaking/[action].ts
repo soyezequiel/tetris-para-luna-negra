@@ -1,8 +1,13 @@
 import type { EnqueueMatchmakingRequest, LeaveMatchmakingRequest, MatchmakingHeartbeatRequest } from '../../src/online/protocol.js';
 import { enqueueMatchmaking, getMatchmakingTicket, heartbeatMatchmaking, leaveMatchmaking } from '../../src/online/roomService.js';
-import { getRoomStore, handleApiError, queryParam, readJsonBody, sendJson, sendMethodNotAllowed } from '../../src/online/vercelApi.js';
+import { getRoomStore, handleApiError, handleNodeApi, queryParam, readJsonBody, sendJson, sendMethodNotAllowed } from '../../src/online/vercelApi.js';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../../src/online/vercelApi.js';
+
+export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  return handleNodeApi(request, response, { GET, POST });
+}
 
 export async function GET(request: Request): Promise<Response> {
   try {

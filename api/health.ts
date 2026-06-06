@@ -1,3 +1,10 @@
+import { handleNodeApi } from '../src/online/vercelApi.js';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  return handleNodeApi(request, response, { GET });
+}
+
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const diagnostics = url.searchParams.get('diag') === 'rooms'
