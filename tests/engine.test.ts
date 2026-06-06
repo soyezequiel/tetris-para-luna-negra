@@ -59,7 +59,7 @@ import {
   updateBinding,
   updateInputTiming,
 } from '../src/input/settings';
-import type { Cell, GameInput, PendingGarbage } from '../src/game/types';
+import type { ActivePiece, Cell, GameInput, PendingGarbage } from '../src/game/types';
 import type { OnlineGameSnapshot, OnlinePlayer, OnlinePlayerStatus } from '../src/online/protocol';
 
 describe('core stacker engine', () => {
@@ -146,6 +146,74 @@ describe('core stacker engine', () => {
     expect(afterHold.canHold).toBe(false);
     const afterSecondHold = engine.tick(2, [{ frame: 2, action: 'hold' }]);
     expect(afterSecondHold.hold).toBe(first);
+  });
+
+  it('matches TETR.IO-style move-reset lock delay for grounded rotations', () => {
+    const engine = new GameEngine(2026);
+    const unsafe = engine as unknown as {
+      active: ActivePiece;
+      lockFrames: number;
+      lockResets: number;
+      fallAccumulator: number;
+    };
+    unsafe.active = {
+      type: 'O',
+      rotation: 0,
+      x: 3,
+      y: DEFAULT_RULES.visibleRows + DEFAULT_RULES.hiddenRows - 2,
+    };
+    unsafe.lockFrames = 0;
+    unsafe.lockResets = 0;
+    unsafe.fallAccumulator = 0;
+
+    let state = engine.getState();
+    for (let frame = 1; frame <= DEFAULT_RULES.lockResetLimit; frame += 1) {
+      state = engine.tick(frame, [{ frame, action: 'rotateCW' }]);
+    }
+
+    expect(state.stats.pieces).toBe(0);
+    expect(unsafe.lockResets).toBe(DEFAULT_RULES.lockResetLimit);
+
+    const maxFrames = DEFAULT_RULES.lockResetLimit + DEFAULT_RULES.lockDelayFrames + 1;
+    for (let frame = DEFAULT_RULES.lockResetLimit + 1; frame <= maxFrames && state.stats.pieces === 0; frame += 1) {
+      state = engine.tick(frame, [{ frame, action: 'rotateCW' }]);
+    }
+
+    expect(state.stats.pieces).toBe(1);
+  });
+
+  it('does not restore the lock reset budget after a floor kick lifts the piece', () => {
+    const engine = new GameEngine(2027, {
+      ...DEFAULT_RULES,
+      gravityCellsPerFrame: 1,
+    });
+    const unsafe = engine as unknown as {
+      active: ActivePiece;
+      lockFrames: number;
+      lockResets: number;
+      fallAccumulator: number;
+    };
+    unsafe.active = {
+      type: 'O',
+      rotation: 0,
+      x: 3,
+      y: DEFAULT_RULES.visibleRows + DEFAULT_RULES.hiddenRows - 4,
+    };
+    unsafe.lockFrames = 0;
+    unsafe.lockResets = DEFAULT_RULES.lockResetLimit;
+    unsafe.fallAccumulator = 0;
+
+    let state = engine.tick(1);
+
+    expect(state.active?.y).toBe(DEFAULT_RULES.visibleRows + DEFAULT_RULES.hiddenRows - 3);
+    expect(unsafe.lockResets).toBe(DEFAULT_RULES.lockResetLimit);
+
+    const maxFrames = DEFAULT_RULES.lockDelayFrames + 5;
+    for (let frame = 2; frame <= maxFrames && state.stats.pieces === 0; frame += 1) {
+      state = engine.tick(frame, [{ frame, action: 'rotateCW' }]);
+    }
+
+    expect(state.stats.pieces).toBe(1);
   });
 
   it('replays the same input log deterministically', () => {

@@ -341,7 +341,6 @@ export class GameEngine {
       if (this.lockFrames >= this.rules.lockDelayFrames) this.lockPiece();
     } else {
       this.lockFrames = 0;
-      this.lockResets = 0;
     }
   }
 

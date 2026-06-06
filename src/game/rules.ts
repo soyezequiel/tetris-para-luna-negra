@@ -23,7 +23,7 @@ export const DEFAULT_RULES: GameRules = {
   allowHold: true,
   showGhost: true,
   infiniteHold: false,
-  infiniteMovement: true,
+  infiniteMovement: false,
   lockResetLimit: 15,
 };
 
