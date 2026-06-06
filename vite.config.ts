@@ -1,35 +1,34 @@
 import { defineConfig } from 'vite';
-import * as attackRoom from './api/rooms/attack';
-import * as createRoom from './api/rooms/create';
-import * as eliminateRoom from './api/rooms/eliminate';
 import * as health from './api/health';
-import * as joinRoom from './api/rooms/join';
 import * as lunaNegraEnter from './api/rooms/luna-negra/enter';
-import * as progressRoom from './api/rooms/progress';
-import * as publicRooms from './api/rooms/public';
-import * as readyRoom from './api/rooms/ready';
-import * as resultRoom from './api/rooms/result';
-import * as signalRoom from './api/rooms/signal';
-import * as startRoom from './api/rooms/start';
-import * as stateRoom from './api/rooms/state';
+import * as matchmakingAction from './api/matchmaking/[action]';
+import * as quickplayAction from './api/quickplay/[action]';
+import * as roomsAction from './api/rooms/[action]';
 
 type LocalApiHandler = (request: Request) => Response | Promise<Response>;
 type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
 
 const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/health', health],
-  ['/api/rooms/attack', attackRoom],
-  ['/api/rooms/create', createRoom],
-  ['/api/rooms/eliminate', eliminateRoom],
-  ['/api/rooms/join', joinRoom],
+  ['/api/matchmaking/enqueue', matchmakingAction],
+  ['/api/matchmaking/heartbeat', matchmakingAction],
+  ['/api/matchmaking/leave', matchmakingAction],
+  ['/api/matchmaking/ticket', matchmakingAction],
+  ['/api/quickplay/enter', quickplayAction],
+  ['/api/quickplay/leaderboard', quickplayAction],
+  ['/api/rooms/attack', roomsAction],
+  ['/api/rooms/create', roomsAction],
+  ['/api/rooms/eliminate', roomsAction],
+  ['/api/rooms/join', roomsAction],
   ['/api/rooms/luna-negra/enter', lunaNegraEnter],
-  ['/api/rooms/progress', progressRoom],
-  ['/api/rooms/public', publicRooms],
-  ['/api/rooms/ready', readyRoom],
-  ['/api/rooms/result', resultRoom],
-  ['/api/rooms/signal', signalRoom],
-  ['/api/rooms/start', startRoom],
-  ['/api/rooms/state', stateRoom],
+  ['/api/rooms/progress', roomsAction],
+  ['/api/rooms/public', roomsAction],
+  ['/api/rooms/ready', roomsAction],
+  ['/api/rooms/result', roomsAction],
+  ['/api/rooms/signal', roomsAction],
+  ['/api/rooms/start', roomsAction],
+  ['/api/rooms/state', roomsAction],
+  ['/api/rooms/targeting', roomsAction],
 ]);
 
 export default defineConfig({
