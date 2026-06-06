@@ -33,7 +33,7 @@ import type {
   StartRoomRequest,
   TargetingMode,
 } from './protocol';
-import { BATTLE_RULES } from '../game/rules';
+import { BATTLE_RULES } from '../game/rules.js';
 import type { GameRules } from '../game/types';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
