@@ -1,4 +1,4 @@
-import type { ActivePiece, Cell } from '../game/types';
+import type { ActivePiece, Cell, GameEngineSnapshot } from '../game/types';
 
 export type RoomVisibility = 'public' | 'private';
 export type OnlineRoomStatus = 'lobby' | 'countdown' | 'playing' | 'finished';
@@ -10,6 +10,14 @@ export interface OnlineGameSnapshot {
   visibleRows: number;
   boardWidth: number;
   elapsedFrames: number;
+  status?: 'ready' | 'playing' | 'finished' | 'gameover';
+  lines?: number;
+  pieces?: number;
+  sentGarbage?: number;
+  receivedGarbage?: number;
+  pendingGarbage?: number;
+  engine?: GameEngineSnapshot;
+  lastProcessedInputSequence?: number;
 }
 
 export type OnlinePeerSignalType = 'offer' | 'answer' | 'ice';
@@ -27,6 +35,7 @@ export interface OnlinePeerSignal {
 export interface OnlineAttack {
   id: string;
   roomId: string;
+  authorityPlayerId: string;
   fromPlayerId: string;
   toPlayerId: string;
   lines: number;
@@ -102,6 +111,7 @@ export interface StartRoomRequest {
 
 export interface ProgressRequest {
   roomId: string;
+  authorityPlayerId: string;
   playerId: string;
   lines: number;
   pieces: number;
@@ -127,6 +137,7 @@ export interface PeerSignalRequest {
 export interface AttackRequest {
   roomId: string;
   attackId: string;
+  authorityPlayerId: string;
   fromPlayerId: string;
   toPlayerId: string;
   lines: number;

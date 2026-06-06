@@ -4,7 +4,7 @@ import { addGarbageLines, clearCompletedLines, createBoard } from './board';
 import { cellsFor, kicksFor, nextRotation } from './pieces';
 import { SeededRng } from './rng';
 import { DEFAULT_RULES } from './rules';
-import type { ActivePiece, Cell, GameEvent, GameInput, GameRules, GameState, InputAction, PendingGarbage, PieceType } from './types';
+import type { ActivePiece, Cell, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, PendingGarbage, PieceType } from './types';
 
 export class GameEngine {
   private readonly rules: GameRules;
@@ -62,6 +62,53 @@ export class GameEngine {
       status: this.status,
       seed: this.seed,
     };
+  }
+
+  createSnapshot(): GameEngineSnapshot {
+    return {
+      seed: this.seed,
+      rngState: this.rng.getState(),
+      board: this.board.map((row) => [...row]),
+      active: this.active ? { ...this.active } : null,
+      hold: this.hold,
+      canHold: this.canHold,
+      next: [...this.next],
+      status: this.status,
+      frame: this.frame,
+      pieces: this.pieces,
+      lines: this.lines,
+      startFrame: this.startFrame,
+      finishFrame: this.finishFrame,
+      gameOverFrame: this.gameOverFrame,
+      sentGarbage: this.sentGarbage,
+      receivedGarbage: this.receivedGarbage,
+      pendingGarbage: this.pendingGarbage.map((garbage) => ({ ...garbage })),
+      fallAccumulator: this.fallAccumulator,
+      lockFrames: this.lockFrames,
+    };
+  }
+
+  restoreSnapshot(snapshot: GameEngineSnapshot): void {
+    if ((snapshot.seed >>> 0) !== this.seed) throw new Error('Cannot restore a snapshot from a different seed.');
+    this.rng.setState(snapshot.rngState);
+    this.board = snapshot.board.map((row) => [...row]);
+    this.active = snapshot.active ? { ...snapshot.active } : null;
+    this.hold = snapshot.hold;
+    this.canHold = snapshot.canHold;
+    this.next = [...snapshot.next];
+    this.status = snapshot.status;
+    this.frame = snapshot.frame;
+    this.pieces = snapshot.pieces;
+    this.lines = snapshot.lines;
+    this.startFrame = snapshot.startFrame;
+    this.finishFrame = snapshot.finishFrame;
+    this.gameOverFrame = snapshot.gameOverFrame;
+    this.sentGarbage = snapshot.sentGarbage;
+    this.receivedGarbage = snapshot.receivedGarbage;
+    this.pendingGarbage = snapshot.pendingGarbage.map((garbage) => ({ ...garbage }));
+    this.events = [];
+    this.fallAccumulator = snapshot.fallAccumulator;
+    this.lockFrames = snapshot.lockFrames;
   }
 
   tick(frame: number, inputs: GameInput[] = []): GameState {

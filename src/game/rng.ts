@@ -5,6 +5,14 @@ export class SeededRng {
     this.state = seed >>> 0;
   }
 
+  getState(): number {
+    return this.state;
+  }
+
+  setState(state: number): void {
+    this.state = state >>> 0;
+  }
+
   next(): number {
     this.state = (this.state + 0x6d2b79f5) >>> 0;
     let value = this.state;

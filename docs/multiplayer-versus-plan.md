@@ -27,9 +27,10 @@ Crear un modo online battle royale casual:
 - Mantener 40L local sin romper historial, replay library ni stats existentes.
 - Agregar reglas de batalla como modo separado, no reemplazar `DEFAULT_RULES` globalmente.
 - Mantener `GameEngine` determinista y testeable.
-- Usar WebRTC DataChannel para ataques y snapshots rapidos.
-- Usar Vercel/Redis como fuente de verdad de sala, vida/muerte y ganador.
-- Aceptar MVP sin anti-cheat: el cliente reporta eventos y resultado.
+- Usar WebRTC DataChannel para inputs de invitados, ataques confirmados y snapshots autoritativos rapidos.
+- Usar al host, el jugador que crea la sala, como fuente de verdad de la partida.
+- Usar Vercel/Redis como persistencia y relay de estado confirmado por el host, no como arbitro de gameplay.
+- Aceptar MVP sin anti-cheat fuerte: los invitados mandan inputs al host; el host simula sus tableros y publica progreso, ataques, vida/muerte y ganador.
 
 ## 1. Nuevo Modo Online De Ultimo En Pie
 
@@ -214,29 +215,37 @@ Otro ejemplo:
 - Garbage que queda pendiente mantiene su orden.
 - Un clear nunca duplica ataque y defensa.
 
-## 5. Enviar Ataques Por WebRTC
+## 5. Inputs Al Host Y Ataques Autoritativos
 
 ### Cambio
 
-El P2P actual manda snapshots visuales. Debe mandar eventos de batalla.
+El P2P actual mandaba snapshots visuales. Debe mandar inputs al host y snapshots autoritativos desde el host.
 
 ### Mensajes
 
 ```ts
 type BattlePeerMessage =
+  | { type: 'input'; playerId: string; inputs: GameInput[] }
   | { type: 'snapshot'; playerId: string; game: OnlineGameSnapshot }
-  | { type: 'attack'; id: string; fromPlayerId: string; toPlayerId: string; lines: number; holeSeed: number; frame: number }
+  | { type: 'attack'; authorityPlayerId: string; id: string; fromPlayerId: string; toPlayerId: string; lines: number; holeSeed: number; frame: number }
   | { type: 'ko'; playerId: string; frame: number };
 ```
 
 ### Diseno
 
+- Cada invitado envia sus `GameInput` al host.
+- El host mantiene un `GameEngine` por invitado y simula sus tableros.
+- Los snapshots de invitados no definen verdad; el host envia snapshots autoritativos de todos los jugadores.
+- Cada input online lleva `sequence`; el snapshot autoritativo incluye `lastProcessedInputSequence`.
+- El snapshot autoritativo incluye una instantanea interna del `GameEngine` para restaurar tablero, pieza, cola, hold, garbage, RNG, gravedad y lock delay.
+- El invitado restaura el snapshot del host para su propio jugador, descarta inputs confirmados y re-simula los inputs pendientes para conservar prediccion local.
 - Para 2 jugadores: objetivo = el otro jugador vivo.
 - Para 3+ jugadores MVP: objetivo random entre vivos.
 - Cada ataque debe tener `id` para evitar duplicados.
-- Si WebRTC no esta abierto, fallback por HTTP:
+- Solo el host calcula y publica ataques por HTTP:
   - `POST /api/rooms/attack`
   - polling lo entrega en `room.attacks`.
+- Si WebRTC no conecta, el host no recibe inputs del invitado y la simulacion autoritativa de ese invitado queda sin controles nuevos.
 - El receptor aplica `queueGarbage()`.
 
 ### Archivos
@@ -252,15 +261,15 @@ type BattlePeerMessage =
 
 ### Criterio De Aceptacion
 
-- Al limpiar un double, el otro jugador recibe 1 garbage.
+- Al limpiar un double en la simulacion del host, el otro jugador recibe 1 garbage.
 - El mismo ataque no se aplica dos veces aunque llegue por P2P y HTTP.
-- Si WebRTC no conecta, el ataque llega por polling con atraso.
+- Si WebRTC no conecta con el host, los inputs del invitado no cuentan para la verdad de sala.
 
 ## 6. Servidor Guarda Vida, Muerte Y Ganador
 
 ### Cambio
 
-El servidor ya guarda resultados, pero debe modelar supervivencia.
+El servidor ya guarda resultados, pero debe aceptar supervivencia solo cuando la publica el host.
 
 ### Modelo Propuesto
 
@@ -286,8 +295,8 @@ interface OnlineRoom {
 
 ### Reglas
 
-- Al `gameover`, el cliente manda `POST /api/rooms/eliminate`.
-- El servidor marca al jugador como eliminado.
+- Al `gameover` en la simulacion del host, el host manda `POST /api/rooms/eliminate` con `authorityPlayerId`.
+- El servidor marca al jugador como eliminado solo si `authorityPlayerId` coincide con `room.hostPlayerId`.
 - Si queda 1 vivo, ese jugador pasa a `winner` y la sala a `finished`.
 - Si todos se eliminan casi al mismo tiempo, gana el de mayor `elapsedFrames` o menor `eliminatedAtServerMs` segun regla definida.
 
@@ -358,7 +367,7 @@ La UI debe comunicar que ya no es 40L y mostrar amenazas.
 2. Agregar garbage al engine.
 3. Agregar eventos de clear y tabla de ataques.
 4. Agregar cancelacion de garbage.
-5. Agregar mensajes de ataque por WebRTC y fallback HTTP.
+5. Agregar envio de inputs por WebRTC hacia el host, simulacion remota en el host y persistencia HTTP solo para ataques confirmados por host.
 6. Cambiar resultados online a ultimo en pie.
 7. Actualizar UI y E2E.
 
@@ -381,12 +390,12 @@ La UI debe comunicar que ya no es 40L y mostrar amenazas.
 - A limpia double y B recibe garbage.
 - B topoutea y A queda como winner.
 - En 3 jugadores, eliminar a uno no termina la sala.
-- Si WebRTC no abre, el fallback HTTP entrega el ataque.
+- Si WebRTC no abre entre invitado y host, los inputs del invitado no llegan a la simulacion autoritativa.
 
 ## Riesgos
 
 - Con ataques, la latencia importa mas que antes: ya no es solo visual.
-- Sin TURN, WebRTC puede fallar en algunas redes; el fallback HTTP debe existir.
+- Sin TURN, WebRTC puede fallar en algunas redes; en host-autoritativo completo eso impide recibir inputs de invitados hasta recuperar conexion con el host.
 - El MVP confia en clientes, asi que no sirve para competitivo serio.
 - Full mesh P2P escala mal si hay muchos jugadores; conviene limitar salas a 4 u 8 al principio.
 - Cambiar `finished`/`gameover` puede romper historial/replays si no se separa bien el modo 40L del modo battle.

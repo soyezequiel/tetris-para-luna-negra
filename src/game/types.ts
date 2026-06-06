@@ -29,6 +29,7 @@ export type InputAction =
 export interface GameInput {
   frame: number;
   action: InputAction;
+  sequence?: number;
 }
 
 export interface GameRules {
@@ -98,4 +99,26 @@ export interface GameState {
   stats: GameStats;
   status: 'ready' | 'playing' | 'finished' | 'gameover';
   seed: number;
+}
+
+export interface GameEngineSnapshot {
+  seed: number;
+  rngState: number;
+  board: Cell[][];
+  active: ActivePiece | null;
+  hold: PieceType | null;
+  canHold: boolean;
+  next: PieceType[];
+  status: GameState['status'];
+  frame: number;
+  pieces: number;
+  lines: number;
+  startFrame: number;
+  finishFrame: number | null;
+  gameOverFrame: number | null;
+  sentGarbage: number;
+  receivedGarbage: number;
+  pendingGarbage: PendingGarbage[];
+  fallAccumulator: number;
+  lockFrames: number;
 }

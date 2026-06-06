@@ -37,6 +37,7 @@ import {
   updateProgress,
 } from '../src/online/roomService';
 import { InputController } from '../src/input';
+import { HostAuthoritySimulator } from '../src/online/hostAuthority';
 import {
   actionForCode,
   DEFAULT_INPUT_SETTINGS,
@@ -103,6 +104,26 @@ describe('core stacker engine', () => {
     expect(a.hold).toEqual(b.hold);
     expect(a.next).toEqual(b.next);
     expect(a.stats).toEqual(b.stats);
+  });
+
+  it('restores an engine snapshot and continues deterministically', () => {
+    const inputs: GameInput[] = [
+      { frame: 1, action: 'hardDrop' },
+      { frame: 2, action: 'moveLeft' },
+      { frame: 3, action: 'rotateCW' },
+      { frame: 4, action: 'hardDrop' },
+    ];
+    const source = new GameEngine(2026, BATTLE_RULES);
+    source.tick(1, [inputs[0]]);
+    source.tick(2, [inputs[1]]);
+    const snapshot = source.createSnapshot();
+    const expected = source.tick(3, [inputs[2]]);
+    const expectedFinal = source.tick(4, [inputs[3]]);
+
+    const restored = new GameEngine(2026, BATTLE_RULES);
+    restored.restoreSnapshot(snapshot);
+    expect(restored.tick(3, [inputs[2]])).toEqual(expected);
+    expect(restored.tick(4, [inputs[3]])).toEqual(expectedFinal);
   });
 
   it('freezes displayed time on terminal frames', () => {
@@ -500,6 +521,42 @@ describe('core stacker engine', () => {
     expect(createRoomCode(() => 0.5)).toMatch(/^[A-HJ-NP-Z2-9]{4}$/);
   });
 
+  it('simulates remote player inputs on the host authority engine', () => {
+    const simulator = new HostAuthoritySimulator(1234, BATTLE_RULES);
+    simulator.ensurePlayers(['player-guest-sim']);
+    simulator.pushInputs('player-guest-sim', [{ frame: 1, action: 'hardDrop' }]);
+
+    const [update] = simulator.advanceAll(1);
+
+    expect(update.playerId).toBe('player-guest-sim');
+    expect(update.state.stats.pieces).toBe(1);
+    expect(simulator.getState('player-guest-sim')?.stats.pieces).toBe(1);
+  });
+
+  it('applies late remote inputs on the next host-authoritative frame', () => {
+    const simulator = new HostAuthoritySimulator(1234, BATTLE_RULES);
+    simulator.ensurePlayers(['player-guest-late']);
+    simulator.advanceAll(10);
+    simulator.pushInputs('player-guest-late', [{ frame: 1, action: 'hardDrop' }]);
+
+    simulator.advanceAll(10);
+    expect(simulator.getState('player-guest-late')?.stats.pieces).toBe(0);
+
+    simulator.advanceAll(11);
+    expect(simulator.getState('player-guest-late')?.stats.pieces).toBe(1);
+  });
+
+  it('reports the last processed remote input sequence from the host simulation', () => {
+    const simulator = new HostAuthoritySimulator(1234, BATTLE_RULES);
+    simulator.ensurePlayers(['player-guest-seq']);
+    simulator.pushInputs('player-guest-seq', [{ frame: 1, action: 'hardDrop', sequence: 7 }]);
+
+    const [update] = simulator.advanceAll(1);
+
+    expect(update.lastProcessedInputSequence).toBe(7);
+    expect(simulator.getLastProcessedInputSequence('player-guest-seq')).toBe(7);
+  });
+
   it('lists public online rooms but keeps private rooms hidden', async () => {
     const store = new MemoryRoomStore();
     const publicRoom = await createRoom(store, {
@@ -549,6 +606,7 @@ describe('core stacker engine', () => {
 
     await submitResult(store, {
       roomId: room.id,
+      authorityPlayerId: 'player-host-2',
       playerId: 'player-host-2',
       result: 'won',
       lines: 40,
@@ -557,6 +615,7 @@ describe('core stacker engine', () => {
     }, 5000);
     await updateProgress(store, {
       roomId: room.id,
+      authorityPlayerId: 'player-host-2',
       playerId: 'player-host-2',
       lines: 4,
       pieces: 10,
@@ -600,6 +659,65 @@ describe('core stacker engine', () => {
     });
   });
 
+  it('requires host authority for competitive online room updates', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-host-auth',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, {
+      roomId: room.id,
+      playerId: 'player-guest-auth',
+      name: 'Guest',
+    }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-auth', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-guest-auth', ready: true }, 1200);
+    await startRoom(store, { roomId: room.id, playerId: 'player-host-auth' }, 1300);
+    await getRoomState(store, room.id, 7000);
+
+    await expect(updateProgress(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-guest-auth',
+      playerId: 'player-guest-auth',
+      lines: 8,
+      pieces: 24,
+      elapsedFrames: 600,
+    }, 7100)).rejects.toThrow('Only the host');
+
+    await expect(addAttack(store, {
+      roomId: room.id,
+      attackId: 'guest-attack-1',
+      authorityPlayerId: 'player-guest-auth',
+      fromPlayerId: 'player-guest-auth',
+      toPlayerId: 'player-host-auth',
+      lines: 2,
+      holeSeed: 99,
+      frame: 600,
+    }, 7200)).rejects.toThrow('Only the host');
+
+    await expect(eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-guest-auth',
+      playerId: 'player-host-auth',
+      frame: 620,
+      lines: 9,
+      pieces: 26,
+      elapsedFrames: 620,
+    }, 7300)).rejects.toThrow('Only the host');
+
+    const updated = await updateProgress(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-host-auth',
+      playerId: 'player-guest-auth',
+      lines: 8,
+      pieces: 24,
+      elapsedFrames: 600,
+    }, 7400);
+
+    expect(updated.players.find((player) => player.id === 'player-guest-auth')?.lines).toBe(8);
+  });
+
   it('stores attacks once and ignores duplicate attack ids', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, {
@@ -619,6 +737,7 @@ describe('core stacker engine', () => {
     const request = {
       roomId: room.id,
       attackId: 'attack-1',
+      authorityPlayerId: 'player-host-4',
       fromPlayerId: 'player-host-4',
       toPlayerId: 'player-guest-4',
       lines: 2,
@@ -632,6 +751,7 @@ describe('core stacker engine', () => {
     expect(duplicate.attacks).toHaveLength(1);
     expect(duplicate.attacks[0]).toMatchObject({
       id: 'attack-1',
+      authorityPlayerId: 'player-host-4',
       fromPlayerId: 'player-host-4',
       toPlayerId: 'player-guest-4',
       lines: 2,
@@ -658,6 +778,7 @@ describe('core stacker engine', () => {
 
     const finished = await eliminatePlayer(store, {
       roomId: room.id,
+      authorityPlayerId: 'player-host-5',
       playerId: 'player-guest-5',
       frame: 360,
       lines: 12,
@@ -688,6 +809,7 @@ describe('core stacker engine', () => {
 
     const updated = await eliminatePlayer(store, {
       roomId: room.id,
+      authorityPlayerId: 'player-host-6',
       playerId: 'player-guest-6a',
       frame: 300,
       lines: 6,

@@ -133,6 +133,7 @@ export async function updateProgress(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
+  requireHostAuthority(room, request.authorityPlayerId);
   const player = requirePlayer(room, request.playerId);
   if (isTerminalPlayer(player)) return room;
   if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
@@ -158,6 +159,7 @@ export async function submitResult(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
+  requireHostAuthority(room, request.authorityPlayerId);
   const player = requirePlayer(room, request.playerId);
   if (isTerminalPlayer(player)) return room;
   player.status = request.result;
@@ -187,6 +189,7 @@ export async function addAttack(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
+  const authority = requireHostAuthority(room, request.authorityPlayerId);
   const from = requirePlayer(room, request.fromPlayerId);
   const to = requirePlayer(room, request.toPlayerId);
   if (!from.alive || !to.alive || room.status === 'finished') return room;
@@ -195,6 +198,7 @@ export async function addAttack(
   const attack: OnlineAttack = {
     id,
     roomId: room.id,
+    authorityPlayerId: authority.id,
     fromPlayerId: from.id,
     toPlayerId: to.id,
     lines: normalizeNonNegativeInteger(request.lines),
@@ -215,6 +219,7 @@ export async function eliminatePlayer(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
+  requireHostAuthority(room, request.authorityPlayerId);
   const player = requirePlayer(room, request.playerId);
   if (player.status === 'winner' || room.winnerPlayerId === player.id) return room;
   if (player.status !== 'eliminated') {
@@ -367,6 +372,14 @@ function requirePlayer(room: OnlineRoom, playerId: string): OnlinePlayer {
   return player;
 }
 
+function requireHostAuthority(room: OnlineRoom, authorityPlayerId: string): OnlinePlayer {
+  const authority = requirePlayer(room, authorityPlayerId);
+  if (authority.id !== room.hostPlayerId) {
+    throw new OnlineRoomError('Only the host can authoritatively update the room.', 403);
+  }
+  return authority;
+}
+
 function createPlayer(id: string, name: string, nowMs: number): OnlinePlayer {
   const normalizedId = normalizePlayerId(id);
   const normalizedName = normalizePlayerName(name);
@@ -491,7 +504,10 @@ function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
     ...room,
     winnerPlayerId: room.winnerPlayerId ?? null,
     peerSignals: room.peerSignals ?? [],
-    attacks: room.attacks ?? [],
+    attacks: (room.attacks ?? []).map((attack) => ({
+      ...attack,
+      authorityPlayerId: attack.authorityPlayerId ?? room.hostPlayerId,
+    })),
     players: room.players.map((player) => ({
       ...player,
       sentGarbage: player.sentGarbage ?? 0,
