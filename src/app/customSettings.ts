@@ -30,6 +30,8 @@ export interface CustomSettings {
   survivalMode: SurvivalMode;
   garbageMessinessPercent: number;
   garbageCap: number;
+  changeOnAttack: boolean;
+  continuousGarbage: boolean;
   layerHeight: number;
   stickyLayer: boolean;
   minimumLayerHeight: number;
@@ -66,6 +68,10 @@ type CustomNumberSettingKey = {
   [Key in keyof CustomSettings]: CustomSettings[Key] extends number ? Key : never;
 }[keyof CustomSettings];
 
+export type CustomBooleanSettingKey = {
+  [Key in keyof CustomSettings]: CustomSettings[Key] extends boolean ? Key : never;
+}[keyof CustomSettings];
+
 type NumberSettingMeta = {
   min: number;
   max: number;
@@ -93,6 +99,8 @@ export const CUSTOM_DEFAULT_SETTINGS: CustomSettings = {
   survivalMode: 'none',
   garbageMessinessPercent: 100,
   garbageCap: 0,
+  changeOnAttack: true,
+  continuousGarbage: false,
   layerHeight: 9,
   stickyLayer: true,
   minimumLayerHeight: 3,
@@ -146,12 +154,14 @@ export const CUSTOM_NUMBER_SETTING_META: Record<CustomNumberSettingKey, NumberSe
   objectiveLineTarget: { min: 0, max: 999, step: 1, integer: true },
 };
 
-const BOOLEAN_SETTING_KEYS: CustomSettingKey[] = [
+const BOOLEAN_SETTING_KEYS: CustomBooleanSettingKey[] = [
   'enableAllClears',
   'useRandomSeed',
   'allowRetry',
   'enableClutchClears',
   'disableLockout',
+  'changeOnAttack',
+  'continuousGarbage',
   'stickyLayer',
   'allow180Spins',
   'useHardDrop',
@@ -206,6 +216,8 @@ export function normalizeCustomSettings(value: unknown): CustomSettings {
     survivalMode: normalizeLiteral(source.survivalMode, ['none'], CUSTOM_DEFAULT_SETTINGS.survivalMode),
     garbageMessinessPercent: normalizeNumber(source.garbageMessinessPercent, 'garbageMessinessPercent'),
     garbageCap: normalizeNumber(source.garbageCap, 'garbageCap'),
+    changeOnAttack: normalizeBoolean(source.changeOnAttack, CUSTOM_DEFAULT_SETTINGS.changeOnAttack),
+    continuousGarbage: normalizeBoolean(source.continuousGarbage, CUSTOM_DEFAULT_SETTINGS.continuousGarbage),
     layerHeight: normalizeNumber(source.layerHeight, 'layerHeight'),
     stickyLayer: normalizeBoolean(source.stickyLayer, CUSTOM_DEFAULT_SETTINGS.stickyLayer),
     minimumLayerHeight: normalizeNumber(source.minimumLayerHeight, 'minimumLayerHeight'),
@@ -251,8 +263,8 @@ export function parseCustomSettingKey(value: string | undefined): CustomSettingK
   return SETTING_KEYS.includes(value as CustomSettingKey) ? value as CustomSettingKey : null;
 }
 
-export function isCustomBooleanSetting(key: CustomSettingKey): boolean {
-  return BOOLEAN_SETTING_KEYS.includes(key);
+export function isCustomBooleanSetting(key: CustomSettingKey): key is CustomBooleanSettingKey {
+  return BOOLEAN_SETTING_KEYS.includes(key as CustomBooleanSettingKey);
 }
 
 export function isCustomNumberSetting(key: CustomSettingKey): key is CustomNumberSettingKey {
@@ -295,6 +307,10 @@ export function customRulesFromSettings(settings: CustomSettings, inputSettings:
     lockDelayFrames: normalized.lockDelayFrames,
     dasFrames: inputSettings.dasFrames,
     arrFrames: inputSettings.arrFrames,
+    garbageCap: normalized.garbageCap,
+    garbageMessinessPercent: normalized.garbageMessinessPercent,
+    changeOnAttack: normalized.changeOnAttack,
+    continuousGarbage: normalized.continuousGarbage,
     allowHardDrop: normalized.useHardDrop,
     allowHold: normalized.useHoldQueue,
     showGhost: normalized.showShadowPiece,

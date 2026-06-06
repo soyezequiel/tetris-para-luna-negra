@@ -1,4 +1,5 @@
 import { MemoryRoomStore, OnlineRoomError, type RoomStore } from './roomService.js';
+import type { MatchmakingQueue, MatchmakingTicket, OnlineMatchResult, OnlineProfile, QuickPlayLeaderboardEntry } from './protocol.js';
 
 export const config = {
   regions: ['gru1'],
@@ -42,6 +43,91 @@ class UpstashRoomStore implements RoomStore {
     const value = JSON.stringify(ids);
     if (ttlSeconds) await this.command(['SET', publicRoomsKey(), value, 'EX', ttlSeconds]);
     else await this.command(['SET', publicRoomsKey(), value]);
+  }
+
+  async getMatchmakingTicket(id: string): Promise<MatchmakingTicket | null> {
+    const raw = await this.command<string | null>(['GET', matchmakingTicketKey(id)]);
+    return raw ? JSON.parse(raw) as MatchmakingTicket : null;
+  }
+
+  async saveMatchmakingTicket(ticket: MatchmakingTicket, ttlSeconds?: number): Promise<void> {
+    const key = matchmakingTicketKey(ticket.id);
+    const value = JSON.stringify(ticket);
+    if (ttlSeconds) await this.command(['SET', key, value, 'EX', ttlSeconds]);
+    else await this.command(['SET', key, value]);
+  }
+
+  async listMatchmakingTicketIds(queue: MatchmakingQueue): Promise<string[]> {
+    const raw = await this.command<string | null>(['GET', matchmakingQueueKey(queue)]);
+    if (!raw) return [];
+    try {
+      const value = JSON.parse(raw);
+      return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveMatchmakingTicketIds(queue: MatchmakingQueue, ids: string[], ttlSeconds?: number): Promise<void> {
+    const value = JSON.stringify(ids);
+    if (ttlSeconds) await this.command(['SET', matchmakingQueueKey(queue), value, 'EX', ttlSeconds]);
+    else await this.command(['SET', matchmakingQueueKey(queue), value]);
+  }
+
+  async getProfile(playerId: string): Promise<OnlineProfile | null> {
+    const raw = await this.command<string | null>(['GET', profileKey(playerId)]);
+    return raw ? JSON.parse(raw) as OnlineProfile : null;
+  }
+
+  async saveProfile(profile: OnlineProfile, ttlSeconds?: number): Promise<void> {
+    const value = JSON.stringify(profile);
+    if (ttlSeconds) await this.command(['SET', profileKey(profile.playerId), value, 'EX', ttlSeconds]);
+    else await this.command(['SET', profileKey(profile.playerId), value]);
+  }
+
+  async getMatchResult(id: string): Promise<OnlineMatchResult | null> {
+    const raw = await this.command<string | null>(['GET', matchResultKey(id)]);
+    return raw ? JSON.parse(raw) as OnlineMatchResult : null;
+  }
+
+  async saveMatchResult(result: OnlineMatchResult, ttlSeconds?: number): Promise<void> {
+    const value = JSON.stringify(result);
+    if (ttlSeconds) await this.command(['SET', matchResultKey(result.id), value, 'EX', ttlSeconds]);
+    else await this.command(['SET', matchResultKey(result.id), value]);
+  }
+
+  async listMatchResultIds(playerId: string): Promise<string[]> {
+    const raw = await this.command<string | null>(['GET', matchResultIdsKey(playerId)]);
+    if (!raw) return [];
+    try {
+      const value = JSON.parse(raw);
+      return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveMatchResultIds(playerId: string, ids: string[], ttlSeconds?: number): Promise<void> {
+    const value = JSON.stringify(ids);
+    if (ttlSeconds) await this.command(['SET', matchResultIdsKey(playerId), value, 'EX', ttlSeconds]);
+    else await this.command(['SET', matchResultIdsKey(playerId), value]);
+  }
+
+  async getQuickPlayLeaderboard(weekId: string): Promise<QuickPlayLeaderboardEntry[]> {
+    const raw = await this.command<string | null>(['GET', quickPlayLeaderboardKey(weekId)]);
+    if (!raw) return [];
+    try {
+      const value = JSON.parse(raw);
+      return Array.isArray(value) ? value as QuickPlayLeaderboardEntry[] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveQuickPlayLeaderboard(weekId: string, entries: QuickPlayLeaderboardEntry[], ttlSeconds?: number): Promise<void> {
+    const value = JSON.stringify(entries);
+    if (ttlSeconds) await this.command(['SET', quickPlayLeaderboardKey(weekId), value, 'EX', ttlSeconds]);
+    else await this.command(['SET', quickPlayLeaderboardKey(weekId), value]);
   }
 
   private async command<T>(command: unknown[]): Promise<T> {
@@ -109,4 +195,28 @@ function roomKey(id: string): string {
 
 function publicRoomsKey(): string {
   return 'stack40:publicRooms';
+}
+
+function matchmakingTicketKey(id: string): string {
+  return `stack40:matchmaking:ticket:${id}`;
+}
+
+function matchmakingQueueKey(queue: MatchmakingQueue): string {
+  return `stack40:matchmaking:queue:${queue}`;
+}
+
+function profileKey(playerId: string): string {
+  return `stack40:profile:${playerId}`;
+}
+
+function matchResultKey(id: string): string {
+  return `stack40:match:${id}`;
+}
+
+function matchResultIdsKey(playerId: string): string {
+  return `stack40:profile:${playerId}:matches`;
+}
+
+function quickPlayLeaderboardKey(weekId: string): string {
+  return `stack40:quickplay:leaderboard:${weekId}`;
 }

@@ -2,19 +2,32 @@ import type {
   AttackRequest,
   CreateRoomRequest,
   EliminateRequest,
+  EnqueueMatchmakingRequest,
   JoinRoomRequest,
+  LeaveMatchmakingRequest,
+  MatchmakingHeartbeatRequest,
+  MatchmakingTicketResponse,
   OnlineErrorResponse,
+  OnlineProfileResponse,
   OnlineRoomResponse,
   PeerSignalRequest,
   ProgressRequest,
+  PublicRoomsFilters,
   PublicRoomsResponse,
+  QuickPlayEnterRequest,
+  QuickPlayEnterResponse,
+  QuickPlayLeaderboardResponse,
   ReadyRequest,
   ResultRequest,
+  SetTargetingRequest,
   StartRoomRequest,
 } from './protocol';
 
 export class OnlineClient {
-  constructor(private readonly basePath = '/api/rooms') {}
+  constructor(
+    private readonly basePath = '/api/rooms',
+    private readonly matchmakingBasePath = '/api/matchmaking',
+  ) {}
 
   createRoom(request: CreateRoomRequest): Promise<OnlineRoomResponse> {
     return this.post('/create', request);
@@ -30,6 +43,10 @@ export class OnlineClient {
 
   startRoom(request: StartRoomRequest): Promise<OnlineRoomResponse> {
     return this.post('/start', request);
+  }
+
+  setTargeting(request: SetTargetingRequest): Promise<OnlineRoomResponse> {
+    return this.post('/targeting', request);
   }
 
   updateProgress(request: ProgressRequest): Promise<OnlineRoomResponse> {
@@ -56,8 +73,47 @@ export class OnlineClient {
     return this.get(`/state?roomId=${encodeURIComponent(roomId)}`);
   }
 
-  listPublicRooms(): Promise<PublicRoomsResponse> {
-    return this.get('/public');
+  listPublicRooms(filters: PublicRoomsFilters = {}): Promise<PublicRoomsResponse> {
+    const query = filtersToQuery(filters);
+    return this.get(`/public${query}`);
+  }
+
+  enqueueMatchmaking(request: EnqueueMatchmakingRequest): Promise<MatchmakingTicketResponse> {
+    return this.postMatchmaking('/enqueue', request);
+  }
+
+  heartbeatMatchmaking(request: MatchmakingHeartbeatRequest): Promise<MatchmakingTicketResponse> {
+    return this.postMatchmaking('/heartbeat', request);
+  }
+
+  leaveMatchmaking(request: LeaveMatchmakingRequest): Promise<MatchmakingTicketResponse> {
+    return this.postMatchmaking('/leave', request);
+  }
+
+  getMatchmakingTicket(ticketId: string, playerId: string): Promise<MatchmakingTicketResponse> {
+    return this.request<MatchmakingTicketResponse>(
+      `${this.matchmakingBasePath}/ticket?ticketId=${encodeURIComponent(ticketId)}&playerId=${encodeURIComponent(playerId)}`,
+      { method: 'GET' },
+    );
+  }
+
+  getProfileState(playerId: string, name: string): Promise<OnlineProfileResponse> {
+    return this.request<OnlineProfileResponse>(
+      `/api/profiles/state?playerId=${encodeURIComponent(playerId)}&name=${encodeURIComponent(name)}`,
+      { method: 'GET' },
+    );
+  }
+
+  enterQuickPlay(request: QuickPlayEnterRequest): Promise<QuickPlayEnterResponse> {
+    return this.request<QuickPlayEnterResponse>('/api/quickplay/enter', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+  }
+
+  getQuickPlayLeaderboard(): Promise<QuickPlayLeaderboardResponse> {
+    return this.request<QuickPlayLeaderboardResponse>('/api/quickplay/leaderboard', { method: 'GET' });
   }
 
   private async get<T>(path: string): Promise<T> {
@@ -72,8 +128,16 @@ export class OnlineClient {
     });
   }
 
+  private async postMatchmaking<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>(`${this.matchmakingBasePath}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
   private async request<T>(path: string, init: RequestInit): Promise<T> {
-    const response = await fetch(`${this.basePath}${path}`, init);
+    const response = await fetch(path.startsWith('/api/') ? path : `${this.basePath}${path}`, init);
     const payload = await readResponsePayload<T | OnlineErrorResponse>(response);
     if (!response.ok) {
       throw new Error(isErrorResponse(payload) ? payload.error : 'Online request failed.');
@@ -96,4 +160,17 @@ async function readResponsePayload<T>(response: Response): Promise<T | null> {
 
 function isErrorResponse(value: unknown): value is OnlineErrorResponse {
   return typeof value === 'object' && value !== null && 'error' in value && typeof (value as OnlineErrorResponse).error === 'string';
+}
+
+function filtersToQuery(filters: PublicRoomsFilters): string {
+  const params = new URLSearchParams();
+  if (filters.matchType) params.set('matchType', filters.matchType);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.region) params.set('region', filters.region);
+  if (typeof filters.ranked === 'boolean') params.set('ranked', String(filters.ranked));
+  if (filters.customPreset) params.set('customPreset', filters.customPreset);
+  if (filters.minPlayers !== undefined) params.set('minPlayers', String(filters.minPlayers));
+  if (filters.maxPlayers !== undefined) params.set('maxPlayers', String(filters.maxPlayers));
+  const query = params.toString();
+  return query ? `?${query}` : '';
 }

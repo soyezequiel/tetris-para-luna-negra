@@ -38,7 +38,7 @@ async function runRoomsDiagnostics(): Promise<Record<string, unknown>> {
   try {
     const publicRoute = await import('./rooms/public.js');
     diagnostics.publicRouteImport = 'ok';
-    const response = await publicRoute.GET();
+    const response = await publicRoute.GET(new Request('https://stack40.local/api/rooms/public'));
     diagnostics.publicRouteStatus = response.status;
     diagnostics.publicRouteBody = await response.text();
   } catch (error) {

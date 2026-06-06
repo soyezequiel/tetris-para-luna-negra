@@ -59,6 +59,7 @@ function parseRules(value: unknown): GameRules | null {
   const hiddenRows = readNonNegativeInteger(value.hiddenRows);
   const nextPreview = readPositiveInteger(value.nextPreview);
   const targetLines = readNullablePositiveInteger(value.targetLines);
+  const attackTable = value.attackTable === 'modern' ? 'modern' : DEFAULT_RULES.attackTable;
   const gravityCellsPerFrame = readPositiveNumber(value.gravityCellsPerFrame);
   const softDropCellsPerFrame = readPositiveNumber(value.softDropCellsPerFrame);
   const lockDelayFrames = readPositiveInteger(value.lockDelayFrames);
@@ -67,6 +68,20 @@ function parseRules(value: unknown): GameRules | null {
   const garbageDelayFrames = value.garbageDelayFrames === undefined
     ? DEFAULT_RULES.garbageDelayFrames
     : readNonNegativeInteger(value.garbageDelayFrames);
+  const garbageTravelFrames = value.garbageTravelFrames === undefined
+    ? DEFAULT_RULES.garbageTravelFrames
+    : readNonNegativeInteger(value.garbageTravelFrames);
+  const garbageActivationFrames = value.garbageActivationFrames === undefined
+    ? value.garbageDelayFrames === undefined ? DEFAULT_RULES.garbageActivationFrames : garbageDelayFrames
+    : readNonNegativeInteger(value.garbageActivationFrames);
+  const garbageCap = value.garbageCap === undefined
+    ? DEFAULT_RULES.garbageCap
+    : readNonNegativeInteger(value.garbageCap);
+  const garbageMessinessPercent = value.garbageMessinessPercent === undefined
+    ? DEFAULT_RULES.garbageMessinessPercent
+    : readPercentageInteger(value.garbageMessinessPercent);
+  const changeOnAttack = value.changeOnAttack === undefined ? DEFAULT_RULES.changeOnAttack : readBoolean(value.changeOnAttack);
+  const continuousGarbage = value.continuousGarbage === undefined ? DEFAULT_RULES.continuousGarbage : readBoolean(value.continuousGarbage);
   const allowHardDrop = value.allowHardDrop === undefined ? DEFAULT_RULES.allowHardDrop : readBoolean(value.allowHardDrop);
   const allowHold = value.allowHold === undefined ? DEFAULT_RULES.allowHold : readBoolean(value.allowHold);
   const showGhost = value.showGhost === undefined ? DEFAULT_RULES.showGhost : readBoolean(value.showGhost);
@@ -87,6 +102,12 @@ function parseRules(value: unknown): GameRules | null {
     || dasFrames === null
     || arrFrames === null
     || garbageDelayFrames === null
+    || garbageTravelFrames === null
+    || garbageActivationFrames === null
+    || garbageCap === null
+    || garbageMessinessPercent === null
+    || changeOnAttack === null
+    || continuousGarbage === null
     || allowHardDrop === null
     || allowHold === null
     || showGhost === null
@@ -100,12 +121,19 @@ function parseRules(value: unknown): GameRules | null {
     hiddenRows,
     nextPreview,
     targetLines,
+    attackTable,
     gravityCellsPerFrame,
     softDropCellsPerFrame,
     lockDelayFrames,
     dasFrames,
     arrFrames,
     garbageDelayFrames,
+    garbageTravelFrames,
+    garbageActivationFrames,
+    garbageCap,
+    garbageMessinessPercent,
+    changeOnAttack,
+    continuousGarbage,
     allowHardDrop,
     allowHold,
     showGhost,
@@ -168,6 +196,10 @@ function readPositiveInteger(value: unknown): number | null {
 function readNullablePositiveInteger(value: unknown): number | null | undefined {
   if (value === null) return null;
   return readPositiveInteger(value) ?? undefined;
+}
+
+function readPercentageInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 100 ? value : null;
 }
 
 function readNonNegativeInteger(value: unknown): number | null {

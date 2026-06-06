@@ -28,6 +28,7 @@ import {
   saveCustomSettings,
   updateCustomSetting,
   updateCustomSettingByDelta,
+  type CustomBooleanSettingKey,
   type CustomSettings,
   type CustomTab,
 } from './app/customSettings';
@@ -59,8 +60,9 @@ import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostA
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBroadcast';
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
-import { normalizeRoomId, rankPlayers } from './online/roomService';
-import type { AttackRequest, OnlineAttack, OnlineGameSnapshot, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, RoomVisibility } from './online/protocol';
+import { normalizeRoomId, rankPlayers, TARGETING_MODES } from './online/roomService';
+import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
+import type { AttackRequest, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -73,12 +75,17 @@ const overlayElement = overlay;
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
+const ONLINE_ROOM_MATCH_FILTERS = ['all', 'battle', 'royale', 'duel', 'league', 'quickPlay', 'sprintRace', 'custom'] as const;
+const ONLINE_ROOM_RANK_FILTERS = ['all', 'casual', 'ranked'] as const;
 const ONLINE_POLL_MS = 1000;
 const ONLINE_PEER_BROADCAST_MS = 100;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
+const ONLINE_MATCHMAKING_HEARTBEAT_MS = 5000;
 const GAME_FRAME_MS = 1000 / 60;
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
+type OnlineRoomMatchFilter = typeof ONLINE_ROOM_MATCH_FILTERS[number];
+type OnlineRoomRankFilter = typeof ONLINE_ROOM_RANK_FILTERS[number];
 type RunKind = 'standard' | 'custom' | 'online';
 type SequencedOnlineInput = GameInput & { sequence: number };
 
@@ -124,14 +131,21 @@ let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
 let onlineRoomMode: OnlineRoomMode = 'battle';
+let onlineRoomMatchFilter: OnlineRoomMatchFilter = 'all';
+let onlineRoomRankFilter: OnlineRoomRankFilter = 'all';
 let onlineRoom: OnlineRoom | null = null;
 let onlinePublicRooms: OnlineRoomSummary[] = [];
+let onlineMatchmakingTicket: MatchmakingTicket | null = null;
+let onlineProfile: OnlineProfile | null = null;
+let onlineRecentResults: OnlineMatchResult[] = [];
+let quickPlayLeaderboard: QuickPlayLeaderboardEntry[] = [];
 let onlineError: string | null = null;
 let onlineBusy = false;
 let onlinePollInFlight = false;
 let onlineProgressInFlight = false;
 let onlineLastPollAt = 0;
 let onlineLastProgressAt = 0;
+let onlineLastMatchmakingHeartbeatAt = 0;
 let onlineLastPeerBroadcastAt = 0;
 let onlineServerOffsetMs = 0;
 let onlineResultSubmitted = false;
@@ -144,9 +158,11 @@ let onlineHostAuthority: HostAuthoritySimulator | null = null;
 let onlineHostProgressInFlight = new Set<string>();
 let onlineHostLastProgressAt = new Map<string, number>();
 let onlineHostCommittedEliminations = new Set<string>();
+let onlineHostCommittedResults = new Set<string>();
 let onlineLastAuthoritativeFrame = 0;
 let onlineInputSequence = 0;
 let onlineInputOutbox: SequencedOnlineInput[] = [];
+let onlineActiveRoundId: string | null = null;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -197,6 +213,7 @@ function loop(): void {
     playAcceptedMoveSound(beforeTickState.active, state.active, gameInputs.map((event) => event.action));
   }
 
+  syncMatchmakingQueue();
   syncOnline(state);
   renderer.render(state);
   renderOverlay(state);
@@ -371,13 +388,23 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-open') openOnlineMenu('battle');
   if (action === 'online-custom-open') openOnlineMenu('custom');
   if (action === 'online-refresh') refreshPublicRooms();
+  if (action === 'online-room-match-filter') setOnlineRoomMatchFilter(control.dataset.matchFilter);
+  if (action === 'online-room-rank-filter') setOnlineRoomRankFilter(control.dataset.rankFilter);
+  if (action === 'online-quick-duel') enqueueOnlineMatchmaking('quickDuel');
+  if (action === 'online-league') enqueueOnlineMatchmaking('league');
+  if (action === 'online-quick-play') enterOnlineQuickPlay();
+  if (action === 'online-cancel-matchmaking') leaveQuickDuelQueue();
   if (action === 'online-create-public') createOnlineRoom('public');
   if (action === 'online-create-private') createOnlineRoom('private');
+  if (action === 'online-create-royale-public') createOnlineRoom('public', 'royale');
+  if (action === 'online-create-sprint-public') createOnlineRoom('public', 'sprintRace');
   if (action === 'online-join') joinOnlineRoom(onlineJoinCode);
   if (action === 'online-join-public') joinOnlineRoom(control.dataset.roomId ?? '');
   if (action === 'online-ready') setOnlineReady(true);
   if (action === 'online-unready') setOnlineReady(false);
   if (action === 'online-start') startOnlineRoom();
+  if (action === 'online-targeting') setOnlineTargeting(control.dataset.targetingMode);
+  if (action === 'online-manual-target') setOnlineTargeting('manual', control.dataset.targetPlayerId ?? null);
   if (action === 'online-leave') leaveOnlineRoom();
   if (action === 'resume') resumeGame();
   if (action === 'settings') openSettings();
@@ -641,13 +668,15 @@ function openOnlineMenu(mode: OnlineRoomMode = 'battle'): void {
   settingsReturnMode = 'menu';
   input.releaseAll();
   refreshPublicRooms();
+  refreshOnlineProfile();
+  refreshQuickPlayLeaderboard();
 }
 
 async function refreshPublicRooms(): Promise<void> {
   if (onlineBusy) return;
   onlineBusy = true;
   try {
-    const response = await onlineClient.listPublicRooms();
+    const response = await onlineClient.listPublicRooms(publicRoomFilters());
     syncOnlineClock(response.serverNowMs);
     onlinePublicRooms = response.rooms;
     onlineError = null;
@@ -658,17 +687,120 @@ async function refreshPublicRooms(): Promise<void> {
   }
 }
 
-async function createOnlineRoom(visibility: RoomVisibility): Promise<void> {
+async function refreshOnlineProfile(): Promise<void> {
+  try {
+    const response = await onlineClient.getProfileState(onlinePlayer.id, onlineName);
+    syncOnlineClock(response.serverNowMs);
+    onlineProfile = response.profile;
+    onlineRecentResults = response.recentResults;
+  } catch {
+    onlineProfile = null;
+    onlineRecentResults = [];
+  }
+}
+
+async function refreshQuickPlayLeaderboard(): Promise<void> {
+  try {
+    const response = await onlineClient.getQuickPlayLeaderboard();
+    syncOnlineClock(response.serverNowMs);
+    quickPlayLeaderboard = response.entries;
+  } catch {
+    quickPlayLeaderboard = [];
+  }
+}
+
+async function enterOnlineQuickPlay(): Promise<void> {
   if (onlineBusy) return;
   onlineBusy = true;
   try {
     onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
+    const response = await onlineClient.enterQuickPlay({
+      playerId: onlinePlayer.id,
+      name: onlinePlayer.name,
+    });
+    syncOnlineClock(response.serverNowMs);
+    quickPlayLeaderboard = response.leaderboard;
+    enterOnlineRoom(response.room, response.room.status === 'playing' ? 'onlineCountdown' : 'roomLobby');
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+function setOnlineRoomMatchFilter(value: string | undefined): void {
+  if (!isOnlineRoomMatchFilter(value)) return;
+  onlineRoomMatchFilter = value;
+  refreshPublicRooms();
+}
+
+function setOnlineRoomRankFilter(value: string | undefined): void {
+  if (!isOnlineRoomRankFilter(value)) return;
+  onlineRoomRankFilter = value;
+  refreshPublicRooms();
+}
+
+function publicRoomFilters(): PublicRoomsFilters {
+  return {
+    matchType: onlineRoomMatchFilter === 'all' ? undefined : onlineRoomMatchFilter,
+    ranked: onlineRoomRankFilter === 'all' ? undefined : onlineRoomRankFilter === 'ranked',
+  };
+}
+
+async function enqueueOnlineMatchmaking(queue: MatchmakingQueue): Promise<void> {
+  if (onlineBusy) return;
+  onlineBusy = true;
+  try {
+    onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
+    const response = await onlineClient.enqueueMatchmaking({
+      queue,
+      playerId: onlinePlayer.id,
+      name: onlinePlayer.name,
+    });
+    syncOnlineClock(response.serverNowMs);
+    onlineMatchmakingTicket = response.ticket;
+    onlineLastMatchmakingHeartbeatAt = performance.now();
+    if (response.room) enterOnlineRoom(response.room, response.room.status === 'countdown' ? 'onlineCountdown' : 'roomLobby');
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function leaveQuickDuelQueue(): Promise<void> {
+  if (!onlineMatchmakingTicket || onlineBusy) return;
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.leaveMatchmaking({
+      ticketId: onlineMatchmakingTicket.id,
+      playerId: onlinePlayer.id,
+    });
+    syncOnlineClock(response.serverNowMs);
+    onlineMatchmakingTicket = response.ticket.status === 'queued' ? response.ticket : null;
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: OnlineMatchType): Promise<void> {
+  if (onlineBusy) return;
+  onlineBusy = true;
+  try {
+    onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
+    const matchType = explicitMatchType ?? (onlineRoomMode === 'custom' ? 'custom' : 'battle');
+    const mode: OnlineRoomMode = matchType === 'custom' ? 'custom' : 'battle';
     const response = await onlineClient.createRoom({
       playerId: onlinePlayer.id,
       name: onlinePlayer.name,
       visibility,
-      mode: onlineRoomMode,
-      rules: onlineRoomMode === 'custom' ? onlineCustomRulesFromSettings() : battleRulesFromSettings(inputSettings),
+      mode,
+      matchType,
+      rules: matchType === 'custom' ? onlineCustomRulesFromSettings() : battleRulesFromSettings(inputSettings),
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
@@ -730,10 +862,34 @@ async function startOnlineRoom(): Promise<void> {
   }
 }
 
+async function setOnlineTargeting(mode: string | undefined, manualTargetPlayerId: string | null = null): Promise<void> {
+  if (!onlineRoom || onlineBusy) return;
+  const targetingMode = parseTargetingMode(mode);
+  if (!targetingMode) return;
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.setTargeting({
+      roomId: onlineRoom.id,
+      playerId: onlinePlayer.id,
+      targetingMode,
+      manualTargetPlayerId,
+    });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    syncOnlinePeers(response.room);
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
 function leaveOnlineRoom(): void {
   onlinePeerBroadcaster?.close();
   onlinePeerBroadcaster = null;
   onlinePeerStates = new Map();
+  onlineMatchmakingTicket = null;
   onlineRoom = null;
   onlineError = null;
   onlineResultSubmitted = false;
@@ -744,17 +900,20 @@ function leaveOnlineRoom(): void {
   onlineHostProgressInFlight = new Set();
   onlineHostLastProgressAt = new Map();
   onlineHostCommittedEliminations = new Set();
+  onlineHostCommittedResults = new Set();
   onlineLastAuthoritativeFrame = 0;
   onlineInputSequence = 0;
   onlineInputOutbox = [];
   onlineLastPollAt = 0;
   onlineLastProgressAt = 0;
   onlineLastPeerBroadcastAt = 0;
+  onlineActiveRoundId = null;
   goToMenu();
 }
 
 function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
-  onlineRoom = room;
+  onlineMatchmakingTicket = null;
+  adoptOnlineRoom(room);
   onlineRoomMode = room.mode === 'custom' ? 'custom' : 'battle';
   syncOnlinePeers(room);
   onlineError = null;
@@ -763,6 +922,34 @@ function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
   else if (room.status === 'playing') appMode = onlineRunStarted ? 'onlinePlaying' : 'onlineCountdown';
   else if (room.status === 'countdown') appMode = 'onlineCountdown';
   else appMode = preferredMode;
+}
+
+function adoptOnlineRoom(room: OnlineRoom): void {
+  const previousRoundId = onlineActiveRoundId;
+  const nextRoundId = room.series?.roundId ?? null;
+  const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
+  onlineRoom = room;
+  onlineActiveRoundId = nextRoundId;
+  if (roundChanged) resetOnlineRuntimeForNextRound();
+}
+
+function resetOnlineRuntimeForNextRound(): void {
+  onlineRunStarted = false;
+  onlineResultSubmitted = false;
+  onlineAttackSequence = 0;
+  onlineAppliedAttackIds = new Set();
+  onlineHostAuthority = null;
+  onlineHostProgressInFlight = new Set();
+  onlineHostLastProgressAt = new Map();
+  onlineHostCommittedEliminations = new Set();
+  onlineHostCommittedResults = new Set();
+  onlineLastAuthoritativeFrame = 0;
+  onlineInputSequence = 0;
+  onlineInputOutbox = [];
+  onlineLastProgressAt = 0;
+  onlineLastPeerBroadcastAt = 0;
+  input.releaseAll();
+  if (onlineRoom?.status === 'countdown' || onlineRoom?.status === 'playing') appMode = 'onlineCountdown';
 }
 
 function applyInputSettings(settings: InputSettings): void {
@@ -940,7 +1127,7 @@ function commitOnlineAttack(request: {
   void onlineClient.sendAttack(attack)
     .then((response) => {
       syncOnlineClock(response.serverNowMs);
-      onlineRoom = response.room;
+      adoptOnlineRoom(response.room);
       applyRoomAttacks(response.room);
     })
     .catch((error) => {
@@ -949,6 +1136,7 @@ function commitOnlineAttack(request: {
 }
 
 function applyAttackToHostTruth(attack: AttackRequest): void {
+  rememberOnlineAttack(attack.fromPlayerId, attack.toPlayerId, attack.lines);
   if (attack.toPlayerId === onlinePlayer.id) {
     applyOnlineAttack({
       id: attack.attackId,
@@ -968,15 +1156,15 @@ function applyAttackToHostTruth(attack: AttackRequest): void {
 
 function selectAttackTarget(sourcePlayerId: string, attackId: string): OnlinePlayer | null {
   if (!onlineRoom) return null;
-  const candidates = onlineRoom.players.filter((player) => (
-    player.id !== sourcePlayerId
-    && player.alive
-    && player.status !== 'eliminated'
-    && player.status !== 'winner'
-    && player.status !== 'disconnected'
-  ));
-  if (candidates.length === 0) return null;
-  return candidates[hashText(attackId) % candidates.length];
+  const source = onlineRoom.players.find((player) => player.id === sourcePlayerId);
+  return selectTargetForAttack({
+    players: onlineRoom.players,
+    sourcePlayerId,
+    attackId,
+    mode: source?.targetingMode ?? onlineRoom.ruleset.targeting,
+    manualTargetPlayerId: source?.manualTargetPlayerId ?? null,
+    recentAttackers: source?.recentAttackers ?? [],
+  });
 }
 
 function advanceHostAuthority(targetFrame: number): void {
@@ -1019,6 +1207,9 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
   if (update.state.status === 'gameover' && !onlineHostCommittedEliminations.has(update.playerId)) {
     void commitOnlineElimination(createOnlineKoReportFromState(update.playerId, update.state));
   }
+  if (update.state.status === 'finished' && !onlineHostCommittedResults.has(update.playerId)) {
+    void commitOnlineResult(update.playerId, update.state, 'won', snapshot);
+  }
 }
 
 function syncOnline(state: GameState): void {
@@ -1032,7 +1223,35 @@ function syncOnline(state: GameState): void {
     applyRoomAttacks(onlineRoom);
     if (state.status === 'playing' && shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(state);
     if (isOnlineHost() && state.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(state);
+    if (state.status === 'finished' && !onlineResultSubmitted) postOnlineResult(state);
     if (state.status === 'gameover' && !onlineResultSubmitted) postOnlineElimination(state);
+  }
+}
+
+function syncMatchmakingQueue(): void {
+  if (!onlineMatchmakingTicket || onlineMatchmakingTicket.status !== 'queued') return;
+  const now = performance.now();
+  if (onlineBusy || now - onlineLastMatchmakingHeartbeatAt < ONLINE_MATCHMAKING_HEARTBEAT_MS) return;
+  void heartbeatQuickDuelQueue();
+}
+
+async function heartbeatQuickDuelQueue(): Promise<void> {
+  if (!onlineMatchmakingTicket || onlineMatchmakingTicket.status !== 'queued') return;
+  onlineBusy = true;
+  onlineLastMatchmakingHeartbeatAt = performance.now();
+  try {
+    const response = await onlineClient.heartbeatMatchmaking({
+      ticketId: onlineMatchmakingTicket.id,
+      playerId: onlinePlayer.id,
+    });
+    syncOnlineClock(response.serverNowMs);
+    onlineMatchmakingTicket = response.ticket.status === 'queued' ? response.ticket : null;
+    if (response.room) enterOnlineRoom(response.room, response.room.status === 'countdown' ? 'onlineCountdown' : 'roomLobby');
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
   }
 }
 
@@ -1059,12 +1278,12 @@ async function pollOnlineRoom(): Promise<void> {
   try {
     const response = await onlineClient.getRoomState(onlineRoom.id);
     syncOnlineClock(response.serverNowMs);
-    onlineRoom = response.room;
-    syncOnlinePeers(onlineRoom);
-    applyRoomAttacks(onlineRoom);
-    if (onlineRoom.status === 'finished') appMode = 'onlineResults';
-    if (onlineRoom.status === 'countdown' && appMode === 'roomLobby') appMode = 'onlineCountdown';
-    if (onlineRoom.status === 'playing' && appMode === 'roomLobby') appMode = 'onlineCountdown';
+    adoptOnlineRoom(response.room);
+    syncOnlinePeers(response.room);
+    applyRoomAttacks(response.room);
+    if (response.room.status === 'finished') appMode = 'onlineResults';
+    if (response.room.status === 'countdown' && (appMode === 'roomLobby' || appMode === 'onlineResults')) appMode = 'onlineCountdown';
+    if (response.room.status === 'playing' && appMode === 'roomLobby') appMode = 'onlineCountdown';
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -1091,13 +1310,62 @@ async function postOnlineProgress(state: GameState): Promise<void> {
       game: createOnlineGameSnapshot(state),
     });
     syncOnlineClock(response.serverNowMs);
-    onlineRoom = response.room;
-    syncOnlinePeers(onlineRoom);
+    adoptOnlineRoom(response.room);
+    syncOnlinePeers(response.room);
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
     onlineProgressInFlight = false;
+  }
+}
+
+async function postOnlineResult(state: GameState): Promise<void> {
+  if (!onlineRoom) return;
+  onlineResultSubmitted = true;
+  const game = createOnlineGameSnapshot(state);
+
+  if (!isOnlineHost()) {
+    appMode = 'onlineResults';
+    onlineError = null;
+    return;
+  }
+
+  await commitOnlineResult(onlinePlayer.id, state, 'won', game, () => {
+    onlineResultSubmitted = false;
+  });
+}
+
+async function commitOnlineResult(
+  playerId: string,
+  state: GameState,
+  result: 'won' | 'lost',
+  game: OnlineGameSnapshot,
+  onFailure?: () => void,
+): Promise<void> {
+  if (!onlineRoom || !isOnlineHost()) return;
+  onlineHostCommittedResults.add(playerId);
+  try {
+    const response = await onlineClient.submitResult({
+      ...createProgressRequest(playerId, game),
+      result,
+      lines: state.stats.lines,
+      pieces: state.stats.pieces,
+      elapsedFrames: displayedElapsedFrames(state.stats),
+      sentGarbage: state.stats.sentGarbage,
+      receivedGarbage: state.stats.receivedGarbage,
+      pendingGarbage: state.stats.pendingGarbage,
+      game,
+    });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    syncOnlinePeers(response.room);
+    if (response.room.status === 'finished' || playerId === onlinePlayer.id) appMode = 'onlineResults';
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+    onlineHostCommittedResults.delete(playerId);
+    onFailure?.();
   }
 }
 
@@ -1121,6 +1389,7 @@ async function postOnlineElimination(state: GameState): Promise<void> {
 
 async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>, onFailure?: () => void): Promise<void> {
   if (!onlineRoom || !isOnlineHost()) return;
+  const previousRoundId = onlineActiveRoundId;
   onlineHostCommittedEliminations.add(report.playerId);
   try {
     const response = await onlineClient.eliminatePlayer({
@@ -1137,9 +1406,10 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
       game: report.game,
     });
     syncOnlineClock(response.serverNowMs);
-    onlineRoom = response.room;
-    syncOnlinePeers(onlineRoom);
-    if (onlineRoom.status === 'finished' || report.playerId === onlinePlayer.id) appMode = 'onlineResults';
+    adoptOnlineRoom(response.room);
+    syncOnlinePeers(response.room);
+    const roundChanged = previousRoundId !== null && response.room.series?.roundId !== previousRoundId;
+    if (response.room.status === 'finished' || (!roundChanged && report.playerId === onlinePlayer.id)) appMode = 'onlineResults';
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -1161,6 +1431,7 @@ function maybeStartOnlineRun(): void {
   onlineHostProgressInFlight = new Set();
   onlineHostLastProgressAt = new Map();
   onlineHostCommittedEliminations = new Set();
+  onlineHostCommittedResults = new Set();
   onlineLastAuthoritativeFrame = 0;
   onlineInputSequence = 0;
   onlineInputOutbox = [];
@@ -1184,7 +1455,7 @@ function syncOnlinePeers(room: OnlineRoom): void {
         data: signal.data,
       }).then((response) => {
         syncOnlineClock(response.serverNowMs);
-        onlineRoom = response.room;
+        adoptOnlineRoom(response.room);
       }).catch((error) => {
         onlineError = onlineErrorText(error);
       });
@@ -1315,8 +1586,8 @@ function postHostSimulatedProgress(playerId: string, state: GameState): void {
   void onlineClient.updateProgress(progress)
     .then((response) => {
       syncOnlineClock(response.serverNowMs);
-      onlineRoom = response.room;
-      syncOnlinePeers(onlineRoom);
+      adoptOnlineRoom(response.room);
+      syncOnlinePeers(response.room);
       onlineError = null;
     })
     .catch((error) => {
@@ -1354,7 +1625,31 @@ function applyOnlineAttack(attack: OnlineAttack): void {
   if (!onlineRoom || attack.authorityPlayerId !== onlineRoom.hostPlayerId) return;
   if (attack.toPlayerId !== onlinePlayer.id || onlineAppliedAttackIds.has(attack.id)) return;
   onlineAppliedAttackIds.add(attack.id);
+  rememberOnlineAttack(attack.fromPlayerId, attack.toPlayerId, attack.lines);
   engine.queueGarbage(attack.lines, attack.holeSeed, gameFrame, attack.id);
+}
+
+function rememberOnlineAttack(fromPlayerId: string, toPlayerId: string, lines: number): void {
+  if (!onlineRoom) return;
+  onlineRoom = {
+    ...onlineRoom,
+    players: onlineRoom.players.map((player) => {
+      if (player.id === fromPlayerId) {
+        return {
+          ...player,
+          currentTargetPlayerId: toPlayerId,
+        };
+      }
+      if (player.id === toPlayerId) {
+        return {
+          ...player,
+          recentAttackers: prependUnique(player.recentAttackers ?? [], fromPlayerId, 8),
+          receivedGarbageThisRound: Math.max(0, Math.floor((player.receivedGarbageThisRound ?? 0) + lines)),
+        };
+      }
+      return player;
+    }),
+  };
 }
 
 function syncOnlineVisibilityChange(): void {
@@ -1367,7 +1662,9 @@ function syncOnlineVisibilityChange(): void {
 }
 
 function syncOnlineBackground(): void {
-  if (!document.hidden || !onlineRoom) return;
+  if (!document.hidden) return;
+  syncMatchmakingQueue();
+  if (!onlineRoom) return;
   if (!['roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return;
 
   let state = engine.getState();
@@ -1673,13 +1970,14 @@ function renderOnlineMenuOverlay(): string {
   const modeDescription = onlineRoomMode === 'custom'
     ? 'Custom room - usa la configuracion custom del host, con victoria por supervivencia online.'
     : 'Battle room - last player standing. Clears send garbage; top out and you are eliminated.';
+  const matchmakingStatus = renderMatchmakingStatus();
   const publicRooms = onlinePublicRooms.length === 0
     ? '<div class="online-empty">No public rooms yet.</div>'
     : onlinePublicRooms.map((room) => `
       <article class="online-room-row">
         <div>
           <strong>${escapeHtml(room.id)}</strong>
-          <span>${escapeHtml(room.hostName)} - ${escapeHtml(roomModeLabel(room.mode))} - ${room.playerCount} player${room.playerCount === 1 ? '' : 's'} - ${escapeHtml(room.status)}</span>
+          <span>${escapeHtml(room.hostName)} - ${escapeHtml(matchTypeLabel(room.matchType))} - ${room.playerCount} player${room.playerCount === 1 ? '' : 's'} - ${escapeHtml(room.status)} - ${escapeHtml(room.region)}${room.ranked ? ' - ranked' : ''}</span>
         </div>
         <button type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}">Join</button>
       </article>
@@ -1691,14 +1989,21 @@ function renderOnlineMenuOverlay(): string {
         <h1>${escapeHtml(modeLabel)}</h1>
         <p>${escapeHtml(modeDescription)}</p>
         ${renderOnlineError()}
+        ${renderOnlineProfileSummary()}
         <label class="online-field">
           <span>Name</span>
           <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
         </label>
         <div class="online-create-actions">
+          <button type="button" data-ui-action="online-quick-duel"${onlineBusy || onlineMatchmakingTicket ? ' disabled' : ''}>Quick Duel</button>
+          <button type="button" data-ui-action="online-league"${onlineBusy || onlineMatchmakingTicket ? ' disabled' : ''}>League</button>
+          <button type="button" data-ui-action="online-quick-play"${onlineBusy ? ' disabled' : ''}>Quick Play</button>
           <button type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Create private</button>
           <button type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Create public</button>
+          <button type="button" data-ui-action="online-create-royale-public"${onlineBusy ? ' disabled' : ''}>Create Royale</button>
+          <button type="button" data-ui-action="online-create-sprint-public"${onlineBusy ? ' disabled' : ''}>Create Sprint Race</button>
         </div>
+        ${matchmakingStatus}
         <div class="online-join-row">
           <label class="online-field">
             <span>Room code</span>
@@ -1710,6 +2015,23 @@ function renderOnlineMenuOverlay(): string {
           <span>Public rooms</span>
           <button type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Refresh</button>
         </div>
+        <div class="online-filters" aria-label="Public room filters">
+          <div>
+            ${ONLINE_ROOM_MATCH_FILTERS.map((filter) => `
+              <button class="${filter === onlineRoomMatchFilter ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-match-filter" data-match-filter="${filter}">
+                ${escapeHtml(filter === 'all' ? 'All' : matchTypeLabel(filter))}
+              </button>
+            `).join('')}
+          </div>
+          <div>
+            ${ONLINE_ROOM_RANK_FILTERS.map((filter) => `
+              <button class="${filter === onlineRoomRankFilter ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-rank-filter" data-rank-filter="${filter}">
+                ${escapeHtml(rankFilterLabel(filter))}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+        ${renderQuickPlayLeaderboard()}
         <div class="online-room-list">${publicRooms}</div>
         <div class="panel-actions">
           <button type="button" data-ui-action="main-menu">Back</button>
@@ -1732,6 +2054,7 @@ function renderOnlineLobbyOverlay(): string {
         <h1>${escapeHtml(onlineRoom.id)}</h1>
         <p>${host ? 'You are host.' : 'Waiting for host.'} ${escapeHtml(modeLabel)}: survive, send garbage, and be the last player standing.</p>
         ${renderOnlineError()}
+        ${renderOnlineSeriesStatus()}
         <div class="online-lobby-list">${onlineRoom.players.map(renderLobbyPlayer).join('')}</div>
         <div class="panel-actions">
           ${player?.ready
@@ -1755,6 +2078,7 @@ function renderOnlineCountdownOverlay(): string {
         <div class="panel-eyebrow">${escapeHtml(modeLabel.toUpperCase())} START</div>
         <h1>${Math.ceil(remainingMs / 1000)}</h1>
         <p>Room ${escapeHtml(onlineRoom.id)} starts from seed ${onlineRoom.seed}. Last player standing wins.</p>
+        ${renderOnlineSeriesStatus()}
       </section>
     </div>
   `;
@@ -1771,6 +2095,7 @@ function renderOnlineResultsOverlay(state: GameState): string {
         <div class="panel-eyebrow">ONLINE RESULTS</div>
         <h1>${onlineRoom ? escapeHtml(onlineRoom.id) : 'Room'}</h1>
         <p>${winner ? `${escapeHtml(winner.name)} wins. ` : ''}Ranking is based on survival, then elapsed frames.</p>
+        ${renderOnlineSeriesStatus()}
         ${ownSummary}
         ${renderOnlineStandings()}
         <div class="panel-actions">
@@ -1787,6 +2112,8 @@ function renderOnlinePlayingOverlay(): string {
     <aside class="online-race-panel" aria-label="Online race status">
       <div class="panel-eyebrow">ROOM ${escapeHtml(onlineRoom.id)}</div>
       <div class="online-battle-meta">${escapeHtml(onlineAliveText())}</div>
+      ${renderOnlineSeriesStatus()}
+      ${renderOnlineTargetingControls()}
       ${renderIncomingGarbage()}
       ${renderOnlineStandings()}
       ${renderOnlinePeerBoards()}
@@ -1817,8 +2144,116 @@ function onlineAliveText(): string {
   return `Alive ${alive}/${onlineRoom.players.length}`;
 }
 
+function renderOnlineSeriesStatus(): string {
+  if (!onlineRoom?.series) return '';
+  const series = onlineRoom.series;
+  const score = series.scores
+    .map((scoreEntry) => {
+      const player = onlineRoom?.players.find((candidate) => candidate.id === scoreEntry.playerId);
+      return `${player?.name ?? scoreEntry.playerId}: ${scoreEntry.wins}`;
+    })
+    .join(' / ');
+  return `
+    <div class="online-series-status">
+      <span>Round ${series.currentRound} - FT${series.firstTo}</span>
+      <strong>${escapeHtml(score || '0 / 0')}</strong>
+    </div>
+  `;
+}
+
 function roomModeLabel(mode: OnlineRoomMode | undefined): string {
   return mode === 'custom' ? 'Custom room' : 'Battle room';
+}
+
+function matchTypeLabel(matchType: OnlineMatchType | OnlineRoomMatchFilter): string {
+  if (matchType === 'duel') return 'Duel';
+  if (matchType === 'league') return 'League';
+  if (matchType === 'custom') return 'Custom';
+  if (matchType === 'quickPlay') return 'Quick Play';
+  if (matchType === 'sprintRace') return 'Sprint Race';
+  if (matchType === 'royale') return 'Royale';
+  return 'Battle';
+}
+
+function rankFilterLabel(filter: OnlineRoomRankFilter): string {
+  if (filter === 'ranked') return 'Ranked';
+  if (filter === 'casual') return 'Casual';
+  return 'All';
+}
+
+function renderMatchmakingStatus(): string {
+  if (!onlineMatchmakingTicket) return '';
+  if (onlineMatchmakingTicket.status !== 'queued') return '';
+  const queueLabel = onlineMatchmakingTicket.queue === 'league' ? 'League' : 'Quick Duel';
+  const rating = onlineMatchmakingTicket.rating === null ? '' : ` - ${onlineMatchmakingTicket.rating}`;
+  return `
+    <div class="online-matchmaking">
+      <div>
+        <strong>${escapeHtml(queueLabel)}</strong>
+        <span>Searching in ${escapeHtml(onlineMatchmakingTicket.region)}${escapeHtml(rating)}</span>
+      </div>
+      <button type="button" data-ui-action="online-cancel-matchmaking"${onlineBusy ? ' disabled' : ''}>Cancel</button>
+    </div>
+  `;
+}
+
+function renderOnlineProfileSummary(): string {
+  if (!onlineProfile) return '';
+  const latest = onlineRecentResults[0];
+  const latestParticipant = latest?.participants.find((participant) => participant.playerId === onlineProfile?.playerId);
+  const latestText = latest && latestParticipant
+    ? `${matchTypeLabel(latest.matchType)} ${latestParticipant.result} #${latestParticipant.placement}`
+    : 'No matches yet';
+  return `
+    <div class="online-profile-summary">
+      <div>
+        <span>League rating</span>
+        <strong>${onlineProfile.rating.value}</strong>
+      </div>
+      <div>
+        <span>League record</span>
+        <strong>${onlineProfile.leagueStats.wins}-${onlineProfile.leagueStats.losses}</strong>
+      </div>
+      <div>
+        <span>Latest</span>
+        <strong>${escapeHtml(latestText)}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function renderQuickPlayLeaderboard(): string {
+  if (quickPlayLeaderboard.length === 0) return '';
+  return `
+    <div class="quickplay-leaderboard">
+      <div class="quickplay-leaderboard-head">
+        <span>Quick Play weekly</span>
+        <strong>${escapeHtml(quickPlayLeaderboard[0]?.weekId ?? '')}</strong>
+      </div>
+      ${quickPlayLeaderboard.slice(0, 5).map((entry, index) => `
+        <div class="quickplay-leaderboard-row">
+          <span>${index + 1}</span>
+          <strong>${escapeHtml(entry.displayName)}</strong>
+          <em>${entry.score}</em>
+          <b>${entry.koCount} KO</b>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function targetingModeLabel(mode: TargetingMode): string {
+  if (mode === 'even') return 'Even';
+  if (mode === 'ko') return 'KO';
+  if (mode === 'attackers') return 'Attackers';
+  if (mode === 'leader') return 'Leader';
+  if (mode === 'manual') return 'Manual';
+  return 'Random';
+}
+
+function targetingModeShortLabel(mode: TargetingMode): string {
+  if (mode === 'attackers') return 'ATK';
+  return targetingModeLabel(mode).slice(0, 4).toUpperCase();
 }
 
 function renderIncomingGarbage(): string {
@@ -1829,6 +2264,47 @@ function renderIncomingGarbage(): string {
       <span>Incoming</span>
       <strong>${pending}</strong>
       <div>${Array.from({ length: 12 }, (_, index) => `<i class="${index < capped ? 'online-garbage-cell-active' : ''}"></i>`).join('')}</div>
+    </div>
+  `;
+}
+
+function renderOnlineTargetingControls(): string {
+  if (!onlineRoom || onlineRoom.players.length <= 2) return '';
+  const player = currentOnlinePlayer();
+  if (!player) return '';
+  const activeMode = player.targetingMode ?? onlineRoom.ruleset.targeting;
+  const liveTargets = onlineRoom.players.filter((candidate) => (
+    candidate.id !== player.id
+    && candidate.alive
+    && candidate.status !== 'eliminated'
+    && candidate.status !== 'winner'
+    && candidate.status !== 'disconnected'
+  ));
+  const target = onlineRoom.players.find((candidate) => candidate.id === player.currentTargetPlayerId)
+    ?? liveTargets.find((candidate) => candidate.id === player.manualTargetPlayerId)
+    ?? null;
+  return `
+    <div class="online-targeting" aria-label="Targeting controls">
+      <div class="online-targeting-head">
+        <span>Target</span>
+        <strong>${escapeHtml(target?.name ?? targetingModeLabel(activeMode))}</strong>
+      </div>
+      <div class="online-targeting-modes">
+        ${TARGETING_MODES.map((mode) => `
+          <button class="${mode === activeMode ? 'online-targeting-active' : ''}" type="button" data-ui-action="online-targeting" data-targeting-mode="${mode}">
+            ${escapeHtml(targetingModeShortLabel(mode))}
+          </button>
+        `).join('')}
+      </div>
+      ${activeMode === 'manual' ? `
+        <div class="online-targeting-manual">
+          ${liveTargets.map((candidate) => `
+            <button class="${candidate.id === player.manualTargetPlayerId ? 'online-targeting-active' : ''}" type="button" data-ui-action="online-manual-target" data-target-player-id="${escapeHtml(candidate.id)}">
+              ${escapeHtml(candidate.name)}
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -2137,6 +2613,8 @@ function renderCustomTabBody(): string {
       renderCustomSelect('Mode', 'survivalMode', [['none', 'NONE']]),
       renderCustomNumber('Garbage messiness %', 'garbageMessinessPercent'),
       renderCustomNumber('Garbage cap', 'garbageCap'),
+      renderCustomToggle('Change on attack', 'changeOnAttack'),
+      renderCustomToggle('Continuous garbage', 'continuousGarbage'),
       renderCustomNumber('Layer height', 'layerHeight'),
       renderCustomToggle('Sticky layer', 'stickyLayer'),
       renderCustomNumber('Minimum layer height', 'minimumLayerHeight'),
@@ -2194,27 +2672,7 @@ function renderCustomSelect(
   `);
 }
 
-function renderCustomToggle(
-  label: string,
-  key: keyof Pick<CustomSettings,
-    | 'enableAllClears'
-    | 'useRandomSeed'
-    | 'allowRetry'
-    | 'enableClutchClears'
-    | 'disableLockout'
-    | 'stickyLayer'
-    | 'allow180Spins'
-    | 'useHardDrop'
-    | 'useNextQueue'
-    | 'useHoldQueue'
-    | 'infiniteMovement'
-    | 'infiniteHold'
-    | 'showShadowPiece'
-    | 'useLevelling'
-    | 'useMasterLevels'
-    | 'useStaticLevelling'
-  >,
-): string {
+function renderCustomToggle(label: string, key: CustomBooleanSettingKey): string {
   const enabled = customSettings[key];
   return renderCustomRow(label, `
     <button class="custom-toggle ${enabled ? 'custom-toggle-on' : 'custom-toggle-off'}" type="button" data-ui-action="custom-toggle" data-setting="${key}">
@@ -2447,6 +2905,7 @@ function onlineRulesFromRoom(room = onlineRoom): GameRules {
   const sharedRules = room?.rules ?? battleRulesFromSettings(inputSettings);
   return {
     ...sharedRules,
+    attackTable: room?.ruleset.attackTable ?? sharedRules.attackTable,
     dasFrames: inputSettings.dasFrames,
     arrFrames: inputSettings.arrFrames,
   };
@@ -2620,6 +3079,22 @@ function currentOnlinePlayer(): OnlinePlayer | null {
   return onlineRoom?.players.find((player) => player.id === onlinePlayer.id) ?? null;
 }
 
+function parseTargetingMode(value: string | undefined): TargetingMode | null {
+  return TARGETING_MODES.includes(value as TargetingMode) ? value as TargetingMode : null;
+}
+
+function isOnlineRoomMatchFilter(value: string | undefined): value is OnlineRoomMatchFilter {
+  return ONLINE_ROOM_MATCH_FILTERS.includes(value as OnlineRoomMatchFilter);
+}
+
+function isOnlineRoomRankFilter(value: string | undefined): value is OnlineRoomRankFilter {
+  return ONLINE_ROOM_RANK_FILTERS.includes(value as OnlineRoomRankFilter);
+}
+
+function prependUnique(values: string[], value: string, limit: number): string[] {
+  return [value, ...values.filter((candidate) => candidate !== value)].slice(0, limit);
+}
+
 function formatOnlinePlayerState(player: OnlinePlayer): string {
   if (player.status === 'winner') return `${formatFrames(player.elapsedFrames)} winner`;
   if (player.status === 'eliminated') return `${formatFrames(player.elapsedFrames)} eliminated`;
@@ -2647,14 +3122,6 @@ function onlineNowMs(): number {
 function normalizeProgressInteger(value: number | undefined, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.max(0, Math.floor(value as number));
-}
-
-function hashText(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash;
 }
 
 function escapeHtml(value: string): string {

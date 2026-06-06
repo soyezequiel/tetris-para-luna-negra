@@ -4,6 +4,10 @@ export type Cell = PieceType | null;
 
 export type Rotation = 0 | 1 | 2 | 3;
 
+export type AttackTableId = 'simple' | 'modern';
+
+export type SpinType = 'none' | 'mini' | 'full';
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -38,12 +42,19 @@ export interface GameRules {
   hiddenRows: number;
   nextPreview: number;
   targetLines: number | null;
+  attackTable: AttackTableId;
   gravityCellsPerFrame: number;
   softDropCellsPerFrame: number;
   lockDelayFrames: number;
   dasFrames: number;
   arrFrames: number;
   garbageDelayFrames: number;
+  garbageTravelFrames: number;
+  garbageActivationFrames: number;
+  garbageCap: number;
+  garbageMessinessPercent: number;
+  changeOnAttack: boolean;
+  continuousGarbage: boolean;
   allowHardDrop: boolean;
   allowHold: boolean;
   showGhost: boolean;
@@ -64,6 +75,12 @@ export interface LineClearEvent {
   type: 'lineClear';
   frame: number;
   cleared: number;
+  difficult: boolean;
+  spin: SpinType;
+  piece: PieceType;
+  perfectClear: boolean;
+  combo: number;
+  b2b: number;
   attackLines: number;
   outgoingLines: number;
 }
@@ -92,6 +109,8 @@ export interface GameStats {
   sentGarbage: number;
   receivedGarbage: number;
   pendingGarbage: number;
+  combo: number;
+  b2b: number;
   targetLines: number | null;
   startFrame: number;
   finishFrame: number | null;
@@ -128,6 +147,10 @@ export interface GameEngineSnapshot {
   sentGarbage: number;
   receivedGarbage: number;
   pendingGarbage: PendingGarbage[];
+  combo: number;
+  b2b: number;
+  lastGarbageHoleColumn: number | null;
+  spinCandidate: boolean;
   fallAccumulator: number;
   lockFrames: number;
   lockResets: number;

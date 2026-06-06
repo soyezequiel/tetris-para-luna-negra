@@ -1,10 +1,10 @@
 import { createShuffledBag } from './bag';
-import { attackLinesForClear, garbageHoleColumn, resolveAttack } from './battle';
+import { calculateAttack, garbageHoleColumn, nextBackToBack, nextCombo, resolveAttack } from './attack';
 import { addGarbageLines, clearCompletedLines, createBoard } from './board';
 import { cellsFor, kicksFor, nextRotation } from './pieces';
 import { SeededRng } from './rng';
 import { DEFAULT_RULES } from './rules';
-import type { ActivePiece, Cell, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, PendingGarbage, PieceType } from './types';
+import type { ActivePiece, Cell, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, PendingGarbage, PieceType, SpinType, Vec2 } from './types';
 
 export class GameEngine {
   private readonly rules: GameRules;
@@ -25,6 +25,10 @@ export class GameEngine {
   private sentGarbage = 0;
   private receivedGarbage = 0;
   private pendingGarbage: PendingGarbage[] = [];
+  private combo = -1;
+  private b2b = 0;
+  private lastGarbageHoleColumn: number | null = null;
+  private spinCandidate = false;
   private events: GameEvent[] = [];
   private fallAccumulator = 0;
   private lockFrames = 0;
@@ -58,6 +62,8 @@ export class GameEngine {
         sentGarbage: this.sentGarbage,
         receivedGarbage: this.receivedGarbage,
         pendingGarbage: this.pendingGarbage.reduce((total, garbage) => total + garbage.lines, 0),
+        combo: this.combo,
+        b2b: this.b2b,
         targetLines: this.rules.targetLines,
         startFrame: this.startFrame,
         finishFrame: this.finishFrame,
@@ -87,6 +93,10 @@ export class GameEngine {
       sentGarbage: this.sentGarbage,
       receivedGarbage: this.receivedGarbage,
       pendingGarbage: this.pendingGarbage.map((garbage) => ({ ...garbage })),
+      combo: this.combo,
+      b2b: this.b2b,
+      lastGarbageHoleColumn: this.lastGarbageHoleColumn,
+      spinCandidate: this.spinCandidate,
       fallAccumulator: this.fallAccumulator,
       lockFrames: this.lockFrames,
       lockResets: this.lockResets,
@@ -111,6 +121,12 @@ export class GameEngine {
     this.sentGarbage = snapshot.sentGarbage;
     this.receivedGarbage = snapshot.receivedGarbage;
     this.pendingGarbage = snapshot.pendingGarbage.map((garbage) => ({ ...garbage }));
+    this.combo = Number.isFinite(snapshot.combo) ? snapshot.combo : -1;
+    this.b2b = Number.isFinite(snapshot.b2b) ? snapshot.b2b : 0;
+    this.lastGarbageHoleColumn = Number.isInteger(snapshot.lastGarbageHoleColumn)
+      ? snapshot.lastGarbageHoleColumn
+      : null;
+    this.spinCandidate = snapshot.spinCandidate === true;
     this.events = [];
     this.fallAccumulator = snapshot.fallAccumulator;
     this.lockFrames = snapshot.lockFrames;
@@ -129,16 +145,20 @@ export class GameEngine {
   queueGarbage(lines: number, holeSeed: number, frame = this.frame, id = `${frame}-${holeSeed}-${lines}`): void {
     const normalizedLines = Math.max(0, Math.floor(lines));
     if (normalizedLines <= 0 || this.status !== 'playing') return;
+    const pendingTotal = this.pendingGarbage.reduce((total, garbage) => total + garbage.lines, 0);
+    const cap = Math.max(0, Math.floor(this.rules.garbageCap));
+    const cappedLines = cap > 0 ? Math.max(0, Math.min(normalizedLines, cap - pendingTotal)) : normalizedLines;
+    if (cappedLines <= 0) return;
     const pending: PendingGarbage = {
       id,
-      lines: normalizedLines,
-      holeColumn: garbageHoleColumn(holeSeed, this.rules.boardWidth),
+      lines: cappedLines,
+      holeColumn: this.selectGarbageHole(holeSeed, frame, id),
       receivedFrame: frame,
-      applyFrame: frame + this.rules.garbageDelayFrames,
+      applyFrame: frame + this.garbageApplyDelayFrames(),
     };
     this.pendingGarbage.push(pending);
-    this.receivedGarbage += normalizedLines;
-    this.events.push({ type: 'incomingGarbage', frame, lines: normalizedLines });
+    this.receivedGarbage += cappedLines;
+    this.events.push({ type: 'incomingGarbage', frame, lines: cappedLines });
   }
 
   drainEvents(): GameEvent[] {
@@ -191,6 +211,10 @@ export class GameEngine {
     this.sentGarbage = 0;
     this.receivedGarbage = 0;
     this.pendingGarbage = [];
+    this.combo = -1;
+    this.b2b = 0;
+    this.lastGarbageHoleColumn = null;
+    this.spinCandidate = false;
     this.events = [];
     this.fallAccumulator = 0;
     this.lockFrames = 0;
@@ -215,6 +239,7 @@ export class GameEngine {
     this.fillNext();
     this.active = { type, rotation: 0, x: this.spawnX(), y: 0 };
     this.canHold = true;
+    this.spinCandidate = false;
     this.lockFrames = 0;
     this.lockResets = 0;
     this.fallAccumulator = 0;
@@ -245,6 +270,7 @@ export class GameEngine {
     const moved = { ...this.active, x: this.active.x + dx, y: this.active.y + dy };
     if (this.collides(moved)) return false;
     this.active = moved;
+    if (dx !== 0 || dy !== 0) this.spinCandidate = false;
     if (dx !== 0 || dy < 0) this.resetLockDelay();
     return true;
   }
@@ -261,6 +287,7 @@ export class GameEngine {
       };
       if (!this.collides(rotated)) {
         this.active = rotated;
+        this.spinCandidate = this.active.type === 'T';
         this.resetLockDelay();
         return;
       }
@@ -287,6 +314,7 @@ export class GameEngine {
       const next = this.hold;
       this.hold = current;
       this.active = { type: next, rotation: 0, x: this.spawnX(), y: 0 };
+      this.spinCandidate = false;
       if (this.collides(this.active)) {
         this.status = 'gameover';
         this.gameOverFrame = this.frame;
@@ -296,6 +324,7 @@ export class GameEngine {
       this.spawn();
     }
     this.canHold = this.rules.infiniteHold;
+    this.spinCandidate = false;
     this.lockFrames = 0;
     this.lockResets = 0;
   }
@@ -344,6 +373,7 @@ export class GameEngine {
 
   private lockPiece(): void {
     if (!this.active) return;
+    const lockedPiece = this.active;
     for (const cell of this.occupied(this.active)) {
       if (cell.y < 0) {
         this.status = 'gameover';
@@ -353,7 +383,8 @@ export class GameEngine {
       this.board[cell.y][cell.x] = cell.type;
     }
     this.pieces += 1;
-    this.clearLines();
+    const spin = this.detectSpin(lockedPiece);
+    this.clearLines(lockedPiece.type, spin);
     if (this.rules.targetLines !== null && this.lines >= this.rules.targetLines) {
       this.status = 'finished';
       this.finishFrame = this.frame;
@@ -363,31 +394,114 @@ export class GameEngine {
     this.spawn();
   }
 
-  private clearLines(): void {
+  private clearLines(piece: PieceType, spin: SpinType): void {
     const result = clearCompletedLines(this.board, this.rules.boardWidth);
     const cleared = result.cleared;
-    if (cleared === 0) return;
+    if (cleared === 0) {
+      this.combo = nextCombo(this.combo, cleared);
+      return;
+    }
     this.board = result.board;
     this.lines += cleared;
-    const attackLines = attackLinesForClear(cleared);
-    const resolved = resolveAttack(attackLines, this.pendingGarbage);
+    this.combo = nextCombo(this.combo, cleared);
+    this.b2b = nextBackToBack(this.b2b, cleared, spin);
+    const perfectClear = this.isPerfectClear();
+    const attack = calculateAttack({
+      table: this.rules.attackTable,
+      cleared,
+      combo: this.combo,
+      b2b: this.b2b,
+      spin,
+      perfectClear,
+    });
+    const resolved = resolveAttack(attack.attackLines, this.pendingGarbage);
     this.pendingGarbage = resolved.remainingIncoming;
     this.sentGarbage += resolved.outgoingAfterCancel;
     this.events.push({
       type: 'lineClear',
       frame: this.frame,
       cleared,
-      attackLines,
+      difficult: attack.difficult,
+      spin,
+      piece,
+      perfectClear,
+      combo: this.combo,
+      b2b: this.b2b,
+      attackLines: attack.attackLines,
       outgoingLines: resolved.outgoingAfterCancel,
     });
+  }
+
+  private isPerfectClear(): boolean {
+    return this.board.every((row) => row.every((cell) => cell === null));
+  }
+
+  private detectSpin(piece: ActivePiece): SpinType {
+    if (!this.spinCandidate || piece.type !== 'T') return 'none';
+    const center = { x: piece.x + 1, y: piece.y + 1 };
+    const corners = [
+      { x: center.x - 1, y: center.y - 1 },
+      { x: center.x + 1, y: center.y - 1 },
+      { x: center.x - 1, y: center.y + 1 },
+      { x: center.x + 1, y: center.y + 1 },
+    ];
+    const blockedCorners = corners.filter((corner) => this.isSpinCornerBlocked(corner.x, corner.y)).length;
+    if (blockedCorners < 3) return 'none';
+    const frontCorners = this.tSpinFrontCorners(piece.rotation, center.x, center.y);
+    const blockedFrontCorners = frontCorners.filter((corner) => this.isSpinCornerBlocked(corner.x, corner.y)).length;
+    return blockedFrontCorners >= 2 ? 'full' : 'mini';
+  }
+
+  private tSpinFrontCorners(rotation: ActivePiece['rotation'], centerX: number, centerY: number): Vec2[] {
+    if (rotation === 1) return [{ x: centerX + 1, y: centerY - 1 }, { x: centerX + 1, y: centerY + 1 }];
+    if (rotation === 2) return [{ x: centerX - 1, y: centerY + 1 }, { x: centerX + 1, y: centerY + 1 }];
+    if (rotation === 3) return [{ x: centerX - 1, y: centerY - 1 }, { x: centerX - 1, y: centerY + 1 }];
+    return [{ x: centerX - 1, y: centerY - 1 }, { x: centerX + 1, y: centerY - 1 }];
+  }
+
+  private isSpinCornerBlocked(x: number, y: number): boolean {
+    if (x < 0 || x >= this.rules.boardWidth || y < 0 || y >= this.board.length) return true;
+    return this.board[y][x] !== null;
+  }
+
+  private garbageApplyDelayFrames(): number {
+    const legacyDelayFrames = Math.max(0, Math.floor(this.rules.garbageDelayFrames));
+    const travelFrames = Math.max(0, Math.floor(this.rules.garbageTravelFrames));
+    const activationFrames = Math.max(0, Math.floor(this.rules.garbageActivationFrames));
+    const usesModernDelay = travelFrames !== DEFAULT_RULES.garbageTravelFrames
+      || activationFrames !== DEFAULT_RULES.garbageActivationFrames
+      || legacyDelayFrames === DEFAULT_RULES.garbageDelayFrames;
+    return usesModernDelay ? travelFrames + activationFrames : legacyDelayFrames;
+  }
+
+  private selectGarbageHole(holeSeed: number, frame: number, id: string): number {
+    const generatedHole = garbageHoleColumn(holeSeed, this.rules.boardWidth);
+    const previousHole = this.lastGarbageHoleColumn;
+    const messiness = Math.min(100, Math.max(0, Math.floor(this.rules.garbageMessinessPercent)));
+    const shouldChange = previousHole === null
+      || (this.rules.changeOnAttack && (
+        messiness >= 100 || deterministicPercent(`${id}:${holeSeed}:${frame}`) < messiness
+      ));
+    const selectedHole = shouldChange ? generatedHole : previousHole;
+    this.lastGarbageHoleColumn = selectedHole;
+    return selectedHole;
   }
 
   private applyPendingGarbage(frame: number): void {
     const due = this.pendingGarbage.filter((garbage) => garbage.applyFrame <= frame);
     if (due.length === 0) return;
-    this.pendingGarbage = this.pendingGarbage.filter((garbage) => garbage.applyFrame > frame);
+    const future = this.pendingGarbage.filter((garbage) => garbage.applyFrame > frame);
+    let garbageToApply = due;
+    const deferred: PendingGarbage[] = [];
+    if (this.rules.continuousGarbage) {
+      const [firstDue, ...remainingDue] = due;
+      garbageToApply = [{ ...firstDue, lines: 1 }];
+      if (firstDue.lines > 1) deferred.push({ ...firstDue, lines: firstDue.lines - 1, applyFrame: frame + 1 });
+      deferred.push(...remainingDue.map((garbage) => ({ ...garbage, applyFrame: Math.max(garbage.applyFrame, frame + 1) })));
+    }
+    this.pendingGarbage = [...future, ...deferred];
     let appliedLines = 0;
-    for (const garbage of due) {
+    for (const garbage of garbageToApply) {
       const result = addGarbageLines(this.board, this.rules.boardWidth, garbage.lines, garbage.holeColumn);
       this.board = result.board;
       appliedLines += garbage.lines;
@@ -405,4 +519,13 @@ export class GameEngine {
     }
     this.events.push({ type: 'appliedGarbage', frame, lines: appliedLines });
   }
+}
+
+function deterministicPercent(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % 100;
 }

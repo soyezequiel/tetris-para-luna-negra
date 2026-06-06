@@ -893,6 +893,166 @@ canvas {
   margin-top: 22px;
 }
 
+.online-filters {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.online-filters > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.online-filters button,
+.online-matchmaking button {
+  min-height: 28px;
+  border: 1px solid rgba(247, 247, 242, 0.16);
+  border-radius: 6px;
+  background: rgba(3, 6, 12, 0.58);
+  color: #f7f7f2;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.online-filters .online-filter-active {
+  border-color: rgba(116, 245, 210, 0.68);
+  color: #74f5d2;
+}
+
+.online-matchmaking {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  border: 1px solid rgba(116, 245, 210, 0.28);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(116, 245, 210, 0.08);
+}
+
+.online-matchmaking div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.online-matchmaking strong,
+.online-matchmaking span {
+  overflow-wrap: anywhere;
+}
+
+.online-matchmaking span {
+  color: rgba(247, 247, 242, 0.62);
+  font-size: 12px;
+}
+
+.online-profile-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.online-profile-summary div {
+  min-width: 0;
+  border: 1px solid rgba(247, 247, 242, 0.12);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(247, 247, 242, 0.05);
+}
+
+.online-profile-summary span,
+.online-profile-summary strong {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.online-profile-summary span {
+  color: rgba(247, 247, 242, 0.56);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.online-profile-summary strong {
+  margin-top: 3px;
+  color: #f7f7f2;
+  font-size: 13px;
+}
+
+.quickplay-leaderboard {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.quickplay-leaderboard-head,
+.quickplay-leaderboard-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.quickplay-leaderboard-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: rgba(247, 247, 242, 0.62);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.quickplay-leaderboard-row {
+  border-bottom: 1px solid rgba(247, 247, 242, 0.1);
+  padding: 6px 0;
+}
+
+.quickplay-leaderboard-row strong,
+.quickplay-leaderboard-row em,
+.quickplay-leaderboard-row b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quickplay-leaderboard-row em,
+.quickplay-leaderboard-row b {
+  color: rgba(247, 247, 242, 0.62);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.online-series-status {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  border: 1px solid rgba(247, 247, 242, 0.14);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(247, 247, 242, 0.06);
+}
+
+.online-series-status span {
+  color: rgba(247, 247, 242, 0.62);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.online-series-status strong {
+  min-width: 0;
+  color: #f7f7f2;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .online-room-list,
 .online-lobby-list,
 .online-standings {
@@ -958,6 +1118,64 @@ canvas {
   font-family: "Arial Black", Arial, sans-serif;
   font-size: 12px;
   font-weight: 900;
+}
+
+.online-targeting {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(247, 247, 242, 0.12);
+}
+
+.online-targeting-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.online-targeting-head span,
+.online-targeting-head strong {
+  overflow: hidden;
+  color: rgba(247, 247, 242, 0.72);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.online-targeting-head strong {
+  color: #39d49a;
+}
+
+.online-targeting-modes,
+.online-targeting-manual {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.online-targeting button {
+  min-width: 0;
+  padding: 6px 4px;
+  border: 1px solid rgba(247, 247, 242, 0.22);
+  border-radius: 4px;
+  background: rgba(247, 247, 242, 0.06);
+  color: rgba(247, 247, 242, 0.78);
+  font-size: 9px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-targeting button:hover,
+.online-targeting .online-targeting-active {
+  border-color: rgba(57, 212, 154, 0.72);
+  color: #39d49a;
 }
 
 .online-garbage-meter {

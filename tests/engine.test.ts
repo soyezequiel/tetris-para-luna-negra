@@ -17,7 +17,8 @@ import {
 } from '../src/app/runHistory';
 import { canAdvanceGame, requiresRunConfirmation, togglePauseMode } from '../src/app/state';
 import { createShuffledBag } from '../src/game/bag';
-import { attackLinesForClear, resolveAttack } from '../src/game/battle';
+import { calculateAttack, nextBackToBack, nextCombo } from '../src/game/attack';
+import { attackLinesForClear, garbageHoleColumn, resolveAttack } from '../src/game/battle';
 import { addGarbageLines, clearCompletedLines, createBoard } from '../src/game/board';
 import { GameEngine } from '../src/game/engine';
 import { createReplayLog, recordInput } from '../src/game/replay';
@@ -30,17 +31,24 @@ import {
   addAttack,
   createRoom,
   createRoomCode,
+  enqueueMatchmaking,
+  enterQuickPlay,
+  getQuickPlayLeaderboard,
   getRoomState,
+  getOnlineProfileState,
+  heartbeatMatchmaking,
   eliminatePlayer,
   joinRoom,
   listPublicRooms,
   MemoryRoomStore,
   rankPlayers,
+  setPlayerTargeting,
   setPlayerReady,
   startRoom,
   submitResult,
   updateProgress,
 } from '../src/online/roomService';
+import { selectAttackTarget } from '../src/online/targeting';
 import { InputController } from '../src/input';
 import { HostAuthoritySimulator } from '../src/online/hostAuthority';
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from '../src/online/reconciliation';
@@ -51,8 +59,8 @@ import {
   updateBinding,
   updateInputTiming,
 } from '../src/input/settings';
-import type { Cell, GameInput } from '../src/game/types';
-import type { OnlinePlayer, OnlinePlayerStatus } from '../src/online/protocol';
+import type { Cell, GameInput, PendingGarbage } from '../src/game/types';
+import type { OnlineGameSnapshot, OnlinePlayer, OnlinePlayerStatus } from '../src/online/protocol';
 
 describe('core stacker engine', () => {
   it('creates deterministic 7-bags with all pieces once', () => {
@@ -242,6 +250,51 @@ describe('core stacker engine', () => {
     expect(attackLinesForClear(4)).toBe(4);
   });
 
+  it('keeps the simple attack table compatible with current battle damage', () => {
+    expect(calculateAttack({
+      table: 'simple',
+      cleared: 4,
+      combo: 6,
+      b2b: 3,
+      perfectClear: true,
+    })).toMatchObject({
+      attackLines: 4,
+      comboBonus: 0,
+      b2bBonus: 0,
+      perfectClearBonus: 0,
+    });
+  });
+
+  it('calculates modern combo, B2B, and perfect clear bonuses', () => {
+    expect(calculateAttack({
+      table: 'modern',
+      cleared: 4,
+      combo: 2,
+      b2b: 2,
+      perfectClear: true,
+    })).toMatchObject({
+      baseLines: 4,
+      comboBonus: 1,
+      b2bBonus: 1,
+      perfectClearBonus: 10,
+      attackLines: 16,
+    });
+  });
+
+  it('increments combo on consecutive clears and cuts it on empty locks', () => {
+    expect(nextCombo(-1, 2)).toBe(0);
+    expect(nextCombo(0, 1)).toBe(1);
+    expect(nextCombo(1, 0)).toBe(-1);
+    expect(nextCombo(-1, 4)).toBe(0);
+  });
+
+  it('increments B2B on quads and cuts it on easy line clears', () => {
+    expect(nextBackToBack(0, 4)).toBe(1);
+    expect(nextBackToBack(1, 4)).toBe(2);
+    expect(nextBackToBack(2, 0)).toBe(2);
+    expect(nextBackToBack(2, 2)).toBe(0);
+  });
+
   it('emits one line clear event with outgoing attack lines', () => {
     const engine = new GameEngine(11, {
       ...BATTLE_RULES,
@@ -267,10 +320,153 @@ describe('core stacker engine', () => {
       type: 'lineClear',
       frame: 0,
       cleared: 2,
+      difficult: false,
+      spin: 'none',
+      piece: 'O',
+      perfectClear: true,
+      combo: 0,
+      b2b: 0,
       attackLines: 1,
       outgoingLines: 1,
     }]);
     expect(engine.drainEvents()).toEqual([]);
+  });
+
+  it('emits modern combo and B2B attack lines from consecutive quads', () => {
+    const engine = new GameEngine(12, {
+      ...BATTLE_RULES,
+      attackTable: 'modern',
+      boardWidth: 4,
+      visibleRows: 5,
+      hiddenRows: 0,
+      nextPreview: 1,
+    });
+    const unsafe = engine as unknown as {
+      board: Cell[][];
+      active: { type: 'I'; x: number; y: number; rotation: 1 };
+      lockPiece: () => void;
+    };
+    const prepareQuad = () => {
+      unsafe.board = createBoard(4, 5);
+      unsafe.board[0] = [null, 'Z', null, null];
+      unsafe.board[1] = [null, 'Z', 'Z', 'Z'];
+      unsafe.board[2] = [null, 'Z', 'Z', 'Z'];
+      unsafe.board[3] = [null, 'Z', 'Z', 'Z'];
+      unsafe.board[4] = [null, 'Z', 'Z', 'Z'];
+      unsafe.active = { type: 'I', x: -2, y: 1, rotation: 1 };
+    };
+
+    prepareQuad();
+    unsafe.lockPiece();
+    prepareQuad();
+    unsafe.lockPiece();
+
+    expect(engine.drainEvents()).toEqual([
+      {
+        type: 'lineClear',
+        frame: 0,
+        cleared: 4,
+        difficult: true,
+        spin: 'none',
+        piece: 'I',
+        perfectClear: false,
+        combo: 0,
+        b2b: 1,
+        attackLines: 4,
+        outgoingLines: 4,
+      },
+      {
+        type: 'lineClear',
+        frame: 0,
+        cleared: 4,
+        difficult: true,
+        spin: 'none',
+        piece: 'I',
+        perfectClear: false,
+        combo: 1,
+        b2b: 2,
+        attackLines: 6,
+        outgoingLines: 6,
+      },
+    ]);
+    expect(engine.getState().stats.sentGarbage).toBe(10);
+    expect(engine.getState().stats.combo).toBe(1);
+    expect(engine.getState().stats.b2b).toBe(2);
+  });
+
+  it('detects a full T-Spin line clear after a rotation candidate', () => {
+    const engine = new GameEngine(15, {
+      ...BATTLE_RULES,
+      attackTable: 'modern',
+      boardWidth: 4,
+      visibleRows: 4,
+      hiddenRows: 0,
+      nextPreview: 1,
+    });
+    const unsafe = engine as unknown as {
+      board: Cell[][];
+      active: { type: 'T'; x: number; y: number; rotation: 0 };
+      spinCandidate: boolean;
+      lockPiece: () => void;
+    };
+    unsafe.board = createBoard(4, 4);
+    unsafe.board[1] = ['Z', null, 'Z', null];
+    unsafe.board[2] = [null, null, null, 'Z'];
+    unsafe.board[3] = ['Z', null, null, null];
+    unsafe.active = { type: 'T', x: 0, y: 1, rotation: 0 };
+    unsafe.spinCandidate = true;
+
+    unsafe.lockPiece();
+
+    expect(engine.drainEvents()).toEqual([{
+      type: 'lineClear',
+      frame: 0,
+      cleared: 1,
+      difficult: true,
+      spin: 'full',
+      piece: 'T',
+      perfectClear: false,
+      combo: 0,
+      b2b: 1,
+      attackLines: 2,
+      outgoingLines: 2,
+    }]);
+  });
+
+  it('adds the modern perfect clear bonus when the board empties after a clear', () => {
+    const engine = new GameEngine(13, {
+      ...BATTLE_RULES,
+      attackTable: 'modern',
+      boardWidth: 4,
+      visibleRows: 2,
+      hiddenRows: 0,
+      nextPreview: 1,
+    });
+    const unsafe = engine as unknown as {
+      board: Cell[][];
+      active: { type: 'O'; x: number; y: number; rotation: 0 };
+      lockPiece: () => void;
+    };
+    unsafe.board = createBoard(4, 2);
+    unsafe.board[0] = [null, null, 'Z', 'Z'];
+    unsafe.board[1] = [null, null, 'Z', 'Z'];
+    unsafe.active = { type: 'O', x: -1, y: 0, rotation: 0 };
+
+    unsafe.lockPiece();
+
+    expect(engine.drainEvents()).toEqual([{
+      type: 'lineClear',
+      frame: 0,
+      cleared: 2,
+      difficult: false,
+      spin: 'none',
+      piece: 'O',
+      perfectClear: true,
+      combo: 0,
+      b2b: 0,
+      attackLines: 11,
+      outgoingLines: 11,
+    }]);
   });
 
   it('cancels incoming garbage before sending outgoing attack', () => {
@@ -285,6 +481,81 @@ describe('core stacker engine', () => {
     expect(resolved.cancelledLines).toBe(3);
     expect(resolved.outgoingAfterCancel).toBe(1);
     expect(resolved.remainingIncoming).toEqual([]);
+  });
+
+  it('caps pending garbage when garbageCap is configured', () => {
+    const engine = new GameEngine(14, {
+      ...BATTLE_RULES,
+      garbageCap: 5,
+      garbageDelayFrames: 90,
+    });
+
+    engine.queueGarbage(4, 1, 1, 'cap-a');
+    engine.queueGarbage(4, 2, 2, 'cap-b');
+    const events = engine.drainEvents();
+
+    expect(engine.getState().stats.pendingGarbage).toBe(5);
+    expect(engine.getState().stats.receivedGarbage).toBe(5);
+    expect(events).toEqual([
+      { type: 'incomingGarbage', frame: 1, lines: 4 },
+      { type: 'incomingGarbage', frame: 2, lines: 1 },
+    ]);
+  });
+
+  it('keeps clean garbage holes when messiness is zero', () => {
+    const engine = new GameEngine(14, {
+      ...BATTLE_RULES,
+      garbageMessinessPercent: 0,
+      changeOnAttack: true,
+    });
+
+    engine.queueGarbage(2, 1, 1, 'clean-a');
+    engine.queueGarbage(2, 2, 2, 'clean-b');
+    const pending = (engine as unknown as { pendingGarbage: PendingGarbage[] }).pendingGarbage;
+
+    expect(pending).toHaveLength(2);
+    expect(pending[1].holeColumn).toBe(pending[0].holeColumn);
+  });
+
+  it('changes garbage holes by attack when changeOnAttack is enabled', () => {
+    const engine = new GameEngine(14, {
+      ...BATTLE_RULES,
+      garbageMessinessPercent: 100,
+      changeOnAttack: true,
+    });
+    const firstSeed = 1;
+    let secondSeed = 2;
+    while (garbageHoleColumn(secondSeed, BATTLE_RULES.boardWidth) === garbageHoleColumn(firstSeed, BATTLE_RULES.boardWidth)) {
+      secondSeed += 1;
+    }
+
+    engine.queueGarbage(2, firstSeed, 1, 'messy-a');
+    engine.queueGarbage(2, secondSeed, 2, 'messy-b');
+    const pending = (engine as unknown as { pendingGarbage: PendingGarbage[] }).pendingGarbage;
+
+    expect(pending).toHaveLength(2);
+    expect(pending[1].holeColumn).not.toBe(pending[0].holeColumn);
+  });
+
+  it('applies continuous garbage one line per frame', () => {
+    const engine = new GameEngine(14, {
+      ...BATTLE_RULES,
+      garbageDelayFrames: 0,
+      garbageTravelFrames: 0,
+      garbageActivationFrames: 0,
+      continuousGarbage: true,
+    });
+
+    engine.queueGarbage(3, 1, 0, 'continuous-a');
+    engine.drainEvents();
+    engine.tick(0);
+    const firstFrameEvents = engine.drainEvents();
+    engine.tick(1);
+    const secondFrameEvents = engine.drainEvents();
+
+    expect(firstFrameEvents).toContainEqual({ type: 'appliedGarbage', frame: 0, lines: 1 });
+    expect(engine.getState().stats.pendingGarbage).toBe(1);
+    expect(secondFrameEvents).toContainEqual({ type: 'appliedGarbage', frame: 1, lines: 1 });
   });
 
   it('normalizes input settings and resolves custom bindings', () => {
@@ -691,6 +962,157 @@ describe('core stacker engine', () => {
     expect(rooms).toHaveLength(1);
     expect(rooms[0].id).toBe(publicRoom.id);
     expect(rooms[0].hostName).toBe('Public');
+    expect(rooms[0].region).toBe('gru1');
+    expect(rooms[0].ranked).toBe(false);
+    expect(rooms[0].customPreset).toBeNull();
+  });
+
+  it('filters public online rooms by match type and ranked flag', async () => {
+    const store = new MemoryRoomStore();
+    await createRoom(store, {
+      playerId: 'player-filter-battle',
+      name: 'Battle',
+      visibility: 'public',
+      matchType: 'battle',
+    }, 1000);
+    const league = await createRoom(store, {
+      playerId: 'player-filter-league',
+      name: 'League',
+      visibility: 'public',
+      matchType: 'league',
+    }, 1100);
+
+    const rankedRooms = await listPublicRooms(store, 1200, { ranked: true });
+    const leagueRooms = await listPublicRooms(store, 1200, { matchType: 'league' });
+
+    expect(rankedRooms.map((room) => room.id)).toEqual([league.id]);
+    expect(leagueRooms.map((room) => room.id)).toEqual([league.id]);
+    expect(leagueRooms[0].matchType).toBe('league');
+    expect(leagueRooms[0].ranked).toBe(true);
+  });
+
+  it('matches two players through Quick Duel into a private duel countdown room', async () => {
+    const store = new MemoryRoomStore();
+    const first = await enqueueMatchmaking(store, {
+      playerId: 'player-quick-duel-a',
+      name: 'A',
+    }, 1000);
+    const second = await enqueueMatchmaking(store, {
+      playerId: 'player-quick-duel-b',
+      name: 'B',
+    }, 1500);
+
+    expect(first.room).toBeNull();
+    expect(first.ticket.status).toBe('queued');
+    expect(second.ticket.status).toBe('matched');
+    expect(second.room).not.toBeNull();
+    expect(second.room?.visibility).toBe('private');
+    expect(second.room?.matchType).toBe('duel');
+    expect(second.room?.status).toBe('countdown');
+    expect(second.room?.players.map((player) => player.ready)).toEqual([true, true]);
+
+    const firstTicket = await heartbeatMatchmaking(store, {
+      ticketId: first.ticket.id,
+      playerId: 'player-quick-duel-a',
+    }, 1600);
+    expect(firstTicket.ticket.status).toBe('matched');
+    expect(firstTicket.room?.id).toBe(second.room?.id);
+  });
+
+  it('matches two players through League matchmaking into a ranked league room', async () => {
+    const store = new MemoryRoomStore();
+    const first = await enqueueMatchmaking(store, {
+      queue: 'league',
+      playerId: 'player-league-queue-a',
+      name: 'A',
+    }, 1000);
+    const second = await enqueueMatchmaking(store, {
+      queue: 'league',
+      playerId: 'player-league-queue-b',
+      name: 'B',
+    }, 1500);
+
+    expect(first.ticket.rating).toBe(1000);
+    expect(second.ticket.status).toBe('matched');
+    expect(second.room?.matchType).toBe('league');
+    expect(second.room?.ruleset.ranked).toBe(true);
+    expect(second.room?.series?.firstTo).toBe(3);
+  });
+
+  it('lets players enter and reenter the persistent Quick Play lobby', async () => {
+    const store = new MemoryRoomStore();
+    const first = await enterQuickPlay(store, {
+      playerId: 'player-quickplay-a',
+      name: 'A',
+    }, 1000);
+    const second = await enterQuickPlay(store, {
+      playerId: 'player-quickplay-b',
+      name: 'B',
+    }, 1100);
+
+    expect(first.room.id).toBe('QPLY');
+    expect(second.room.id).toBe(first.room.id);
+    expect(second.room.matchType).toBe('quickPlay');
+    expect(second.room.players.map((player) => player.id)).toEqual(['player-quickplay-a', 'player-quickplay-b']);
+
+    await getRoomState(store, first.room.id, 7000);
+    const eliminated = await eliminatePlayer(store, {
+      roomId: first.room.id,
+      authorityPlayerId: 'player-quickplay-a',
+      playerId: 'player-quickplay-b',
+      frame: 360,
+      lines: 12,
+      pieces: 30,
+      elapsedFrames: 360,
+      sentGarbage: 4,
+      receivedGarbage: 8,
+    }, 7100);
+
+    expect(eliminated.status).toBe('playing');
+    expect(eliminated.winnerPlayerId).toBeNull();
+    expect(eliminated.players.find((player) => player.id === 'player-quickplay-b')?.status).toBe('eliminated');
+
+    const reentered = await enterQuickPlay(store, {
+      playerId: 'player-quickplay-b',
+      name: 'B Again',
+    }, 7200);
+    const player = reentered.room.players.find((candidate) => candidate.id === 'player-quickplay-b');
+    expect(reentered.room.id).toBe(first.room.id);
+    expect(player).toMatchObject({
+      name: 'B Again',
+      alive: true,
+      status: 'ready',
+      lines: 0,
+    });
+  });
+
+  it('updates the weekly Quick Play leaderboard from progress and eliminations', async () => {
+    const store = new MemoryRoomStore();
+    const joined = await enterQuickPlay(store, {
+      playerId: 'player-quickplay-score',
+      name: 'Scorer',
+    }, Date.UTC(2026, 5, 6));
+    await getRoomState(store, joined.room.id, Date.UTC(2026, 5, 6) + 6000);
+    await updateProgress(store, {
+      roomId: joined.room.id,
+      authorityPlayerId: 'player-quickplay-score',
+      playerId: 'player-quickplay-score',
+      lines: 20,
+      pieces: 50,
+      elapsedFrames: 1800,
+      sentGarbage: 10,
+      receivedGarbage: 5,
+    }, Date.UTC(2026, 5, 6) + 7000);
+
+    const leaderboard = await getQuickPlayLeaderboard(store, '2026-06-01');
+
+    expect(leaderboard[0]).toMatchObject({
+      playerId: 'player-quickplay-score',
+      displayName: 'Scorer',
+      lines: 20,
+      sentGarbage: 10,
+    });
+    expect(leaderboard[0].score).toBeGreaterThan(0);
   });
 
   it('stores custom online room rules while keeping online survival as the objective', async () => {
@@ -716,6 +1138,341 @@ describe('core stacker engine', () => {
     expect(room.rules.visibleRows).toBe(22);
     expect(room.rules.gravityCellsPerFrame).toBe(0.02);
     expect(room.rules.targetLines).toBeNull();
+  });
+
+  it('creates versioned online rulesets for new match types', async () => {
+    const store = new MemoryRoomStore();
+    const duel = await createRoom(store, {
+      playerId: 'player-duel-1',
+      name: 'Duel',
+      visibility: 'private',
+      matchType: 'duel',
+    }, 1000);
+    const league = await createRoom(store, {
+      playerId: 'player-league-1',
+      name: 'League',
+      visibility: 'private',
+      matchType: 'league',
+    }, 1100);
+
+    expect(duel.mode).toBe('battle');
+    expect(duel.matchType).toBe('duel');
+    expect(duel.ruleset).toMatchObject({
+      rulesetId: 'duel-ft3-simple',
+      rulesetVersion: 1,
+      objective: { type: 'duelRounds', firstTo: 3 },
+      attackTable: 'simple',
+      targeting: 'random',
+      ranked: false,
+    });
+    expect(league.ruleset.ranked).toBe(true);
+    expect(league.ruleset.objective).toEqual({ type: 'duelRounds', firstTo: 3 });
+  });
+
+  it('maps online objectives to engine target lines only for sprint races', async () => {
+    const store = new MemoryRoomStore();
+    const sprint = await createRoom(store, {
+      playerId: 'player-sprint-1',
+      name: 'Sprint',
+      visibility: 'public',
+      matchType: 'sprintRace',
+    }, 1000);
+    const royale = await createRoom(store, {
+      playerId: 'player-royale-1',
+      name: 'Royale',
+      visibility: 'public',
+      matchType: 'royale',
+    }, 1100);
+
+    expect(sprint.ruleset.objective).toEqual({ type: 'sprint', targetLines: 40 });
+    expect(sprint.rules.targetLines).toBe(40);
+    expect(royale.ruleset.objective).toEqual({ type: 'lastStanding' });
+    expect(royale.rules.targetLines).toBeNull();
+  });
+
+  it('finishes a sprint race when the first player submits a clear result', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-sprint-host',
+      name: 'Host',
+      visibility: 'private',
+      matchType: 'sprintRace',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-sprint-guest', name: 'Guest' }, 1100);
+
+    const finished = await submitResult(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-sprint-host',
+      playerId: 'player-sprint-guest',
+      result: 'won',
+      lines: 40,
+      pieces: 101,
+      elapsedFrames: 3200,
+    }, 5000);
+
+    expect(finished.status).toBe('finished');
+    expect(finished.winnerPlayerId).toBe('player-sprint-guest');
+    expect(finished.players.find((player) => player.id === 'player-sprint-guest')?.status).toBe('won');
+    expect(finished.players.find((player) => player.id === 'player-sprint-host')?.status).toBe('lost');
+  });
+
+  it('accumulates duel rounds in the same room until first-to is reached', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-duel-host',
+      name: 'Host',
+      visibility: 'private',
+      matchType: 'duel',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-duel-guest', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-duel-host', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-duel-guest', ready: true }, 1200);
+    const started = await startRoom(store, { roomId: room.id, playerId: 'player-duel-host' }, 1300);
+
+    expect(started.series).toMatchObject({
+      objective: 'duelRounds',
+      firstTo: 3,
+      currentRound: 1,
+      completed: false,
+    });
+
+    let playing = await getRoomState(store, room.id, 7000);
+    const firstRound = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-duel-host',
+      playerId: 'player-duel-guest',
+      frame: 300,
+      lines: 10,
+      pieces: 20,
+      elapsedFrames: 300,
+    }, 7100);
+
+    expect(playing.status).toBe('playing');
+    expect(firstRound.status).toBe('countdown');
+    expect(firstRound.winnerPlayerId).toBeNull();
+    expect(firstRound.series?.currentRound).toBe(2);
+    expect(firstRound.series?.scores.find((score) => score.playerId === 'player-duel-host')?.wins).toBe(1);
+    expect(firstRound.series?.rounds).toHaveLength(1);
+    expect(firstRound.players.every((player) => player.alive && player.status === 'ready')).toBe(true);
+
+    playing = await getRoomState(store, room.id, 13000);
+    const secondRound = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-duel-host',
+      playerId: 'player-duel-guest',
+      frame: 280,
+      lines: 12,
+      pieces: 18,
+      elapsedFrames: 280,
+    }, 13100);
+
+    expect(playing.status).toBe('playing');
+    expect(secondRound.status).toBe('countdown');
+    expect(secondRound.series?.currentRound).toBe(3);
+    expect(secondRound.series?.scores.find((score) => score.playerId === 'player-duel-host')?.wins).toBe(2);
+
+    await getRoomState(store, room.id, 19000);
+    const finished = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-duel-host',
+      playerId: 'player-duel-guest',
+      frame: 260,
+      lines: 14,
+      pieces: 16,
+      elapsedFrames: 260,
+    }, 19100);
+
+    expect(finished.status).toBe('finished');
+    expect(finished.winnerPlayerId).toBe('player-duel-host');
+    expect(finished.series).toMatchObject({
+      completed: true,
+      winnerPlayerId: 'player-duel-host',
+    });
+    expect(finished.series?.rounds).toHaveLength(3);
+  });
+
+  it('stores casual duel results without changing rating', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-casual-host',
+      name: 'Host',
+      visibility: 'private',
+      matchType: 'duel',
+      ruleset: {
+        rulesetId: 'duel-ft1-simple',
+        rulesetVersion: 1,
+        objective: { type: 'duelRounds', firstTo: 1 },
+        attackTable: 'simple',
+        targeting: 'random',
+        ranked: false,
+      },
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-casual-guest', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-casual-host', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-casual-guest', ready: true }, 1200);
+    await startRoom(store, { roomId: room.id, playerId: 'player-casual-host' }, 1300);
+    await getRoomState(store, room.id, 7000);
+
+    const finished = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-casual-host',
+      playerId: 'player-casual-guest',
+      frame: 240,
+      lines: 8,
+      pieces: 16,
+      elapsedFrames: 240,
+    }, 7100);
+
+    const hostProfile = await store.getProfile('player-casual-host');
+    const [resultId] = await store.listMatchResultIds('player-casual-host');
+    const result = await store.getMatchResult(resultId);
+
+    expect(finished.matchResultId).toBe(resultId);
+    expect(hostProfile?.rating.value).toBe(1000);
+    expect(hostProfile?.casualStats.played).toBe(1);
+    expect(hostProfile?.leagueStats.played).toBe(0);
+    expect(result?.ranked).toBe(false);
+    expect(result?.participants.find((participant) => participant.playerId === 'player-casual-host')?.ratingAfter).toBeNull();
+  });
+
+  it('updates league Elo only when the ranked series completes', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-league-host',
+      name: 'Host',
+      visibility: 'private',
+      matchType: 'league',
+      ruleset: {
+        rulesetId: 'league-ft1-simple',
+        rulesetVersion: 1,
+        objective: { type: 'duelRounds', firstTo: 1 },
+        attackTable: 'simple',
+        targeting: 'random',
+        ranked: true,
+      },
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-league-guest', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-league-host', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-league-guest', ready: true }, 1200);
+    await startRoom(store, { roomId: room.id, playerId: 'player-league-host' }, 1300);
+    await getRoomState(store, room.id, 7000);
+
+    const finished = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-league-host',
+      playerId: 'player-league-guest',
+      frame: 240,
+      lines: 8,
+      pieces: 16,
+      elapsedFrames: 240,
+    }, 7100);
+
+    const hostProfile = await store.getProfile('player-league-host');
+    const guestProfile = await store.getProfile('player-league-guest');
+    const [resultId] = await store.listMatchResultIds('player-league-host');
+    const result = await store.getMatchResult(resultId);
+
+    expect(finished.matchResultId).toBe(resultId);
+    expect(hostProfile?.rating.value).toBe(1016);
+    expect(guestProfile?.rating.value).toBe(984);
+    expect(hostProfile?.leagueStats.played).toBe(1);
+    expect(hostProfile?.casualStats.played).toBe(0);
+    expect(result?.ranked).toBe(true);
+    expect(result?.participants.find((participant) => participant.playerId === 'player-league-host')).toMatchObject({
+      ratingBefore: 1000,
+      ratingAfter: 1016,
+    });
+  });
+
+  it('returns online profile state with recent persisted match results', async () => {
+    const store = new MemoryRoomStore();
+    const profileState = await getOnlineProfileState(store, 'player-profile-state', 'Profile', 1000);
+
+    expect(profileState.profile.rating.value).toBe(1000);
+    expect(profileState.profile.displayName).toBe('Profile');
+    expect(profileState.recentResults).toEqual([]);
+  });
+
+  it('rejects invalid explicit online rulesets', async () => {
+    const store = new MemoryRoomStore();
+    await expect(createRoom(store, {
+      playerId: 'player-bad-ruleset',
+      name: 'Bad',
+      visibility: 'private',
+      matchType: 'duel',
+      ruleset: {
+        rulesetId: 'bad ruleset',
+        rulesetVersion: 999,
+      },
+    }, 1000)).rejects.toThrow('Invalid ruleset id');
+  });
+
+  it('lets each player set targeting without gaining host authority', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-target-host',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-target-a', name: 'A' }, 1100);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-target-b', name: 'B' }, 1200);
+
+    const updated = await setPlayerTargeting(store, {
+      roomId: room.id,
+      playerId: 'player-target-a',
+      targetingMode: 'manual',
+      manualTargetPlayerId: 'player-target-b',
+    }, 1300);
+    const player = updated.players.find((candidate) => candidate.id === 'player-target-a');
+
+    expect(player?.targetingMode).toBe('manual');
+    expect(player?.manualTargetPlayerId).toBe('player-target-b');
+    await expect(setPlayerTargeting(store, {
+      roomId: room.id,
+      playerId: 'player-target-a',
+      targetingMode: 'manual',
+      manualTargetPlayerId: 'player-target-a',
+    }, 1400)).rejects.toThrow('Invalid manual target');
+  });
+
+  it('updates player danger level from board height and pending garbage', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-danger-host',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-danger-target', name: 'Target' }, 1100);
+    const board = createBoard(4, 4);
+    board[1][0] = 'T';
+    board[2][1] = 'T';
+    board[3][2] = 'T';
+    const game: OnlineGameSnapshot = {
+      board,
+      active: null,
+      visibleRows: 4,
+      boardWidth: 4,
+      elapsedFrames: 300,
+      status: 'playing',
+      lines: 4,
+      pieces: 12,
+      sentGarbage: 0,
+      receivedGarbage: 0,
+      pendingGarbage: 6,
+    };
+
+    const updated = await updateProgress(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-danger-host',
+      playerId: 'player-danger-target',
+      lines: 4,
+      pieces: 12,
+      elapsedFrames: 300,
+      pendingGarbage: 6,
+      game,
+    }, 1500);
+
+    expect(updated.players.find((player) => player.id === 'player-danger-target')?.dangerLevel).toBeGreaterThanOrEqual(8);
   });
 
   it('allows only the host to start an online room and keeps the start timestamp fixed', async () => {
@@ -963,6 +1720,61 @@ describe('core stacker engine', () => {
     expect(updated.players.filter((player) => player.alive)).toHaveLength(2);
   });
 
+  it('selects battle targets by explicit targeting mode', () => {
+    const source = createOnlinePlayerFixture('source', 'playing', 10, 1000, 0);
+    const lowGarbage = {
+      ...createOnlinePlayerFixture('low-garbage', 'playing', 4, 900, 0),
+      receivedGarbageThisRound: 1,
+      receivedGarbage: 3,
+    };
+    const danger = {
+      ...createOnlinePlayerFixture('danger', 'playing', 8, 1100, 0),
+      dangerLevel: 9,
+      pendingGarbage: 6,
+      receivedGarbageThisRound: 6,
+    };
+    const leader = {
+      ...createOnlinePlayerFixture('leader', 'playing', 20, 1200, 0),
+      koCount: 2,
+      sentGarbage: 12,
+      receivedGarbageThisRound: 8,
+    };
+    const players = [source, lowGarbage, danger, leader];
+
+    expect(selectAttackTarget({
+      players,
+      sourcePlayerId: 'source',
+      attackId: 'attack-even',
+      mode: 'even',
+    })?.id).toBe('low-garbage');
+    expect(selectAttackTarget({
+      players,
+      sourcePlayerId: 'source',
+      attackId: 'attack-ko',
+      mode: 'ko',
+    })?.id).toBe('danger');
+    expect(selectAttackTarget({
+      players,
+      sourcePlayerId: 'source',
+      attackId: 'attack-leader',
+      mode: 'leader',
+    })?.id).toBe('leader');
+    expect(selectAttackTarget({
+      players,
+      sourcePlayerId: 'source',
+      attackId: 'attack-manual',
+      mode: 'manual',
+      manualTargetPlayerId: 'danger',
+    })?.id).toBe('danger');
+    expect(selectAttackTarget({
+      players,
+      sourcePlayerId: 'source',
+      attackId: 'attack-attackers',
+      mode: 'attackers',
+      recentAttackers: ['low-garbage', 'leader'],
+    })?.id).toBe('leader');
+  });
+
   it('ranks online players by result, elapsed frames, lines, and finish timestamp', () => {
     const ranked = rankPlayers([
       createOnlinePlayerFixture('lost-low', 'lost', 18, 5000, 10_000),
@@ -1073,6 +1885,13 @@ function createOnlinePlayerFixture(
     eliminatedAtFrame: status === 'lost' || status === 'eliminated' ? elapsedFrames : null,
     eliminatedAtServerMs: status === 'lost' || status === 'eliminated' ? finishedAtServerMs : null,
     game: null,
+    targetingMode: 'random',
+    manualTargetPlayerId: null,
+    currentTargetPlayerId: null,
+    recentAttackers: [],
+    koCount: 0,
+    receivedGarbageThisRound: 0,
+    dangerLevel: 0,
   };
 }
 
