@@ -126,6 +126,28 @@ test.describe('STACK/40 browser flows', () => {
     ))).toBe(countAfterCancel);
   });
 
+  test('repeats held keyboard controls after the input debounce', async ({ page }) => {
+    await openFreshApp(page);
+
+    await action(page, 'start').click();
+    await expect.poll(() => appMode(page)).toBe('playing');
+
+    await page.keyboard.down('ArrowUp');
+    await expect.poll(
+      () => page.evaluate(() => window.stack40.getReplay().inputs.filter((input) => input.action === 'rotateCW').length),
+      { timeout: 1000 },
+    ).toBeGreaterThan(1);
+
+    await page.keyboard.up('ArrowUp');
+    const countAfterRelease = await page.evaluate(() => (
+      window.stack40.getReplay().inputs.filter((input) => input.action === 'rotateCW').length
+    ));
+    await page.waitForTimeout(180);
+    await expect.poll(() => page.evaluate(() => (
+      window.stack40.getReplay().inputs.filter((input) => input.action === 'rotateCW').length
+    ))).toBe(countAfterRelease);
+  });
+
   test('shows public rooms, joins by listing, and keeps private rooms hidden', async ({ page }) => {
     await mockOnlineApi(page);
     await openFreshApp(page);

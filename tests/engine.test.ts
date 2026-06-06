@@ -270,6 +270,48 @@ describe('core stacker engine', () => {
     expect(input.collect(4)).toEqual([{ frame: 4, action: 'moveLeft' }]);
   });
 
+  it('processes repeatable controls on press and again after the held debounce', () => {
+    const input = new InputController({
+      ...DEFAULT_INPUT_SETTINGS,
+      dasFrames: 2,
+      arrFrames: 2,
+    }, null);
+
+    input.pressControl('key:ArrowUp', 'rotateCW');
+    input.advanceFrame(1);
+    expect(input.collect(1)).toEqual([{ frame: 0, action: 'rotateCW' }]);
+
+    input.advanceFrame(2);
+    expect(input.collect(2)).toEqual([]);
+
+    input.advanceFrame(3);
+    expect(input.collect(3)).toEqual([{ frame: 3, action: 'rotateCW' }]);
+
+    input.advanceFrame(4);
+    expect(input.collect(4)).toEqual([]);
+
+    input.advanceFrame(5);
+    expect(input.collect(5)).toEqual([{ frame: 5, action: 'rotateCW' }]);
+  });
+
+  it('keeps one-shot controls from repeating while held', () => {
+    const input = new InputController({
+      ...DEFAULT_INPUT_SETTINGS,
+      dasFrames: 1,
+      arrFrames: 1,
+    }, null);
+
+    input.pressControl('key:Space', 'hardDrop');
+    input.advanceFrame(1);
+    expect(input.collect(1)).toEqual([{ frame: 0, action: 'hardDrop' }]);
+
+    input.advanceFrame(2);
+    expect(input.collect(2)).toEqual([]);
+
+    input.advanceFrame(3);
+    expect(input.collect(3)).toEqual([]);
+  });
+
   it('stops held touch controls on release or pointer cancel', () => {
     const input = new InputController({
       ...DEFAULT_INPUT_SETTINGS,

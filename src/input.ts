@@ -37,7 +37,7 @@ export class InputController {
   pressControl(sourceId: string, action: ControlAction): void {
     if (this.pressed.has(sourceId)) return;
     this.queue.push({ frame: 0, action });
-    if (isHeldAction(action)) this.pressed.set(sourceId, { frame: 0, action });
+    if (isRepeatableAction(action)) this.pressed.set(sourceId, { frame: 0, action });
   }
 
   releaseControl(sourceId: string): void {
@@ -47,11 +47,6 @@ export class InputController {
   collect(frame: number): ControlInput[] {
     const inputs = this.queue.splice(0);
     for (const [, held] of this.pressed) {
-      if (held.action === 'softDrop') {
-        inputs.push({ frame, action: held.action });
-        continue;
-      }
-      if (held.action !== 'moveLeft' && held.action !== 'moveRight') continue;
       const age = frame - held.frame;
       if (age >= this.settings.dasFrames && (age - this.settings.dasFrames) % this.settings.arrFrames === 0) {
         inputs.push({ frame, action: held.action });
@@ -100,6 +95,10 @@ export function isBrowserShortcutKeyDown(event: KeyboardEvent): boolean {
   return false;
 }
 
-function isHeldAction(action: ControlAction): boolean {
-  return action === 'moveLeft' || action === 'moveRight' || action === 'softDrop';
+function isRepeatableAction(action: ControlAction): boolean {
+  return action === 'moveLeft'
+    || action === 'moveRight'
+    || action === 'softDrop'
+    || action === 'rotateCW'
+    || action === 'rotateCCW';
 }
