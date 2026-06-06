@@ -2,14 +2,16 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, type Page } from '@playwright/test';
 import { createExportedReplay } from '../../src/app/replayExport';
+import type { CustomSettings } from '../../src/app/customSettings';
 import { GameEngine } from '../../src/game/engine';
 import { createReplayLog, recordInput } from '../../src/game/replay';
 import { DEFAULT_RULES } from '../../src/game/rules';
-import type { GameInput } from '../../src/game/types';
+import type { GameInput, GameState } from '../../src/game/types';
 import { DEFAULT_INPUT_SETTINGS, type InputSettings } from '../../src/input/settings';
 
 export type AppMode =
   | 'menu'
+  | 'custom'
   | 'playing'
   | 'paused'
   | 'settings'
@@ -31,9 +33,11 @@ export type PlaybackSnapshot = {
 };
 
 export type Stack40Api = {
+  getState: () => GameState;
   getAppMode: () => AppMode;
+  getCustomSettings: () => CustomSettings;
   getInputSettings: () => InputSettings;
-  getReplay: () => { inputs: GameInput[] };
+  getReplay: () => { seed: number; inputs: GameInput[] };
   getTouchControlsHidden: () => boolean;
   getPlayback: () => PlaybackSnapshot | null;
 };

@@ -12,6 +12,25 @@ import {
 } from './app/runHistory';
 import { createRunSummary, RunSplitTracker, type LineSplit, type RunSummary } from './app/runStats';
 import { canAdvanceGame, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
+import {
+  CUSTOM_NUMBER_SETTING_META,
+  CUSTOM_TABS,
+  cloneCustomSettings,
+  customRulesFromSettings,
+  customSeed,
+  formatCustomNumber,
+  isCustomBooleanSetting,
+  isCustomNumberSetting,
+  loadCustomSettings,
+  parseCustomSettingKey,
+  parseCustomTab,
+  resetCustomSettings,
+  saveCustomSettings,
+  updateCustomSetting,
+  updateCustomSettingByDelta,
+  type CustomSettings,
+  type CustomTab,
+} from './app/customSettings';
 import { MUSIC_TRACKS } from './audio/music';
 import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
 import { GameEngine } from './game/engine';
@@ -60,9 +79,11 @@ const ONLINE_BACKGROUND_SYNC_MS = 1000;
 const GAME_FRAME_MS = 1000 / 60;
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
+type RunKind = 'standard' | 'custom' | 'online';
 type SequencedOnlineInput = GameInput & { sequence: number };
 
 let inputSettings = loadInputSettings();
+let customSettings = loadCustomSettings();
 let gameRules = rulesFromSettings(inputSettings);
 let seed = randomSeed();
 let engine = new GameEngine(seed, gameRules);
@@ -76,6 +97,8 @@ let best = loadRecord();
 let runHistory = loadRunHistory();
 let appMode: AppMode = 'menu';
 let settingsReturnMode: AppMode = 'menu';
+let currentRunKind: RunKind = 'standard';
+let customTab: CustomTab = 'game';
 let gameFrame = 0;
 let gameClockOriginMs = performance.now();
 let savedFinish = false;
@@ -87,6 +110,7 @@ let lastStatus = engine.getState().status;
 let volumeFeedback: { channel: VolumeChannel; expiresAt: number } | null = null;
 let bindingCapture: ControlAction | null = null;
 let lastExportName: string | null = null;
+let lastCustomExportName: string | null = null;
 let lastOverlayHtml = '';
 let playback: ReplayPlayback | null = null;
 let importedReplayName: string | null = null;
@@ -188,6 +212,7 @@ Object.assign(window, {
     getAppMode: () => appMode,
     getPendingConfirmAction: () => pendingConfirmAction,
     getInputSettings: () => cloneInputSettings(inputSettings),
+    getCustomSettings: () => cloneCustomSettings(customSettings),
     getTouchControlsHidden: () => touchControlsHidden,
     getRunHistory: () => runHistory,
     getOnlineRoom: () => onlineRoom,
@@ -273,10 +298,20 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
 
 function handleOverlayInput(event: Event): void {
   const target = event.target;
-  if (!(target instanceof HTMLInputElement)) return;
-  const field = target.dataset.onlineField;
-  if (field === 'name') onlineName = target.value;
-  if (field === 'join-code') onlineJoinCode = normalizeRoomId(target.value);
+  if (target instanceof HTMLInputElement) {
+    const field = target.dataset.onlineField;
+    if (field === 'name') onlineName = target.value;
+    if (field === 'join-code') onlineJoinCode = normalizeRoomId(target.value);
+    const customKey = parseCustomSettingKey(target.dataset.customSetting);
+    if (customKey && target.value !== '') {
+      customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.type === 'checkbox' ? target.checked : target.value));
+    }
+    return;
+  }
+  if (target instanceof HTMLSelectElement) {
+    const customKey = parseCustomSettingKey(target.dataset.customSetting);
+    if (customKey) customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.value));
+  }
 }
 
 function handleOverlayClick(event: MouseEvent): void {
@@ -304,7 +339,30 @@ function handleOverlayClick(event: MouseEvent): void {
     return;
   }
 
-  if (action === 'start' || action === 'restart') startNewRun();
+  if (action === 'start') startNewRun();
+  if (action === 'restart') restartCurrentRun();
+  if (action === 'custom-open') openCustomMode();
+  if (action === 'custom-back') goToMenu();
+  if (action === 'custom-start') startCustomRun();
+  if (action === 'custom-reset') customSettings = resetCustomSettings();
+  if (action === 'custom-export') lastCustomExportName = exportCustomSettings();
+  if (action === 'custom-tab') {
+    const nextTab = parseCustomTab(control.dataset.tab);
+    if (nextTab) customTab = nextTab;
+  }
+  if (action === 'custom-toggle') {
+    const setting = parseCustomSettingKey(control.dataset.setting);
+    if (setting && isCustomBooleanSetting(setting)) {
+      customSettings = saveCustomSettings(updateCustomSetting(customSettings, setting, !customSettings[setting]));
+    }
+  }
+  if (action === 'custom-step') {
+    const setting = parseCustomSettingKey(control.dataset.setting);
+    const delta = Number(control.dataset.delta ?? 0);
+    if (setting && Number.isFinite(delta)) {
+      customSettings = saveCustomSettings(updateCustomSettingByDelta(customSettings, setting, delta));
+    }
+  }
   if (action === 'online-open') openOnlineMenu();
   if (action === 'online-refresh') refreshPublicRooms();
   if (action === 'online-create-public') createOnlineRoom('public');
@@ -442,23 +500,25 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
       input.releaseAll();
       return true;
     }
-    startNewRun();
+    restartCurrentRun();
     return true;
   }
 
   return false;
 }
 
-function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing'): void {
+function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nextRunKind: RunKind = nextMode === 'onlinePlaying' ? 'online' : 'standard'): void {
   input.releaseAll();
   bindingCapture = null;
   pendingConfirmAction = null;
   lastExportName = null;
+  lastCustomExportName = null;
   replayImportError = null;
   libraryError = null;
   importedReplayName = null;
   playback = null;
-  gameRules = nextMode === 'onlinePlaying' ? battleRulesFromSettings(inputSettings) : rulesFromSettings(inputSettings);
+  currentRunKind = nextRunKind;
+  gameRules = rulesForRun(nextMode, nextRunKind);
   seed = nextSeed;
   engine = new GameEngine(seed, gameRules);
   replay = createReplayLog(seed, gameRules);
@@ -473,6 +533,27 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing'): vo
   appMode = nextMode;
   settingsReturnMode = 'menu';
   sound.play('retry');
+}
+
+function restartCurrentRun(): void {
+  if (currentRunKind === 'custom') {
+    if (!customSettings.allowRetry) return;
+    startCustomRun();
+    return;
+  }
+  startNewRun();
+}
+
+function startCustomRun(): void {
+  startNewRun(customSeed(customSettings, randomSeed), 'playing', 'custom');
+}
+
+function openCustomMode(): void {
+  bindingCapture = null;
+  pendingConfirmAction = null;
+  appMode = 'custom';
+  settingsReturnMode = 'menu';
+  input.releaseAll();
 }
 
 function resumeGame(): void {
@@ -505,6 +586,7 @@ function goToMenu(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
   appMode = 'menu';
+  currentRunKind = 'standard';
   syncGameplayClockToCurrentFrame();
   settingsReturnMode = 'menu';
   playback = null;
@@ -677,16 +759,31 @@ function exportReplay(): void {
   lastExportName = downloadReplayFile(exported);
 }
 
+function exportCustomSettings(): string {
+  const fileName = `stack40-custom-settings-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  downloadJsonFile(fileName, {
+    version: 1,
+    game: 'stack40',
+    mode: 'custom',
+    settings: customSettings,
+  });
+  return fileName;
+}
+
 function downloadReplayFile(exported: ExportedReplay): string {
   const fileName = replayFileName(exported);
-  const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+  downloadJsonFile(fileName, exported);
+  return fileName;
+}
+
+function downloadJsonFile(fileName: string, value: unknown): void {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  return fileName;
 }
 
 function openReplayFilePicker(): void {
@@ -1316,39 +1413,48 @@ function renderOverlay(state: GameState): void {
     ${renderTouchControls()}
   `;
   if (html !== lastOverlayHtml) {
-    const focusSnapshot = captureOnlineFieldFocus();
+    const focusSnapshot = captureOverlayFieldFocus();
     overlayElement.innerHTML = html;
     lastOverlayHtml = html;
-    restoreOnlineFieldFocus(focusSnapshot);
+    restoreOverlayFieldFocus(focusSnapshot);
   }
   if (appMode === 'replayPlayback' && playback) updateReplayOverlay(playback.snapshot());
 }
 
-type OnlineFieldFocusSnapshot = {
+type OverlayFieldFocusSnapshot = {
+  source: 'online' | 'custom';
   field: string;
   selectionStart: number | null;
   selectionEnd: number | null;
 };
 
-function captureOnlineFieldFocus(): OnlineFieldFocusSnapshot | null {
+function captureOverlayFieldFocus(): OverlayFieldFocusSnapshot | null {
   const active = document.activeElement;
-  if (!(active instanceof HTMLInputElement)) return null;
-  const field = active.dataset.onlineField;
-  if (!field) return null;
+  if (!(active instanceof HTMLInputElement) && !(active instanceof HTMLSelectElement)) return null;
+  const onlineField = active.dataset.onlineField;
+  const customField = active.dataset.customSetting;
+  const source = onlineField ? 'online' : customField ? 'custom' : null;
+  const field = onlineField ?? customField;
+  if (!field || !source) return null;
   return {
+    source,
     field,
-    selectionStart: active.selectionStart,
-    selectionEnd: active.selectionEnd,
+    selectionStart: active instanceof HTMLInputElement ? active.selectionStart : null,
+    selectionEnd: active instanceof HTMLInputElement ? active.selectionEnd : null,
   };
 }
 
-function restoreOnlineFieldFocus(snapshot: OnlineFieldFocusSnapshot | null): void {
+function restoreOverlayFieldFocus(snapshot: OverlayFieldFocusSnapshot | null): void {
   if (!snapshot) return;
-  const field = Array.from(overlayElement.querySelectorAll<HTMLInputElement>('[data-online-field]'))
-    .find((candidate) => candidate.dataset.onlineField === snapshot.field);
+  const field = Array.from(overlayElement.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-online-field], [data-custom-setting]'))
+    .find((candidate) => (
+      snapshot.source === 'online'
+        ? candidate.dataset.onlineField === snapshot.field
+        : candidate.dataset.customSetting === snapshot.field
+    ));
   if (!field) return;
   field.focus({ preventScroll: true });
-  if (snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
+  if (field instanceof HTMLInputElement && snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
     field.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
   }
 }
@@ -1356,6 +1462,7 @@ function restoreOnlineFieldFocus(snapshot: OnlineFieldFocusSnapshot | null): voi
 function renderScreenOverlay(state: GameState): string {
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
+  if (appMode === 'custom') return renderCustomOverlay();
   if (appMode === 'settings') return renderSettingsOverlay();
   if (appMode === 'library') return renderLibraryOverlay();
   if (appMode === 'onlineMenu') return renderOnlineMenuOverlay();
@@ -1369,6 +1476,7 @@ function renderScreenOverlay(state: GameState): string {
       meta: `${formatActionBinding('pause')} pause - ${formatActionBinding('hardDrop')} hard drop`,
       actions: [
         ['start', 'Start run'],
+        ['custom-open', 'Custom'],
         ['online-open', 'Online rooms'],
         ['replay-library', 'Replay library'],
         ['import-replay', 'Import replay'],
@@ -1377,35 +1485,41 @@ function renderScreenOverlay(state: GameState): string {
     });
   }
   if (appMode === 'paused') {
+    const actions: [string, string][] = [
+      ['resume', 'Resume'],
+      ...(canRetryCurrentRun() ? [['restart', 'Restart'] as [string, string]] : []),
+      ['settings', 'Input settings'],
+      ['import-replay', 'Import replay'],
+      ['export-replay', 'Export replay'],
+      ['main-menu', 'Main menu'],
+    ];
     return renderPanel({
       eyebrow: 'PAUSED',
       title: formatRunSummary(state),
       meta: 'Run is frozen. Resume keeps the exact board and timer.',
-      actions: [
-        ['resume', 'Resume'],
-        ['restart', 'Restart'],
-        ['settings', 'Input settings'],
-        ['import-replay', 'Import replay'],
-        ['export-replay', 'Export replay'],
-        ['main-menu', 'Main menu'],
-      ],
+      actions,
     });
   }
 
   const terminal = terminalLabel(state.status);
   if (!terminal) return '';
+  const actions: [string, string][] = [
+    ...(canRetryCurrentRun() ? [['restart', 'Restart'] as [string, string]] : []),
+    ['export-replay', 'Export replay'],
+    ['settings', 'Input settings'],
+    ['main-menu', 'Main menu'],
+  ];
   return renderPanel({
     eyebrow: terminal,
     title: formatRunSummary(state),
     meta: state.status === 'finished' ? 'Saved if this beats your local best.' : 'The stack topped out.',
     details: renderAdvancedRunStats(currentRunSummary(state)),
-    actions: [
-      ['restart', 'Restart'],
-      ['export-replay', 'Export replay'],
-      ['settings', 'Input settings'],
-      ['main-menu', 'Main menu'],
-    ],
+    actions,
   });
+}
+
+function canRetryCurrentRun(): boolean {
+  return currentRunKind !== 'custom' || customSettings.allowRetry;
 }
 
 function renderTouchControls(): string {
@@ -1463,7 +1577,7 @@ function cancelPendingConfirmation(): void {
 function confirmPendingAction(): void {
   const action = pendingConfirmAction;
   pendingConfirmAction = null;
-  if (action === 'restart') startNewRun();
+  if (action === 'restart') restartCurrentRun();
   if (action === 'main-menu') goToMenu();
   if (action === 'import-replay') openReplayFilePicker();
   if (action === 'online-leave') leaveOnlineRoom();
@@ -1872,6 +1986,192 @@ function setText(selector: string, value: string): void {
   if (element && element.textContent !== value) element.textContent = value;
 }
 
+function renderCustomOverlay(): string {
+  const exported = lastCustomExportName ? `<div class="panel-note">Exported ${escapeHtml(lastCustomExportName)}</div>` : '';
+  return `
+    <div class="menu-scrim custom-scrim">
+      <section class="menu-panel custom-panel" aria-label="Custom mode">
+        <div class="custom-header">
+          <div>
+            <div class="panel-eyebrow">CUSTOM</div>
+            <h1>Custom</h1>
+            <p>PLAY AS YOU WISH. REPLAYS ARE NOT SUBMITTED.</p>
+          </div>
+          <button type="button" data-ui-action="custom-export">Export settings</button>
+        </div>
+        <div class="custom-start-row">
+          <div class="custom-music">MUSIC RANDOM: CALM</div>
+          <button class="custom-start-button" type="button" data-ui-action="custom-start">Start</button>
+        </div>
+        <div class="custom-tabs" aria-label="Custom sections">
+          ${CUSTOM_TABS.map((tab) => `
+            <button class="${customTab === tab ? 'custom-tab-active' : ''}" type="button" data-ui-action="custom-tab" data-tab="${tab}">
+              ${tab.toUpperCase()}
+            </button>
+          `).join('')}
+        </div>
+        <div class="custom-tab-body">
+          ${renderCustomTabBody()}
+        </div>
+        ${exported}
+        <div class="panel-actions custom-actions">
+          <button type="button" data-ui-action="custom-back">Back</button>
+          <button type="button" data-ui-action="custom-reset">Reset defaults</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderCustomTabBody(): string {
+  if (customTab === 'objective') {
+    return [
+      renderCustomSection('OBJECTIVE', [
+        renderCustomSelect('Mode', 'objectiveMode', [['none', 'NONE'], ['lines', 'LINES']]),
+        renderCustomNumber('Line target', 'objectiveLineTarget'),
+      ]),
+    ].join('');
+  }
+  if (customTab === 'meta') {
+    return [
+      renderCustomSection('META', [
+        renderCustomSelect('Music', 'musicMode', [['random-calm', 'RANDOM: CALM']]),
+        renderCustomStaticRow('Replay submission', 'OFF'),
+      ]),
+    ].join('');
+  }
+  return [
+    renderCustomSection('GENERAL', [
+      renderCustomSelect('Random bag type', 'randomBagType', [['7-bag', '7-BAG']]),
+      renderCustomSelect('Allowed spins', 'allowedSpins', [['all-mini-plus', 'ALL-MINI+']]),
+      renderCustomSelect('Combo table', 'comboTable', [['multiplier', 'MULTIPLIER']]),
+      renderCustomToggle('Enable all clears', 'enableAllClears'),
+      renderCustomToggle('Use random seed', 'useRandomSeed'),
+      renderCustomNumber('Seed', 'seed'),
+      renderCustomToggle('Allow retry', 'allowRetry'),
+      renderCustomNumber('Stock', 'stock'),
+      renderCustomToggle('Enable clutch clears', 'enableClutchClears'),
+      renderCustomToggle('Disable lockout', 'disableLockout'),
+      renderCustomNumber('Board width', 'boardWidth'),
+      renderCustomNumber('Board height', 'boardHeight'),
+    ]),
+    renderCustomSection('SURVIVAL', [
+      renderCustomSelect('Mode', 'survivalMode', [['none', 'NONE']]),
+      renderCustomNumber('Garbage messiness %', 'garbageMessinessPercent'),
+      renderCustomNumber('Garbage cap', 'garbageCap'),
+      renderCustomNumber('Layer height', 'layerHeight'),
+      renderCustomToggle('Sticky layer', 'stickyLayer'),
+      renderCustomNumber('Minimum layer height', 'minimumLayerHeight'),
+      renderCustomNumber('Timer interval', 'timerIntervalSeconds'),
+    ]),
+    renderCustomSection('CONTROLS', [
+      renderCustomToggle('Allow 180 spins', 'allow180Spins'),
+      renderCustomSelect('Kick table', 'kickTable', [['srs-plus', 'SRS+']]),
+      renderCustomToggle('Use hard drop', 'useHardDrop'),
+      renderCustomToggle('Use next queue', 'useNextQueue'),
+      renderCustomToggle('Use hold queue', 'useHoldQueue'),
+      renderCustomNumber('Next pieces', 'nextPieces'),
+      renderCustomToggle('Infinite movement', 'infiniteMovement'),
+      renderCustomToggle('Infinite hold', 'infiniteHold'),
+      renderCustomToggle('Show shadow piece', 'showShadowPiece'),
+      renderCustomNumber('ARE', 'areFrames'),
+      renderCustomNumber('Line clear ARE', 'lineClearAreFrames'),
+    ]),
+    renderCustomSection('GRAVITY & LEVELLING', [
+      renderCustomNumber('Gravity', 'gravity'),
+      renderCustomToggle('Use levelling', 'useLevelling'),
+      renderCustomToggle('Use master levels', 'useMasterLevels'),
+      renderCustomNumber('Starting level', 'startingLevel'),
+      renderCustomNumber('Level speed', 'levelSpeed'),
+      renderCustomToggle('Use static levelling', 'useStaticLevelling'),
+      renderCustomNumber('Level static speed', 'levelStaticSpeed'),
+      renderCustomNumber('Base gravity', 'baseGravity'),
+      renderCustomNumber('Gravity increase', 'gravityIncrease'),
+      renderCustomNumber('Lock delay', 'lockDelayFrames'),
+    ]),
+  ].join('');
+}
+
+function renderCustomSection(title: string, rows: string[]): string {
+  return `
+    <section class="custom-section" aria-label="${escapeHtml(title)}">
+      <h2>${escapeHtml(title)}</h2>
+      <div class="custom-rows">${rows.join('')}</div>
+    </section>
+  `;
+}
+
+function renderCustomSelect(
+  label: string,
+  key: keyof Pick<CustomSettings, 'randomBagType' | 'allowedSpins' | 'comboTable' | 'survivalMode' | 'kickTable' | 'objectiveMode' | 'musicMode'>,
+  options: [string, string][],
+): string {
+  const value = String(customSettings[key]);
+  return renderCustomRow(label, `
+    <select data-custom-setting="${key}">
+      ${options.map(([optionValue, optionLabel]) => `
+        <option value="${escapeHtml(optionValue)}"${value === optionValue ? ' selected' : ''}>${escapeHtml(optionLabel)}</option>
+      `).join('')}
+    </select>
+  `);
+}
+
+function renderCustomToggle(
+  label: string,
+  key: keyof Pick<CustomSettings,
+    | 'enableAllClears'
+    | 'useRandomSeed'
+    | 'allowRetry'
+    | 'enableClutchClears'
+    | 'disableLockout'
+    | 'stickyLayer'
+    | 'allow180Spins'
+    | 'useHardDrop'
+    | 'useNextQueue'
+    | 'useHoldQueue'
+    | 'infiniteMovement'
+    | 'infiniteHold'
+    | 'showShadowPiece'
+    | 'useLevelling'
+    | 'useMasterLevels'
+    | 'useStaticLevelling'
+  >,
+): string {
+  const enabled = customSettings[key];
+  return renderCustomRow(label, `
+    <button class="custom-toggle ${enabled ? 'custom-toggle-on' : 'custom-toggle-off'}" type="button" data-ui-action="custom-toggle" data-setting="${key}">
+      ${enabled ? 'ON' : 'OFF'}
+    </button>
+  `);
+}
+
+function renderCustomNumber(label: string, key: keyof CustomSettings): string {
+  if (!isCustomNumberSetting(key)) return '';
+  const meta = CUSTOM_NUMBER_SETTING_META[key];
+  const value = customSettings[key];
+  const step = formatCustomNumber(meta.step);
+  return renderCustomRow(label, `
+    <div class="custom-number-control">
+      <button type="button" data-ui-action="custom-step" data-setting="${key}" data-delta="-${step}" aria-label="${escapeHtml(label)} down">-</button>
+      <input type="number" data-custom-setting="${key}" value="${escapeHtml(formatCustomNumber(value))}" min="${formatCustomNumber(meta.min)}" max="${formatCustomNumber(meta.max)}" step="${step}" inputmode="decimal" />
+      <button type="button" data-ui-action="custom-step" data-setting="${key}" data-delta="${step}" aria-label="${escapeHtml(label)} up">+</button>
+    </div>
+  `);
+}
+
+function renderCustomStaticRow(label: string, value: string): string {
+  return renderCustomRow(label, `<strong class="custom-static-value">${escapeHtml(value)}</strong>`);
+}
+
+function renderCustomRow(label: string, control: string): string {
+  return `
+    <div class="custom-row">
+      <label>${escapeHtml(label)}</label>
+      <div class="custom-control">${control}</div>
+    </div>
+  `;
+}
+
 function renderSettingsOverlay(): string {
   const captureText = bindingCapture ? `Press a key for ${CONTROL_ACTION_LABELS[bindingCapture]}` : 'Input settings';
   const bindingRows = CONTROL_ACTIONS.map((action) => `
@@ -2041,6 +2341,12 @@ function rulesFromSettings(settings: InputSettings): GameRules {
     dasFrames: settings.dasFrames,
     arrFrames: settings.arrFrames,
   };
+}
+
+function rulesForRun(mode: AppMode, runKind: RunKind): GameRules {
+  if (mode === 'onlinePlaying') return battleRulesFromSettings(inputSettings);
+  if (runKind === 'custom') return customRulesFromSettings(customSettings, inputSettings);
+  return rulesFromSettings(inputSettings);
 }
 
 function battleRulesFromSettings(settings: InputSettings): GameRules {

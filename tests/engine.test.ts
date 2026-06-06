@@ -3,6 +3,11 @@ import { importReplayJson, importReplayValue } from '../src/app/replayImport';
 import { createExportedReplay, replayFileName } from '../src/app/replayExport';
 import { ReplayPlayback } from '../src/app/replayPlayback';
 import {
+  CUSTOM_DEFAULT_SETTINGS,
+  customRulesFromSettings,
+  normalizeCustomSettings,
+} from '../src/app/customSettings';
+import {
   createRunHistoryEntry,
   deleteRunHistoryEntry,
   loadRunHistory,
@@ -56,6 +61,52 @@ describe('core stacker engine', () => {
     expect(bagA).toEqual(bagB);
     expect(new Set(bagA).size).toBe(7);
     expect([...bagA].sort()).toEqual(['I', 'J', 'L', 'O', 'S', 'T', 'Z']);
+  });
+
+  it('maps the custom default preset into playable rules', () => {
+    const settings = normalizeCustomSettings({});
+    const rules = customRulesFromSettings(settings, DEFAULT_INPUT_SETTINGS);
+
+    expect(settings).toMatchObject({
+      ...CUSTOM_DEFAULT_SETTINGS,
+      useRandomSeed: true,
+      seed: 0,
+      boardWidth: 10,
+      boardHeight: 20,
+      gravity: 0.02,
+      lockDelayFrames: 30,
+    });
+    expect(rules).toMatchObject({
+      boardWidth: 10,
+      visibleRows: 20,
+      nextPreview: 5,
+      targetLines: null,
+      gravityCellsPerFrame: 0.02,
+      lockDelayFrames: 30,
+      allowHardDrop: true,
+      allowHold: true,
+      showGhost: true,
+      infiniteHold: false,
+      infiniteMovement: false,
+    });
+  });
+
+  it('applies custom control toggles inside the engine', () => {
+    const custom = normalizeCustomSettings({
+      useHardDrop: false,
+      useHoldQueue: false,
+      showShadowPiece: false,
+    });
+    const engine = new GameEngine(9, customRulesFromSettings(custom, DEFAULT_INPUT_SETTINGS));
+    const state = engine.tick(1, [
+      { frame: 1, action: 'hardDrop' },
+      { frame: 1, action: 'hold' },
+    ]);
+
+    expect(state.stats.pieces).toBe(0);
+    expect(state.hold).toBeNull();
+    expect(state.canHold).toBe(false);
+    expect(state.ghost).toBeNull();
   });
 
   it('clears completed lines and preserves row order', () => {

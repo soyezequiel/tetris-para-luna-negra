@@ -2,6 +2,7 @@ import type { GameState } from '../game/types';
 
 export type AppMode =
   | 'menu'
+  | 'custom'
   | 'playing'
   | 'paused'
   | 'settings'
@@ -31,7 +32,7 @@ export function requiresRunConfirmation(
   status: GameState['status'],
 ): action is DestructiveRunAction {
   if (status !== 'playing') return false;
-  if (mode === 'menu' || mode === 'replayPlayback' || mode === 'library' || mode === 'onlineMenu' || mode === 'roomLobby' || mode === 'onlineCountdown' || mode === 'onlineResults') return false;
+  if (mode === 'menu' || mode === 'custom' || mode === 'replayPlayback' || mode === 'library' || mode === 'onlineMenu' || mode === 'roomLobby' || mode === 'onlineCountdown' || mode === 'onlineResults') return false;
   return action === 'restart' || action === 'main-menu' || action === 'import-replay' || action === 'online-leave';
 }
 

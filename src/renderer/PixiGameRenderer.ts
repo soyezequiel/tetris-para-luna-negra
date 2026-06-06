@@ -43,6 +43,9 @@ export class PixiGameRenderer {
   private cell = 24;
   private boardX = 0;
   private boardY = 0;
+  private boardColumns = DEFAULT_RULES.boardWidth;
+  private visibleRows = DEFAULT_RULES.visibleRows;
+  private hiddenRows = DEFAULT_RULES.hiddenRows;
   private lastLines = 0;
   private shakeFrames = 0;
 
@@ -90,7 +93,7 @@ export class PixiGameRenderer {
       this.shakeFrames = 10;
       this.lastLines = state.stats.lines;
     }
-    this.layout();
+    this.layout(state);
     const shake = this.shakeFrames > 0 ? Math.sin(this.shakeFrames * 2.3) * 5 : 0;
     this.stage.position.set(shake, 0);
     this.shakeFrames = Math.max(0, this.shakeFrames - 1);
@@ -102,7 +105,10 @@ export class PixiGameRenderer {
     this.drawHud(state);
   }
 
-  private layout(): void {
+  private layout(state?: GameState): void {
+    this.boardColumns = state?.stats.boardWidth ?? this.boardColumns;
+    this.visibleRows = state?.stats.visibleRows ?? this.visibleRows;
+    this.hiddenRows = state?.stats.hiddenRows ?? this.hiddenRows;
     this.width = window.innerWidth;
     this.height = window.innerHeight;
     const touchControlsInset = window.matchMedia('(pointer: coarse)').matches
@@ -110,10 +116,10 @@ export class PixiGameRenderer {
       : 0;
     const availableHeight = Math.max(360, this.height - touchControlsInset);
     const horizontalBudget = this.width < 760 ? this.width * 0.58 : this.width * 0.2;
-    const verticalBudget = availableHeight * 0.86 / DEFAULT_RULES.visibleRows;
-    this.cell = Math.max(15, Math.min(34, horizontalBudget / DEFAULT_RULES.boardWidth, verticalBudget));
-    const boardW = this.cell * DEFAULT_RULES.boardWidth;
-    const boardH = this.cell * DEFAULT_RULES.visibleRows;
+    const verticalBudget = availableHeight * 0.86 / this.visibleRows;
+    this.cell = Math.max(15, Math.min(34, horizontalBudget / this.boardColumns, verticalBudget));
+    const boardW = this.cell * this.boardColumns;
+    const boardH = this.cell * this.visibleRows;
     this.boardX = Math.round(this.width / 2 - boardW / 2);
     this.boardY = Math.round(availableHeight / 2 - boardH / 2 + 8);
   }
@@ -147,48 +153,48 @@ export class PixiGameRenderer {
     this.boardLayer.clear();
     this.sideLayer.clear();
     this.effectLayer.clear();
-    this.drawAngledPanel(this.boardLayer, this.boardX, this.boardY, this.cell * 10, this.cell * 20, 0);
+    this.drawAngledPanel(this.boardLayer, this.boardX, this.boardY, this.cell * this.boardColumns, this.cell * this.visibleRows, 0);
     this.drawGrid();
 
     const sideW = this.cell * 5.2;
     const holdX = this.boardX - sideW - this.cell * 0.7;
-    const nextX = this.boardX + this.cell * 10 + this.cell * 0.7;
+    const nextX = this.boardX + this.cell * this.boardColumns + this.cell * 0.7;
     this.drawLabelPanel(this.sideLayer, 'HOLD', holdX, this.boardY, sideW, this.cell * 3.8);
-    this.drawLabelPanel(this.sideLayer, 'NEXT', nextX, this.boardY, sideW, this.cell * 14.5);
+    this.drawLabelPanel(this.sideLayer, 'NEXT', nextX, this.boardY, sideW, this.cell * Math.max(3.8, 1.55 + Math.max(1, DEFAULT_RULES.nextPreview) * 2.45));
     this.positionLabel(this.holdLabel, holdX, this.boardY);
     this.positionLabel(this.nextLabel, nextX, this.boardY);
   }
 
   private drawGrid(): void {
     this.boardLayer.lineStyle(1, GRID_LINE, 0.58);
-    for (let x = 1; x < DEFAULT_RULES.boardWidth; x += 1) {
+    for (let x = 1; x < this.boardColumns; x += 1) {
       this.boardLayer.moveTo(this.boardX + x * this.cell, this.boardY);
-      this.boardLayer.lineTo(this.boardX + x * this.cell, this.boardY + this.cell * DEFAULT_RULES.visibleRows);
+      this.boardLayer.lineTo(this.boardX + x * this.cell, this.boardY + this.cell * this.visibleRows);
     }
-    for (let y = 1; y < DEFAULT_RULES.visibleRows; y += 1) {
+    for (let y = 1; y < this.visibleRows; y += 1) {
       this.boardLayer.moveTo(this.boardX, this.boardY + y * this.cell);
-      this.boardLayer.lineTo(this.boardX + this.cell * DEFAULT_RULES.boardWidth, this.boardY + y * this.cell);
+      this.boardLayer.lineTo(this.boardX + this.cell * this.boardColumns, this.boardY + y * this.cell);
     }
   }
 
   private drawBoard(state: GameState): void {
     this.pieceLayer.clear();
     state.board.forEach((row, y) => {
-      if (y < DEFAULT_RULES.hiddenRows) return;
+      if (y < this.hiddenRows) return;
       row.forEach((cell, x) => {
-        if (cell) this.drawBlock(this.pieceLayer, x, y - DEFAULT_RULES.hiddenRows, cell, 1);
+        if (cell) this.drawVisibleBlock(x, y - this.hiddenRows, cell, 1);
       });
     });
 
     if (state.ghost) {
       for (const cell of cellsFor(state.ghost.type, state.ghost.rotation)) {
-        this.drawGhostBlock(this.pieceLayer, state.ghost.x + cell.x, state.ghost.y + cell.y - DEFAULT_RULES.hiddenRows);
+        this.drawVisibleGhostBlock(state.ghost.x + cell.x, state.ghost.y + cell.y - this.hiddenRows);
       }
     }
 
     if (state.active) {
       for (const cell of cellsFor(state.active.type, state.active.rotation)) {
-        this.drawBlock(this.pieceLayer, state.active.x + cell.x, state.active.y + cell.y - DEFAULT_RULES.hiddenRows, state.active.type, 1);
+        this.drawVisibleBlock(state.active.x + cell.x, state.active.y + cell.y - this.hiddenRows, state.active.type, 1);
       }
     }
   }
@@ -196,7 +202,7 @@ export class PixiGameRenderer {
   private drawSidePieces(state: GameState): void {
     const sideW = this.cell * 5.2;
     const holdX = this.boardX - sideW - this.cell * 0.7;
-    const nextX = this.boardX + this.cell * 10 + this.cell * 0.7;
+    const nextX = this.boardX + this.cell * this.boardColumns + this.cell * 0.7;
     if (state.status !== 'playing') return;
     if (state.hold) this.drawMiniPiece(this.sideLayer, state.hold, holdX + this.cell * 1.1, this.boardY + this.cell * 1.25, 0.62);
     state.next.forEach((piece, index) => {
@@ -215,7 +221,21 @@ export class PixiGameRenderer {
     this.hudText.style.fontSize = Math.max(14, Math.min(22, this.cell * 0.68));
     this.hudText.style.align = 'right';
     this.hudText.anchor.set(1, 1);
-    this.hudText.position.set(this.boardX - this.cell * 0.35, this.boardY + this.cell * 19.8);
+    this.hudText.position.set(this.boardX - this.cell * 0.35, this.boardY + this.cell * (this.visibleRows - 0.2));
+  }
+
+  private drawVisibleBlock(boardX: number, boardY: number, piece: PieceType, alpha: number): void {
+    if (!this.isVisibleCell(boardX, boardY)) return;
+    this.drawBlock(this.pieceLayer, boardX, boardY, piece, alpha);
+  }
+
+  private drawVisibleGhostBlock(boardX: number, boardY: number): void {
+    if (!this.isVisibleCell(boardX, boardY)) return;
+    this.drawGhostBlock(this.pieceLayer, boardX, boardY);
+  }
+
+  private isVisibleCell(boardX: number, boardY: number): boolean {
+    return boardX >= 0 && boardX < this.boardColumns && boardY >= 0 && boardY < this.visibleRows;
   }
 
   private drawAngledPanel(g: Graphics, x: number, y: number, w: number, h: number, labelHeight: number): void {

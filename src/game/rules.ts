@@ -12,6 +12,12 @@ export const DEFAULT_RULES: GameRules = {
   dasFrames: 9,
   arrFrames: 1,
   garbageDelayFrames: 90,
+  allowHardDrop: true,
+  allowHold: true,
+  showGhost: true,
+  infiniteHold: false,
+  infiniteMovement: true,
+  lockResetLimit: 15,
 };
 
 export const BATTLE_RULES: GameRules = {

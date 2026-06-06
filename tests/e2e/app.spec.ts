@@ -30,6 +30,28 @@ test.describe('STACK/40 browser flows', () => {
     await expect(action(page, 'resume')).toBeHidden();
   });
 
+  test('configures and starts a custom run from the visible menu', async ({ page }) => {
+    await openFreshApp(page);
+
+    await action(page, 'custom-open').click();
+    await expect.poll(() => appMode(page)).toBe('custom');
+    await expect(page.getByRole('heading', { name: 'Custom' })).toBeVisible();
+    await expect(page.locator('[data-custom-setting="gravity"]')).toHaveValue('0.02');
+    await expect(page.locator('[data-custom-setting="lockDelayFrames"]')).toHaveValue('30');
+    await expect(page.locator('[data-custom-setting="boardWidth"]')).toHaveValue('10');
+
+    await page.locator('[data-ui-action="custom-toggle"][data-setting="useRandomSeed"]').click();
+    await page.locator('[data-custom-setting="boardWidth"]').fill('12');
+    await expect.poll(() => page.evaluate(() => window.stack40.getCustomSettings().boardWidth)).toBe(12);
+    await expect.poll(() => page.evaluate(() => window.stack40.getCustomSettings().useRandomSeed)).toBe(false);
+
+    await action(page, 'custom-start').click();
+    await expect.poll(() => appMode(page)).toBe('playing');
+    await expect.poll(() => page.evaluate(() => window.stack40.getReplay().seed)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.stack40.getState().stats.boardWidth)).toBe(12);
+    await expect.poll(() => page.evaluate(() => window.stack40.getState().stats.targetLines)).toBeNull();
+  });
+
   test('rebinds input settings and resets them to defaults', async ({ page }) => {
     await openFreshApp(page);
 

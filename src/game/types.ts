@@ -44,6 +44,12 @@ export interface GameRules {
   dasFrames: number;
   arrFrames: number;
   garbageDelayFrames: number;
+  allowHardDrop: boolean;
+  allowHold: boolean;
+  showGhost: boolean;
+  infiniteHold: boolean;
+  infiniteMovement: boolean;
+  lockResetLimit: number;
 }
 
 export interface PendingGarbage {
@@ -77,6 +83,9 @@ export interface AppliedGarbageEvent {
 export type GameEvent = LineClearEvent | IncomingGarbageEvent | AppliedGarbageEvent;
 
 export interface GameStats {
+  boardWidth: number;
+  visibleRows: number;
+  hiddenRows: number;
   frame: number;
   pieces: number;
   lines: number;
@@ -121,4 +130,5 @@ export interface GameEngineSnapshot {
   pendingGarbage: PendingGarbage[];
   fallAccumulator: number;
   lockFrames: number;
+  lockResets: number;
 }

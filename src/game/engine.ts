@@ -28,6 +28,7 @@ export class GameEngine {
   private events: GameEvent[] = [];
   private fallAccumulator = 0;
   private lockFrames = 0;
+  private lockResets = 0;
 
   constructor(seed = Date.now(), rules: GameRules = DEFAULT_RULES) {
     this.seed = seed >>> 0;
@@ -43,11 +44,14 @@ export class GameEngine {
     return {
       board: this.board.map((row) => [...row]),
       active: this.active ? { ...this.active } : null,
-      ghost: this.active ? this.getGhost() : null,
-      hold: this.hold,
-      canHold: this.canHold,
+      ghost: this.rules.showGhost && this.active ? this.getGhost() : null,
+      hold: this.rules.allowHold ? this.hold : null,
+      canHold: this.rules.allowHold && this.canHold,
       next: this.next.slice(0, this.rules.nextPreview),
       stats: {
+        boardWidth: this.rules.boardWidth,
+        visibleRows: this.rules.visibleRows,
+        hiddenRows: this.rules.hiddenRows,
         frame: this.frame,
         pieces: this.pieces,
         lines: this.lines,
@@ -85,6 +89,7 @@ export class GameEngine {
       pendingGarbage: this.pendingGarbage.map((garbage) => ({ ...garbage })),
       fallAccumulator: this.fallAccumulator,
       lockFrames: this.lockFrames,
+      lockResets: this.lockResets,
     };
   }
 
@@ -109,6 +114,7 @@ export class GameEngine {
     this.events = [];
     this.fallAccumulator = snapshot.fallAccumulator;
     this.lockFrames = snapshot.lockFrames;
+    this.lockResets = snapshot.lockResets;
   }
 
   tick(frame: number, inputs: GameInput[] = []): GameState {
@@ -188,6 +194,7 @@ export class GameEngine {
     this.events = [];
     this.fallAccumulator = 0;
     this.lockFrames = 0;
+    this.lockResets = 0;
     this.rng = new SeededRng(this.seed);
     this.fillNext();
     this.spawn();
@@ -206,9 +213,10 @@ export class GameEngine {
   private spawn(type = this.next.shift()): void {
     if (!type) throw new Error('Cannot spawn without a piece.');
     this.fillNext();
-    this.active = { type, rotation: 0, x: 3, y: 0 };
+    this.active = { type, rotation: 0, x: this.spawnX(), y: 0 };
     this.canHold = true;
     this.lockFrames = 0;
+    this.lockResets = 0;
     this.fallAccumulator = 0;
     if (this.collides(this.active)) {
       this.status = 'gameover';
@@ -237,7 +245,7 @@ export class GameEngine {
     const moved = { ...this.active, x: this.active.x + dx, y: this.active.y + dy };
     if (this.collides(moved)) return false;
     this.active = moved;
-    if (dx !== 0 || dy < 0) this.lockFrames = 0;
+    if (dx !== 0 || dy < 0) this.resetLockDelay();
     return true;
   }
 
@@ -253,7 +261,7 @@ export class GameEngine {
       };
       if (!this.collides(rotated)) {
         this.active = rotated;
-        this.lockFrames = 0;
+        this.resetLockDelay();
         return;
       }
     }
@@ -265,18 +273,20 @@ export class GameEngine {
   }
 
   private hardDrop(): void {
+    if (!this.rules.allowHardDrop) return;
     if (!this.active) return;
     this.active = this.getGhost();
     this.lockPiece();
   }
 
   private holdPiece(): void {
+    if (!this.rules.allowHold) return;
     if (!this.active || !this.canHold) return;
     const current = this.active.type;
     if (this.hold) {
       const next = this.hold;
       this.hold = current;
-      this.active = { type: next, rotation: 0, x: 3, y: 0 };
+      this.active = { type: next, rotation: 0, x: this.spawnX(), y: 0 };
       if (this.collides(this.active)) {
         this.status = 'gameover';
         this.gameOverFrame = this.frame;
@@ -285,8 +295,9 @@ export class GameEngine {
       this.hold = current;
       this.spawn();
     }
-    this.canHold = false;
+    this.canHold = this.rules.infiniteHold;
     this.lockFrames = 0;
+    this.lockResets = 0;
   }
 
   private applyGravity(): void {
@@ -301,7 +312,23 @@ export class GameEngine {
       if (this.lockFrames >= this.rules.lockDelayFrames) this.lockPiece();
     } else {
       this.lockFrames = 0;
+      this.lockResets = 0;
     }
+  }
+
+  private resetLockDelay(): void {
+    if (!this.active || !this.isGrounded()) {
+      this.lockFrames = 0;
+      return;
+    }
+    if (this.rules.infiniteMovement || this.lockResets < this.rules.lockResetLimit) {
+      this.lockFrames = 0;
+      this.lockResets += 1;
+    }
+  }
+
+  private spawnX(): number {
+    return Math.max(0, Math.floor(this.rules.boardWidth / 2) - 2);
   }
 
   private isGrounded(): boolean {

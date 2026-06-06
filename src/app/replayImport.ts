@@ -67,6 +67,14 @@ function parseRules(value: unknown): GameRules | null {
   const garbageDelayFrames = value.garbageDelayFrames === undefined
     ? DEFAULT_RULES.garbageDelayFrames
     : readNonNegativeInteger(value.garbageDelayFrames);
+  const allowHardDrop = value.allowHardDrop === undefined ? DEFAULT_RULES.allowHardDrop : readBoolean(value.allowHardDrop);
+  const allowHold = value.allowHold === undefined ? DEFAULT_RULES.allowHold : readBoolean(value.allowHold);
+  const showGhost = value.showGhost === undefined ? DEFAULT_RULES.showGhost : readBoolean(value.showGhost);
+  const infiniteHold = value.infiniteHold === undefined ? DEFAULT_RULES.infiniteHold : readBoolean(value.infiniteHold);
+  const infiniteMovement = value.infiniteMovement === undefined ? DEFAULT_RULES.infiniteMovement : readBoolean(value.infiniteMovement);
+  const lockResetLimit = value.lockResetLimit === undefined
+    ? DEFAULT_RULES.lockResetLimit
+    : readNonNegativeInteger(value.lockResetLimit);
   if (
     boardWidth === null
     || visibleRows === null
@@ -79,6 +87,12 @@ function parseRules(value: unknown): GameRules | null {
     || dasFrames === null
     || arrFrames === null
     || garbageDelayFrames === null
+    || allowHardDrop === null
+    || allowHold === null
+    || showGhost === null
+    || infiniteHold === null
+    || infiniteMovement === null
+    || lockResetLimit === null
   ) return null;
   return {
     boardWidth,
@@ -92,6 +106,12 @@ function parseRules(value: unknown): GameRules | null {
     dasFrames,
     arrFrames,
     garbageDelayFrames,
+    allowHardDrop,
+    allowHold,
+    showGhost,
+    infiniteHold,
+    infiniteMovement,
+    lockResetLimit,
   };
 }
 
@@ -161,6 +181,10 @@ function readNullableNonNegativeInteger(value: unknown): number | null | undefin
 
 function readPositiveNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
 }
 
 function isUnsignedInteger(value: unknown): value is number {
