@@ -38,6 +38,7 @@ import {
 } from '../src/online/roomService';
 import { InputController } from '../src/input';
 import { HostAuthoritySimulator } from '../src/online/hostAuthority';
+import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from '../src/online/reconciliation';
 import {
   actionForCode,
   DEFAULT_INPUT_SETTINGS,
@@ -557,6 +558,28 @@ describe('core stacker engine', () => {
     expect(simulator.getLastProcessedInputSequence('player-guest-seq')).toBe(7);
   });
 
+  it('keeps local prediction while own online inputs are still pending', () => {
+    const local = new GameEngine(321, BATTLE_RULES);
+    const snapshot = local.createSnapshot();
+
+    expect(shouldReconcileLocalEngineSnapshot(local.getState(), {
+      ...createOnlineGameSnapshotFixture(local),
+      engine: snapshot,
+      status: 'playing',
+    }, 1)).toBe(false);
+
+    expect(shouldReconcileLocalEngineSnapshot(local.getState(), {
+      ...createOnlineGameSnapshotFixture(local),
+      engine: snapshot,
+      status: 'gameover',
+    }, 1)).toBe(true);
+  });
+
+  it('preserves pending input timing when replaying after reconciliation', () => {
+    expect(frameForPendingInputReplay({ frame: 24, action: 'moveLeft', sequence: 1 }, 10)).toBe(24);
+    expect(frameForPendingInputReplay({ frame: 4, action: 'moveLeft', sequence: 2 }, 10)).toBe(11);
+  });
+
   it('lists public online rooms but keeps private rooms hidden', async () => {
     const store = new MemoryRoomStore();
     const publicRoom = await createRoom(store, {
@@ -894,6 +917,17 @@ function createSplitState(lines: number, frame: number) {
       lines,
       frame,
     },
+  };
+}
+
+function createOnlineGameSnapshotFixture(engine: GameEngine) {
+  const state = engine.getState();
+  return {
+    board: state.board,
+    active: state.active,
+    visibleRows: BATTLE_RULES.visibleRows,
+    boardWidth: BATTLE_RULES.boardWidth,
+    elapsedFrames: displayedElapsedFrames(state.stats),
   };
 }
 

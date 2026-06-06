@@ -39,6 +39,7 @@ import { OnlineClient } from './online/client';
 import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostAuthority';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBroadcast';
+import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers } from './online/roomService';
 import type { AttackRequest, OnlineAttack, OnlineGameSnapshot, OnlinePlayer, OnlineRoom, OnlineRoomSummary, ProgressRequest, RoomVisibility } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
@@ -1142,6 +1143,7 @@ function reconcileLocalEngine(game: OnlineGameSnapshot): void {
   const acknowledgedSequence = game.lastProcessedInputSequence ?? 0;
   onlineLastAuthoritativeFrame = snapshot.frame;
   onlineInputOutbox = onlineInputOutbox.filter((input) => input.sequence > acknowledgedSequence);
+  if (!shouldReconcileLocalEngineSnapshot(engine.getState(), game, onlineInputOutbox.length)) return;
 
   try {
     engine.restoreSnapshot(snapshot);
@@ -1157,9 +1159,9 @@ function reconcileLocalEngine(game: OnlineGameSnapshot): void {
 function resimulateLocalPrediction(targetFrame: number, acknowledgedSequence: number): void {
   const pendingInputs = onlineInputOutbox
     .filter((input) => input.sequence > acknowledgedSequence)
-    .map((input, index) => ({
+    .map((input) => ({
       ...input,
-      frame: Math.max(input.frame, onlineLastAuthoritativeFrame + 1 + index),
+      frame: frameForPendingInputReplay(input, onlineLastAuthoritativeFrame),
     }));
 
   let state = engine.getState();
