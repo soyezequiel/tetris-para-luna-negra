@@ -169,20 +169,41 @@ test.describe('STACK/40 browser flows', () => {
     await action(page, 'start').click();
     await expect.poll(() => appMode(page)).toBe('playing');
 
+    await page.keyboard.down('ArrowLeft');
+    await expect.poll(
+      () => page.evaluate(() => window.stack40.getReplay().inputs.filter((input) => input.action === 'moveLeft').length),
+      { timeout: 1000 },
+    ).toBeGreaterThan(1);
+
+    await page.keyboard.up('ArrowLeft');
+    const countAfterRelease = await page.evaluate(() => (
+      window.stack40.getReplay().inputs.filter((input) => input.action === 'moveLeft').length
+    ));
+    await page.waitForTimeout(180);
+    await expect.poll(() => page.evaluate(() => (
+      window.stack40.getReplay().inputs.filter((input) => input.action === 'moveLeft').length
+    ))).toBe(countAfterRelease);
+  });
+
+  test('does not repeat held rotation controls', async ({ page }) => {
+    await openFreshApp(page);
+
+    await action(page, 'solo-menu').click();
+    await action(page, 'start').click();
+    await expect.poll(() => appMode(page)).toBe('playing');
+
     await page.keyboard.down('ArrowUp');
     await expect.poll(
       () => page.evaluate(() => window.stack40.getReplay().inputs.filter((input) => input.action === 'rotateCW').length),
       { timeout: 1000 },
-    ).toBeGreaterThan(1);
+    ).toBe(1);
 
-    await page.keyboard.up('ArrowUp');
-    const countAfterRelease = await page.evaluate(() => (
-      window.stack40.getReplay().inputs.filter((input) => input.action === 'rotateCW').length
-    ));
-    await page.waitForTimeout(180);
+    await page.waitForTimeout(220);
     await expect.poll(() => page.evaluate(() => (
       window.stack40.getReplay().inputs.filter((input) => input.action === 'rotateCW').length
-    ))).toBe(countAfterRelease);
+    ))).toBe(1);
+
+    await page.keyboard.up('ArrowUp');
   });
 
   test('shows public rooms, joins by listing, and keeps private rooms hidden', async ({ page }) => {

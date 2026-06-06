@@ -98,7 +98,5 @@ export function isBrowserShortcutKeyDown(event: KeyboardEvent): boolean {
 function isRepeatableAction(action: ControlAction): boolean {
   return action === 'moveLeft'
     || action === 'moveRight'
-    || action === 'softDrop'
-    || action === 'rotateCW'
-    || action === 'rotateCCW';
+    || action === 'softDrop';
 }

@@ -599,6 +599,30 @@ describe('core stacker engine', () => {
       arrFrames: 2,
     }, null);
 
+    input.pressControl('key:ArrowLeft', 'moveLeft');
+    input.advanceFrame(1);
+    expect(input.collect(1)).toEqual([{ frame: 0, action: 'moveLeft' }]);
+
+    input.advanceFrame(2);
+    expect(input.collect(2)).toEqual([]);
+
+    input.advanceFrame(3);
+    expect(input.collect(3)).toEqual([{ frame: 3, action: 'moveLeft' }]);
+
+    input.advanceFrame(4);
+    expect(input.collect(4)).toEqual([]);
+
+    input.advanceFrame(5);
+    expect(input.collect(5)).toEqual([{ frame: 5, action: 'moveLeft' }]);
+  });
+
+  it('keeps rotation controls from repeating while held', () => {
+    const input = new InputController({
+      ...DEFAULT_INPUT_SETTINGS,
+      dasFrames: 1,
+      arrFrames: 1,
+    }, null);
+
     input.pressControl('key:ArrowUp', 'rotateCW');
     input.advanceFrame(1);
     expect(input.collect(1)).toEqual([{ frame: 0, action: 'rotateCW' }]);
@@ -607,13 +631,7 @@ describe('core stacker engine', () => {
     expect(input.collect(2)).toEqual([]);
 
     input.advanceFrame(3);
-    expect(input.collect(3)).toEqual([{ frame: 3, action: 'rotateCW' }]);
-
-    input.advanceFrame(4);
-    expect(input.collect(4)).toEqual([]);
-
-    input.advanceFrame(5);
-    expect(input.collect(5)).toEqual([{ frame: 5, action: 'rotateCW' }]);
+    expect(input.collect(3)).toEqual([]);
   });
 
   it('keeps one-shot controls from repeating while held', () => {
