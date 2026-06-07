@@ -1432,6 +1432,7 @@ describe('core stacker engine', () => {
       roomId: first.room.id,
       authorityPlayerId: 'player-quickplay-a',
       playerId: 'player-quickplay-b',
+      seed: second.room.seed,
       frame: 360,
       lines: 12,
       pieces: 30,
@@ -1469,6 +1470,7 @@ describe('core stacker engine', () => {
       roomId: joined.room.id,
       authorityPlayerId: 'player-quickplay-score',
       playerId: 'player-quickplay-score',
+      seed: joined.room.seed,
       lines: 20,
       pieces: 50,
       elapsedFrames: 1800,
@@ -1576,6 +1578,7 @@ describe('core stacker engine', () => {
       roomId: room.id,
       authorityPlayerId: 'player-sprint-host',
       playerId: 'player-sprint-guest',
+      seed: room.seed,
       result: 'won',
       lines: 40,
       pieces: 101,
@@ -1613,6 +1616,7 @@ describe('core stacker engine', () => {
       roomId: room.id,
       authorityPlayerId: 'player-duel-host',
       playerId: 'player-duel-guest',
+      seed: playing.seed,
       frame: 300,
       lines: 10,
       pieces: 20,
@@ -1632,6 +1636,7 @@ describe('core stacker engine', () => {
       roomId: room.id,
       authorityPlayerId: 'player-duel-host',
       playerId: 'player-duel-guest',
+      seed: playing.seed,
       frame: 280,
       lines: 12,
       pieces: 18,
@@ -1643,11 +1648,12 @@ describe('core stacker engine', () => {
     expect(secondRound.series?.currentRound).toBe(3);
     expect(secondRound.series?.scores.find((score) => score.playerId === 'player-duel-host')?.wins).toBe(2);
 
-    await getRoomState(store, room.id, 19000);
+    playing = await getRoomState(store, room.id, 19000);
     const finished = await eliminatePlayer(store, {
       roomId: room.id,
       authorityPlayerId: 'player-duel-host',
       playerId: 'player-duel-guest',
+      seed: playing.seed,
       frame: 260,
       lines: 14,
       pieces: 16,
@@ -1683,12 +1689,13 @@ describe('core stacker engine', () => {
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-casual-host', ready: true }, 1200);
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-casual-guest', ready: true }, 1200);
     await startRoom(store, { roomId: room.id, playerId: 'player-casual-host' }, 1300);
-    await getRoomState(store, room.id, 7000);
+    const playing = await getRoomState(store, room.id, 7000);
 
     const finished = await eliminatePlayer(store, {
       roomId: room.id,
       authorityPlayerId: 'player-casual-host',
       playerId: 'player-casual-guest',
+      seed: playing.seed,
       frame: 240,
       lines: 8,
       pieces: 16,
@@ -1727,12 +1734,13 @@ describe('core stacker engine', () => {
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-league-host', ready: true }, 1200);
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-league-guest', ready: true }, 1200);
     await startRoom(store, { roomId: room.id, playerId: 'player-league-host' }, 1300);
-    await getRoomState(store, room.id, 7000);
+    const playing = await getRoomState(store, room.id, 7000);
 
     const finished = await eliminatePlayer(store, {
       roomId: room.id,
       authorityPlayerId: 'player-league-host',
       playerId: 'player-league-guest',
+      seed: playing.seed,
       frame: 240,
       lines: 8,
       pieces: 16,
@@ -1820,6 +1828,7 @@ describe('core stacker engine', () => {
     board[2][1] = 'T';
     board[3][2] = 'T';
     const game: OnlineGameSnapshot = {
+      seed: room.seed,
       board,
       active: null,
       visibleRows: 4,
@@ -1837,6 +1846,7 @@ describe('core stacker engine', () => {
       roomId: room.id,
       authorityPlayerId: 'player-danger-host',
       playerId: 'player-danger-target',
+      seed: room.seed,
       lines: 4,
       pieces: 12,
       elapsedFrames: 300,
@@ -1877,12 +1887,13 @@ describe('core stacker engine', () => {
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-restart', ready: true }, 1200);
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-guest-restart', ready: true }, 1200);
     await startRoom(store, { roomId: room.id, playerId: 'player-host-restart' }, 1300);
-    await getRoomState(store, room.id, 7000);
+    const playing = await getRoomState(store, room.id, 7000);
 
     const finished = await eliminatePlayer(store, {
       roomId: room.id,
       authorityPlayerId: 'player-host-restart',
       playerId: 'player-guest-restart',
+      seed: playing.seed,
       frame: 300,
       lines: 8,
       pieces: 18,
@@ -1974,6 +1985,7 @@ describe('core stacker engine', () => {
       roomId: room.id,
       authorityPlayerId: 'player-host-2',
       playerId: 'player-host-2',
+      seed: room.seed,
       result: 'won',
       lines: 40,
       pieces: 100,
@@ -1983,6 +1995,7 @@ describe('core stacker engine', () => {
       roomId: room.id,
       authorityPlayerId: 'player-host-2',
       playerId: 'player-host-2',
+      seed: room.seed,
       lines: 4,
       pieces: 10,
       elapsedFrames: 9999,
@@ -2040,12 +2053,13 @@ describe('core stacker engine', () => {
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-auth', ready: true }, 1200);
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-guest-auth', ready: true }, 1200);
     await startRoom(store, { roomId: room.id, playerId: 'player-host-auth' }, 1300);
-    await getRoomState(store, room.id, 7000);
+    const playing = await getRoomState(store, room.id, 7000);
 
     await expect(updateProgress(store, {
       roomId: room.id,
       authorityPlayerId: 'player-guest-auth',
       playerId: 'player-guest-auth',
+      seed: playing.seed,
       lines: 8,
       pieces: 24,
       elapsedFrames: 600,
@@ -2057,6 +2071,7 @@ describe('core stacker engine', () => {
       authorityPlayerId: 'player-guest-auth',
       fromPlayerId: 'player-guest-auth',
       toPlayerId: 'player-host-auth',
+      seed: playing.seed,
       lines: 2,
       holeSeed: 99,
       frame: 600,
@@ -2066,6 +2081,7 @@ describe('core stacker engine', () => {
       roomId: room.id,
       authorityPlayerId: 'player-guest-auth',
       playerId: 'player-host-auth',
+      seed: playing.seed,
       frame: 620,
       lines: 9,
       pieces: 26,
@@ -2076,6 +2092,7 @@ describe('core stacker engine', () => {
       roomId: room.id,
       authorityPlayerId: 'player-host-auth',
       playerId: 'player-guest-auth',
+      seed: playing.seed,
       lines: 8,
       pieces: 24,
       elapsedFrames: 600,
@@ -2098,7 +2115,7 @@ describe('core stacker engine', () => {
     }, 1200);
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-4', ready: true }, 1300);
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-guest-4', ready: true }, 1300);
-    await startRoom(store, { roomId: room.id, playerId: 'player-host-4' }, 1400);
+    const started = await startRoom(store, { roomId: room.id, playerId: 'player-host-4' }, 1400);
 
     const request = {
       roomId: room.id,
@@ -2106,6 +2123,7 @@ describe('core stacker engine', () => {
       authorityPlayerId: 'player-host-4',
       fromPlayerId: 'player-host-4',
       toPlayerId: 'player-guest-4',
+      seed: started.seed,
       lines: 2,
       holeSeed: 99,
       frame: 42,
@@ -2140,12 +2158,13 @@ describe('core stacker engine', () => {
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-5', ready: true }, 1300);
     await setPlayerReady(store, { roomId: room.id, playerId: 'player-guest-5', ready: true }, 1300);
     await startRoom(store, { roomId: room.id, playerId: 'player-host-5' }, 1400);
-    await getRoomState(store, room.id, 7000);
+    const playing = await getRoomState(store, room.id, 7000);
 
     const finished = await eliminatePlayer(store, {
       roomId: room.id,
       authorityPlayerId: 'player-host-5',
       playerId: 'player-guest-5',
+      seed: playing.seed,
       frame: 360,
       lines: 12,
       pieces: 40,
@@ -2171,12 +2190,13 @@ describe('core stacker engine', () => {
       await setPlayerReady(store, { roomId: room.id, playerId, ready: true }, 1300);
     }
     await startRoom(store, { roomId: room.id, playerId: 'player-host-6' }, 1400);
-    await getRoomState(store, room.id, 7000);
+    const playing = await getRoomState(store, room.id, 7000);
 
     const updated = await eliminatePlayer(store, {
       roomId: room.id,
       authorityPlayerId: 'player-host-6',
       playerId: 'player-guest-6a',
+      seed: playing.seed,
       frame: 300,
       lines: 6,
       pieces: 20,

@@ -345,6 +345,25 @@ test.describe('STACK/40 browser flows', () => {
     expect(requests.restartCount).toBe(1);
   });
 
+  test('adopts a restarted online round even if the local room is still playing', async ({ page }) => {
+    const requests = await mockOnlineApi(page, { largePlayingRoom: true });
+    await openFreshApp(page);
+
+    await action(page, 'multiplayer-menu').click();
+    await action(page, 'online-open').click();
+    await page.locator('[data-online-field="name"]').fill('Host');
+    await action(page, 'online-create-private').click();
+    await action(page, 'online-ready').click();
+    await action(page, 'online-start').click();
+    await expect.poll(() => appMode(page)).toBe('onlinePlaying');
+    await expect.poll(() => page.evaluate(() => window.stack40.getReplay().seed)).toBe(12345);
+
+    requests.restartOnNextState = true;
+
+    await expect.poll(() => page.evaluate(() => window.stack40.getReplay().seed), { timeout: 3000 }).toBe(12346);
+    await expect.poll(() => appMode(page)).toBe('onlinePlaying');
+  });
+
   test('shows many online opponents to the right with auto-sized boards', async ({ page }) => {
     await page.setViewportSize({ width: 1365, height: 768 });
     await mockOnlineApi(page, { largePlayingRoom: true });
@@ -429,9 +448,9 @@ test.describe('STACK/40 browser flows', () => {
   });
 });
 
-async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Promise<{ lastCreate: MockCreateRequest | null; restartCount: number }> {
+async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Promise<MockOnlineApiRequests> {
   const now = Date.now();
-  const requests: { lastCreate: MockCreateRequest | null; restartCount: number } = { lastCreate: null, restartCount: 0 };
+  const requests: MockOnlineApiRequests = { lastCreate: null, restartCount: 0, restartOnNextState: false };
   let room = createMockRoom('ROOM', 'private', now);
   const publicRoom = createMockRoom('PUB1', 'public', now);
   const quickPlayLeaderboard = [createMockQuickPlayLeaderboardEntry('player-leader', 'Leader', now)];
@@ -607,6 +626,10 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
       return;
     }
     if (path.endsWith('/state')) {
+      if (requests.restartOnNextState) {
+        requests.restartOnNextState = false;
+        room = restartMockRoom(room, Date.now(), true);
+      }
       await fulfillRoom(route, room);
       return;
     }
@@ -655,6 +678,12 @@ async function fulfillRoom(route: Route, room: MockRoom): Promise<void> {
 type MockOnlineApiOptions = {
   largePlayingRoom?: boolean;
   finishedCreatedRoom?: boolean;
+};
+
+type MockOnlineApiRequests = {
+  lastCreate: MockCreateRequest | null;
+  restartCount: number;
+  restartOnNextState: boolean;
 };
 
 function createMockRoom(
@@ -742,11 +771,11 @@ function createMockFinishedRoom(room: MockRoom, now: number): MockRoom {
   };
 }
 
-function restartMockRoom(room: MockRoom, now: number): MockRoom {
+function restartMockRoom(room: MockRoom, now: number, startImmediately = false): MockRoom {
   return {
     ...room,
     status: 'countdown',
-    startsAtServerMs: now + 5000,
+    startsAtServerMs: startImmediately ? now - 1 : now + 5000,
     updatedAtServerMs: now,
     seed: room.seed + 1,
     winnerPlayerId: null,

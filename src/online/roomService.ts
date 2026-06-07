@@ -1036,7 +1036,7 @@ function requireHostAuthority(room: OnlineRoom, authorityPlayerId: string): Onli
 }
 
 function requestMatchesRoomSeed(room: OnlineRoom, seed: number | undefined): boolean {
-  return seed === undefined || normalizeNonNegativeInteger(seed) === room.seed;
+  return seed !== undefined && normalizeNonNegativeInteger(seed) === room.seed;
 }
 
 function createPlayer(id: string, name: string, nowMs: number, avatarUrl?: string | null): OnlinePlayer {

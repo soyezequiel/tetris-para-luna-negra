@@ -988,12 +988,17 @@ function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
 function adoptOnlineRoom(room: OnlineRoom): void {
   const previousRoom = onlineRoom;
   const previousRoundId = onlineActiveRoundId;
-  const nextRoundId = room.series?.roundId ?? null;
+  if (previousRoom && room.updatedAtServerMs < previousRoom.updatedAtServerMs) return;
+  const nextRoundId = onlineRoundKey(room);
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && room.status === 'countdown';
   onlineRoom = room;
   onlineActiveRoundId = nextRoundId;
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
+}
+
+function onlineRoundKey(room: OnlineRoom): string {
+  return room.series?.roundId ?? `seed:${room.seed}`;
 }
 
 function resetOnlineRuntimeForNextRound(): void {
