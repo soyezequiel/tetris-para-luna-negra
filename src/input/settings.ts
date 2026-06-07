@@ -10,6 +10,7 @@ export const GAME_ACTIONS: InputAction[] = [
   'hardDrop',
   'rotateCW',
   'rotateCCW',
+  'rotate180',
   'hold',
   'retry',
 ];
@@ -23,6 +24,7 @@ export const CONTROL_ACTION_LABELS: Record<ControlAction, string> = {
   hardDrop: 'Hard drop',
   rotateCW: 'Rotate CW',
   rotateCCW: 'Rotate CCW',
+  rotate180: 'Rotate 180',
   hold: 'Hold',
   retry: 'Retry',
   pause: 'Pause',
@@ -43,6 +45,7 @@ export const DEFAULT_BINDINGS: InputBindings = {
   hardDrop: ['Space'],
   rotateCW: ['ArrowUp', 'KeyX'],
   rotateCCW: ['KeyZ'],
+  rotate180: ['KeyA'],
   hold: ['KeyC', 'ShiftLeft', 'ShiftRight'],
   retry: ['KeyR'],
   pause: ['Escape'],

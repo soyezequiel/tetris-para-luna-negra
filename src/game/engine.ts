@@ -190,6 +190,9 @@ export class GameEngine {
       case 'rotateCCW':
         this.rotate(-1);
         break;
+      case 'rotate180':
+        this.rotate(2);
+        break;
       case 'hold':
         this.holdPiece();
         break;
@@ -276,7 +279,7 @@ export class GameEngine {
     return true;
   }
 
-  private rotate(dir: 1 | -1): void {
+  private rotate(dir: 1 | -1 | 2): void {
     if (!this.active) return;
     const to = nextRotation(this.active.rotation, dir);
     for (const kick of kicksFor(this.active.type, this.active.rotation, to)) {

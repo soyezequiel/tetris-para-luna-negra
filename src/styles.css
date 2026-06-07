@@ -1586,7 +1586,7 @@ canvas {
 }
 
 .touch-cluster-actions {
-  grid-template-columns: repeat(2, minmax(58px, 76px));
+  grid-template-columns: repeat(3, minmax(58px, 76px));
   justify-content: end;
 }
 
@@ -1845,9 +1845,12 @@ canvas {
     grid-row: 1;
   }
 
-  .touch-cluster-move,
-  .touch-cluster-actions {
+  .touch-cluster-move {
     grid-template-columns: repeat(2, 58px);
+  }
+
+  .touch-cluster-actions {
+    grid-template-columns: repeat(3, 58px);
   }
 
   .touch-button,
@@ -1868,9 +1871,12 @@ canvas {
     gap: 6px;
   }
 
-  .touch-cluster-move,
-  .touch-cluster-actions {
+  .touch-cluster-move {
     grid-template-columns: repeat(2, minmax(52px, 1fr));
+  }
+
+  .touch-cluster-actions {
+    grid-template-columns: repeat(3, minmax(52px, 1fr));
   }
 
   .touch-button,

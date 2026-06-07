@@ -201,7 +201,7 @@ export function cellsFor(type: PieceType, rotation: Rotation): Vec2[] {
   return SHAPES[type][rotation];
 }
 
-export function nextRotation(rotation: Rotation, dir: 1 | -1): Rotation {
+export function nextRotation(rotation: Rotation, dir: 1 | -1 | 2): Rotation {
   return (((rotation + dir) % 4) + 4) % 4 as Rotation;
 }
 
@@ -323,7 +323,84 @@ const I_KICKS: Record<string, Vec2[]> = {
   ],
 };
 
+// 180-degree rotation kicks (TETR.IO / SRS+ style), stored in the same
+// y-negated convention as the tables above so they apply via `y - kick.y`.
+const JLSTZ_180_KICKS: Record<string, Vec2[]> = {
+  '0>2': [
+    { x: 0, y: 0 },
+    { x: 0, y: -1 },
+    { x: 1, y: -1 },
+    { x: -1, y: -1 },
+    { x: 1, y: 0 },
+    { x: -1, y: 0 },
+  ],
+  '2>0': [
+    { x: 0, y: 0 },
+    { x: 0, y: 1 },
+    { x: -1, y: 1 },
+    { x: 1, y: 1 },
+    { x: -1, y: 0 },
+    { x: 1, y: 0 },
+  ],
+  '1>3': [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: -2 },
+    { x: 1, y: -1 },
+    { x: 0, y: -2 },
+    { x: 0, y: -1 },
+  ],
+  '3>1': [
+    { x: 0, y: 0 },
+    { x: -1, y: 0 },
+    { x: -1, y: -2 },
+    { x: -1, y: -1 },
+    { x: 0, y: -2 },
+    { x: 0, y: -1 },
+  ],
+};
+
+const I_180_KICKS: Record<string, Vec2[]> = {
+  '0>2': [
+    { x: 0, y: 0 },
+    { x: -1, y: 0 },
+    { x: -2, y: 0 },
+    { x: 1, y: 0 },
+    { x: 2, y: 0 },
+    { x: 0, y: -1 },
+  ],
+  '2>0': [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 2, y: 0 },
+    { x: -1, y: 0 },
+    { x: -2, y: 0 },
+    { x: 0, y: 1 },
+  ],
+  '1>3': [
+    { x: 0, y: 0 },
+    { x: 0, y: -1 },
+    { x: 0, y: -2 },
+    { x: 0, y: 1 },
+    { x: 0, y: 2 },
+    { x: -1, y: 0 },
+  ],
+  '3>1': [
+    { x: 0, y: 0 },
+    { x: 0, y: -1 },
+    { x: 0, y: -2 },
+    { x: 0, y: 1 },
+    { x: 0, y: 2 },
+    { x: 1, y: 0 },
+  ],
+};
+
 export function kicksFor(type: PieceType, from: Rotation, to: Rotation): Vec2[] {
   if (type === 'O') return [{ x: 0, y: 0 }];
-  return (type === 'I' ? I_KICKS : JLSTZ_KICKS)[`${from}>${to}`] ?? [{ x: 0, y: 0 }];
+  const key = `${from}>${to}`;
+  const is180 = (from + 2) % 4 === to;
+  if (is180) {
+    return (type === 'I' ? I_180_KICKS : JLSTZ_180_KICKS)[key] ?? [{ x: 0, y: 0 }];
+  }
+  return (type === 'I' ? I_KICKS : JLSTZ_KICKS)[key] ?? [{ x: 0, y: 0 }];
 }

@@ -2007,6 +2007,7 @@ function renderTouchControls(): string {
       </div>
       <div class="touch-cluster touch-cluster-actions">
         ${renderTouchButton('rotateCCW', 'CCW')}
+        ${renderTouchButton('rotate180', '180')}
         ${renderTouchButton('rotateCW', 'CW')}
         ${renderTouchButton('hardDrop', 'Drop')}
       </div>
@@ -3003,7 +3004,7 @@ function renderSplitList(splits: LineSplit[]): string {
 
 function helpText(): string {
   if (appMode === 'replayPlayback') return `${formatActionBinding('pause')} pause replay - ${formatActionBinding('retry')} restart replay - M sound - N music`;
-  return `Move ${formatActionBinding('moveLeft')}/${formatActionBinding('moveRight')} - Rotate ${formatActionBinding('rotateCW')}/${formatActionBinding('rotateCCW')} - Drop ${formatActionBinding('softDrop')}/${formatActionBinding('hardDrop')} - Hold ${formatActionBinding('hold')} - Pause ${formatActionBinding('pause')} - Retry ${formatActionBinding('retry')} - M sound - N music`;
+  return `Move ${formatActionBinding('moveLeft')}/${formatActionBinding('moveRight')} - Rotate ${formatActionBinding('rotateCW')}/${formatActionBinding('rotateCCW')}/${formatActionBinding('rotate180')} - Drop ${formatActionBinding('softDrop')}/${formatActionBinding('hardDrop')} - Hold ${formatActionBinding('hold')} - Pause ${formatActionBinding('pause')} - Retry ${formatActionBinding('retry')} - M sound - N music`;
 }
 
 function formatActionBinding(action: ControlAction): string {
@@ -3043,7 +3044,7 @@ function getActiveVolumeChannel(): VolumeChannel | null {
 
 function playImmediateInputSounds(actions: InputAction[]): void {
   for (const action of actions) {
-    if (action === 'rotateCW' || action === 'rotateCCW') sound.play('rotate');
+    if (action === 'rotateCW' || action === 'rotateCCW' || action === 'rotate180') sound.play('rotate');
     if (action === 'softDrop') sound.play('softDrop');
     if (action === 'hardDrop') sound.play('hardDrop');
     if (action === 'hold') sound.play('hold');

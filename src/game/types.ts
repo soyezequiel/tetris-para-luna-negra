@@ -27,6 +27,7 @@ export type InputAction =
   | 'hardDrop'
   | 'rotateCW'
   | 'rotateCCW'
+  | 'rotate180'
   | 'hold'
   | 'retry';
 
