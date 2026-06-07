@@ -118,6 +118,7 @@ export async function createRoom(
     peerSignals: [],
     attacks: [],
     bet: null,
+    lunaGameId: normalizeNullableString(request.lunaGameId),
   };
   await persistRoom(store, room);
   return room;
@@ -126,6 +127,7 @@ export async function createRoom(
 export interface VerifiedLunaNegraInvite {
   npub: string;
   pubkey: string;
+  gameId: string | null;
   displayName: string | null;
   avatarUrl: string | null;
   roomId: string;
@@ -150,6 +152,7 @@ export async function enterLunaNegraRoom(
     if (invite.host && existing.hostPlayerId !== player.id) {
       throw new OnlineRoomError('Only the original Luna Negra host can reopen this room.', 403);
     }
+    if (invite.gameId && !existing.lunaGameId) existing.lunaGameId = normalizeNullableString(invite.gameId);
     const room = await enterExistingLunaNegraRoom(store, existing, player, nowMs);
     return { room, player };
   }
@@ -162,6 +165,7 @@ export async function enterLunaNegraRoom(
     roomId,
     playerId: player.id,
     npub: player.npub,
+    lunaGameId: invite.gameId,
     name: player.name,
     avatarUrl: player.avatarUrl,
     visibility: 'private',
@@ -557,6 +561,7 @@ export async function enterQuickPlay(
       peerSignals: [],
       attacks: [],
       bet: null,
+      lunaGameId: null,
     };
   } else {
     const existing = room.players.find((candidate) => candidate.id === player.id);
@@ -1904,6 +1909,7 @@ function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
     series: normalizeSeriesState(room.series, room, ruleset),
     matchResultId: room.matchResultId ?? null,
     bet: normalizeBet(room.bet),
+    lunaGameId: normalizeNullableString(room.lunaGameId),
     peerSignals: room.peerSignals ?? [],
     attacks: (room.attacks ?? []).map((attack) => ({
       ...attack,

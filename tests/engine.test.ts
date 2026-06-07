@@ -1161,6 +1161,7 @@ describe('core stacker engine', () => {
     const host = await enterLunaNegraRoom(store, {
       npub: 'npub-host-player',
       pubkey: 'pubkey-host-player',
+      gameId: null,
       displayName: 'Nostr Host',
       avatarUrl: 'https://example.com/host.png',
       roomId: 'lnroom123',
@@ -1187,6 +1188,7 @@ describe('core stacker engine', () => {
     await enterLunaNegraRoom(store, {
       npub: 'npub-host-player',
       pubkey: 'pubkey-host-player',
+      gameId: null,
       displayName: 'Nostr Host',
       avatarUrl: null,
       roomId: 'lnroom124',
@@ -1198,6 +1200,7 @@ describe('core stacker engine', () => {
     const guest = await enterLunaNegraRoom(store, {
       npub: 'npub-guest-player',
       pubkey: 'pubkey-guest-player',
+      gameId: null,
       displayName: 'Guest Name',
       avatarUrl: 'https://example.com/guest.png',
       roomId: 'lnroom124',
@@ -1218,6 +1221,7 @@ describe('core stacker engine', () => {
     await enterLunaNegraRoom(store, {
       npub: 'npub-host-player',
       pubkey: 'pubkey-host-player',
+      gameId: null,
       displayName: 'Nostr Host',
       avatarUrl: null,
       roomId: 'lnroom125',
@@ -1229,6 +1233,7 @@ describe('core stacker engine', () => {
     await expect(enterLunaNegraRoom(store, {
       npub: 'npub-guest-player',
       pubkey: 'pubkey-guest-player',
+      gameId: null,
       displayName: 'Guest Name',
       avatarUrl: null,
       roomId: 'lnroom125',

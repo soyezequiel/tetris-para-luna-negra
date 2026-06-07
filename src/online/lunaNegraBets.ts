@@ -10,7 +10,6 @@ import type { OnlineRoom, RoomBet, RoomBetParticipant } from './protocol';
 interface LunaConfig {
   baseUrl: string;
   apiKey: string;
-  gameId: string;
 }
 
 interface LunaEconomics {
@@ -55,19 +54,12 @@ interface LunaBetDeposits {
 export const LUNA_NEGRA_MIN_STAKE_SATS = 1;
 export const LUNA_NEGRA_MAX_STAKE_SATS = 1_000_000;
 
-function readApiConfig(): Pick<LunaConfig, 'baseUrl' | 'apiKey'> {
+function readApiConfig(): LunaConfig {
   const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
   if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
   if (!apiKey) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
   return { baseUrl, apiKey };
-}
-
-function readConfig(): LunaConfig {
-  const { baseUrl, apiKey } = readApiConfig();
-  const gameId = (process.env.LUNA_NEGRA_GAME_ID ?? '').trim();
-  if (!gameId) throw new OnlineRoomError('LUNA_NEGRA_GAME_ID no está configurada.', 500);
-  return { baseUrl, apiKey, gameId };
 }
 
 export function isLunaNegraApiConfigured(): boolean {
@@ -77,12 +69,8 @@ export function isLunaNegraApiConfigured(): boolean {
   );
 }
 
-export function isLunaNegraBettingConfigured(): boolean {
-  return isLunaNegraApiConfigured() && Boolean((process.env.LUNA_NEGRA_GAME_ID ?? '').trim());
-}
-
 async function lunaFetch<T>(
-  config: Pick<LunaConfig, 'baseUrl' | 'apiKey'>,
+  config: LunaConfig,
   path: string,
   init: { method: 'GET' | 'POST'; body?: unknown } = { method: 'GET' },
 ): Promise<T> {
@@ -177,7 +165,7 @@ export async function createBetForRoom(
   input: { roomId: string; playerId: string; stakeSats: number; victoryCondition?: string },
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const config = readConfig();
+  const config = readApiConfig();
   const room = await loadRoom(store, input.roomId);
   if (room.hostPlayerId !== input.playerId) throw new OnlineRoomError('Solo el host puede crear la apuesta.', 403);
   if (room.status !== 'lobby') throw new OnlineRoomError('La sala ya empezó.', 409);
@@ -185,6 +173,8 @@ export async function createBetForRoom(
     throw new OnlineRoomError('Ya hay una apuesta activa para esta sala.', 409);
   }
   if (room.players.length < 2) throw new OnlineRoomError('Se necesitan al menos 2 jugadores para apostar.', 409);
+  const gameId = room.lunaGameId?.trim() || (process.env.LUNA_NEGRA_GAME_ID ?? '').trim();
+  if (!gameId) throw new OnlineRoomError('No se pudo determinar el gameId de Luna Negra para esta sala.', 409);
   const npubs = room.players.map((player) => player.npub);
   if (npubs.some((npub) => !npub)) {
     throw new OnlineRoomError('Todos los jugadores deben tener cuenta Luna Negra (npub) para apostar.', 409);
@@ -198,7 +188,7 @@ export async function createBetForRoom(
   const create = await lunaFetch<LunaBetCreate>(config, '/api/v1/bets', {
     method: 'POST',
     body: {
-      gameId: config.gameId,
+      gameId,
       participants,
       stakeSats,
       victoryCondition: input.victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
@@ -212,7 +202,7 @@ export async function createBetForRoom(
 }
 
 export async function refreshRoomBet(store: RoomStore, roomId: string, nowMs = Date.now()): Promise<OnlineRoom> {
-  const config = readConfig();
+  const config = readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) return room;
   const { detail, deposits } = await fetchDetailAndDeposits(config, room.bet.betId);
@@ -238,7 +228,7 @@ export async function cancelRoomBet(
   playerId: string,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const config = readConfig();
+  const config = readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) throw new OnlineRoomError('No hay apuesta para cancelar.', 404);
   if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede cancelar la apuesta.', 403);
@@ -259,8 +249,8 @@ export async function maybeReportRoomBetResult(
   if (!bet || bet.resultReported) return null;
   if (room.status !== 'finished') return null;
   if (bet.status !== 'funded') return null;
-  if (!isLunaNegraBettingConfigured()) return null;
-  const config = readConfig();
+  if (!isLunaNegraApiConfigured()) return null;
+  const config = readApiConfig();
   const winners = winnerNpubsFromRoom(room);
 
   // Camino por API key: Luna Negra firma el resultado con el oráculo gestionado

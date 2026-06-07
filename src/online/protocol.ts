@@ -236,6 +236,8 @@ export interface OnlineRoom {
   peerSignals: OnlinePeerSignal[];
   attacks: OnlineAttack[];
   bet: RoomBet | null;
+  /** gameId de Luna Negra capturado del invite (para crear apuestas). */
+  lunaGameId: string | null;
 }
 
 export interface OnlineRoomSummary {
@@ -267,6 +269,7 @@ export interface CreateRoomRequest {
   roomId?: string;
   playerId: string;
   npub?: string | null;
+  lunaGameId?: string | null;
   name: string;
   avatarUrl?: string | null;
   visibility: RoomVisibility;

@@ -13,6 +13,7 @@ interface LunaNegraVerifyResponse {
   valid?: boolean;
   npub?: string;
   pubkey?: string;
+  gameId?: string | null;
   displayName?: string | null;
   avatarUrl?: string | null;
   roomId?: string;
@@ -67,6 +68,7 @@ async function verifyLunaNegraInvite(inviteToken: string): Promise<VerifiedLunaN
   return {
     npub: payload.npub,
     pubkey: payload.pubkey,
+    gameId: typeof payload.gameId === 'string' ? payload.gameId : null,
     displayName: typeof payload.displayName === 'string' ? payload.displayName : null,
     avatarUrl: typeof payload.avatarUrl === 'string' ? payload.avatarUrl : null,
     roomId: payload.roomId,
