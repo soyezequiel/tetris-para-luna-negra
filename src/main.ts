@@ -2531,11 +2531,19 @@ function renderLobbyPlayer(player: OnlinePlayer): string {
   `;
 }
 
-function lunaNegraBettingAvailable(): boolean {
-  return !!onlineRoom
-    && onlineRoom.visibility === 'private'
-    && onlineRoom.players.length >= 2
-    && onlineRoom.players.every((player) => !!player.npub);
+function isLunaNegraRoom(): boolean {
+  if (!onlineRoom) return false;
+  const host = onlineRoom.players.find((player) => player.id === onlineRoom!.hostPlayerId);
+  return !!host?.npub;
+}
+
+function lunaNegraBettingBlockedReason(): string {
+  if (!onlineRoom) return '';
+  if (onlineRoom.players.length < 2) return 'Necesitás al menos 2 jugadores en la sala para apostar.';
+  if (!onlineRoom.players.every((player) => !!player.npub)) {
+    return 'Todos los jugadores deben haber entrado con su cuenta Luna Negra.';
+  }
+  return '';
 }
 
 function betStatusLabel(status: RoomBet['status']): string {
@@ -2570,7 +2578,9 @@ function renderOnlineBetPanel(host: boolean): string {
   const bet = onlineRoom.bet;
 
   if (!bet) {
-    if (!host || !lunaNegraBettingAvailable()) return '';
+    if (!host || !isLunaNegraRoom()) return '';
+    const blocked = lunaNegraBettingBlockedReason();
+    const canCreate = !blocked && !onlineBetBusy;
     return `
       <div class="online-bet-panel">
         <div class="panel-eyebrow">APUESTA (OPCIONAL)</div>
@@ -2579,8 +2589,9 @@ function renderOnlineBetPanel(host: boolean): string {
           <label>Monto por jugador (sats)
             <input type="text" inputmode="numeric" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50" />
           </label>
-          <button type="button" data-ui-action="online-bet-create"${onlineBetBusy ? ' disabled' : ''}>Crear apuesta</button>
+          <button type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>Crear apuesta</button>
         </div>
+        ${blocked ? `<p class="online-bet-note">⚠️ ${escapeHtml(blocked)}</p>` : ''}
       </div>
     `;
   }
