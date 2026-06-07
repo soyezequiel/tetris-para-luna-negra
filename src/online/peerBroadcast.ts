@@ -152,15 +152,20 @@ export class OnlinePeerBroadcaster {
       });
     };
     connection.onconnectionstatechange = () => {
-      if (connection.connectionState === 'connected') this.setPeerState(remoteId, 'open');
-      if (connection.connectionState === 'closed' || connection.connectionState === 'failed' || connection.connectionState === 'disconnected') {
-        this.setPeerState(remoteId, connection.connectionState === 'closed' ? 'closed' : 'connecting');
-      }
+      const state = connection.connectionState;
+      if (state === 'connected') this.setPeerState(remoteId, 'open');
+      else if (state === 'failed') this.recreatePeer(remoteId);
+      else if (state === 'closed') this.setPeerState(remoteId, 'closed');
+      else if (state === 'disconnected') this.setPeerState(remoteId, 'connecting');
     };
     connection.ondatachannel = (event) => this.attachChannel(remoteId, entry, event.channel);
 
     if (initiate) {
-      this.attachChannel(remoteId, entry, connection.createDataChannel('stack40-game', { ordered: false, maxRetransmits: 0 }));
+      // Inputs are deltas: a single dropped packet desyncs the host simulation and
+      // can falsely top a player out. Use a reliable, ordered channel so every input
+      // (and KO/attack message) is delivered. Snapshots are full-state, latest-wins,
+      // so the small ordering latency is harmless here.
+      this.attachChannel(remoteId, entry, connection.createDataChannel('stack40-game', { ordered: true }));
       void this.createAndSendOffer(remoteId, entry);
     }
 
@@ -184,7 +189,13 @@ export class OnlinePeerBroadcaster {
   }
 
   private async handleSignal(signal: OnlinePeerSignal): Promise<void> {
-    const entry = this.ensurePeer(signal.fromPlayerId, false);
+    let entry = this.ensurePeer(signal.fromPlayerId, false);
+    // A failed/closed connection never recovers on its own. If a peer renegotiates
+    // (e.g. after reconnecting), rebuild from a fresh connection before applying signals.
+    if (entry.connection.connectionState === 'failed' || entry.connection.connectionState === 'closed') {
+      this.closePeer(signal.fromPlayerId);
+      entry = this.ensurePeer(signal.fromPlayerId, false);
+    }
     if (signal.type === 'ice') {
       const candidate = signal.data as RTCIceCandidateInit;
       if (!entry.connection.remoteDescription) {
@@ -267,10 +278,28 @@ export class OnlinePeerBroadcaster {
     }
   }
 
+  private recreatePeer(remoteId: string): void {
+    // A failed ICE connection is terminal; drop it and immediately stand up a fresh
+    // connection so input flow recovers instead of the host topping the player out.
+    if (!this.peers.has(remoteId)) return;
+    this.closePeer(remoteId);
+    this.ensurePeer(remoteId, this.shouldInitiate(remoteId));
+  }
+
   private closePeer(remoteId: string): void {
     const peer = this.peers.get(remoteId);
     if (!peer) return;
-    peer.channel?.close();
+    // Detach handlers first so the old connection's deferred 'closed' events can't
+    // clobber the state of a replacement connection created right after.
+    peer.connection.onicecandidate = null;
+    peer.connection.onconnectionstatechange = null;
+    peer.connection.ondatachannel = null;
+    if (peer.channel) {
+      peer.channel.onopen = null;
+      peer.channel.onclose = null;
+      peer.channel.onmessage = null;
+      peer.channel.close();
+    }
     peer.connection.close();
     this.peers.delete(remoteId);
     this.setPeerState(remoteId, 'closed');
