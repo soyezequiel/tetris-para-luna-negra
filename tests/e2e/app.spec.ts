@@ -326,6 +326,25 @@ test.describe('STACK/40 browser flows', () => {
     await expect(page.getByText('Last player standing wins')).toBeVisible();
   });
 
+  test('starts a new online game from online results', async ({ page }) => {
+    const requests = await mockOnlineApi(page, { finishedCreatedRoom: true });
+    await openFreshApp(page);
+
+    await action(page, 'multiplayer-menu').click();
+    await action(page, 'online-open').click();
+    await page.locator('[data-online-field="name"]').fill('Host');
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('onlineResults');
+    await expect(action(page, 'online-restart')).toHaveText('Nueva partida');
+
+    await action(page, 'online-restart').click();
+
+    await expect.poll(() => appMode(page)).toBe('onlineCountdown');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.status)).toBe('countdown');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.seed)).toBe(12346);
+    expect(requests.restartCount).toBe(1);
+  });
+
   test('shows many online opponents to the right with auto-sized boards', async ({ page }) => {
     await page.setViewportSize({ width: 1365, height: 768 });
     await mockOnlineApi(page, { largePlayingRoom: true });
@@ -410,9 +429,9 @@ test.describe('STACK/40 browser flows', () => {
   });
 });
 
-async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Promise<{ lastCreate: MockCreateRequest | null }> {
+async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Promise<{ lastCreate: MockCreateRequest | null; restartCount: number }> {
   const now = Date.now();
-  const requests: { lastCreate: MockCreateRequest | null } = { lastCreate: null };
+  const requests: { lastCreate: MockCreateRequest | null; restartCount: number } = { lastCreate: null, restartCount: 0 };
   let room = createMockRoom('ROOM', 'private', now);
   const publicRoom = createMockRoom('PUB1', 'public', now);
   const quickPlayLeaderboard = [createMockQuickPlayLeaderboardEntry('player-leader', 'Leader', now)];
@@ -531,6 +550,7 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
       const body = route.request().postDataJSON() as MockCreateRequest;
       requests.lastCreate = body;
       room = createMockRoom('ROOM', body.visibility, Date.now(), body.playerId, body.name, body.mode, body.rules, body.matchType, body.avatarUrl ?? null);
+      if (options.finishedCreatedRoom) room = createMockFinishedRoom(room, Date.now());
       await fulfillRoom(route, room);
       return;
     }
@@ -562,6 +582,12 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
         status: 'countdown',
         startsAtServerMs: Date.now() + 5000,
       };
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/restart')) {
+      requests.restartCount += 1;
+      room = restartMockRoom(room, Date.now());
       await fulfillRoom(route, room);
       return;
     }
@@ -628,6 +654,7 @@ async function fulfillRoom(route: Route, room: MockRoom): Promise<void> {
 
 type MockOnlineApiOptions = {
   largePlayingRoom?: boolean;
+  finishedCreatedRoom?: boolean;
 };
 
 function createMockRoom(
@@ -687,6 +714,65 @@ function createMockLargePlayingRoom(room: MockRoom, now: number): MockRoom {
     startsAtServerMs: now - 1,
     updatedAtServerMs: now,
     players: [host, ...opponents],
+  };
+}
+
+function createMockFinishedRoom(room: MockRoom, now: number): MockRoom {
+  return {
+    ...room,
+    status: 'finished',
+    startsAtServerMs: null,
+    updatedAtServerMs: now,
+    winnerPlayerId: room.hostPlayerId,
+    matchResultId: `${room.id}-${now}`,
+    players: room.players.map((player) => ({
+      ...player,
+      ready: true,
+      status: player.id === room.hostPlayerId ? 'winner' : 'eliminated',
+      lines: player.id === room.hostPlayerId ? 12 : 8,
+      pieces: player.id === room.hostPlayerId ? 40 : 38,
+      elapsedFrames: player.id === room.hostPlayerId ? 900 : 840,
+      alive: player.id === room.hostPlayerId,
+      updatedAtServerMs: now,
+      finishedAtServerMs: now,
+      eliminatedAtFrame: player.id === room.hostPlayerId ? null : 840,
+      eliminatedAtServerMs: player.id === room.hostPlayerId ? null : now,
+      game: createMockGameSnapshot(0),
+    })),
+  };
+}
+
+function restartMockRoom(room: MockRoom, now: number): MockRoom {
+  return {
+    ...room,
+    status: 'countdown',
+    startsAtServerMs: now + 5000,
+    updatedAtServerMs: now,
+    seed: room.seed + 1,
+    winnerPlayerId: null,
+    matchResultId: null,
+    attacks: [],
+    players: room.players.map((player) => ({
+      ...player,
+      ready: true,
+      status: 'ready',
+      lines: 0,
+      pieces: 0,
+      elapsedFrames: 0,
+      sentGarbage: 0,
+      receivedGarbage: 0,
+      pendingGarbage: 0,
+      alive: true,
+      updatedAtServerMs: now,
+      finishedAtServerMs: null,
+      eliminatedAtFrame: null,
+      eliminatedAtServerMs: null,
+      game: null,
+      currentTargetPlayerId: null,
+      recentAttackers: [],
+      receivedGarbageThisRound: 0,
+      dangerLevel: 0,
+    })),
   };
 }
 

@@ -27,6 +27,7 @@ import type {
   QuickPlayEnterRequest,
   QuickPlayLeaderboardEntry,
   ReadyRequest,
+  RestartRoomRequest,
   ResultRequest,
   RoomVisibility,
   SetTargetingRequest,
@@ -217,6 +218,24 @@ export async function startRoom(
   }
   if (room.ruleset.objective.type === 'duelRounds') room.series = createSeriesState(room, nowMs);
   prepareRoundCountdown(room, nowMs, false);
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return room;
+}
+
+export async function restartRoom(
+  store: RoomStore,
+  request: RestartRoomRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, request.roomId);
+  if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can restart.', 403);
+  if (room.status !== 'finished') return room;
+  room.series = room.ruleset.objective.type === 'duelRounds'
+    ? createSeriesState(room, nowMs)
+    : null;
+  room.matchResultId = null;
+  prepareRoundCountdown(room, nowMs, true);
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
   return room;

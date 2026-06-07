@@ -407,6 +407,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-ready') setOnlineReady(true);
   if (action === 'online-unready') setOnlineReady(false);
   if (action === 'online-start') startOnlineRoom();
+  if (action === 'online-restart') restartOnlineRoom();
   if (action === 'online-targeting') setOnlineTargeting(control.dataset.targetingMode);
   if (action === 'online-manual-target') setOnlineTargeting('manual', control.dataset.targetPlayerId ?? null);
   if (action === 'online-leave') leaveOnlineRoom();
@@ -908,6 +909,20 @@ async function startOnlineRoom(): Promise<void> {
   }
 }
 
+async function restartOnlineRoom(): Promise<void> {
+  if (!onlineRoom || onlineBusy) return;
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.restartRoom({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'onlineCountdown');
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
 async function setOnlineTargeting(mode: string | undefined, manualTargetPlayerId: string | null = null): Promise<void> {
   if (!onlineRoom || onlineBusy) return;
   const targetingMode = parseTargetingMode(mode);
@@ -971,12 +986,14 @@ function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
 }
 
 function adoptOnlineRoom(room: OnlineRoom): void {
+  const previousRoom = onlineRoom;
   const previousRoundId = onlineActiveRoundId;
   const nextRoundId = room.series?.roundId ?? null;
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
+  const roomRestarted = previousRoom?.status === 'finished' && room.status === 'countdown';
   onlineRoom = room;
   onlineActiveRoundId = nextRoundId;
-  if (roundChanged) resetOnlineRuntimeForNextRound();
+  if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
 }
 
 function resetOnlineRuntimeForNextRound(): void {
@@ -2136,6 +2153,11 @@ function renderOnlineResultsOverlay(state: GameState): string {
     ? `<div class="panel-note">${escapeHtml(formatRunSummary(state, appMode === 'onlineResults' || appMode === 'onlinePlaying'))}</div>`
     : '';
   const winner = onlineRoom?.players.find((player) => player.status === 'winner' || player.id === onlineRoom?.winnerPlayerId);
+  const restartAction = onlineRoom
+    ? onlineRoom.hostPlayerId === onlinePlayer.id
+      ? `<button type="button" data-ui-action="online-restart"${onlineBusy ? ' disabled' : ''}>Nueva partida</button>`
+      : '<button type="button" disabled>Esperando host</button>'
+    : '';
   return `
     <div class="menu-scrim">
       <section class="menu-panel online-panel" aria-label="Online results">
@@ -2146,6 +2168,7 @@ function renderOnlineResultsOverlay(state: GameState): string {
         ${ownSummary}
         ${renderOnlineStandings()}
         <div class="panel-actions">
+          ${restartAction}
           <button type="button" data-ui-action="online-leave">Main menu</button>
         </div>
       </section>

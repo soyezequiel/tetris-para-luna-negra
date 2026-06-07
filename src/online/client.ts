@@ -20,6 +20,7 @@ import type {
   QuickPlayEnterResponse,
   QuickPlayLeaderboardResponse,
   ReadyRequest,
+  RestartRoomRequest,
   ResultRequest,
   SetTargetingRequest,
   StartRoomRequest,
@@ -49,6 +50,10 @@ export class OnlineClient {
 
   startRoom(request: StartRoomRequest): Promise<OnlineRoomResponse> {
     return this.post('/start', request);
+  }
+
+  restartRoom(request: RestartRoomRequest): Promise<OnlineRoomResponse> {
+    return this.post('/restart', request);
   }
 
   setTargeting(request: SetTargetingRequest): Promise<OnlineRoomResponse> {

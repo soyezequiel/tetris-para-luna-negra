@@ -246,6 +246,11 @@ export interface StartRoomRequest {
   playerId: string;
 }
 
+export interface RestartRoomRequest {
+  roomId: string;
+  playerId: string;
+}
+
 export interface SetTargetingRequest {
   roomId: string;
   playerId: string;

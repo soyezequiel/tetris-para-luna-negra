@@ -9,6 +9,7 @@ import type {
   ProgressRequest,
   PublicRoomsFilters,
   ReadyRequest,
+  RestartRoomRequest,
   ResultRequest,
   SetTargetingRequest,
   StartRoomRequest,
@@ -21,6 +22,7 @@ import {
   getRoomState,
   joinRoom,
   listPublicRooms,
+  restartRoom,
   setPlayerReady,
   setPlayerTargeting,
   startRoom,
@@ -82,6 +84,10 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (action === 'result') {
       const room = await submitResult(getRoomStore(), await readJsonBody<ResultRequest>(request));
+      return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'restart') {
+      const room = await restartRoom(getRoomStore(), await readJsonBody<RestartRoomRequest>(request));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'signal') {

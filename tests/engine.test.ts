@@ -46,6 +46,7 @@ import {
   MemoryRoomStore,
   normalizeRoomId,
   rankPlayers,
+  restartRoom,
   setPlayerTargeting,
   setPlayerReady,
   startRoom,
@@ -1863,6 +1864,56 @@ describe('core stacker engine', () => {
     expect(started.status).toBe('countdown');
     expect(started.startsAtServerMs).toBe(6400);
     expect(startedAgain.startsAtServerMs).toBe(6400);
+  });
+
+  it('lets only the host restart a finished online room with a fresh countdown', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-host-restart',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-guest-restart', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-restart', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-guest-restart', ready: true }, 1200);
+    await startRoom(store, { roomId: room.id, playerId: 'player-host-restart' }, 1300);
+    await getRoomState(store, room.id, 7000);
+
+    const finished = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-host-restart',
+      playerId: 'player-guest-restart',
+      frame: 300,
+      lines: 8,
+      pieces: 18,
+      elapsedFrames: 300,
+    }, 7100);
+    const previousResultId = finished.matchResultId;
+
+    expect(finished.status).toBe('finished');
+    expect(previousResultId).not.toBeNull();
+    await expect(restartRoom(store, {
+      roomId: room.id,
+      playerId: 'player-guest-restart',
+    }, 7200)).rejects.toThrow('Only the host can restart.');
+
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValueOnce(0.25);
+    try {
+      const restarted = await restartRoom(store, {
+        roomId: room.id,
+        playerId: 'player-host-restart',
+      }, 7300);
+
+      expect(restarted.status).toBe('countdown');
+      expect(restarted.startsAtServerMs).toBe(12300);
+      expect(restarted.seed).toBe(1073741823);
+      expect(restarted.winnerPlayerId).toBeNull();
+      expect(restarted.matchResultId).toBeNull();
+      expect(restarted.players.every((player) => player.ready && player.alive && player.status === 'ready')).toBe(true);
+      expect(restarted.players.every((player) => player.lines === 0 && player.pieces === 0 && player.game === null)).toBe(true);
+    } finally {
+      randomSpy.mockRestore();
+    }
   });
 
   it('does not overwrite final online results with late progress', async () => {
