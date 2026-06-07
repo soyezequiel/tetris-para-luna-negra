@@ -63,7 +63,7 @@ import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBr
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomVisibility, TargetingMode } from './online/protocol';
+import type { AttackRequest, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -79,6 +79,7 @@ const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_ROOM_MATCH_FILTERS = ['all', 'battle', 'royale', 'duel', 'league', 'quickPlay', 'sprintRace', 'custom'] as const;
 const ONLINE_ROOM_RANK_FILTERS = ['all', 'casual', 'ranked'] as const;
 const ONLINE_POLL_MS = 1000;
+const ONLINE_BET_POLL_MS = 4000;
 const ONLINE_PEER_BROADCAST_MS = 100;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
 const ONLINE_MATCHMAKING_HEARTBEAT_MS = 5000;
@@ -131,6 +132,9 @@ let touchControlsHidden = best.touchControlsHidden;
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
+let onlineStakeInput = '';
+let onlineBetBusy = false;
+let onlineLastBetPollAt = 0;
 let onlineRoomMode: OnlineRoomMode = 'battle';
 let onlineRoomMatchFilter: OnlineRoomMatchFilter = 'all';
 let onlineRoomRankFilter: OnlineRoomRankFilter = 'all';
@@ -324,6 +328,7 @@ function handleOverlayInput(event: Event): void {
     const field = target.dataset.onlineField;
     if (field === 'name') onlineName = target.value;
     if (field === 'join-code') onlineJoinCode = normalizeRoomId(target.value);
+    if (field === 'bet-stake') onlineStakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
     const customKey = parseCustomSettingKey(target.dataset.customSetting);
     if (customKey && target.value !== '') {
       customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.type === 'checkbox' ? target.checked : target.value));
@@ -408,6 +413,10 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-unready') setOnlineReady(false);
   if (action === 'online-start') startOnlineRoom();
   if (action === 'online-restart') restartOnlineRoom();
+  if (action === 'online-bet-create') createOnlineBet();
+  if (action === 'online-bet-cancel') cancelOnlineBet();
+  if (action === 'online-bet-refresh') refreshOnlineBet(false);
+  if (action === 'online-bet-copy') copyToClipboard(control.dataset.copy ?? '');
   if (action === 'online-targeting') setOnlineTargeting(control.dataset.targetingMode);
   if (action === 'online-manual-target') setOnlineTargeting('manual', control.dataset.targetPlayerId ?? null);
   if (action === 'online-leave') leaveOnlineRoom();
@@ -923,6 +932,66 @@ async function restartOnlineRoom(): Promise<void> {
   }
 }
 
+async function createOnlineBet(): Promise<void> {
+  if (!onlineRoom || onlineBusy || onlineBetBusy) return;
+  const stakeSats = Number(onlineStakeInput);
+  if (!Number.isInteger(stakeSats) || stakeSats <= 0) {
+    onlineError = 'Ingresá un monto de apuesta válido (sats).';
+    return;
+  }
+  onlineBetBusy = true;
+  try {
+    const response = await onlineClient.createBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id, stakeSats });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBetBusy = false;
+  }
+}
+
+async function cancelOnlineBet(): Promise<void> {
+  if (!onlineRoom || onlineBetBusy) return;
+  onlineBetBusy = true;
+  try {
+    const response = await onlineClient.cancelBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBetBusy = false;
+  }
+}
+
+async function refreshOnlineBet(silent: boolean): Promise<void> {
+  if (!onlineRoom?.bet || onlineBetBusy) return;
+  onlineBetBusy = true;
+  onlineLastBetPollAt = performance.now();
+  try {
+    const response = await onlineClient.refreshBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    if (!silent) onlineError = null;
+  } catch (error) {
+    if (!silent) onlineError = onlineErrorText(error);
+  } finally {
+    onlineBetBusy = false;
+  }
+}
+
+async function copyToClipboard(text: string): Promise<void> {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Clipboard puede estar bloqueado; el usuario puede copiar manualmente.
+  }
+}
+
 async function setOnlineTargeting(mode: string | undefined, manualTargetPlayerId: string | null = null): Promise<void> {
   if (!onlineRoom || onlineBusy) return;
   const targetingMode = parseTargetingMode(mode);
@@ -953,6 +1022,9 @@ function leaveOnlineRoom(): void {
   onlineMatchmakingTicket = null;
   onlineRoom = null;
   onlineError = null;
+  onlineStakeInput = '';
+  onlineBetBusy = false;
+  onlineLastBetPollAt = 0;
   onlineResultSubmitted = false;
   onlineRunStarted = false;
   onlineAttackSequence = 0;
@@ -1358,11 +1430,20 @@ async function pollOnlineRoom(): Promise<void> {
     if (response.room.status === 'countdown' && (appMode === 'roomLobby' || appMode === 'onlineResults')) appMode = 'onlineCountdown';
     if (response.room.status === 'playing' && appMode === 'roomLobby') appMode = 'onlineCountdown';
     onlineError = null;
+    maybeRefreshBet();
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
     onlinePollInFlight = false;
   }
+}
+
+function maybeRefreshBet(): void {
+  if (appMode !== 'roomLobby') return;
+  const bet = onlineRoom?.bet;
+  if (!bet || (bet.status !== 'pending_deposits' && bet.status !== 'funded')) return;
+  if (onlineBetBusy || performance.now() - onlineLastBetPollAt < ONLINE_BET_POLL_MS) return;
+  void refreshOnlineBet(true);
 }
 
 async function postOnlineProgress(state: GameState): Promise<void> {
@@ -2144,6 +2225,7 @@ function renderOnlineLobbyOverlay(): string {
   const player = currentOnlinePlayer();
   const host = onlineRoom.hostPlayerId === onlinePlayer.id;
   const allReady = onlineRoom.players.length > 0 && onlineRoom.players.every((candidate) => candidate.ready);
+  const betReady = !onlineRoom.bet || onlineRoom.bet.status === 'funded';
   const modeLabel = roomModeLabel(onlineRoom.mode);
   return `
     <div class="menu-scrim">
@@ -2154,11 +2236,12 @@ function renderOnlineLobbyOverlay(): string {
         ${renderOnlineError()}
         ${renderOnlineSeriesStatus()}
         <div class="online-lobby-list">${onlineRoom.players.map(renderLobbyPlayer).join('')}</div>
+        ${renderOnlineBetPanel(host)}
         <div class="panel-actions">
           ${player?.ready
             ? '<button type="button" data-ui-action="online-unready">Unready</button>'
             : '<button type="button" data-ui-action="online-ready">Ready</button>'}
-          ${host ? `<button type="button" data-ui-action="online-start"${allReady && !onlineBusy ? '' : ' disabled'}>Start</button>` : ''}
+          ${host ? `<button type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Start</button>` : ''}
           <button type="button" data-ui-action="online-leave">Leave</button>
         </div>
       </section>
@@ -2198,6 +2281,7 @@ function renderOnlineResultsOverlay(state: GameState): string {
         <div class="panel-eyebrow">ONLINE RESULTS</div>
         <h1>${onlineRoom ? escapeHtml(onlineRoom.id) : 'Room'}</h1>
         <p>${winner ? `${escapeHtml(winner.name)} wins. ` : ''}Ranking is based on survival, then elapsed frames.</p>
+        ${renderOnlineBetResult()}
         ${renderOnlineSeriesStatus()}
         ${ownSummary}
         ${renderOnlineStandings()}
@@ -2445,6 +2529,111 @@ function renderLobbyPlayer(player: OnlinePlayer): string {
       <span class="online-lobby-player-status">${player.ready ? 'Ready' : 'Not ready'}</span>
     </div>
   `;
+}
+
+function lunaNegraBettingAvailable(): boolean {
+  return !!onlineRoom
+    && onlineRoom.visibility === 'private'
+    && onlineRoom.players.length >= 2
+    && onlineRoom.players.every((player) => !!player.npub);
+}
+
+function betStatusLabel(status: RoomBet['status']): string {
+  switch (status) {
+    case 'pending_deposits': return 'Esperando depósitos';
+    case 'funded': return 'Pozo completo';
+    case 'settled': return 'Pagada';
+    case 'cancelled': return 'Cancelada';
+    case 'expired': return 'Vencida';
+    case 'refunded': return 'Reembolsada';
+    default: return status;
+  }
+}
+
+function depositStatusLabel(status: RoomBetParticipant['depositStatus']): string {
+  switch (status) {
+    case 'paid': return '✅ Pagó';
+    case 'refunded': return '↩️ Reembolsado';
+    case 'failed': return '⚠️ Falló';
+    default: return '⏳ Pendiente';
+  }
+}
+
+function betParticipantName(participant: RoomBetParticipant): string {
+  const player = onlineRoom?.players.find((candidate) => candidate.npub === participant.npub || candidate.id === participant.playerId);
+  if (player) return player.name;
+  return `${participant.npub.slice(0, 8)}…${participant.npub.slice(-4)}`;
+}
+
+function renderOnlineBetPanel(host: boolean): string {
+  if (!onlineRoom) return '';
+  const bet = onlineRoom.bet;
+
+  if (!bet) {
+    if (!host || !lunaNegraBettingAvailable()) return '';
+    return `
+      <div class="online-bet-panel">
+        <div class="panel-eyebrow">APUESTA (OPCIONAL)</div>
+        <p class="online-bet-note">Creá un pozo: cada jugador deposita el mismo monto y el ganador se lleva todo (menos la comisión de Luna Negra).</p>
+        <div class="online-bet-create">
+          <label>Monto por jugador (sats)
+            <input type="text" inputmode="numeric" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50" />
+          </label>
+          <button type="button" data-ui-action="online-bet-create"${onlineBetBusy ? ' disabled' : ''}>Crear apuesta</button>
+        </div>
+      </div>
+    `;
+  }
+
+  const mine = currentOnlinePlayer();
+  const myEntry = mine?.npub ? bet.participants.find((entry) => entry.npub === mine.npub) : undefined;
+  const rows = bet.participants.map((entry) => `
+    <div class="online-bet-row">
+      <span>${escapeHtml(betParticipantName(entry))}</span>
+      <span>${depositStatusLabel(entry.depositStatus)}</span>
+    </div>
+  `).join('');
+
+  const myDeposit = myEntry && myEntry.depositStatus === 'pending' && (myEntry.bolt11 || myEntry.payUrl)
+    ? `
+      <div class="online-bet-deposit">
+        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        <div class="online-bet-deposit-actions">
+          ${myEntry.payUrl ? `<a class="online-bet-pay" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener">Pagar en Luna Negra</a>` : ''}
+          ${myEntry.bolt11 ? `<button type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
+          ${myEntry.lnurl ? `<button type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.lnurl)}">Copiar LNURL</button>` : ''}
+        </div>
+      </div>
+    `
+    : '';
+
+  const terminal = ['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status);
+  return `
+    <div class="online-bet-panel">
+      <div class="panel-eyebrow">APUESTA · ${escapeHtml(betStatusLabel(bet.status))}</div>
+      <p class="online-bet-note">Pozo ${bet.potSats}/${bet.potTargetSats} sats · stake ${bet.stakeSats} · el ganador cobra ${bet.netPayoutSats} sats (comisión ${bet.feeSats}).</p>
+      <div class="online-bet-rows">${rows}</div>
+      ${myDeposit}
+      <div class="online-bet-actions">
+        <button type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
+        ${host && !terminal ? `<button type="button" class="danger-action" data-ui-action="online-bet-cancel"${onlineBetBusy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderOnlineBetResult(): string {
+  const bet = onlineRoom?.bet;
+  if (!bet) return '';
+  if (bet.status === 'settled') {
+    const winners = bet.participants.filter((entry) => (entry.payoutSats ?? 0) > 0);
+    const names = winners.map((entry) => `${escapeHtml(betParticipantName(entry))} (+${entry.payoutSats} sats)`).join(', ');
+    return `<div class="panel-note">💰 Apuesta pagada. ${names || `${bet.netPayoutSats} sats al ganador.`}</div>`;
+  }
+  if (bet.status === 'refunded' || bet.status === 'cancelled' || bet.status === 'expired') {
+    return `<div class="panel-note">↩️ Apuesta ${escapeHtml(betStatusLabel(bet.status).toLowerCase())}: se reembolsaron los depósitos.</div>`;
+  }
+  return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.</div>`;
 }
 
 function renderOnlinePeerBoards(): string {

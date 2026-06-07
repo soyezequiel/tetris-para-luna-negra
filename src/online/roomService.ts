@@ -27,6 +27,9 @@ import type {
   QuickPlayEnterRequest,
   QuickPlayLeaderboardEntry,
   ReadyRequest,
+  RoomBet,
+  RoomBetParticipant,
+  RoomBetStatus,
   RestartRoomRequest,
   ResultRequest,
   RoomVisibility,
@@ -86,7 +89,7 @@ export async function createRoom(
   request: CreateRoomRequest,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const player = createPlayer(request.playerId, request.name, nowMs, request.avatarUrl);
+  const player = createPlayer(request.playerId, request.name, nowMs, request.avatarUrl, request.npub);
   const id = request.roomId
     ? normalizeRoomIdStrict(request.roomId)
     : await generateUniqueRoomId((candidate) => store.getRoom(candidate));
@@ -114,6 +117,7 @@ export async function createRoom(
     players: [player],
     peerSignals: [],
     attacks: [],
+    bet: null,
   };
   await persistRoom(store, room);
   return room;
@@ -157,6 +161,7 @@ export async function enterLunaNegraRoom(
   const room = await createRoom(store, {
     roomId,
     playerId: player.id,
+    npub: player.npub,
     name: player.name,
     avatarUrl: player.avatarUrl,
     visibility: 'private',
@@ -174,11 +179,12 @@ export async function joinRoom(
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
   if (room.status !== 'lobby') throw new OnlineRoomError('Room already started.', 409);
-  const player = createPlayer(request.playerId, request.name, nowMs, request.avatarUrl);
+  const player = createPlayer(request.playerId, request.name, nowMs, request.avatarUrl, request.npub);
   const existing = room.players.find((candidate) => candidate.id === player.id);
   if (existing) {
     existing.name = player.name;
     if (request.avatarUrl !== undefined) existing.avatarUrl = player.avatarUrl;
+    if (player.npub) existing.npub = player.npub;
     existing.updatedAtServerMs = nowMs;
     existing.status = existing.ready ? 'ready' : 'joined';
   } else {
@@ -215,6 +221,9 @@ export async function startRoom(
   if (room.status !== 'lobby') return room;
   if (room.players.some((player) => !player.ready)) {
     throw new OnlineRoomError('All players must be ready.', 409);
+  }
+  if (room.bet && room.bet.status !== 'funded') {
+    throw new OnlineRoomError('La apuesta todavía no está fondeada por todos los jugadores.', 409);
   }
   if (room.ruleset.objective.type === 'duelRounds') room.series = createSeriesState(room, nowMs);
   prepareRoundCountdown(room, nowMs, false);
@@ -547,6 +556,7 @@ export async function enterQuickPlay(
       players: [player],
       peerSignals: [],
       attacks: [],
+      bet: null,
     };
   } else {
     const existing = room.players.find((candidate) => candidate.id === player.id);
@@ -908,13 +918,14 @@ function enterExistingLunaNegraRoom(
   if (existing) {
     existing.name = normalizePlayerName(lunaPlayer.name);
     existing.avatarUrl = normalizeAvatarUrl(lunaPlayer.avatarUrl);
+    if (lunaPlayer.npub) existing.npub = normalizeNpub(lunaPlayer.npub);
     existing.updatedAtServerMs = nowMs;
     if (room.status === 'lobby') existing.status = existing.ready ? 'ready' : 'joined';
     room.updatedAtServerMs = nowMs;
     return persistRoom(store, room).then(() => room);
   }
   if (room.status !== 'lobby') throw new OnlineRoomError('Room already started.', 409);
-  room.players.push(createPlayer(lunaPlayer.id, lunaPlayer.name, nowMs, lunaPlayer.avatarUrl));
+  room.players.push(createPlayer(lunaPlayer.id, lunaPlayer.name, nowMs, lunaPlayer.avatarUrl, lunaPlayer.npub));
   room.updatedAtServerMs = nowMs;
   return persistRoom(store, room).then(() => room);
 }
@@ -1039,11 +1050,12 @@ function requestMatchesRoomSeed(room: OnlineRoom, seed: number | undefined): boo
   return seed !== undefined && normalizeNonNegativeInteger(seed) === room.seed;
 }
 
-function createPlayer(id: string, name: string, nowMs: number, avatarUrl?: string | null): OnlinePlayer {
+function createPlayer(id: string, name: string, nowMs: number, avatarUrl?: string | null, npub?: string | null): OnlinePlayer {
   const normalizedId = normalizePlayerId(id);
   const normalizedName = normalizePlayerName(name);
   return {
     id: normalizedId,
+    npub: normalizeNpub(npub),
     name: normalizedName,
     avatarUrl: normalizeAvatarUrl(avatarUrl),
     ready: false,
@@ -1646,6 +1658,108 @@ function normalizeAvatarUrl(value: unknown): string | null {
   }
 }
 
+export function normalizeNpub(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 128) return null;
+  return trimmed;
+}
+
+const ROOM_BET_STATUSES: RoomBetStatus[] = [
+  'pending_deposits',
+  'funded',
+  'settled',
+  'cancelled',
+  'expired',
+  'refunded',
+];
+
+function normalizeBetStatus(value: unknown): RoomBetStatus {
+  return ROOM_BET_STATUSES.includes(value as RoomBetStatus) ? value as RoomBetStatus : 'pending_deposits';
+}
+
+function normalizeBetDepositStatus(value: unknown): RoomBetParticipant['depositStatus'] {
+  if (value === 'paid' || value === 'refunded' || value === 'failed') return value;
+  return 'pending';
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeNullableSats(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : null;
+}
+
+function normalizeBet(value: unknown): RoomBet | null {
+  if (!isObject(value)) return null;
+  const betId = normalizeNullableString(value.betId);
+  if (!betId) return null;
+  const participants = Array.isArray(value.participants)
+    ? value.participants
+      .filter((entry): entry is Record<string, unknown> => isObject(entry) && typeof entry.npub === 'string')
+      .map((entry): RoomBetParticipant => ({
+        npub: String(entry.npub),
+        playerId: normalizeNullableString(entry.playerId),
+        depositStatus: normalizeBetDepositStatus(entry.depositStatus),
+        bolt11: normalizeNullableString(entry.bolt11),
+        lnurl: normalizeNullableString(entry.lnurl),
+        payUrl: normalizeNullableString(entry.payUrl),
+        payoutSats: normalizeNullableSats(entry.payoutSats),
+      }))
+    : [];
+  const winnerNpubs = Array.isArray(value.winnerNpubs)
+    ? value.winnerNpubs.filter((item): item is string => typeof item === 'string')
+    : null;
+  return {
+    betId,
+    status: normalizeBetStatus(value.status),
+    stakeSats: normalizeNonNegativeInteger(Number(value.stakeSats ?? 0)),
+    potSats: normalizeNonNegativeInteger(Number(value.potSats ?? 0)),
+    potTargetSats: normalizeNonNegativeInteger(Number(value.potTargetSats ?? 0)),
+    feeSats: normalizeNonNegativeInteger(Number(value.feeSats ?? 0)),
+    feePct: Number.isFinite(Number(value.feePct)) ? Number(value.feePct) : 0,
+    netPayoutSats: normalizeNonNegativeInteger(Number(value.netPayoutSats ?? 0)),
+    depositDeadline: normalizeNullableString(value.depositDeadline),
+    depositsReceived: normalizeNonNegativeInteger(Number(value.depositsReceived ?? 0)),
+    depositsTotal: normalizeNonNegativeInteger(Number(value.depositsTotal ?? participants.length)),
+    participants,
+    winnerNpubs,
+    resultReported: value.resultReported === true,
+    createdByPlayerId: normalizeNullableString(value.createdByPlayerId) ?? '',
+    createdAtServerMs: normalizeNonNegativeInteger(Number(value.createdAtServerMs ?? 0)),
+    updatedAtServerMs: normalizeNonNegativeInteger(Number(value.updatedAtServerMs ?? 0)),
+  };
+}
+
+/** Carga una sala normalizada (sin efectos de stale/countdown). Para orquestar apuestas. */
+export async function loadRoom(store: RoomStore, roomId: string): Promise<OnlineRoom> {
+  return requireRoom(store, roomId);
+}
+
+/** Persiste el estado de la apuesta sobre la sala. */
+export async function setRoomBet(
+  store: RoomStore,
+  roomId: string,
+  bet: RoomBet | null,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, roomId);
+  room.bet = bet ? normalizeBet(bet) : null;
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return room;
+}
+
+/** npubs de los ganadores de la sala terminada (vacío = empate/anulación). */
+export function winnerNpubsFromRoom(room: OnlineRoom): string[] {
+  if (!room.winnerPlayerId) return [];
+  const winner = room.players.find((player) => player.id === room.winnerPlayerId);
+  return winner?.npub ? [winner.npub] : [];
+}
+
 function lunaNegraPlayerFromInvite(invite: VerifiedLunaNegraInvite): LunaNegraPlayer {
   const pubkey = normalizePlayerId(invite.pubkey);
   const npub = typeof invite.npub === 'string' ? invite.npub.trim() : '';
@@ -1789,6 +1903,7 @@ function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
     winnerPlayerId: room.winnerPlayerId ?? null,
     series: normalizeSeriesState(room.series, room, ruleset),
     matchResultId: room.matchResultId ?? null,
+    bet: normalizeBet(room.bet),
     peerSignals: room.peerSignals ?? [],
     attacks: (room.attacks ?? []).map((attack) => ({
       ...attack,
@@ -1796,6 +1911,7 @@ function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
     })),
     players: room.players.map((player) => ({
       ...player,
+      npub: normalizeNpub(player.npub),
       avatarUrl: normalizeAvatarUrl(player.avatarUrl),
       sentGarbage: player.sentGarbage ?? 0,
       receivedGarbage: player.receivedGarbage ?? 0,

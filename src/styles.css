@@ -1088,6 +1088,88 @@ canvas {
   font-weight: 900;
 }
 
+.online-bet-panel {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(247, 200, 80, 0.34);
+  border-radius: 12px;
+  background: rgba(247, 200, 80, 0.08);
+  display: grid;
+  gap: 10px;
+}
+
+.online-bet-note {
+  margin: 0;
+  color: rgba(247, 247, 242, 0.74);
+  font-size: 12px;
+}
+
+.online-bet-create {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.online-bet-create label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(247, 247, 242, 0.58);
+  font-weight: 800;
+}
+
+.online-bet-create input {
+  width: 120px;
+}
+
+.online-bet-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.online-bet-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: #f7f7f2;
+  overflow-wrap: anywhere;
+}
+
+.online-bet-deposit {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.online-bet-deposit-actions,
+.online-bet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.online-bet-pay {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(247, 200, 80, 0.6);
+  background: rgba(247, 200, 80, 0.18);
+  color: #f7f7f2;
+  font-weight: 800;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.online-bet-actions .danger-action {
+  border-color: #eb445a;
+  background: rgba(235, 68, 90, 0.16);
+}
+
 .online-room-row span,
 .online-lobby-player span,
 .online-empty {

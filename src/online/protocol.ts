@@ -145,6 +145,7 @@ export interface OnlineAttack {
 
 export interface OnlinePlayer {
   id: string;
+  npub: string | null;
   name: string;
   avatarUrl: string | null;
   ready: boolean;
@@ -170,6 +171,50 @@ export interface OnlinePlayer {
   dangerLevel: number;
 }
 
+export type RoomBetStatus =
+  | 'pending_deposits'
+  | 'funded'
+  | 'settled'
+  | 'cancelled'
+  | 'expired'
+  | 'refunded';
+
+export type RoomBetDepositStatus = 'pending' | 'paid' | 'refunded' | 'failed';
+
+export interface RoomBetParticipant {
+  npub: string;
+  /** pubkey del jugador en la sala, si pudo mapearse. */
+  playerId: string | null;
+  depositStatus: RoomBetDepositStatus;
+  /** Handles de pago (cómo deposita su stake). `null` cuando el depósito cerró. */
+  bolt11: string | null;
+  lnurl: string | null;
+  payUrl: string | null;
+  /** Pago recibido por este participante (si ganó), en sats. */
+  payoutSats: number | null;
+}
+
+/** Estado de la apuesta de la sala, sincronizado desde Luna Negra. */
+export interface RoomBet {
+  betId: string;
+  status: RoomBetStatus;
+  stakeSats: number;
+  potSats: number;
+  potTargetSats: number;
+  feeSats: number;
+  feePct: number;
+  netPayoutSats: number;
+  depositDeadline: string | null;
+  depositsReceived: number;
+  depositsTotal: number;
+  participants: RoomBetParticipant[];
+  winnerNpubs: string[] | null;
+  resultReported: boolean;
+  createdByPlayerId: string;
+  createdAtServerMs: number;
+  updatedAtServerMs: number;
+}
+
 export interface OnlineRoom {
   id: string;
   visibility: RoomVisibility;
@@ -190,6 +235,7 @@ export interface OnlineRoom {
   players: OnlinePlayer[];
   peerSignals: OnlinePeerSignal[];
   attacks: OnlineAttack[];
+  bet: RoomBet | null;
 }
 
 export interface OnlineRoomSummary {
@@ -220,6 +266,7 @@ export interface PublicRoomsFilters {
 export interface CreateRoomRequest {
   roomId?: string;
   playerId: string;
+  npub?: string | null;
   name: string;
   avatarUrl?: string | null;
   visibility: RoomVisibility;
@@ -233,6 +280,7 @@ export interface CreateRoomRequest {
 export interface JoinRoomRequest {
   roomId: string;
   playerId: string;
+  npub?: string | null;
   name: string;
   avatarUrl?: string | null;
 }
@@ -330,6 +378,18 @@ export interface LunaNegraPlayer {
 
 export interface LunaNegraEnterResponse extends OnlineRoomResponse {
   player: LunaNegraPlayer;
+}
+
+export interface CreateBetRequest {
+  roomId: string;
+  playerId: string;
+  stakeSats: number;
+  victoryCondition?: string;
+}
+
+export interface RoomBetActionRequest {
+  roomId: string;
+  playerId: string;
 }
 
 export interface PublicRoomsResponse {

@@ -5,9 +5,11 @@ import type {
   EnqueueMatchmakingRequest,
   JoinRoomRequest,
   LeaveMatchmakingRequest,
+  CreateBetRequest,
   LunaNegraEnterRequest,
   LunaNegraEnterResponse,
   MatchmakingHeartbeatRequest,
+  RoomBetActionRequest,
   MatchmakingTicketResponse,
   OnlineErrorResponse,
   OnlineProfileResponse,
@@ -42,6 +44,18 @@ export class OnlineClient {
 
   enterLunaNegraRoom(request: LunaNegraEnterRequest): Promise<LunaNegraEnterResponse> {
     return this.post('/luna-negra/enter', request);
+  }
+
+  createBet(request: CreateBetRequest): Promise<OnlineRoomResponse> {
+    return this.post('/api/bets/create', request);
+  }
+
+  refreshBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
+    return this.post('/api/bets/refresh', request);
+  }
+
+  cancelBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
+    return this.post('/api/bets/cancel', request);
   }
 
   setReady(request: ReadyRequest): Promise<OnlineRoomResponse> {

@@ -53,6 +53,31 @@ Si Playwright no encuentra un navegador local, instalalo con:
 npx playwright install chromium
 ```
 
+## Apuestas con Luna Negra (escrow Lightning)
+
+Las salas privadas creadas vía Luna Negra (con `?inviteToken=`) soportan un pozo
+"winner-takes-all": cada jugador deposita el mismo monto en sats y el ganador se
+lleva el pozo (menos la comisión de Luna Negra). Es **opcional**: el host la activa
+desde el lobby.
+
+Flujo: el host crea la apuesta → cada jugador deposita su stake (invoice / LNURL /
+deep-link) → cuando el pozo está completo se habilita **Start** → al terminar la
+partida el servidor reporta el ganador firmando un evento Nostr y Luna Negra paga.
+
+Variables de entorno (Vercel) para habilitarlo en el backend:
+
+| Variable | Para qué |
+| --- | --- |
+| `LUNA_NEGRA_BASE_URL` | URL del deploy de Luna Negra (también valida invites). |
+| `LUNA_NEGRA_API_KEY` | API key del proveedor (`ln_sk_…`) para crear/leer/cancelar apuestas. |
+| `LUNA_NEGRA_GAME_ID` | ID del juego registrado en Luna Negra. |
+| `LUNA_NEGRA_NOSTR_NSEC` | Clave Nostr del proveedor (`nsec1…` o hex) para firmar el resultado (oráculo). |
+| `LUNA_NEGRA_WEBHOOK_SECRET` | (Opcional) `whsec_…` para verificar la firma de los webhooks. |
+
+Configurá además la **URL de webhook** en /provider apuntando a
+`https://<tu-deploy>/api/webhooks/luna-negra`. Sin webhooks igual funciona: el lobby
+refresca el estado de la apuesta por polling.
+
 ## Controles por defecto
 
 | Accion | Tecla |

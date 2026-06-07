@@ -29,7 +29,9 @@ import {
   submitResult,
   updateProgress,
 } from '../../src/online/roomService.js';
+import { maybeReportRoomBetResult } from '../../src/online/lunaNegraBets.js';
 import { getRoomStore, handleApiError, handleNodeApi, queryParam, readJsonBody, sendJson, sendMethodNotAllowed } from '../../src/online/vercelApi.js';
+import type { OnlineRoom } from '../../src/online/protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../../src/online/vercelApi.js';
@@ -67,7 +69,7 @@ export async function POST(request: Request): Promise<Response> {
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'eliminate') {
-      const room = await eliminatePlayer(getRoomStore(), await readJsonBody<EliminateRequest>(request));
+      const room = await settleBetIfFinished(await eliminatePlayer(getRoomStore(), await readJsonBody<EliminateRequest>(request)));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'join') {
@@ -83,7 +85,7 @@ export async function POST(request: Request): Promise<Response> {
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'result') {
-      const room = await submitResult(getRoomStore(), await readJsonBody<ResultRequest>(request));
+      const room = await settleBetIfFinished(await submitResult(getRoomStore(), await readJsonBody<ResultRequest>(request)));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'restart') {
@@ -105,6 +107,15 @@ export async function POST(request: Request): Promise<Response> {
     return sendMethodNotAllowed();
   } catch (error) {
     return handleApiError(error);
+  }
+}
+
+async function settleBetIfFinished(room: OnlineRoom): Promise<OnlineRoom> {
+  if (room.status !== 'finished' || !room.bet || room.bet.resultReported || room.bet.status !== 'funded') return room;
+  try {
+    return (await maybeReportRoomBetResult(getRoomStore(), room)) ?? room;
+  } catch {
+    return room;
   }
 }
 

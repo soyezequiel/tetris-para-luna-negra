@@ -2363,6 +2363,7 @@ function createOnlinePlayerFixture(
 ): OnlinePlayer {
   return {
     id,
+    npub: null,
     name: id,
     avatarUrl: null,
     ready: true,
