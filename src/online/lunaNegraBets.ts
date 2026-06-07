@@ -96,8 +96,32 @@ function nonNegInt(value: unknown, fallback = 0): number {
 }
 
 function normalizeDepositStatus(value: unknown): RoomBetParticipant['depositStatus'] {
-  if (value === 'paid' || value === 'refunded' || value === 'failed') return value;
+  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  // Luna Negra puede reportar el depósito confirmado con distintas palabras según
+  // el endpoint; las tratamos todas como 'paid'.
+  if (['paid', 'confirmed', 'completed', 'complete', 'settled', 'received', 'deposited', 'funded', 'success', 'succeeded'].includes(v)) {
+    return 'paid';
+  }
+  if (['refunded', 'returned'].includes(v)) return 'refunded';
+  if (['failed', 'error', 'expired', 'cancelled', 'canceled'].includes(v)) return 'failed';
   return 'pending';
+}
+
+// Combina el estado de las dos fuentes (detail y deposits) quedándose con el más
+// avanzado, para que un handle que sigue en 'pending' no enmascare un pago real.
+function mergeDepositStatus(...values: unknown[]): RoomBetParticipant['depositStatus'] {
+  const rank: Record<RoomBetParticipant['depositStatus'], number> = {
+    pending: 0,
+    failed: 1,
+    paid: 2,
+    refunded: 3,
+  };
+  let best: RoomBetParticipant['depositStatus'] = 'pending';
+  for (const value of values) {
+    const normalized = normalizeDepositStatus(value);
+    if (rank[normalized] > rank[best]) best = normalized;
+  }
+  return best;
 }
 
 function buildRoomBet(
@@ -112,6 +136,7 @@ function buildRoomBet(
 ): RoomBet {
   const detailByNpub = new Map((detail?.participants ?? []).map((p) => [p.npub, p]));
   const depByNpub = new Map((deposits?.deposits ?? []).map((d) => [d.npub, d]));
+  const previousByNpub = new Map((previous?.participants ?? []).map((p) => [p.npub, p]));
   const participants: RoomBetParticipant[] = npubs.map((npub) => {
     const d = detailByNpub.get(npub);
     const h = depByNpub.get(npub);
@@ -119,7 +144,7 @@ function buildRoomBet(
     return {
       npub,
       playerId: player?.id ?? null,
-      depositStatus: normalizeDepositStatus(h?.depositStatus ?? d?.depositStatus),
+      depositStatus: mergeDepositStatus(h?.depositStatus, d?.depositStatus, previousByNpub.get(npub)?.depositStatus),
       bolt11: typeof h?.bolt11 === 'string' ? h.bolt11 : null,
       lnurl: typeof h?.lnurl === 'string' ? h.lnurl : null,
       payUrl: typeof h?.payUrl === 'string' ? h.payUrl : null,
@@ -255,14 +280,20 @@ export async function maybeReportRoomBetResult(
 
   // Camino por API key: Luna Negra firma el resultado con el oráculo gestionado
   // del proveedor. El game server no toca Nostr. winners vacío = empate/anulación.
+  let reportedOk = true;
   try {
     await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/result`, {
       method: 'POST',
       body: { winners },
     });
-  } catch {
-    // Si ya estaba resuelta (ALREADY_RESOLVED) u otro error transitorio, lo marcamos
-    // igual y dejamos que el siguiente refresh sincronice el estado real.
+  } catch (error) {
+    // Distinguimos errores terminales de transitorios: un 4xx (incluido
+    // ALREADY_RESOLVED) es definitivo, así que lo damos por reportado. Un error de
+    // red o 5xx es transitorio: NO lo marcamos reportado para reintentar el pago en
+    // el próximo refresh, en vez de dejar al ganador sin cobrar para siempre.
+    const status = error instanceof OnlineRoomError ? error.status : 502;
+    reportedOk = status >= 400 && status < 500;
+    if (!reportedOk) return null;
   }
   const reported: RoomBet = { ...bet, resultReported: true, winnerNpubs: winners, updatedAtServerMs: nowMs };
   let updated = await setRoomBet(store, room.id, reported, nowMs);

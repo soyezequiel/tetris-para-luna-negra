@@ -79,7 +79,7 @@ const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_ROOM_MATCH_FILTERS = ['all', 'battle', 'royale', 'duel', 'league', 'quickPlay', 'sprintRace', 'custom'] as const;
 const ONLINE_ROOM_RANK_FILTERS = ['all', 'casual', 'ranked'] as const;
 const ONLINE_POLL_MS = 1000;
-const ONLINE_BET_POLL_MS = 4000;
+const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_PEER_BROADCAST_MS = 100;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
 const ONLINE_MATCHMAKING_HEARTBEAT_MS = 5000;
@@ -181,6 +181,7 @@ window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
 window.addEventListener('wheel', handleVolumeWheel, { passive: false });
 window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 document.addEventListener('visibilitychange', syncOnlineVisibilityChange);
+window.addEventListener('focus', eagerRefreshBetIfPending);
 replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
 overlayElement.addEventListener('input', handleOverlayInput);
@@ -1439,7 +1440,10 @@ async function pollOnlineRoom(): Promise<void> {
 }
 
 function maybeRefreshBet(): void {
-  if (appMode !== 'roomLobby') return;
+  // En el lobby seguimos los depósitos; en la pantalla de resultados seguimos
+  // refrescando para reintentar la liquidación (reporte del ganador + pago) hasta
+  // que la apuesta quede en estado terminal.
+  if (appMode !== 'roomLobby' && appMode !== 'onlineResults') return;
   const bet = onlineRoom?.bet;
   if (!bet || (bet.status !== 'pending_deposits' && bet.status !== 'funded')) return;
   if (onlineBetBusy || performance.now() - onlineLastBetPollAt < ONLINE_BET_POLL_MS) return;
@@ -1834,7 +1838,18 @@ function syncOnlineVisibilityChange(): void {
     return;
   }
   if (!onlineRoom) return;
+  eagerRefreshBetIfPending();
   syncOnline(engine.getState());
+}
+
+// Al volver de pagar en Luna Negra (otra pestaña/app) refrescamos la apuesta de
+// inmediato, sin esperar el throttle del poll, que es cuando importa la latencia.
+function eagerRefreshBetIfPending(): void {
+  if (appMode !== 'roomLobby') return;
+  const bet = onlineRoom?.bet;
+  if (!bet || (bet.status !== 'pending_deposits' && bet.status !== 'funded')) return;
+  if (onlineBetBusy) return;
+  void refreshOnlineBet(true);
 }
 
 function syncOnlineBackground(): void {
