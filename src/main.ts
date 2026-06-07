@@ -692,7 +692,11 @@ async function bootstrapLunaNegraEntry(): Promise<void> {
   onlineError = null;
   try {
     const response = await onlineClient.enterLunaNegraRoom({ inviteToken, roomId });
-    onlinePlayer = { id: response.player.id, name: response.player.name };
+    onlinePlayer = saveOnlinePlayer({
+      id: response.player.id,
+      name: response.player.name,
+      avatarUrl: response.player.avatarUrl,
+    });
     onlineName = response.player.name;
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
@@ -755,6 +759,7 @@ async function enterOnlineQuickPlay(): Promise<void> {
     const response = await onlineClient.enterQuickPlay({
       playerId: onlinePlayer.id,
       name: onlinePlayer.name,
+      avatarUrl: onlinePlayer.avatarUrl,
     });
     syncOnlineClock(response.serverNowMs);
     quickPlayLeaderboard = response.leaderboard;
@@ -794,6 +799,7 @@ async function enqueueOnlineMatchmaking(queue: MatchmakingQueue): Promise<void> 
       queue,
       playerId: onlinePlayer.id,
       name: onlinePlayer.name,
+      avatarUrl: onlinePlayer.avatarUrl,
     });
     syncOnlineClock(response.serverNowMs);
     onlineMatchmakingTicket = response.ticket;
@@ -835,6 +841,7 @@ async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: 
     const response = await onlineClient.createRoom({
       playerId: onlinePlayer.id,
       name: onlinePlayer.name,
+      avatarUrl: onlinePlayer.avatarUrl,
       visibility,
       mode,
       matchType,
@@ -862,6 +869,7 @@ async function joinOnlineRoom(roomId: string): Promise<void> {
       roomId: normalizedRoomId,
       playerId: onlinePlayer.id,
       name: onlinePlayer.name,
+      avatarUrl: onlinePlayer.avatarUrl,
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
@@ -2013,6 +2021,7 @@ function renderOnlineMenuOverlay(): string {
     ? '<div class="online-empty">No public rooms yet.</div>'
     : onlinePublicRooms.map((room) => `
       <article class="online-room-row">
+        ${renderOnlineAvatar({ name: room.hostName, avatarUrl: room.hostAvatarUrl })}
         <div>
           <strong>${escapeHtml(room.id)}</strong>
           <span>${escapeHtml(room.hostName)} - ${escapeHtml(matchTypeLabel(room.matchType))} - ${room.playerCount} player${room.playerCount === 1 ? '' : 's'} - ${escapeHtml(room.status)} - ${escapeHtml(room.region)}${room.ranked ? ' - ranked' : ''}</span>
@@ -2166,7 +2175,8 @@ function renderOnlineStandings(): string {
     <div class="online-standings">
       ${rankPlayers(onlineRoom.players).map((player, index) => `
         <div class="online-standing-row ${player.id === onlinePlayer.id ? 'online-standing-self' : ''}">
-          <span>${index + 1}</span>
+          <span class="online-standing-rank">${index + 1}</span>
+          ${renderOnlineAvatar(player, 'small')}
           <strong>${escapeHtml(player.name)}</strong>
           <em>${escapeHtml(formatOnlinePlayerState(player))}</em>
           <b>${player.sentGarbage}G</b>
@@ -2180,6 +2190,27 @@ function onlineAliveText(): string {
   if (!onlineRoom) return 'Alive 0/0';
   const alive = onlineRoom.players.filter((player) => player.alive && player.status !== 'eliminated').length;
   return `Alive ${alive}/${onlineRoom.players.length}`;
+}
+
+function renderOnlineAvatar(
+  player: { name: string; avatarUrl?: string | null },
+  size: 'small' | 'medium' = 'medium',
+): string {
+  const image = player.avatarUrl
+    ? `<img src="${escapeHtml(player.avatarUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'" />`
+    : '';
+  return `
+    <span class="online-avatar online-avatar-${size}" aria-hidden="true">
+      <span class="online-avatar-initials">${escapeHtml(onlineAvatarInitials(player.name))}</span>
+      ${image}
+    </span>
+  `;
+}
+
+function onlineAvatarInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  return (words[0] ?? 'P').slice(0, 2).toUpperCase();
 }
 
 function renderOnlineSeriesStatus(): string {
@@ -2350,7 +2381,10 @@ function renderOnlineTargetingControls(): string {
 function renderLobbyPlayer(player: OnlinePlayer): string {
   return `
     <div class="online-lobby-player ${player.id === onlinePlayer.id ? 'online-standing-self' : ''}">
-      <strong>${escapeHtml(player.name)}${player.id === onlineRoom?.hostPlayerId ? ' HOST' : ''}</strong>
+      ${renderOnlineAvatar(player)}
+      <div>
+        <strong>${escapeHtml(player.name)}${player.id === onlineRoom?.hostPlayerId ? ' HOST' : ''}</strong>
+      </div>
       <span>${player.ready ? 'Ready' : 'Not ready'}</span>
     </div>
   `;
@@ -2373,7 +2407,10 @@ function renderOnlinePeerBoard(player: OnlinePlayer): string {
   return `
     <section class="online-peer-board">
       <div class="online-peer-board-head">
-        <strong>${escapeHtml(player.name)}</strong>
+        <div class="online-player-label">
+          ${renderOnlineAvatar(player, 'small')}
+          <strong>${escapeHtml(player.name)}</strong>
+        </div>
         <span>${escapeHtml(stateLabel)}</span>
       </div>
       ${player.game ? renderOnlineMiniBoard(player.game) : '<div class="online-mini-board online-mini-board-empty">No board yet</div>'}

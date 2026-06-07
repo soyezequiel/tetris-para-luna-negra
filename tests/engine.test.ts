@@ -1156,7 +1156,7 @@ describe('core stacker engine', () => {
       npub: 'npub-host-player',
       pubkey: 'pubkey-host-player',
       displayName: 'Nostr Host',
-      avatarUrl: null,
+      avatarUrl: 'https://example.com/host.png',
       roomId: 'lnroom123',
       host: true,
       hostPubkey: 'pubkey-host-player',
@@ -1166,8 +1166,10 @@ describe('core stacker engine', () => {
     expect(host.player).toMatchObject({
       id: 'pubkey-host-player',
       name: 'Nostr Host',
+      avatarUrl: 'https://example.com/host.png',
       host: true,
     });
+    expect(host.room.players[0].avatarUrl).toBe('https://example.com/host.png');
     expect(host.room.id).toBe('LNROOM123');
     expect(host.room.hostPlayerId).toBe('pubkey-host-player');
     expect(host.room.visibility).toBe('private');
@@ -1191,7 +1193,7 @@ describe('core stacker engine', () => {
       npub: 'npub-guest-player',
       pubkey: 'pubkey-guest-player',
       displayName: 'Guest Name',
-      avatarUrl: null,
+      avatarUrl: 'https://example.com/guest.png',
       roomId: 'lnroom124',
       host: false,
       hostPubkey: 'pubkey-host-player',
@@ -1199,9 +1201,9 @@ describe('core stacker engine', () => {
     }, 1100);
 
     expect(guest.player.id).toBe('pubkey-guest-player');
-    expect(guest.room.players.map((player) => [player.id, player.name])).toEqual([
-      ['pubkey-host-player', 'Nostr Host'],
-      ['pubkey-guest-player', 'Guest Name'],
+    expect(guest.room.players.map((player) => [player.id, player.name, player.avatarUrl])).toEqual([
+      ['pubkey-host-player', 'Nostr Host', null],
+      ['pubkey-guest-player', 'Guest Name', 'https://example.com/guest.png'],
     ]);
   });
 
@@ -2240,6 +2242,7 @@ function createOnlinePlayerFixture(
   return {
     id,
     name: id,
+    avatarUrl: null,
     ready: true,
     status,
     lines,

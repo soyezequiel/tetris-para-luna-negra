@@ -340,7 +340,9 @@ test.describe('STACK/40 browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer())).toEqual({
       id: 'pubkey-host-luna',
       name: 'Nostr Host',
+      avatarUrl: 'https://example.com/nostr-host.png',
     });
+    await expect(page.locator('.online-lobby-player img')).toHaveAttribute('src', 'https://example.com/nostr-host.png');
     await expect.poll(() => page.evaluate(() => window.location.search.includes('inviteToken'))).toBe(false);
   });
 
@@ -377,8 +379,8 @@ async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateReques
     const path = url.pathname;
     const serverNowMs = Date.now();
     if (path.endsWith('/enter')) {
-      const body = route.request().postDataJSON() as { playerId: string; name: string };
-      room = createMockRoom('QPLY', 'public', serverNowMs, body.playerId, body.name, 'battle', BATTLE_RULES, 'quickPlay');
+      const body = route.request().postDataJSON() as { playerId: string; name: string; avatarUrl?: string | null };
+      room = createMockRoom('QPLY', 'public', serverNowMs, body.playerId, body.name, 'battle', BATTLE_RULES, 'quickPlay', body.avatarUrl ?? null);
       room = {
         ...room,
         status: 'countdown',
@@ -402,9 +404,9 @@ async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateReques
     const path = url.pathname;
     const serverNowMs = Date.now();
     if (path.endsWith('/enqueue')) {
-      const body = route.request().postDataJSON() as { playerId: string; name: string; queue?: 'quickDuel' | 'league' };
+      const body = route.request().postDataJSON() as { playerId: string; name: string; avatarUrl?: string | null; queue?: 'quickDuel' | 'league' };
       const matchType: OnlineMatchType = body.queue === 'league' ? 'league' : 'duel';
-      room = createMockRoom(matchType === 'league' ? 'LEAG' : 'DUEL', 'private', serverNowMs, body.playerId, body.name, 'battle', BATTLE_RULES, matchType);
+      room = createMockRoom(matchType === 'league' ? 'LEAG' : 'DUEL', 'private', serverNowMs, body.playerId, body.name, 'battle', BATTLE_RULES, matchType, body.avatarUrl ?? null);
       room = {
         ...room,
         status: 'countdown',
@@ -447,12 +449,12 @@ async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateReques
         pubkey: 'pubkey-host-luna',
         name: 'Nostr Host',
         displayName: 'Nostr Host',
-        avatarUrl: null,
+        avatarUrl: 'https://example.com/nostr-host.png',
         host: true,
         hostPubkey: 'pubkey-host-luna',
         expiresAt: '2026-06-06T21:00:00.000Z',
       };
-      room = createMockRoom(body.roomId.toUpperCase(), 'private', serverNowMs, player.id, player.name);
+      room = createMockRoom(body.roomId.toUpperCase(), 'private', serverNowMs, player.id, player.name, undefined, undefined, undefined, player.avatarUrl);
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({ room, player, serverNowMs }),
@@ -466,6 +468,7 @@ async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateReques
           rooms: [{
             id: publicRoom.id,
             hostName: 'Public host',
+            hostAvatarUrl: null,
             playerCount: 1,
             mode: publicRoom.mode,
             matchType: publicRoom.matchType,
@@ -484,15 +487,15 @@ async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateReques
     if (path.endsWith('/create')) {
       const body = route.request().postDataJSON() as MockCreateRequest;
       requests.lastCreate = body;
-      room = createMockRoom('ROOM', body.visibility, Date.now(), body.playerId, body.name, body.mode, body.rules, body.matchType);
+      room = createMockRoom('ROOM', body.visibility, Date.now(), body.playerId, body.name, body.mode, body.rules, body.matchType, body.avatarUrl ?? null);
       await fulfillRoom(route, room);
       return;
     }
     if (path.endsWith('/join')) {
-      const body = route.request().postDataJSON() as { playerId: string; name: string };
+      const body = route.request().postDataJSON() as { playerId: string; name: string; avatarUrl?: string | null };
       room = {
         ...publicRoom,
-        players: [{ ...publicRoom.players[0] }, createMockPlayer(body.playerId, body.name, Date.now())],
+        players: [{ ...publicRoom.players[0] }, createMockPlayer(body.playerId, body.name, Date.now(), body.avatarUrl ?? null)],
       };
       await fulfillRoom(route, room);
       return;
@@ -584,6 +587,7 @@ function createMockRoom(
   mode: OnlineRoomMode = 'battle',
   rules: GameRules = BATTLE_RULES,
   matchType: OnlineMatchType = mode === 'custom' ? 'custom' : 'battle',
+  avatarUrl: string | null = null,
 ): MockRoom {
   return {
     id,
@@ -602,7 +606,7 @@ function createMockRoom(
     winnerPlayerId: null,
     series: null,
     matchResultId: null,
-    players: [createMockPlayer(playerId, name, now)],
+    players: [createMockPlayer(playerId, name, now, avatarUrl)],
     peerSignals: [],
     attacks: [],
   };
@@ -630,10 +634,11 @@ type MockRoom = {
   attacks: unknown[];
 };
 
-function createMockPlayer(id: string, name: string, now: number): MockPlayer {
+function createMockPlayer(id: string, name: string, now: number, avatarUrl: string | null = null): MockPlayer {
   return {
     id,
     name,
+    avatarUrl,
     ready: false,
     status: 'joined',
     lines: 0,
@@ -670,6 +675,7 @@ function createMockMatchmakingTicket(
     queue: 'quickDuel',
     playerId,
     name,
+    avatarUrl: null,
     region: 'gru1',
     rating: 1000,
     status,
@@ -711,6 +717,7 @@ function createMockQuickPlayLeaderboardEntry(playerId: string, displayName: stri
 type MockPlayer = {
   id: string;
   name: string;
+  avatarUrl: string | null;
   ready: boolean;
   status: string;
   lines: number;
@@ -737,6 +744,7 @@ type MockPlayer = {
 type MockCreateRequest = {
   playerId: string;
   name: string;
+  avatarUrl?: string | null;
   visibility: 'public' | 'private';
   mode: OnlineRoomMode;
   matchType?: OnlineMatchType;

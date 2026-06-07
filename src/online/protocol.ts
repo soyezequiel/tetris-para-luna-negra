@@ -144,6 +144,7 @@ export interface OnlineAttack {
 export interface OnlinePlayer {
   id: string;
   name: string;
+  avatarUrl: string | null;
   ready: boolean;
   status: OnlinePlayerStatus;
   lines: number;
@@ -192,6 +193,7 @@ export interface OnlineRoom {
 export interface OnlineRoomSummary {
   id: string;
   hostName: string;
+  hostAvatarUrl: string | null;
   playerCount: number;
   mode: OnlineRoomMode;
   matchType: OnlineMatchType;
@@ -217,6 +219,7 @@ export interface CreateRoomRequest {
   roomId?: string;
   playerId: string;
   name: string;
+  avatarUrl?: string | null;
   visibility: RoomVisibility;
   mode?: OnlineRoomMode;
   matchType?: OnlineMatchType;
@@ -229,6 +232,7 @@ export interface JoinRoomRequest {
   roomId: string;
   playerId: string;
   name: string;
+  avatarUrl?: string | null;
 }
 
 export interface ReadyRequest {
@@ -333,6 +337,7 @@ export interface MatchmakingTicket {
   queue: MatchmakingQueue;
   playerId: string;
   name: string;
+  avatarUrl: string | null;
   region: string;
   rating: number | null;
   status: MatchmakingTicketStatus;
@@ -346,6 +351,7 @@ export interface EnqueueMatchmakingRequest {
   queue?: MatchmakingQueue;
   playerId: string;
   name: string;
+  avatarUrl?: string | null;
   region?: string;
 }
 
@@ -374,6 +380,7 @@ export interface OnlineProfileResponse {
 export interface QuickPlayEnterRequest {
   playerId: string;
   name: string;
+  avatarUrl?: string | null;
   region?: string;
 }
 

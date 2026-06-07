@@ -85,7 +85,7 @@ export async function createRoom(
   request: CreateRoomRequest,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const player = createPlayer(request.playerId, request.name, nowMs);
+  const player = createPlayer(request.playerId, request.name, nowMs, request.avatarUrl);
   const id = request.roomId
     ? normalizeRoomIdStrict(request.roomId)
     : await generateUniqueRoomId((candidate) => store.getRoom(candidate));
@@ -157,6 +157,7 @@ export async function enterLunaNegraRoom(
     roomId,
     playerId: player.id,
     name: player.name,
+    avatarUrl: player.avatarUrl,
     visibility: 'private',
     mode: 'battle',
     matchType: 'battle',
@@ -172,10 +173,11 @@ export async function joinRoom(
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
   if (room.status !== 'lobby') throw new OnlineRoomError('Room already started.', 409);
-  const player = createPlayer(request.playerId, request.name, nowMs);
+  const player = createPlayer(request.playerId, request.name, nowMs, request.avatarUrl);
   const existing = room.players.find((candidate) => candidate.id === player.id);
   if (existing) {
     existing.name = player.name;
+    if (request.avatarUrl !== undefined) existing.avatarUrl = player.avatarUrl;
     existing.updatedAtServerMs = nowMs;
     existing.status = existing.ready ? 'ready' : 'joined';
   } else {
@@ -413,7 +415,7 @@ export async function enqueueMatchmaking(
   await cleanupMatchmakingQueue(store, queue, nowMs);
   const queuedTickets = await loadQueuedMatchmakingTickets(store, queue, nowMs);
   const opponent = queuedTickets.find((ticket) => ticket.playerId !== playerId && ticketsAreCompatible(ticket, queue, region, rating));
-  const ticket = createMatchmakingTicket(queue, playerId, name, region, rating, nowMs);
+  const ticket = createMatchmakingTicket(queue, playerId, name, request.avatarUrl, region, rating, nowMs);
 
   if (!opponent) {
     await persistMatchmakingTicket(store, ticket);
@@ -494,7 +496,7 @@ export async function enterQuickPlay(
 ): Promise<{ room: OnlineRoom; leaderboard: QuickPlayLeaderboardEntry[] }> {
   const region = normalizeRegion(request.region);
   const roomId = quickPlayRoomId(region);
-  const player = createPlayer(request.playerId, request.name, nowMs);
+  const player = createPlayer(request.playerId, request.name, nowMs, request.avatarUrl);
   player.ready = true;
   player.status = 'ready';
   let room = await store.getRoom(roomId).then((value) => value ? normalizeRoomShape(value) : null);
@@ -524,7 +526,7 @@ export async function enterQuickPlay(
     };
   } else {
     const existing = room.players.find((candidate) => candidate.id === player.id);
-    if (existing) resetQuickPlayPlayer(existing, player.name, nowMs);
+    if (existing) resetQuickPlayPlayer(existing, player.name, nowMs, request.avatarUrl);
     else room.players.push(player);
     if (room.status === 'finished' || room.status === 'lobby') {
       room.status = 'countdown';
@@ -809,8 +811,9 @@ function quickPlayScore(player: OnlinePlayer): number {
     + normalizeNonNegativeInteger(player.sentGarbage) * 3;
 }
 
-function resetQuickPlayPlayer(player: OnlinePlayer, name: string, nowMs: number): void {
+function resetQuickPlayPlayer(player: OnlinePlayer, name: string, nowMs: number, avatarUrl?: string | null): void {
   player.name = normalizePlayerName(name);
+  if (avatarUrl !== undefined) player.avatarUrl = normalizeAvatarUrl(avatarUrl);
   player.ready = true;
   player.status = 'ready';
   player.lines = 0;
@@ -880,13 +883,14 @@ function enterExistingLunaNegraRoom(
   const existing = room.players.find((candidate) => candidate.id === lunaPlayer.id);
   if (existing) {
     existing.name = normalizePlayerName(lunaPlayer.name);
+    existing.avatarUrl = normalizeAvatarUrl(lunaPlayer.avatarUrl);
     existing.updatedAtServerMs = nowMs;
     if (room.status === 'lobby') existing.status = existing.ready ? 'ready' : 'joined';
     room.updatedAtServerMs = nowMs;
     return persistRoom(store, room).then(() => room);
   }
   if (room.status !== 'lobby') throw new OnlineRoomError('Room already started.', 409);
-  room.players.push(createPlayer(lunaPlayer.id, lunaPlayer.name, nowMs));
+  room.players.push(createPlayer(lunaPlayer.id, lunaPlayer.name, nowMs, lunaPlayer.avatarUrl));
   room.updatedAtServerMs = nowMs;
   return persistRoom(store, room).then(() => room);
 }
@@ -1007,12 +1011,13 @@ function requireHostAuthority(room: OnlineRoom, authorityPlayerId: string): Onli
   return authority;
 }
 
-function createPlayer(id: string, name: string, nowMs: number): OnlinePlayer {
+function createPlayer(id: string, name: string, nowMs: number, avatarUrl?: string | null): OnlinePlayer {
   const normalizedId = normalizePlayerId(id);
   const normalizedName = normalizePlayerName(name);
   return {
     id: normalizedId,
     name: normalizedName,
+    avatarUrl: normalizeAvatarUrl(avatarUrl),
     ready: false,
     status: 'joined',
     lines: 0,
@@ -1042,6 +1047,7 @@ function roomSummary(room: OnlineRoom): OnlineRoomSummary {
   return {
     id: room.id,
     hostName: host?.name ?? 'Host',
+    hostAvatarUrl: host?.avatarUrl ?? null,
     playerCount: room.players.length,
     mode: room.mode,
     matchType: room.matchType,
@@ -1397,6 +1403,7 @@ function createMatchmakingTicket(
   queue: MatchmakingQueue,
   playerId: string,
   name: string,
+  avatarUrl: string | null | undefined,
   region: string,
   rating: number | null,
   nowMs: number,
@@ -1406,6 +1413,7 @@ function createMatchmakingTicket(
     queue,
     playerId,
     name,
+    avatarUrl: normalizeAvatarUrl(avatarUrl),
     region,
     rating,
     status: 'queued',
@@ -1433,12 +1441,13 @@ async function createMatchedRoom(
   let room = await createRoom(store, {
     playerId: first.playerId,
     name: first.name,
+    avatarUrl: first.avatarUrl,
     visibility: 'private',
     mode: 'battle',
     matchType,
     region: first.region,
   }, nowMs);
-  room = await joinRoom(store, { roomId: room.id, playerId: second.playerId, name: second.name }, nowMs);
+  room = await joinRoom(store, { roomId: room.id, playerId: second.playerId, name: second.name, avatarUrl: second.avatarUrl }, nowMs);
   room = await setPlayerReady(store, { roomId: room.id, playerId: first.playerId, ready: true }, nowMs);
   room = await setPlayerReady(store, { roomId: room.id, playerId: second.playerId, ready: true }, nowMs);
   return startRoom(store, { roomId: room.id, playerId: first.playerId }, nowMs);
@@ -1511,6 +1520,7 @@ function normalizeMatchmakingTicket(ticket: MatchmakingTicket, nowMs: number): M
     queue: ticket.queue === 'league' ? 'league' : 'quickDuel',
     playerId: normalizePlayerId(ticket.playerId),
     name: normalizePlayerName(ticket.name),
+    avatarUrl: normalizeAvatarUrl(ticket.avatarUrl),
     region: normalizeRegion(ticket.region),
     rating: typeof ticket.rating === 'number' && Number.isFinite(ticket.rating) ? Math.round(ticket.rating) : null,
     status,
@@ -1596,6 +1606,18 @@ function normalizePlayerName(value: string): string {
   return normalized.length > 0 ? normalized : 'Player';
 }
 
+function normalizeAvatarUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 2048) return null;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function lunaNegraPlayerFromInvite(invite: VerifiedLunaNegraInvite): LunaNegraPlayer {
   const pubkey = normalizePlayerId(invite.pubkey);
   const npub = typeof invite.npub === 'string' ? invite.npub.trim() : '';
@@ -1605,7 +1627,7 @@ function lunaNegraPlayerFromInvite(invite: VerifiedLunaNegraInvite): LunaNegraPl
     pubkey,
     name: displayNameFromInvite(invite.displayName, npub),
     displayName: invite.displayName,
-    avatarUrl: invite.avatarUrl,
+    avatarUrl: normalizeAvatarUrl(invite.avatarUrl),
     host: invite.host,
     hostPubkey: invite.hostPubkey,
     expiresAt: invite.expiresAt,
@@ -1746,6 +1768,7 @@ function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
     })),
     players: room.players.map((player) => ({
       ...player,
+      avatarUrl: normalizeAvatarUrl(player.avatarUrl),
       sentGarbage: player.sentGarbage ?? 0,
       receivedGarbage: player.receivedGarbage ?? 0,
       pendingGarbage: player.pendingGarbage ?? 0,

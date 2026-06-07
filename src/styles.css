@@ -1062,10 +1062,17 @@ canvas {
 }
 
 .online-room-row,
-.online-lobby-player,
+.online-lobby-player {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(247, 247, 242, 0.12);
+}
+
 .online-standing-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 10px 0;
@@ -1220,7 +1227,7 @@ canvas {
 }
 
 .online-standing-row {
-  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  grid-template-columns: 24px 28px minmax(0, 1fr) auto auto;
   padding: 8px 0;
 }
 
@@ -1270,7 +1277,7 @@ canvas {
 .online-peer-board-head {
   display: flex;
   gap: 8px;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   margin-bottom: 6px;
 }
@@ -1293,6 +1300,71 @@ canvas {
   color: rgba(247, 247, 242, 0.56);
   font-size: 10px;
   font-weight: 900;
+}
+
+.online-player-label {
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.online-player-label strong {
+  min-width: 0;
+}
+
+.online-avatar {
+  position: relative;
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-top: 0;
+  border: 1px solid rgba(57, 212, 154, 0.46);
+  border-radius: 999px;
+  background: rgba(57, 212, 154, 0.12);
+  color: #39d49a;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: normal;
+}
+
+.online-avatar-small {
+  width: 24px;
+  height: 24px;
+  font-size: 9px;
+}
+
+.online-avatar img,
+.online-avatar-initials {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: inherit;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.online-avatar img {
+  z-index: 1;
+  object-fit: cover;
+}
+
+.online-avatar-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .online-mini-board {
@@ -1664,7 +1736,7 @@ canvas {
   }
 
   .online-standing-row {
-    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-columns: 20px 24px minmax(0, 1fr) auto;
   }
 
   .online-standing-row em {
