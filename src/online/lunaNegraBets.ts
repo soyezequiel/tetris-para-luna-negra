@@ -1,5 +1,3 @@
-import { finalizeEvent } from 'nostr-tools/pure';
-import { nip19 } from 'nostr-tools';
 import {
   loadRoom,
   OnlineRoomError,
@@ -57,31 +55,38 @@ interface LunaBetDeposits {
 export const LUNA_NEGRA_MIN_STAKE_SATS = 1;
 export const LUNA_NEGRA_MAX_STAKE_SATS = 1_000_000;
 
-function readConfig(): LunaConfig {
+function readApiConfig(): Pick<LunaConfig, 'baseUrl' | 'apiKey'> {
   const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
-  const gameId = (process.env.LUNA_NEGRA_GAME_ID ?? '').trim();
   if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
   if (!apiKey) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
+  return { baseUrl, apiKey };
+}
+
+function readConfig(): LunaConfig {
+  const { baseUrl, apiKey } = readApiConfig();
+  const gameId = (process.env.LUNA_NEGRA_GAME_ID ?? '').trim();
   if (!gameId) throw new OnlineRoomError('LUNA_NEGRA_GAME_ID no está configurada.', 500);
   return { baseUrl, apiKey, gameId };
 }
 
-export function isLunaNegraBettingConfigured(): boolean {
+export function isLunaNegraApiConfigured(): boolean {
   return Boolean(
     (process.env.LUNA_NEGRA_BASE_URL ?? '').trim()
-    && (process.env.LUNA_NEGRA_API_KEY ?? '').trim()
-    && (process.env.LUNA_NEGRA_GAME_ID ?? '').trim(),
+    && (process.env.LUNA_NEGRA_API_KEY ?? '').trim(),
   );
 }
 
+export function isLunaNegraBettingConfigured(): boolean {
+  return isLunaNegraApiConfigured() && Boolean((process.env.LUNA_NEGRA_GAME_ID ?? '').trim());
+}
+
 async function lunaFetch<T>(
-  config: LunaConfig,
+  config: Pick<LunaConfig, 'baseUrl' | 'apiKey'>,
   path: string,
-  init: { method: 'GET' | 'POST'; body?: unknown; auth?: boolean } = { method: 'GET' },
+  init: { method: 'GET' | 'POST'; body?: unknown } = { method: 'GET' },
 ): Promise<T> {
-  const headers: Record<string, string> = {};
-  if (init.auth !== false) headers.authorization = `Bearer ${config.apiKey}`;
+  const headers: Record<string, string> = { authorization: `Bearer ${config.apiKey}` };
   if (init.body !== undefined) headers['content-type'] = 'application/json';
   const response = await fetch(`${config.baseUrl}${path}`, {
     method: init.method,
@@ -95,21 +100,6 @@ async function lunaFetch<T>(
     throw new OnlineRoomError(message, response.status === 400 || response.status === 409 ? response.status : 502);
   }
   return payload as T;
-}
-
-function providerSecretKey(): Uint8Array {
-  const raw = (process.env.LUNA_NEGRA_NOSTR_NSEC ?? '').trim();
-  if (!raw) throw new OnlineRoomError('LUNA_NEGRA_NOSTR_NSEC no está configurada.', 500);
-  if (raw.startsWith('nsec')) {
-    const decoded = nip19.decode(raw);
-    if (decoded.type !== 'nsec') throw new OnlineRoomError('LUNA_NEGRA_NOSTR_NSEC inválida.', 500);
-    return decoded.data as Uint8Array;
-  }
-  const hex = raw.replace(/^0x/, '');
-  if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new OnlineRoomError('LUNA_NEGRA_NOSTR_NSEC inválida.', 500);
-  const bytes = new Uint8Array(32);
-  for (let i = 0; i < 32; i += 1) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  return bytes;
 }
 
 function nonNegInt(value: unknown, fallback = 0): number {
@@ -273,22 +263,12 @@ export async function maybeReportRoomBetResult(
   const config = readConfig();
   const winners = winnerNpubsFromRoom(room);
 
-  const template = {
-    kind: 30078,
-    created_at: Math.floor(nowMs / 1000),
-    tags: [
-      ['t', 'lunanegra:result'],
-      ['bet', bet.betId],
-      ...winners.map((npub) => ['winner', npub]),
-    ],
-    content: '',
-  };
-  const signed = finalizeEvent(template, providerSecretKey());
+  // Camino por API key: Luna Negra firma el resultado con el oráculo gestionado
+  // del proveedor. El game server no toca Nostr. winners vacío = empate/anulación.
   try {
     await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/result`, {
       method: 'POST',
-      body: { event: signed },
-      auth: false,
+      body: { winners },
     });
   } catch {
     // Si ya estaba resuelta (ALREADY_RESOLVED) u otro error transitorio, lo marcamos
@@ -312,4 +292,69 @@ export async function maybeReportRoomBetResult(
     updated = await setRoomBet(store, room.id, synced, nowMs);
   }
   return updated;
+}
+
+// ───────────────────────── Webhook (auto-registro) ─────────────────────────
+
+interface LunaWebhookConfig {
+  url: string | null;
+  secret: string | null;
+}
+
+let cachedWebhookSecret: string | null = null;
+let webhookSetupDone = false;
+
+function webhookPath(): string {
+  return '/api/webhooks/luna-negra';
+}
+
+/**
+ * Registra automáticamente la URL de webhook usando solo la API key y cachea el
+ * secreto de firma. Memoizado por instancia. No requiere `LUNA_NEGRA_GAME_ID`.
+ * `requestOrigin` es el origin público del deploy (ej. https://mi-tetris.vercel.app).
+ */
+export async function ensureWebhookRegistered(requestOrigin: string): Promise<void> {
+  if (webhookSetupDone || !isLunaNegraApiConfigured()) return;
+  webhookSetupDone = true;
+  try {
+    const config = readApiConfig();
+    const explicit = (process.env.LUNA_NEGRA_WEBHOOK_URL ?? '').trim().replace(/\/+$/, '');
+    // En previews de Vercel no pisamos la URL de producción salvo override explícito.
+    const allowFromRequest = process.env.VERCEL_ENV !== 'preview';
+    const desiredUrl = explicit || (allowFromRequest && requestOrigin ? `${requestOrigin}${webhookPath()}` : '');
+    if (!desiredUrl) return;
+
+    const current = await lunaFetch<LunaWebhookConfig>(config, '/api/v1/provider/webhook');
+    if (current.url === desiredUrl && current.secret) {
+      cachedWebhookSecret = current.secret;
+      return;
+    }
+    const updated = await lunaFetch<LunaWebhookConfig>(config, '/api/v1/provider/webhook', {
+      method: 'POST',
+      body: { url: desiredUrl },
+    });
+    cachedWebhookSecret = updated.secret;
+  } catch {
+    // Si falla el registro, el lobby igual refresca la apuesta por polling.
+    webhookSetupDone = false;
+  }
+}
+
+/**
+ * Secreto para verificar la firma de los webhooks. Prioriza el override por env;
+ * si no, lo obtiene/cachea desde Luna Negra con la API key (sin pegarlo a mano).
+ */
+export async function getWebhookSecret(): Promise<string | null> {
+  const override = (process.env.LUNA_NEGRA_WEBHOOK_SECRET ?? '').trim();
+  if (override) return override;
+  if (cachedWebhookSecret) return cachedWebhookSecret;
+  if (!isLunaNegraApiConfigured()) return null;
+  try {
+    const config = readApiConfig();
+    const current = await lunaFetch<LunaWebhookConfig>(config, '/api/v1/provider/webhook');
+    cachedWebhookSecret = current.secret;
+    return cachedWebhookSecret;
+  } catch {
+    return null;
+  }
 }

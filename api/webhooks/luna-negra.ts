@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { refreshRoomBet } from '../../src/online/lunaNegraBets.js';
+import { getWebhookSecret, refreshRoomBet } from '../../src/online/lunaNegraBets.js';
 import { normalizeRoomId } from '../../src/online/roomService.js';
 import { getRoomStore, handleApiError, handleNodeApi, sendJson } from '../../src/online/vercelApi.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -35,8 +35,8 @@ function roomIdFromPayload(payload: unknown): string | null {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const secret = (process.env.LUNA_NEGRA_WEBHOOK_SECRET ?? '').trim();
     const rawBody = await request.text();
+    const secret = await getWebhookSecret();
     if (secret) {
       const signature = request.headers.get('x-lunanegra-signature') ?? '';
       if (!verifySignature(rawBody, signature, secret)) return sendJson(401, { error: 'Invalid signature.' });

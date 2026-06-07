@@ -69,10 +69,17 @@ Variables de entorno (Vercel) para habilitarlo en el backend:
 | Variable | Para qué |
 | --- | --- |
 | `LUNA_NEGRA_BASE_URL` | URL del deploy de Luna Negra (también valida invites). |
-| `LUNA_NEGRA_API_KEY` | API key del proveedor (`ln_sk_…`) para crear/leer/cancelar apuestas. |
+| `LUNA_NEGRA_API_KEY` | API key del proveedor (`ln_sk_…`) para crear/leer/cancelar apuestas y reportar el ganador. |
 | `LUNA_NEGRA_GAME_ID` | ID del juego registrado en Luna Negra. |
-| `LUNA_NEGRA_NOSTR_NSEC` | Clave Nostr del proveedor (`nsec1…` o hex) para firmar el resultado (oráculo). |
-| `LUNA_NEGRA_WEBHOOK_SECRET` | (Opcional) `whsec_…` para verificar la firma de los webhooks. |
+| `LUNA_NEGRA_WEBHOOK_URL` | (Opcional) Fuerza la URL de webhook a registrar; si no, se deriva del dominio del deploy. |
+| `LUNA_NEGRA_WEBHOOK_SECRET` | (Opcional) Override del secreto de firma; normalmente **no hace falta** (se obtiene solo). |
+
+> El juego **no toca Nostr**: el ganador se reporta con la API key y Luna Negra firma
+> el resultado con el oráculo gestionado del proveedor.
+>
+> **El webhook se registra solo**: al crear la primera apuesta, el backend registra su
+> URL (`…/api/webhooks/luna-negra`) con la API key y cachea el secreto de firma. No
+> hace falta configurarlo a mano en el panel ni pegar `LUNA_NEGRA_WEBHOOK_SECRET`.
 
 Configurá además la **URL de webhook** en /provider apuntando a
 `https://<tu-deploy>/api/webhooks/luna-negra`. Sin webhooks igual funciona: el lobby
