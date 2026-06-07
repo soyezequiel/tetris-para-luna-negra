@@ -1,5 +1,5 @@
 import type { CreateBetRequest, RoomBetActionRequest } from '../../src/online/protocol.js';
-import { cancelRoomBet, createBetForRoom, ensureWebhookRegistered, refreshRoomBet } from '../../src/online/lunaNegraBets.js';
+import { cancelRoomBet, createBetForRoom, ensureWebhookRegistered, refreshRoomBet, settleRoomBet } from '../../src/online/lunaNegraBets.js';
 import {
   getRoomStore,
   handleApiError,
@@ -52,6 +52,11 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'cancel') {
       const body = await readJsonBody<RoomBetActionRequest>(request);
       const room = await cancelRoomBet(getRoomStore(), body.roomId, body.playerId);
+      return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'settle') {
+      const body = await readJsonBody<RoomBetActionRequest>(request);
+      const room = await settleRoomBet(getRoomStore(), body.roomId, body.playerId);
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     return sendMethodNotAllowed();

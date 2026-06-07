@@ -264,6 +264,25 @@ export async function cancelRoomBet(
   return refreshRoomBet(store, roomId, nowMs);
 }
 
+/**
+ * Liquidación manual disparada por el host desde la pantalla de resultados, como
+ * red de seguridad si el reporte automático no llegó a concretarse. Reutiliza
+ * refreshRoomBet, que internamente reintenta `maybeReportRoomBetResult`.
+ */
+export async function settleRoomBet(
+  store: RoomStore,
+  roomId: string,
+  playerId: string,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  readApiConfig();
+  const room = await loadRoom(store, roomId);
+  if (!room.bet) throw new OnlineRoomError('No hay apuesta para liquidar.', 404);
+  if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede liquidar la apuesta.', 403);
+  if (room.status !== 'finished') throw new OnlineRoomError('La partida todavía no terminó.', 409);
+  return refreshRoomBet(store, roomId, nowMs);
+}
+
 /** Reporta el ganador a Luna Negra cuando la sala terminó y la apuesta está fondeada. */
 export async function maybeReportRoomBetResult(
   store: RoomStore,

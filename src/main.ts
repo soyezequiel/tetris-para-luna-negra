@@ -416,6 +416,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-restart') restartOnlineRoom();
   if (action === 'online-bet-create') createOnlineBet();
   if (action === 'online-bet-cancel') cancelOnlineBet();
+  if (action === 'online-bet-settle') settleOnlineBet();
   if (action === 'online-bet-refresh') refreshOnlineBet(false);
   if (action === 'online-bet-copy') copyToClipboard(control.dataset.copy ?? '');
   if (action === 'online-targeting') setOnlineTargeting(control.dataset.targetingMode);
@@ -958,6 +959,21 @@ async function cancelOnlineBet(): Promise<void> {
   onlineBetBusy = true;
   try {
     const response = await onlineClient.cancelBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBetBusy = false;
+  }
+}
+
+async function settleOnlineBet(): Promise<void> {
+  if (!onlineRoom || onlineBetBusy) return;
+  onlineBetBusy = true;
+  try {
+    const response = await onlineClient.settleBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     onlineError = null;
@@ -2659,7 +2675,13 @@ function renderOnlineBetResult(): string {
   if (bet.status === 'refunded' || bet.status === 'cancelled' || bet.status === 'expired') {
     return `<div class="panel-note">↩️ Apuesta ${escapeHtml(betStatusLabel(bet.status).toLowerCase())}: se reembolsaron los depósitos.</div>`;
   }
-  return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.</div>`;
+  const isHost = onlineRoom?.hostPlayerId === onlinePlayer.id;
+  const settleAction = isHost && bet.status === 'funded'
+    ? `<div class="online-bet-deposit-actions">
+        <button type="button" data-ui-action="online-bet-settle"${onlineBetBusy ? ' disabled' : ''}>Cobrar apuesta</button>
+      </div>`
+    : '';
+  return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.${bet.status === 'funded' ? ' Liquidando el pago al ganador…' : ''}</div>${settleAction}`;
 }
 
 function renderOnlinePeerBoards(): string {

@@ -58,6 +58,10 @@ export class OnlineClient {
     return this.post('/api/bets/cancel', request);
   }
 
+  settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
+    return this.post('/api/bets/settle', request);
+  }
+
   setReady(request: ReadyRequest): Promise<OnlineRoomResponse> {
     return this.post('/ready', request);
   }
