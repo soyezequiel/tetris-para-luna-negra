@@ -12,6 +12,7 @@ type PeerConnectionState = 'new' | 'connecting' | 'open' | 'closed';
 export interface OnlinePeerSnapshotMessage {
   type: 'snapshot';
   playerId: string;
+  seed?: number;
   game: OnlineGameSnapshot;
 }
 
@@ -19,11 +20,13 @@ export type OnlinePeerAttackMessage = Omit<AttackRequest, 'roomId'> & { type: 'a
 export interface OnlinePeerInputMessage {
   type: 'input';
   playerId: string;
+  seed?: number;
   inputs: GameInput[];
 }
 export interface OnlinePeerKoMessage {
   type: 'ko';
   playerId: string;
+  seed?: number;
   frame: number;
   lines: number;
   pieces: number;
@@ -80,7 +83,7 @@ export class OnlinePeerBroadcaster {
   }
 
   broadcastSnapshot(playerId: string, game: OnlineGameSnapshot): void {
-    const message = JSON.stringify({ type: 'snapshot', playerId, game } satisfies OnlinePeerSnapshotMessage);
+    const message = JSON.stringify({ type: 'snapshot', playerId, seed: game.seed, game } satisfies OnlinePeerSnapshotMessage);
     for (const peer of this.peers.values()) {
       if (peer.channel?.readyState === 'open') peer.channel.send(message);
     }
@@ -93,12 +96,13 @@ export class OnlinePeerBroadcaster {
     return true;
   }
 
-  sendInputs(toPlayerId: string, inputs: GameInput[]): boolean {
+  sendInputs(toPlayerId: string, inputs: GameInput[], seed?: number): boolean {
     const peer = this.peers.get(toPlayerId);
     if (peer?.channel?.readyState !== 'open') return false;
     peer.channel.send(JSON.stringify({
       type: 'input',
       playerId: this.options.playerId,
+      seed,
       inputs,
     } satisfies OnlinePeerInputMessage));
     return true;

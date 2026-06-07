@@ -266,6 +266,7 @@ export async function updateProgress(
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
   requireHostAuthority(room, request.authorityPlayerId);
+  if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const player = requirePlayer(room, request.playerId);
   if (isTerminalPlayer(player)) return room;
   if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
@@ -294,6 +295,7 @@ export async function submitResult(
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
   requireHostAuthority(room, request.authorityPlayerId);
+  if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const player = requirePlayer(room, request.playerId);
   if (isTerminalPlayer(player)) return room;
   player.status = request.result;
@@ -328,6 +330,7 @@ export async function addAttack(
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
   const authority = requireHostAuthority(room, request.authorityPlayerId);
+  if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const from = requirePlayer(room, request.fromPlayerId);
   const to = requirePlayer(room, request.toPlayerId);
   if (!from.alive || !to.alive || room.status === 'finished') return room;
@@ -339,6 +342,7 @@ export async function addAttack(
     authorityPlayerId: authority.id,
     fromPlayerId: from.id,
     toPlayerId: to.id,
+    seed: request.seed,
     lines: normalizeNonNegativeInteger(request.lines),
     holeSeed: normalizeNonNegativeInteger(request.holeSeed),
     frame: normalizeNonNegativeInteger(request.frame),
@@ -361,6 +365,7 @@ export async function eliminatePlayer(
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
   requireHostAuthority(room, request.authorityPlayerId);
+  if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const player = requirePlayer(room, request.playerId);
   if (player.status === 'winner' || room.winnerPlayerId === player.id) return room;
   if (player.status !== 'eliminated') {
@@ -1028,6 +1033,10 @@ function requireHostAuthority(room: OnlineRoom, authorityPlayerId: string): Onli
     throw new OnlineRoomError('Only the host can authoritatively update the room.', 403);
   }
   return authority;
+}
+
+function requestMatchesRoomSeed(room: OnlineRoom, seed: number | undefined): boolean {
+  return seed === undefined || normalizeNonNegativeInteger(seed) === room.seed;
 }
 
 function createPlayer(id: string, name: string, nowMs: number, avatarUrl?: string | null): OnlinePlayer {

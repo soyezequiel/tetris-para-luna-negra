@@ -1142,7 +1142,7 @@ function sendOnlineInputsToHost(inputs: GameInput[]): void {
 
 function flushOnlineInputOutbox(): void {
   if (onlineInputOutbox.length === 0 || !onlineRoom || isOnlineHost()) return;
-  const sent = onlinePeerBroadcaster?.sendInputs(onlineRoom.hostPlayerId, onlineInputOutbox) ?? false;
+  const sent = onlinePeerBroadcaster?.sendInputs(onlineRoom.hostPlayerId, onlineInputOutbox, onlineRoom.seed) ?? false;
   if (!sent) onlineError = 'Waiting for host connection to send inputs.';
 }
 
@@ -1174,6 +1174,7 @@ function commitOnlineAttack(request: {
     attackId: request.attackId,
     fromPlayerId: request.fromPlayerId,
     toPlayerId: target.id,
+    seed: onlineRoom.seed,
     lines: request.lines,
     holeSeed: request.holeSeed,
     frame: request.frame,
@@ -1183,12 +1184,15 @@ function commitOnlineAttack(request: {
     attackId: attack.attackId,
     authorityPlayerId: attack.authorityPlayerId,
     fromPlayerId: attack.fromPlayerId,
+    seed: attack.seed,
     lines: attack.lines,
     holeSeed: attack.holeSeed,
     frame: attack.frame,
   });
+  const requestSeed = attack.seed;
   void onlineClient.sendAttack(attack)
     .then((response) => {
+      if (!isCurrentOnlineSeed(requestSeed)) return;
       syncOnlineClock(response.serverNowMs);
       adoptOnlineRoom(response.room);
       applyRoomAttacks(response.room);
@@ -1207,6 +1211,7 @@ function applyAttackToHostTruth(attack: AttackRequest): void {
       authorityPlayerId: attack.authorityPlayerId,
       fromPlayerId: attack.fromPlayerId,
       toPlayerId: attack.toPlayerId,
+      seed: attack.seed,
       lines: attack.lines,
       holeSeed: attack.holeSeed,
       frame: attack.frame,
@@ -1359,11 +1364,13 @@ async function postOnlineProgress(state: GameState): Promise<void> {
   if (!onlineRoom || !isOnlineHost()) return;
   onlineProgressInFlight = true;
   onlineLastProgressAt = performance.now();
+  const requestSeed = onlineRoom.seed;
   try {
     const response = await onlineClient.updateProgress({
       roomId: onlineRoom.id,
       authorityPlayerId: onlinePlayer.id,
       playerId: onlinePlayer.id,
+      seed: onlineRoom.seed,
       lines: state.stats.lines,
       pieces: state.stats.pieces,
       elapsedFrames: displayedElapsedFrames(state.stats),
@@ -1372,6 +1379,7 @@ async function postOnlineProgress(state: GameState): Promise<void> {
       pendingGarbage: state.stats.pendingGarbage,
       game: createOnlineGameSnapshot(state),
     });
+    if (!isCurrentOnlineSeed(requestSeed)) return;
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
@@ -1408,6 +1416,7 @@ async function commitOnlineResult(
 ): Promise<void> {
   if (!onlineRoom || !isOnlineHost()) return;
   onlineHostCommittedResults.add(playerId);
+  const requestSeed = game.seed;
   try {
     const response = await onlineClient.submitResult({
       ...createProgressRequest(playerId, game),
@@ -1420,6 +1429,7 @@ async function commitOnlineResult(
       pendingGarbage: state.stats.pendingGarbage,
       game,
     });
+    if (!isCurrentOnlineSeed(requestSeed)) return;
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
@@ -1453,12 +1463,14 @@ async function postOnlineElimination(state: GameState): Promise<void> {
 async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>, onFailure?: () => void): Promise<void> {
   if (!onlineRoom || !isOnlineHost()) return;
   const previousRoundId = onlineActiveRoundId;
+  const requestSeed = report.seed;
   onlineHostCommittedEliminations.add(report.playerId);
   try {
     const response = await onlineClient.eliminatePlayer({
       roomId: onlineRoom.id,
       authorityPlayerId: onlinePlayer.id,
       playerId: report.playerId,
+      seed: report.seed,
       frame: report.frame,
       lines: report.lines,
       pieces: report.pieces,
@@ -1468,6 +1480,7 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
       pendingGarbage: report.pendingGarbage,
       game: report.game,
     });
+    if (!isCurrentOnlineSeed(requestSeed)) return;
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
@@ -1526,12 +1539,14 @@ function syncOnlinePeers(room: OnlineRoom): void {
     onSnapshot: (remoteId, playerId, game) => applyAuthoritativeSnapshot(remoteId, playerId, game),
     onAttack: (remoteId, attack) => {
       if (!onlineRoom || remoteId !== onlineRoom.hostPlayerId || attack.authorityPlayerId !== onlineRoom.hostPlayerId) return;
+      if (!isCurrentOnlineSeed(attack.seed)) return;
       applyOnlineAttack({
         id: attack.attackId,
         roomId: onlineRoom.id,
         authorityPlayerId: attack.authorityPlayerId,
         fromPlayerId: attack.fromPlayerId,
         toPlayerId: attack.toPlayerId,
+        seed: attack.seed,
         lines: attack.lines,
         holeSeed: attack.holeSeed,
         frame: attack.frame,
@@ -1540,12 +1555,14 @@ function syncOnlinePeers(room: OnlineRoom): void {
     },
     onInput: (remoteId, message) => {
       if (!isOnlineHost() || remoteId !== message.playerId) return;
+      if (!isCurrentOnlineSeed(message.seed)) return;
       onlineHostAuthority?.pushInputs(message.playerId, message.inputs);
     },
     onKo: (remoteId, message) => {
       if (remoteId !== message.playerId) return;
       if (isOnlineHost()) return;
       if (!onlineRoom || remoteId !== onlineRoom.hostPlayerId) return;
+      if (!isCurrentOnlineSeed(message.seed)) return;
       applyPeerKo(message);
     },
     onPeerState: (playerId, state) => {
@@ -1579,8 +1596,17 @@ function applyAuthoritativeSnapshot(remoteId: string, playerId: string, game: On
   if (!onlineRoom) return;
   if (isOnlineHost()) return;
   if (remoteId !== onlineRoom.hostPlayerId) return;
+  if (!isCurrentOnlineGame(game)) return;
   if (playerId === onlinePlayer.id) reconcileLocalEngine(game);
   applyPeerSnapshot(remoteId, playerId, game);
+}
+
+function isCurrentOnlineGame(game: OnlineGameSnapshot | null | undefined): boolean {
+  return !!game && isCurrentOnlineSeed(game.seed);
+}
+
+function isCurrentOnlineSeed(seedValue: number | undefined): boolean {
+  return !!onlineRoom && seedValue === onlineRoom.seed;
 }
 
 function reconcileLocalEngine(game: OnlineGameSnapshot): void {
@@ -1627,6 +1653,7 @@ function resimulateLocalPrediction(targetFrame: number, acknowledgedSequence: nu
 
 function applyPeerSnapshot(_remoteId: string, playerId: string, game: OnlineGameSnapshot): void {
   if (!onlineRoom) return;
+  if (!isCurrentOnlineGame(game)) return;
   onlineRoom = {
     ...onlineRoom,
     players: onlineRoom.players.map((player) => player.id === playerId ? { ...player, game } : player),
@@ -1641,6 +1668,7 @@ function postHostSimulatedProgress(playerId: string, state: GameState): void {
 
   onlineHostProgressInFlight.add(playerId);
   onlineHostLastProgressAt.set(playerId, now);
+  const requestSeed = onlineRoom.seed;
   const progress = createProgressRequest(playerId, createOnlineGameSnapshotFromState(
     state,
     onlineHostAuthority?.getSnapshot(playerId) ?? undefined,
@@ -1648,6 +1676,7 @@ function postHostSimulatedProgress(playerId: string, state: GameState): void {
   ));
   void onlineClient.updateProgress(progress)
     .then((response) => {
+      if (!isCurrentOnlineSeed(requestSeed)) return;
       syncOnlineClock(response.serverNowMs);
       adoptOnlineRoom(response.room);
       syncOnlinePeers(response.room);
@@ -1661,9 +1690,10 @@ function postHostSimulatedProgress(playerId: string, state: GameState): void {
     });
 }
 
-function applyPeerKo(message: Pick<OnlinePeerKoMessage, 'playerId' | 'frame' | 'elapsedFrames' | 'game'>): void {
+function applyPeerKo(message: Pick<OnlinePeerKoMessage, 'playerId' | 'seed' | 'frame' | 'elapsedFrames' | 'game'>): void {
   const { playerId, frame } = message;
   if (!onlineRoom || playerId === onlinePlayer.id) return;
+  if (!isCurrentOnlineSeed(message.seed)) return;
   onlineRoom = {
     ...onlineRoom,
     players: onlineRoom.players.map((player) => player.id === playerId
@@ -1686,6 +1716,7 @@ function applyRoomAttacks(room: OnlineRoom): void {
 
 function applyOnlineAttack(attack: OnlineAttack): void {
   if (!onlineRoom || attack.authorityPlayerId !== onlineRoom.hostPlayerId) return;
+  if (!isCurrentOnlineSeed(attack.seed)) return;
   if (attack.toPlayerId !== onlinePlayer.id || onlineAppliedAttackIds.has(attack.id)) return;
   onlineAppliedAttackIds.add(attack.id);
   rememberOnlineAttack(attack.fromPlayerId, attack.toPlayerId, attack.lines);
@@ -1751,6 +1782,7 @@ function createOnlineGameSnapshotFromState(
   lastProcessedInputSequence?: number,
 ): OnlineGameSnapshot {
   return {
+    seed: onlineRoom?.seed,
     board: state.board.map((row) => [...row]),
     active: state.active ? { ...state.active } : null,
     visibleRows: Math.min(BATTLE_RULES.visibleRows, state.board.length),
@@ -3172,6 +3204,7 @@ function createProgressRequest(playerId: string, game: OnlineGameSnapshot): Prog
     roomId: onlineRoom?.id ?? '',
     authorityPlayerId: onlinePlayer.id,
     playerId,
+    seed: onlineRoom?.seed,
     lines: normalizeProgressInteger(game.lines, player?.lines ?? 0),
     pieces: normalizeProgressInteger(game.pieces, player?.pieces ?? 0),
     elapsedFrames: normalizeProgressInteger(game.elapsedFrames, player?.elapsedFrames ?? 0),
@@ -3190,6 +3223,7 @@ function createOnlineKoReportFromState(playerId: string, state: GameState): Omit
   const elapsedFrames = displayedElapsedFrames(state.stats);
   return {
     playerId,
+    seed: onlineRoom?.seed,
     frame: elapsedFrames,
     lines: state.stats.lines,
     pieces: state.stats.pieces,

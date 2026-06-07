@@ -102,6 +102,7 @@ export interface OnlineMatchResult {
 }
 
 export interface OnlineGameSnapshot {
+  seed?: number;
   board: Cell[][];
   active: ActivePiece | null;
   visibleRows: number;
@@ -135,6 +136,7 @@ export interface OnlineAttack {
   authorityPlayerId: string;
   fromPlayerId: string;
   toPlayerId: string;
+  seed?: number;
   lines: number;
   holeSeed: number;
   frame: number;
@@ -262,6 +264,7 @@ export interface ProgressRequest {
   roomId: string;
   authorityPlayerId: string;
   playerId: string;
+  seed?: number;
   lines: number;
   pieces: number;
   elapsedFrames: number;
@@ -289,6 +292,7 @@ export interface AttackRequest {
   authorityPlayerId: string;
   fromPlayerId: string;
   toPlayerId: string;
+  seed?: number;
   lines: number;
   holeSeed: number;
   frame: number;

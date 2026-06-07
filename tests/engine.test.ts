@@ -1916,6 +1916,52 @@ describe('core stacker engine', () => {
     }
   });
 
+  it('ignores terminal updates from the previous online seed after a restart', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-host-stale',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-guest-stale', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-stale', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-guest-stale', ready: true }, 1200);
+    const started = await startRoom(store, { roomId: room.id, playerId: 'player-host-stale' }, 1300);
+    await getRoomState(store, room.id, 7000);
+
+    await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-host-stale',
+      playerId: 'player-guest-stale',
+      seed: started.seed,
+      frame: 300,
+      lines: 8,
+      pieces: 18,
+      elapsedFrames: 300,
+    }, 7100);
+    const restarted = await restartRoom(store, {
+      roomId: room.id,
+      playerId: 'player-host-stale',
+    }, 7300);
+
+    expect(restarted.status).toBe('countdown');
+    expect(restarted.seed).not.toBe(started.seed);
+
+    const afterStaleElimination = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-host-stale',
+      playerId: 'player-guest-stale',
+      seed: started.seed,
+      frame: 320,
+      lines: 9,
+      pieces: 20,
+      elapsedFrames: 320,
+    }, 7400);
+
+    expect(afterStaleElimination.status).toBe('countdown');
+    expect(afterStaleElimination.players.every((player) => player.alive && player.status === 'ready')).toBe(true);
+  });
+
   it('does not overwrite final online results with late progress', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, {
