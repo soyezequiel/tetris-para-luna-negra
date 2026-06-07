@@ -1,8 +1,8 @@
 import { expect, type Page, type Route, test } from '@playwright/test';
 import { action, appMode, openFreshApp, writeReplayFixture } from './fixtures';
 import { BATTLE_RULES } from '../../src/game/rules';
-import type { GameRules } from '../../src/game/types';
-import type { MatchmakingTicket, OnlineMatchType, OnlineRoomMode, OnlineRuleset, OnlineSeriesState, QuickPlayLeaderboardEntry, TargetingMode } from '../../src/online/protocol';
+import type { Cell, GameRules, PieceType } from '../../src/game/types';
+import type { MatchmakingTicket, OnlineGameSnapshot, OnlineMatchType, OnlineRoomMode, OnlineRuleset, OnlineSeriesState, QuickPlayLeaderboardEntry, TargetingMode } from '../../src/online/protocol';
 
 test.describe('STACK/40 browser flows', () => {
   test('serves online API during local Vite dev', async ({ page }) => {
@@ -318,12 +318,55 @@ test.describe('STACK/40 browser flows', () => {
     await expect(page.getByText('Battle room: survive')).toBeVisible();
 
     await action(page, 'online-ready').click();
-    await expect(page.locator('.online-lobby-player span')).toHaveText('Ready');
+    await expect(page.locator('.online-lobby-player-status')).toHaveText('Ready');
 
     await action(page, 'online-start').click();
     await expect.poll(() => appMode(page)).toBe('onlineCountdown');
     await expect(page.getByRole('heading', { name: /[1-5]/ })).toBeVisible();
     await expect(page.getByText('Last player standing wins')).toBeVisible();
+  });
+
+  test('shows many online opponents to the right with auto-sized boards', async ({ page }) => {
+    await page.setViewportSize({ width: 1365, height: 768 });
+    await mockOnlineApi(page, { largePlayingRoom: true });
+    await openFreshApp(page);
+
+    await action(page, 'multiplayer-menu').click();
+    await action(page, 'online-open').click();
+    await page.locator('[data-online-field="name"]').fill('Host');
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+
+    await action(page, 'online-ready').click();
+    await action(page, 'online-start').click();
+    await expect.poll(() => appMode(page)).toBe('onlinePlaying');
+
+    const layout = await page.evaluate(() => {
+      const grid = document.querySelector<HTMLElement>('.online-versus-grid');
+      const boards = Array.from(document.querySelectorAll<HTMLElement>('.online-versus-grid .online-peer-board'));
+      const board = boards[0]?.getBoundingClientRect();
+      const gridRect = grid?.getBoundingClientRect();
+      const boardList = document.querySelector<HTMLElement>('.online-peer-boards');
+      const style = boardList ? getComputedStyle(boardList) : null;
+      return {
+        count: boards.length,
+        columns: style?.getPropertyValue('--online-peer-columns').trim() ?? '',
+        cardWidth: Number.parseFloat(style?.getPropertyValue('--online-peer-card-width') ?? '0'),
+        firstBoardWidth: board?.width ?? 0,
+        firstBoardHeight: board?.height ?? 0,
+        gridLeft: gridRect?.left ?? 0,
+        leftPanelBoards: document.querySelectorAll('.online-race-panel .online-peer-board').length,
+      };
+    });
+
+    expect(layout.count).toBe(7);
+    expect(layout.columns).toBe('3');
+    expect(layout.cardWidth).toBeGreaterThanOrEqual(70);
+    expect(layout.cardWidth).toBeLessThanOrEqual(100);
+    expect(layout.firstBoardWidth).toBeGreaterThanOrEqual(70);
+    expect(layout.firstBoardHeight).toBeGreaterThan(150);
+    expect(layout.gridLeft).toBeGreaterThan(980);
+    expect(layout.leftPanelBoards).toBe(0);
   });
 
   test('enters a Luna Negra room from invite query and cleans the token', async ({ page }) => {
@@ -367,7 +410,7 @@ test.describe('STACK/40 browser flows', () => {
   });
 });
 
-async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateRequest | null }> {
+async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Promise<{ lastCreate: MockCreateRequest | null }> {
   const now = Date.now();
   const requests: { lastCreate: MockCreateRequest | null } = { lastCreate: null };
   let room = createMockRoom('ROOM', 'private', now);
@@ -509,6 +552,11 @@ async function mockOnlineApi(page: Page): Promise<{ lastCreate: MockCreateReques
       return;
     }
     if (path.endsWith('/start')) {
+      if (options.largePlayingRoom) {
+        room = createMockLargePlayingRoom(room, Date.now());
+        await fulfillRoom(route, room);
+        return;
+      }
       room = {
         ...room,
         status: 'countdown',
@@ -578,6 +626,10 @@ async function fulfillRoom(route: Route, room: MockRoom): Promise<void> {
   });
 }
 
+type MockOnlineApiOptions = {
+  largePlayingRoom?: boolean;
+};
+
 function createMockRoom(
   id: string,
   visibility: 'public' | 'private',
@@ -609,6 +661,56 @@ function createMockRoom(
     players: [createMockPlayer(playerId, name, now, avatarUrl)],
     peerSignals: [],
     attacks: [],
+  };
+}
+
+function createMockLargePlayingRoom(room: MockRoom, now: number): MockRoom {
+  const host = {
+    ...room.players[0],
+    ready: true,
+    status: 'playing',
+    game: createMockGameSnapshot(0),
+  };
+  const opponents = Array.from({ length: 7 }, (_, index) => ({
+    ...createMockPlayer(`player-opponent-${index + 1}`, `P${index + 2}`, now),
+    ready: true,
+    status: 'playing',
+    lines: index * 2,
+    pieces: 20 + index * 4,
+    elapsedFrames: 600 + index * 60,
+    sentGarbage: index,
+    game: createMockGameSnapshot(index + 1),
+  }));
+  return {
+    ...room,
+    status: 'playing',
+    startsAtServerMs: now - 1,
+    updatedAtServerMs: now,
+    players: [host, ...opponents],
+  };
+}
+
+function createMockGameSnapshot(seedOffset: number): OnlineGameSnapshot {
+  const pieces: PieceType[] = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'];
+  const board: Cell[][] = Array.from({ length: BATTLE_RULES.visibleRows }, (_, y) => (
+    Array.from({ length: BATTLE_RULES.boardWidth }, (_, x) => {
+      const stackHeight = 2 + ((x + seedOffset) % 5);
+      if (y < BATTLE_RULES.visibleRows - stackHeight) return null;
+      return pieces[(x + y + seedOffset) % pieces.length];
+    })
+  ));
+  return {
+    board,
+    active: null,
+    visibleRows: BATTLE_RULES.visibleRows,
+    boardWidth: BATTLE_RULES.boardWidth,
+    elapsedFrames: 600 + seedOffset * 60,
+    status: 'playing',
+    lines: seedOffset * 2,
+    pieces: 20 + seedOffset * 3,
+    sentGarbage: seedOffset,
+    receivedGarbage: Math.max(0, seedOffset - 1),
+    pendingGarbage: seedOffset % 3,
   };
 }
 
@@ -731,7 +833,7 @@ type MockPlayer = {
   finishedAtServerMs: number | null;
   eliminatedAtFrame: number | null;
   eliminatedAtServerMs: number | null;
-  game: unknown;
+  game: OnlineGameSnapshot | null;
   targetingMode: TargetingMode;
   manualTargetPlayerId: string | null;
   currentTargetPlayerId: string | null;

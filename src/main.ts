@@ -2163,9 +2163,9 @@ function renderOnlinePlayingOverlay(): string {
       ${renderOnlineTargetingControls()}
       ${renderIncomingGarbage()}
       ${renderOnlineStandings()}
-      ${renderOnlinePeerBoards()}
       <button type="button" data-ui-action="online-leave">Leave</button>
     </aside>
+    ${renderOnlinePeerBoards()}
   `;
 }
 
@@ -2385,7 +2385,7 @@ function renderLobbyPlayer(player: OnlinePlayer): string {
       <div>
         <strong>${escapeHtml(player.name)}${player.id === onlineRoom?.hostPlayerId ? ' HOST' : ''}</strong>
       </div>
-      <span>${player.ready ? 'Ready' : 'Not ready'}</span>
+      <span class="online-lobby-player-status">${player.ready ? 'Ready' : 'Not ready'}</span>
     </div>
   `;
 }
@@ -2393,12 +2393,65 @@ function renderLobbyPlayer(player: OnlinePlayer): string {
 function renderOnlinePeerBoards(): string {
   if (!onlineRoom) return '';
   const remotePlayers = onlineRoom.players.filter((player) => player.id !== onlinePlayer.id);
-  if (remotePlayers.length === 0) return '<div class="online-empty">Waiting for another board.</div>';
+  if (remotePlayers.length === 0) {
+    return `
+      <aside class="online-versus-grid online-versus-grid-empty" aria-label="Remote player boards">
+        <div class="online-versus-title">
+          <span>Opponents</span>
+          <strong>0</strong>
+        </div>
+        <div class="online-empty">Waiting for another board.</div>
+      </aside>
+    `;
+  }
+  const layout = onlinePeerGridLayout(remotePlayers.length);
   return `
-    <div class="online-peer-boards" aria-label="Remote player boards">
-      ${remotePlayers.map(renderOnlinePeerBoard).join('')}
-    </div>
+    <aside class="online-versus-grid" aria-label="Remote player boards">
+      <div class="online-versus-title">
+        <span>Opponents</span>
+        <strong>${remotePlayers.length}</strong>
+      </div>
+      <div
+        class="online-peer-boards"
+        data-peer-count="${remotePlayers.length}"
+        style="--online-peer-columns: ${layout.columns}; --online-peer-card-width: ${layout.cardWidth}px;"
+      >
+        ${remotePlayers.map(renderOnlinePeerBoard).join('')}
+      </div>
+    </aside>
   `;
+}
+
+function onlinePeerGridLayout(playerCount: number): { columns: number; cardWidth: number } {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const columns = onlinePeerGridColumns(playerCount, width);
+  const rows = Math.ceil(playerCount / columns);
+  const gap = width < 760 ? 6 : 8;
+  const panelWidth = width < 760
+    ? Math.max(240, width - 28)
+    : width < 1120
+      ? Math.max(176, width * 0.22)
+      : Math.min(420, width * 0.32);
+  const availableHeight = Math.max(240, height - (width < 760 ? 168 : 118));
+  const widthBound = (panelWidth - gap * (columns - 1)) / columns;
+  const heightBound = (availableHeight - gap * (rows - 1)) / rows / 2.42;
+  const minWidth = width < 760 ? 44 : 54;
+  const maxWidth = width < 760 ? 82 : 128;
+  return {
+    columns,
+    cardWidth: Math.floor(Math.max(minWidth, Math.min(maxWidth, widthBound, heightBound))),
+  };
+}
+
+function onlinePeerGridColumns(playerCount: number, width: number): number {
+  if (width < 760) return Math.min(playerCount, playerCount <= 2 ? 2 : 4);
+  if (playerCount <= 1) return 1;
+  if (playerCount <= 4) return 2;
+  if (playerCount <= 9) return 3;
+  if (playerCount <= 16) return 4;
+  if (playerCount <= 25) return 5;
+  return 6;
 }
 
 function renderOnlinePeerBoard(player: OnlinePlayer): string {
