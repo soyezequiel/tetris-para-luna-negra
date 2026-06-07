@@ -12,7 +12,7 @@ import {
 } from './app/runHistory';
 import { soundCueForRunProgress } from './app/runEffects';
 import { createRunSummary, RunSplitTracker, type LineSplit, type RunSummary } from './app/runStats';
-import { canAdvanceGame, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
+import { canAdvanceGame, canCommitLocalOnlineTerminal, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import {
   CUSTOM_NUMBER_SETTING_META,
   CUSTOM_TABS,
@@ -1399,14 +1399,12 @@ async function postOnlineProgress(state: GameState): Promise<void> {
 async function postOnlineResult(state: GameState): Promise<void> {
   if (!onlineRoom) return;
   onlineResultSubmitted = true;
-  const game = createOnlineGameSnapshot(state);
-
-  if (!isOnlineHost()) {
-    appMode = 'onlineResults';
+  if (!canCommitLocalOnlineTerminal(isOnlineHost())) {
     onlineError = null;
     return;
   }
 
+  const game = createOnlineGameSnapshot(state);
   await commitOnlineResult(onlinePlayer.id, state, 'won', game, () => {
     onlineResultSubmitted = false;
   });
@@ -1451,15 +1449,13 @@ async function postOnlineElimination(state: GameState): Promise<void> {
   if (!onlineRoom) return;
   onlineResultSubmitted = true;
   const report = createOnlineKoReport(onlinePlayer.id, state);
-  onlinePeerBroadcaster?.broadcastKo(report);
 
-  if (!isOnlineHost()) {
-    markOnlinePlayerEliminated(report);
-    appMode = 'onlineResults';
+  if (!canCommitLocalOnlineTerminal(isOnlineHost())) {
     onlineError = null;
     return;
   }
 
+  onlinePeerBroadcaster?.broadcastKo(report);
   await commitOnlineElimination(report, () => {
     onlineResultSubmitted = false;
   });
@@ -3237,31 +3233,6 @@ function createOnlineKoReportFromState(playerId: string, state: GameState): Omit
     receivedGarbage: state.stats.receivedGarbage,
     pendingGarbage: state.stats.pendingGarbage,
     game: createOnlineGameSnapshotFromState(state),
-  };
-}
-
-function markOnlinePlayerEliminated(report: Omit<OnlinePeerKoMessage, 'type'>): void {
-  if (!onlineRoom) return;
-  onlineRoom = {
-    ...onlineRoom,
-    players: onlineRoom.players.map((player) => player.id === report.playerId
-      ? {
-        ...player,
-        status: 'eliminated',
-        ready: true,
-        alive: false,
-        lines: report.lines,
-        pieces: report.pieces,
-        elapsedFrames: report.elapsedFrames,
-        sentGarbage: report.sentGarbage,
-        receivedGarbage: report.receivedGarbage,
-        pendingGarbage: report.pendingGarbage,
-        eliminatedAtFrame: report.frame,
-        eliminatedAtServerMs: onlineNowMs(),
-        finishedAtServerMs: onlineNowMs(),
-        game: report.game,
-      }
-      : player),
   };
 }
 

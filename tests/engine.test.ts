@@ -16,7 +16,7 @@ import {
   saveRunHistoryEntry,
   type HistoryStorage,
 } from '../src/app/runHistory';
-import { canAdvanceGame, requiresRunConfirmation, togglePauseMode } from '../src/app/state';
+import { canAdvanceGame, canCommitLocalOnlineTerminal, requiresRunConfirmation, togglePauseMode } from '../src/app/state';
 import { createShuffledBag } from '../src/game/bag';
 import { calculateAttack, nextBackToBack, nextCombo } from '../src/game/attack';
 import { attackLinesForClear, garbageHoleColumn, resolveAttack } from '../src/game/battle';
@@ -915,6 +915,11 @@ describe('core stacker engine', () => {
     expect(togglePauseMode('playing', 'playing', 'menu')).toBe('paused');
     expect(togglePauseMode('paused', 'playing', 'menu')).toBe('playing');
     expect(togglePauseMode('settings', 'playing', 'paused')).toBe('paused');
+  });
+
+  it('only lets the host commit local terminal states in online play', () => {
+    expect(canCommitLocalOnlineTerminal(true)).toBe(true);
+    expect(canCommitLocalOnlineTerminal(false)).toBe(false);
   });
 
   it('requires confirmation only for destructive actions during active runs', () => {

@@ -364,6 +364,32 @@ test.describe('STACK/40 browser flows', () => {
     await expect.poll(() => appMode(page)).toBe('onlinePlaying');
   });
 
+  test('keeps a guest in the online round when its local prediction reaches gameover first', async ({ page }) => {
+    await mockOnlineApi(page, { createdPlayingGuestRoom: true });
+    await openFreshApp(page);
+
+    await action(page, 'multiplayer-menu').click();
+    await action(page, 'online-open').click();
+    await page.locator('[data-online-field="name"]').fill('Guest');
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('onlinePlaying');
+    await expect.poll(() => page.evaluate(() => {
+      const room = window.stack40.getOnlineRoom();
+      const player = window.stack40.getOnlinePlayer();
+      return !!room && room.hostPlayerId !== player.id;
+    })).toBe(true);
+
+    for (let index = 0; index < 140; index += 1) {
+      await page.keyboard.press('Space');
+      if (await page.evaluate(() => window.stack40.getState().status !== 'playing')) break;
+      await page.waitForTimeout(10);
+    }
+
+    await expect.poll(() => page.evaluate(() => window.stack40.getState().status), { timeout: 5000 }).toBe('gameover');
+    await expect.poll(() => appMode(page), { timeout: 1000 }).toBe('onlinePlaying');
+    await expect(page.getByRole('heading', { name: 'ONLINE RESULTS' })).toBeHidden();
+  });
+
   test('shows many online opponents to the right with auto-sized boards', async ({ page }) => {
     await page.setViewportSize({ width: 1365, height: 768 });
     await mockOnlineApi(page, { largePlayingRoom: true });
@@ -569,6 +595,7 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
       const body = route.request().postDataJSON() as MockCreateRequest;
       requests.lastCreate = body;
       room = createMockRoom('ROOM', body.visibility, Date.now(), body.playerId, body.name, body.mode, body.rules, body.matchType, body.avatarUrl ?? null);
+      if (options.createdPlayingGuestRoom) room = createMockPlayingGuestRoom(room, Date.now());
       if (options.finishedCreatedRoom) room = createMockFinishedRoom(room, Date.now());
       await fulfillRoom(route, room);
       return;
@@ -678,6 +705,7 @@ async function fulfillRoom(route: Route, room: MockRoom): Promise<void> {
 type MockOnlineApiOptions = {
   largePlayingRoom?: boolean;
   finishedCreatedRoom?: boolean;
+  createdPlayingGuestRoom?: boolean;
 };
 
 type MockOnlineApiRequests = {
@@ -743,6 +771,29 @@ function createMockLargePlayingRoom(room: MockRoom, now: number): MockRoom {
     startsAtServerMs: now - 1,
     updatedAtServerMs: now,
     players: [host, ...opponents],
+  };
+}
+
+function createMockPlayingGuestRoom(room: MockRoom, now: number): MockRoom {
+  const guest = {
+    ...room.players[0],
+    ready: true,
+    status: 'playing',
+    game: createMockGameSnapshot(0),
+  };
+  const host = {
+    ...createMockPlayer('player-host-authority', 'Host Authority', now),
+    ready: true,
+    status: 'playing',
+    game: createMockGameSnapshot(1),
+  };
+  return {
+    ...room,
+    status: 'playing',
+    hostPlayerId: host.id,
+    startsAtServerMs: now - 1,
+    updatedAtServerMs: now,
+    players: [host, guest],
   };
 }
 

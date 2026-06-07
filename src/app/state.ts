@@ -23,6 +23,10 @@ export function canAdvanceGame(mode: AppMode, status: GameState['status']): bool
   return (mode === 'playing' || mode === 'onlinePlaying') && status === 'playing';
 }
 
+export function canCommitLocalOnlineTerminal(isHostAuthority: boolean): boolean {
+  return isHostAuthority;
+}
+
 export function togglePauseMode(mode: AppMode, status: GameState['status'], settingsReturnMode: AppMode): AppMode {
   if (mode === 'settings') return settingsReturnMode;
   if (mode === 'paused' && status === 'playing') return 'playing';
