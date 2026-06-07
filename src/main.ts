@@ -2675,13 +2675,17 @@ function renderOnlineBetResult(): string {
   if (bet.status === 'refunded' || bet.status === 'cancelled' || bet.status === 'expired') {
     return `<div class="panel-note">↩️ Apuesta ${escapeHtml(betStatusLabel(bet.status).toLowerCase())}: se reembolsaron los depósitos.</div>`;
   }
-  const isHost = onlineRoom?.hostPlayerId === onlinePlayer.id;
-  const settleAction = isHost && bet.status === 'funded'
-    ? `<div class="online-bet-deposit-actions">
-        <button type="button" data-ui-action="online-bet-settle"${onlineBetBusy ? ' disabled' : ''}>Cobrar apuesta</button>
-      </div>`
-    : '';
-  return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.${bet.status === 'funded' ? ' Liquidando el pago al ganador…' : ''}</div>${settleAction}`;
+  if (bet.status === 'funded') {
+    if (bet.resultReported) {
+      return `<div class="panel-note">✅ Ganador reportado a Luna Negra. El pago se está liquidando…</div>`;
+    }
+    const isHost = onlineRoom?.hostPlayerId === onlinePlayer.id;
+    const settleAction = isHost
+      ? `<div class="online-bet-deposit-actions"><button type="button" data-ui-action="online-bet-settle"${onlineBetBusy ? ' disabled' : ''}>Cobrar apuesta</button></div>`
+      : '';
+    return `<div class="panel-note">Apuesta fondeada · pozo ${bet.potSats} sats. Liquidando el pago al ganador…</div>${settleAction}`;
+  }
+  return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.</div>`;
 }
 
 function renderOnlinePeerBoards(): string {

@@ -69,6 +69,20 @@ export function isLunaNegraApiConfigured(): boolean {
   );
 }
 
+// Error de la API de Luna Negra que conserva el status HTTP real y el código de
+// error del proveedor, para poder clasificar fallos (transitorio vs. definitivo)
+// sin perder información al aplanar el status que ve el resto de la app.
+class LunaApiError extends OnlineRoomError {
+  constructor(
+    message: string,
+    status: number,
+    readonly httpStatus: number,
+    readonly code: string | null,
+  ) {
+    super(message, status);
+  }
+}
+
 async function lunaFetch<T>(
   config: LunaConfig,
   path: string,
@@ -85,9 +99,19 @@ async function lunaFetch<T>(
   if (!response.ok) {
     const err = payload as { error?: { code?: string; message?: string } } | null;
     const message = err?.error?.message ?? `Luna Negra respondió ${response.status}.`;
-    throw new OnlineRoomError(message, response.status === 400 || response.status === 409 ? response.status : 502);
+    const status = response.status === 400 || response.status === 409 ? response.status : 502;
+    throw new LunaApiError(message, status, response.status, err?.error?.code ?? null);
   }
   return payload as T;
+}
+
+// Reconoce, a partir del error del POST /result, que la apuesta ya estaba resuelta
+// (reporte duplicado). Cubre tanto el código como el mensaje porque el vocabulario
+// exacto del proveedor no está documentado.
+function errorLooksResolved(error: unknown): boolean {
+  const code = error instanceof LunaApiError ? (error.code ?? '') : '';
+  const message = error instanceof Error ? error.message : '';
+  return /resolv|settl|already|duplicate|paid|finaliz|complet/i.test(`${code} ${message}`);
 }
 
 function nonNegInt(value: unknown, fallback = 0): number {
@@ -105,6 +129,33 @@ function normalizeDepositStatus(value: unknown): RoomBetParticipant['depositStat
   if (['refunded', 'returned'].includes(v)) return 'refunded';
   if (['failed', 'error', 'expired', 'cancelled', 'canceled'].includes(v)) return 'failed';
   return 'pending';
+}
+
+// Traduce el vocabulario de estado de la apuesta de Luna Negra a nuestro enum.
+// Devuelve null si la palabra es desconocida, para poder caer al estado previo.
+function normalizeBetStatus(value: unknown): RoomBet['status'] | null {
+  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!v) return null;
+  if (['settled', 'resolved', 'paid', 'paid_out', 'paidout', 'payout', 'won', 'win', 'closed'].includes(v)) return 'settled';
+  if (['funded', 'active', 'locked', 'in_progress', 'inprogress', 'ready', 'full', 'started', 'playing'].includes(v)) return 'funded';
+  if (['pending_deposits', 'pending', 'awaiting_deposits', 'awaiting', 'open', 'created', 'new', 'deposits_pending'].includes(v)) return 'pending_deposits';
+  if (['cancelled', 'canceled'].includes(v)) return 'cancelled';
+  if (['expired', 'timeout', 'timedout'].includes(v)) return 'expired';
+  if (['refunded', 'returned', 'reimbursed'].includes(v)) return 'refunded';
+  return null;
+}
+
+function isTerminalBetStatus(status: RoomBet['status'] | undefined | null): boolean {
+  return status === 'settled' || status === 'cancelled' || status === 'expired' || status === 'refunded';
+}
+
+// Determina, a partir de la respuesta cruda de Luna Negra, si la apuesta ya quedó
+// resuelta (pagada/reembolsada). Sirve para cortar el reintento de reporte cuando
+// el pago ya se hizo aunque el POST /result devuelva error.
+function isResolvedFromLuna(detail: LunaBetDetail | null, deposits: LunaBetDeposits | null): boolean {
+  const status = normalizeBetStatus(detail?.status ?? deposits?.status);
+  if (isTerminalBetStatus(status)) return true;
+  return (detail?.participants ?? []).some((p) => typeof p.payoutSats === 'number' && p.payoutSats > 0);
 }
 
 // Combina el estado de las dos fuentes (detail y deposits) quedándose con el más
@@ -151,7 +202,18 @@ function buildRoomBet(
       payoutSats: typeof d?.payoutSats === 'number' ? d.payoutSats : null,
     };
   });
-  const status = (detail?.status ?? deposits?.status ?? previous?.status ?? 'pending_deposits') as RoomBet['status'];
+  // No regresamos de un estado terminal; si no, traducimos el vocabulario de Luna
+  // Negra y, como respaldo, marcamos 'settled' cuando ya reportamos el resultado y
+  // el ganador tiene un payout efectivo (la palabra de estado puede no llegarnos).
+  let status: RoomBet['status'];
+  if (isTerminalBetStatus(previous?.status)) {
+    status = previous!.status;
+  } else {
+    const normalized = normalizeBetStatus(detail?.status ?? deposits?.status);
+    const paidOut = previous?.resultReported === true
+      && participants.some((p) => typeof p.payoutSats === 'number' && p.payoutSats > 0);
+    status = paidOut ? 'settled' : (normalized ?? previous?.status ?? 'pending_deposits');
+  }
   const depositsReceived = deposits?.depositsReceived ?? participants.filter((p) => p.depositStatus === 'paid').length;
   return {
     betId: econ.betId,
@@ -299,20 +361,25 @@ export async function maybeReportRoomBetResult(
 
   // Camino por API key: Luna Negra firma el resultado con el oráculo gestionado
   // del proveedor. El game server no toca Nostr. winners vacío = empate/anulación.
-  let reportedOk = true;
   try {
     await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/result`, {
       method: 'POST',
       body: { winners },
     });
   } catch (error) {
-    // Distinguimos errores terminales de transitorios: un 4xx (incluido
-    // ALREADY_RESOLVED) es definitivo, así que lo damos por reportado. Un error de
-    // red o 5xx es transitorio: NO lo marcamos reportado para reintentar el pago en
-    // el próximo refresh, en vez de dejar al ganador sin cobrar para siempre.
-    const status = error instanceof OnlineRoomError ? error.status : 502;
-    reportedOk = status >= 400 && status < 500;
-    if (!reportedOk) return null;
+    // El reporte falló. Decidimos si reintentar o darlo por hecho:
+    //  1) Si el error indica "ya resuelta/duplicada" → hecho (corta el loop).
+    //  2) Si el estado real en Luna ya está resuelto/pagado → hecho.
+    //  3) Si no, solo reintentamos en errores transitorios (red o 5xx); un 4xx es
+    //     definitivo (p. ej. winners inválido) y lo damos por reportado para no
+    //     reintentar para siempre algo que nunca va a tener éxito.
+    const probe = await fetchDetailAndDeposits(config, bet.betId).catch(() => ({ detail: null, deposits: null }));
+    const resolved = errorLooksResolved(error) || isResolvedFromLuna(probe.detail, probe.deposits);
+    if (!resolved) {
+      const httpStatus = error instanceof LunaApiError ? error.httpStatus : 0;
+      const transient = httpStatus === 0 || httpStatus >= 500;
+      if (transient) return null;
+    }
   }
   const reported: RoomBet = { ...bet, resultReported: true, winnerNpubs: winners, updatedAtServerMs: nowMs };
   let updated = await setRoomBet(store, room.id, reported, nowMs);
