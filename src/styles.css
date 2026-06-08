@@ -2612,6 +2612,51 @@ canvas {
   background: rgba(12, 16, 24, 0.75);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--dash-border);
+  position: relative;
+}
+
+.dash-topbar-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--dash-text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.dash-topbar-play svg {
+  margin-left: 2px;
+}
+
+.dash-topbar-play:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--dash-text);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+.dash-topbar-play--active {
+  background: rgba(124, 92, 252, 0.15);
+  color: #a78bfa;
+  border-color: rgba(124, 92, 252, 0.45);
+  box-shadow: 0 0 15px rgba(124, 92, 252, 0.2);
+}
+
+.dash-topbar-play--active:hover {
+  background: rgba(124, 92, 252, 0.22);
+  color: #a78bfa;
+  border-color: rgba(124, 92, 252, 0.6);
+  transform: translate(-50%, -50%) scale(1.08);
 }
 
 .dash-logo {

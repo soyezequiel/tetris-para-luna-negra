@@ -3548,7 +3548,7 @@ function renderDashboardMenu(state: GameState): string {
   const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
 
   const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
-  const playClass = isPlayActive ? 'dash-sidebar-btn--active' : '';
+  const playClass = isPlayActive ? 'dash-topbar-play--active' : '';
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
 
@@ -3560,6 +3560,11 @@ function renderDashboardMenu(state: GameState): string {
       <!-- TOP BAR -->
       <header class="dash-topbar">
         <h1 class="dash-logo">TETRA</h1>
+        
+        <button class="dash-topbar-play ${playClass}" type="button" data-ui-action="sidebar-play" aria-label="Jugar">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+
         <div class="dash-user">
           <div class="dash-user-avatar" style="display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700;">
             ${avatarLetter}
@@ -3574,10 +3579,6 @@ function renderDashboardMenu(state: GameState): string {
           <button class="dash-sidebar-btn ${homeClass}" type="button" data-ui-action="main-menu">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
             Inicio
-          </button>
-          <button class="dash-sidebar-btn ${playClass}" type="button" data-ui-action="sidebar-play">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z"/></svg>
-            Jugar
           </button>
           <button class="dash-sidebar-btn ${historyClass}" type="button" data-ui-action="history-menu">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
