@@ -179,7 +179,12 @@ let lunaLastInviteUrl: string | null = null;
 
 const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
 const LUNA_FRIENDS_POLL_MS = 5000;
-const LUNA_PRESENCE_HEARTBEAT_MS = 10000;
+// La presencia caduca a los 20s sin heartbeat (ver docs/luna-negra-social-spec.md).
+// Latimos cada 10s (la mitad del TTL) para que un jugador activo nunca expire,
+// pero SOLO mientras la pestaña está visible: si el jugador cambia de app, minimiza
+// o cierra el juego dejamos de latir y a los ~20s deja de figurar "jugando".
+const LUNA_PRESENCE_TTL_MS = 20000;
+const LUNA_PRESENCE_HEARTBEAT_MS = LUNA_PRESENCE_TTL_MS / 2;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -196,7 +201,7 @@ window.setInterval(() => {
   if (lunaIdentity && (appMode === 'onlineMenu' || appMode === 'roomLobby')) void refreshLunaFriends();
 }, LUNA_FRIENDS_POLL_MS);
 window.setInterval(() => {
-  if (lunaIdentity) void syncLunaPresence();
+  if (lunaIdentity && isPlayerActivelyPresent()) void syncLunaPresence();
 }, LUNA_PRESENCE_HEARTBEAT_MS);
 document.addEventListener('visibilitychange', syncOnlineVisibilityChange);
 window.addEventListener('focus', eagerRefreshBetIfPending);
@@ -856,10 +861,18 @@ function removeLunaSessionParamsFromUrl(): void {
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }
 
+// El jugador "está jugando" solo si tiene el juego visible en primer plano. Si
+// minimiza, cambia de pestaña/app o cierra el juego dejamos de latir, y al
+// caducar el heartbeat (20s) Luna Negra lo deja de mostrar como jugando. Esto
+// evita los falsos positivos de "Jugando Tetris" con el juego abierto de fondo.
+function isPlayerActivelyPresent(): boolean {
+  return document.visibilityState === 'visible';
+}
+
 // Reporta que este jugador tiene el juego abierto (online) o está en una sala
 // (in-game). Alimenta el orden del panel de amigos de los demás.
 async function syncLunaPresence(): Promise<void> {
-  if (!lunaIdentity) return;
+  if (!lunaIdentity || !isPlayerActivelyPresent()) return;
   try {
     await lunaSocialClient.heartbeat({
       npub: lunaIdentity.npub,
@@ -2105,6 +2118,9 @@ function syncOnlineVisibilityChange(): void {
     syncOnlineBackground();
     return;
   }
+  // Al volver al juego reanunciamos presencia de inmediato (sin esperar el
+  // intervalo) para reaparecer como "jugando" apenas el jugador regresa.
+  if (lunaIdentity) void syncLunaPresence();
   if (!onlineRoom) return;
   eagerRefreshBetIfPending();
   syncOnline(engine.getState());

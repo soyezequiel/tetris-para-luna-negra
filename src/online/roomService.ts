@@ -70,8 +70,11 @@ export interface LunaPresenceRecord {
   updatedAtServerMs: number;
 }
 
-export const LUNA_PRESENCE_TTL_MS = 30_000;
-export const LUNA_PRESENCE_TTL_SECONDS = 120;
+// Un jugador deja de figurar "jugando" si no emite heartbeat por más de 20s.
+// El cliente late cada ~10s (la mitad del TTL) solo mientras tiene el juego en
+// primer plano, así un jugador activo nunca expira pero quien se va cae solo.
+export const LUNA_PRESENCE_TTL_MS = 20_000;
+export const LUNA_PRESENCE_TTL_SECONDS = 20;
 
 export interface RoomStore {
   getRoom(id: string): Promise<OnlineRoom | null>;

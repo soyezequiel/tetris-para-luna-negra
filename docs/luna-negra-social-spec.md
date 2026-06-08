@@ -13,7 +13,7 @@
 >    futuro el juego necesitara revalidar la sesión más tarde, haría falta un token
 >    de sesión más largo (follow-up corto del lado de Luna Negra).
 > 3. **Verificación E2E** con `ln_sk_…` + `lnToken` reales: confirmar que `source`
->    pasa de `"mock"` a `"luna-negra"` y que la presencia cae a offline tras 30s.
+>    pasa de `"mock"` a `"luna-negra"` y que la presencia cae a offline tras 20s.
 
 
 STACK/40 ya integra a Luna Negra como **escrow de apuestas** (`/api/v1/bets/*`),
@@ -105,8 +105,15 @@ El juego avisa, cada ~10 s, que el usuario tiene el juego abierto o está en una
 ```
 
 `status`: `"in-game"` (dentro de una sala) o `"online"` (juego abierto, sin sala).
-`roomId` puede ser `null`. Respuesta `200 { "ok": true }`. Idealmente la presencia
-expira sola (TTL ~30 s) para que "offline" sea automático al cerrar el juego.
+`roomId` puede ser `null`. Respuesta `200 { "ok": true }`.
+
+> **TTL de 20 s (importante para evitar falsos positivos).** El juego late cada
+> ~10 s **solo mientras el jugador tiene la pestaña visible en primer plano**: si
+> minimiza, cambia de app o cierra el juego, **deja de latir**. Para que la
+> tarjeta "Jugando Tetris" desaparezca sola, la presencia debe **caducar a los
+> 20 s** sin heartbeat. Si Luna Negra muestra al jugador como "jugando" mientras
+> haya un último heartbeat más reciente que 20 s, la presencia refleja
+> exactamente quién está realmente en el juego.
 
 ### 4) `POST /api/v1/friends/invite`  — invitar a una sala
 
@@ -162,7 +169,9 @@ detecta y deja de usar el mock automáticamente (el campo `source` pasa de
 > 2. `GET /api/v1/friends?npub=…&presence=true` — lista de amigos del usuario con
 >    su estado de presencia en nuestro juego (`in-game` / `online` / `offline`) y
 >    `roomId` actual.
-> 3. `POST /api/v1/presence` — heartbeat `{ npub, status, roomId }` con TTL ~30 s.
+> 3. `POST /api/v1/presence` — heartbeat `{ npub, status, roomId }` con **TTL 20 s**
+>    (el juego late cada ~10 s solo con la pestaña en primer plano; si no llega
+>    heartbeat en 20 s el jugador deja de figurar "jugando").
 > 4. `POST /api/v1/friends/invite` — `{ fromNpub, toNpub, roomId, inviteUrl }` que
 >    notifique al amigo (push/deep‑link) y devuelva `{ delivered: true|false }`.
 >
