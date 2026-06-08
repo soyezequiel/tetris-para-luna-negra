@@ -389,7 +389,7 @@ function handleOverlayClick(event: MouseEvent): void {
 
   if (action === 'sidebar-play') {
     if (!onlineRoom || !onlineRoomHasOtherPlayers()) {
-      startNewRun();
+      openCustomMode();
     } else {
       startOnlineRoom();
     }
@@ -3608,7 +3608,7 @@ function renderDashboardMenu(state: GameState): string {
 
 function renderDashboardCenterContent(_state: GameState): string {
   const mode = appMode;
-    if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
+  if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
     return `
       <div class="dash-hero-container">
         <div class="dash-hero-image-wrapper">
