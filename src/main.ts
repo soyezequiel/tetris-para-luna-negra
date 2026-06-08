@@ -385,7 +385,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'restart') restartCurrentRun();
   if (action === 'solo-menu') openModeMenu('soloMenu');
   if (action === 'multiplayer-menu') openOnlineMenu();
-  if (action === 'history-menu') openModeMenu('historyMenu');
+  if (action === 'history-menu') openReplayLibrary();
   if (action === 'config-menu') openModeMenu('configMenu');
   if (action === 'custom-open') openCustomMode();
   if (action === 'custom-back') goToMenu();
@@ -3053,8 +3053,9 @@ function renderLibraryPanelContent(): string {
           ${renderLibraryDetails(selectedEntry)}
         </div>
         <div class="panel-actions">
-          <button type="button" data-ui-action="library-back">Back</button>
-          <button type="button" data-ui-action="clear-history"${runHistory.length === 0 ? ' disabled' : ''}>Clear</button>
+          <button type="button" data-ui-action="library-back">Volver</button>
+          <button class="dash-action-btn accent" style="width: auto; padding: 0 14px;" type="button" data-ui-action="import-replay">Importar partida</button>
+          <button class="dash-action-btn danger" style="width: auto; padding: 0 14px;" type="button" data-ui-action="clear-history"${runHistory.length === 0 ? ' disabled' : ''}>Borrar historial</button>
         </div>
       </section>
   `;
