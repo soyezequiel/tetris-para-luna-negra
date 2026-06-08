@@ -64,7 +64,7 @@ import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBr
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LunaIdentity, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode, UpdateRoomSettingsRequest } from './online/protocol';
+import type { AttackRequest, LunaIdentity, OnlineAttack, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode, UpdateRoomSettingsRequest } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -77,20 +77,13 @@ const overlayElement = overlay;
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
-const ONLINE_ROOM_MATCH_FILTERS = ['all', 'battle', 'royale', 'duel', 'league', 'quickPlay', 'sprintRace', 'custom'] as const;
-const ONLINE_ROOM_RANK_FILTERS = ['all', 'casual', 'ranked'] as const;
-const ONLINE_ROOM_MODE_OPTIONS = ['battle', 'royale', 'sprintRace', 'custom'] as const;
 const ONLINE_POLL_MS = 1000;
 const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_PEER_BROADCAST_MS = 100;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
-const ONLINE_MATCHMAKING_HEARTBEAT_MS = 5000;
 const GAME_FRAME_MS = 1000 / 60;
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
-type OnlineRoomMatchFilter = typeof ONLINE_ROOM_MATCH_FILTERS[number];
-type OnlineRoomRankFilter = typeof ONLINE_ROOM_RANK_FILTERS[number];
-type ConfigurableOnlineMatchType = typeof ONLINE_ROOM_MODE_OPTIONS[number];
 type RunKind = 'standard' | 'custom' | 'online';
 type SequencedOnlineInput = GameInput & { sequence: number };
 
@@ -139,15 +132,8 @@ let onlineJoinCode = '';
 let onlineStakeInput = '';
 let onlineBetBusy = false;
 let onlineLastBetPollAt = 0;
-let onlineRoomMode: OnlineRoomMode = 'battle';
-let onlineRoomMatchFilter: OnlineRoomMatchFilter = 'all';
-let onlineRoomRankFilter: OnlineRoomRankFilter = 'all';
 let onlineRoom: OnlineRoom | null = null;
 let onlinePublicRooms: OnlineRoomSummary[] = [];
-let onlineMatchmakingTicket: MatchmakingTicket | null = null;
-let onlineProfile: OnlineProfile | null = null;
-let onlineRecentResults: OnlineMatchResult[] = [];
-let quickPlayLeaderboard: QuickPlayLeaderboardEntry[] = [];
 let localRunError: string | null = null;
 let onlineError: string | null = null;
 let onlineBusy = false;
@@ -155,7 +141,6 @@ let onlinePollInFlight = false;
 let onlineProgressInFlight = false;
 let onlineLastPollAt = 0;
 let onlineLastProgressAt = 0;
-let onlineLastMatchmakingHeartbeatAt = 0;
 let onlineLastPeerBroadcastAt = 0;
 let onlineServerOffsetMs = 0;
 let onlineResultSubmitted = false;
@@ -248,7 +233,6 @@ function loop(): void {
     playAcceptedMoveSound(beforeTickState.active, state.active, gameInputs.map((event) => event.action));
   }
 
-  syncMatchmakingQueue();
   syncOnline(state);
   renderer.render(state);
   renderOverlay(state);
@@ -400,7 +384,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'start') startNewRun();
   if (action === 'restart') restartCurrentRun();
   if (action === 'solo-menu') openModeMenu('soloMenu');
-  if (action === 'multiplayer-menu') openModeMenu('multiplayerMenu');
+  if (action === 'multiplayer-menu') openOnlineMenu();
   if (action === 'history-menu') openModeMenu('historyMenu');
   if (action === 'config-menu') openModeMenu('configMenu');
   if (action === 'custom-open') openCustomMode();
@@ -425,20 +409,12 @@ function handleOverlayClick(event: MouseEvent): void {
       customSettings = saveCustomSettings(updateCustomSettingByDelta(customSettings, setting, delta));
     }
   }
-  if (action === 'online-open') openOnlineMenu('battle');
-  if (action === 'online-custom-open') openOnlineMenu('custom');
+  if (action === 'online-open') openOnlineMenu();
+  if (action === 'online-custom-open') openOnlineMenu();
   if (action === 'online-refresh') refreshPublicRooms();
-  if (action === 'online-room-match-filter') setOnlineRoomMatchFilter(control.dataset.matchFilter);
-  if (action === 'online-room-rank-filter') setOnlineRoomRankFilter(control.dataset.rankFilter);
-  if (action === 'online-room-mode') setOnlineRoomMode(control.dataset.matchType);
-  if (action === 'online-quick-duel') enqueueOnlineMatchmaking('quickDuel');
-  if (action === 'online-league') enqueueOnlineMatchmaking('league');
-  if (action === 'online-quick-play') enterOnlineQuickPlay();
-  if (action === 'online-cancel-matchmaking') leaveQuickDuelQueue();
+  if (action === 'online-room-visibility') setOnlineRoomVisibility(control.dataset.visibility);
   if (action === 'online-create-public') createOnlineRoom('public');
   if (action === 'online-create-private') createOnlineRoom('private');
-  if (action === 'online-create-royale-public') createOnlineRoom('public', 'royale');
-  if (action === 'online-create-sprint-public') createOnlineRoom('public', 'sprintRace');
   if (action === 'online-join') joinOnlineRoom(onlineJoinCode);
   if (action === 'online-join-public') joinOnlineRoom(control.dataset.roomId ?? '');
   if (action === 'online-ready') setOnlineReady(true);
@@ -714,17 +690,14 @@ function openReplayLibrary(): void {
   input.releaseAll();
 }
 
-function openOnlineMenu(mode: OnlineRoomMode = 'battle'): void {
+function openOnlineMenu(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
-  onlineRoomMode = mode;
   onlineError = null;
   appMode = 'onlineMenu';
   settingsReturnMode = 'menu';
   input.releaseAll();
   refreshPublicRooms();
-  refreshOnlineProfile();
-  refreshQuickPlayLeaderboard();
 }
 
 async function bootstrapLunaNegraEntry(): Promise<void> {
@@ -799,8 +772,6 @@ async function bootstrapOnlineStartup(): Promise<void> {
     return;
   }
   void refreshPublicRooms();
-  void refreshOnlineProfile();
-  void refreshQuickPlayLeaderboard();
 }
 
 // Login automático. El juego se abre desde Luna Negra con el entitlement JWT en
@@ -850,7 +821,7 @@ function applyLunaIdentity(identity: LunaIdentity): void {
 }
 
 async function bootstrapJoinLink(roomId: string): Promise<void> {
-  openOnlineMenu('battle');
+  openOnlineMenu();
   await joinOnlineRoom(roomId);
   const url = new URL(window.location.href);
   url.searchParams.delete('join');
@@ -1069,82 +1040,29 @@ async function refreshPublicRooms(): Promise<void> {
   }
 }
 
-async function refreshOnlineProfile(): Promise<void> {
-  try {
-    const response = await onlineClient.getProfileState(onlinePlayer.id, onlineName);
-    syncOnlineClock(response.serverNowMs);
-    onlineProfile = response.profile;
-    onlineRecentResults = response.recentResults;
-  } catch {
-    onlineProfile = null;
-    onlineRecentResults = [];
-  }
-}
-
-async function refreshQuickPlayLeaderboard(): Promise<void> {
-  try {
-    const response = await onlineClient.getQuickPlayLeaderboard();
-    syncOnlineClock(response.serverNowMs);
-    quickPlayLeaderboard = response.entries;
-  } catch {
-    quickPlayLeaderboard = [];
-  }
-}
-
-async function enterOnlineQuickPlay(): Promise<void> {
-  if (onlineBusy) return;
-  onlineBusy = true;
-  try {
-    onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
-    const response = await onlineClient.enterQuickPlay({
-      playerId: onlinePlayer.id,
-      name: onlinePlayer.name,
-      avatarUrl: onlinePlayer.avatarUrl,
-    });
-    syncOnlineClock(response.serverNowMs);
-    quickPlayLeaderboard = response.leaderboard;
-    enterOnlineRoom(response.room, response.room.status === 'playing' ? 'onlineCountdown' : 'roomLobby');
-  } catch (error) {
-    onlineError = onlineErrorText(error);
-  } finally {
-    onlineBusy = false;
-  }
-}
-
-function setOnlineRoomMatchFilter(value: string | undefined): void {
-  if (!isOnlineRoomMatchFilter(value)) return;
-  onlineRoomMatchFilter = value;
-  refreshPublicRooms();
-}
-
-function setOnlineRoomRankFilter(value: string | undefined): void {
-  if (!isOnlineRoomRankFilter(value)) return;
-  onlineRoomRankFilter = value;
-  refreshPublicRooms();
-}
-
 function publicRoomFilters(): PublicRoomsFilters {
   return {
-    matchType: onlineRoomMatchFilter === 'all' ? undefined : onlineRoomMatchFilter,
-    ranked: onlineRoomRankFilter === 'all' ? undefined : onlineRoomRankFilter === 'ranked',
+    matchType: 'custom',
   };
 }
 
-async function enqueueOnlineMatchmaking(queue: MatchmakingQueue): Promise<void> {
-  if (onlineBusy) return;
+async function setOnlineRoomVisibility(value: string | undefined): Promise<void> {
+  if (!onlineRoom || onlineBusy) return;
+  const visibility = value === 'public' ? 'public' : value === 'private' ? 'private' : null;
+  if (!visibility || visibility === onlineRoom.visibility) return;
+  if (onlineRoom.hostPlayerId !== onlinePlayer.id) {
+    onlineError = 'Solo el host puede cambiar la visibilidad de la sala.';
+    return;
+  }
+  if (onlineRoom.status !== 'lobby') {
+    onlineError = 'La visibilidad solo se puede cambiar en el lobby.';
+    return;
+  }
   onlineBusy = true;
   try {
-    onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
-    const response = await onlineClient.enqueueMatchmaking({
-      queue,
-      playerId: onlinePlayer.id,
-      name: onlinePlayer.name,
-      avatarUrl: onlinePlayer.avatarUrl,
-    });
+    const response = await onlineClient.updateRoomSettings(createOnlineRoomSettingsRequest(visibility));
     syncOnlineClock(response.serverNowMs);
-    onlineMatchmakingTicket = response.ticket;
-    onlineLastMatchmakingHeartbeatAt = performance.now();
-    if (response.room) enterOnlineRoom(response.room, response.room.status === 'countdown' ? 'onlineCountdown' : 'roomLobby');
+    enterOnlineRoom(response.room, 'roomLobby');
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -1153,33 +1071,13 @@ async function enqueueOnlineMatchmaking(queue: MatchmakingQueue): Promise<void> 
   }
 }
 
-async function leaveQuickDuelQueue(): Promise<void> {
-  if (!onlineMatchmakingTicket || onlineBusy) return;
-  onlineBusy = true;
-  try {
-    const response = await onlineClient.leaveMatchmaking({
-      ticketId: onlineMatchmakingTicket.id,
-      playerId: onlinePlayer.id,
-    });
-    syncOnlineClock(response.serverNowMs);
-    onlineMatchmakingTicket = response.ticket.status === 'queued' ? response.ticket : null;
-    onlineError = null;
-  } catch (error) {
-    onlineError = onlineErrorText(error);
-  } finally {
-    onlineBusy = false;
-  }
-}
-
-async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: OnlineMatchType): Promise<void> {
+async function createOnlineRoom(visibility: RoomVisibility): Promise<void> {
   if (onlineBusy) return;
   onlineBusy = true;
   try {
     // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
     await leaveCurrentRoomBeforeNew();
     onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
-    const matchType = explicitMatchType ?? (onlineRoomMode === 'custom' ? 'custom' : 'battle');
-    const mode: OnlineRoomMode = matchType === 'custom' ? 'custom' : 'battle';
     const response = await onlineClient.createRoom({
       playerId: onlinePlayer.id,
       npub: lunaIdentity?.npub ?? null,
@@ -1187,9 +1085,9 @@ async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: 
       name: onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
       visibility,
-      mode,
-      matchType,
-      rules: matchType === 'custom' ? onlineCustomRulesFromSettings() : battleRulesFromSettings(inputSettings),
+      mode: 'custom',
+      matchType: 'custom',
+      rules: onlineCustomRulesFromSettings(),
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
@@ -1201,38 +1099,14 @@ async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: 
   }
 }
 
-async function setOnlineRoomMode(value: string | undefined): Promise<void> {
-  if (!onlineRoom || onlineBusy) return;
-  const matchType = parseConfigurableOnlineMatchType(value);
-  if (!matchType) return;
-  if (onlineRoom.hostPlayerId !== onlinePlayer.id) {
-    onlineError = 'Solo el host puede cambiar el modo de la sala.';
-    return;
-  }
-  if (onlineRoom.status !== 'lobby') {
-    onlineError = 'El modo solo se puede cambiar en el lobby.';
-    return;
-  }
-  onlineBusy = true;
-  try {
-    const response = await onlineClient.updateRoomSettings(createOnlineRoomSettingsRequest(matchType));
-    syncOnlineClock(response.serverNowMs);
-    enterOnlineRoom(response.room, 'roomLobby');
-  } catch (error) {
-    onlineError = onlineErrorText(error);
-  } finally {
-    onlineBusy = false;
-  }
-}
-
-function createOnlineRoomSettingsRequest(matchType: ConfigurableOnlineMatchType): UpdateRoomSettingsRequest {
-  const mode: OnlineRoomMode = matchType === 'custom' ? 'custom' : 'battle';
+function createOnlineRoomSettingsRequest(visibility = onlineRoom?.visibility ?? 'private'): UpdateRoomSettingsRequest {
   return {
     roomId: onlineRoom?.id ?? '',
     playerId: onlinePlayer.id,
-    matchType,
-    mode,
-    rules: matchType === 'custom' ? onlineCustomRulesFromSettings() : battleRulesFromSettings(inputSettings),
+    visibility,
+    matchType: 'custom',
+    mode: 'custom',
+    rules: onlineCustomRulesFromSettings(),
   };
 }
 
@@ -1434,7 +1308,6 @@ function resetOnlineRoomState(): void {
   onlinePeerBroadcaster?.close();
   onlinePeerBroadcaster = null;
   onlinePeerStates = new Map();
-  onlineMatchmakingTicket = null;
   onlineRoom = null;
   onlineError = null;
   onlineStakeInput = '';
@@ -1459,9 +1332,7 @@ function resetOnlineRoomState(): void {
 }
 
 function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
-  onlineMatchmakingTicket = null;
   adoptOnlineRoom(room);
-  onlineRoomMode = room.mode === 'custom' ? 'custom' : 'battle';
   syncOnlinePeers(room);
   onlineError = null;
   onlineLastPollAt = 0;
@@ -1484,7 +1355,7 @@ function adoptOnlineRoom(room: OnlineRoom): void {
 }
 
 function onlineRoundKey(room: OnlineRoom): string {
-  return room.series?.roundId ?? `seed:${room.seed}`;
+  return `seed:${room.seed}`;
 }
 
 function resetOnlineRuntimeForNextRound(): void {
@@ -1787,33 +1658,6 @@ function syncOnline(state: GameState): void {
   }
 }
 
-function syncMatchmakingQueue(): void {
-  if (!onlineMatchmakingTicket || onlineMatchmakingTicket.status !== 'queued') return;
-  const now = performance.now();
-  if (onlineBusy || now - onlineLastMatchmakingHeartbeatAt < ONLINE_MATCHMAKING_HEARTBEAT_MS) return;
-  void heartbeatQuickDuelQueue();
-}
-
-async function heartbeatQuickDuelQueue(): Promise<void> {
-  if (!onlineMatchmakingTicket || onlineMatchmakingTicket.status !== 'queued') return;
-  onlineBusy = true;
-  onlineLastMatchmakingHeartbeatAt = performance.now();
-  try {
-    const response = await onlineClient.heartbeatMatchmaking({
-      ticketId: onlineMatchmakingTicket.id,
-      playerId: onlinePlayer.id,
-    });
-    syncOnlineClock(response.serverNowMs);
-    onlineMatchmakingTicket = response.ticket.status === 'queued' ? response.ticket : null;
-    if (response.room) enterOnlineRoom(response.room, response.room.status === 'countdown' ? 'onlineCountdown' : 'roomLobby');
-    onlineError = null;
-  } catch (error) {
-    onlineError = onlineErrorText(error);
-  } finally {
-    onlineBusy = false;
-  }
-}
-
 function shouldPollOnline(now: number): boolean {
   if (onlinePollInFlight) return false;
   if (!['menu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return false;
@@ -1973,7 +1817,6 @@ async function postOnlineElimination(state: GameState): Promise<void> {
 
 async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>, onFailure?: () => void): Promise<void> {
   if (!onlineRoom || !isOnlineHost()) return;
-  const previousRoundId = onlineActiveRoundId;
   const requestSeed = report.seed;
   onlineHostCommittedEliminations.add(report.playerId);
   try {
@@ -1995,8 +1838,7 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
-    const roundChanged = previousRoundId !== null && response.room.series?.roundId !== previousRoundId;
-    if (response.room.status === 'finished' || (!roundChanged && report.playerId === onlinePlayer.id)) appMode = 'onlineResults';
+    if (response.room.status === 'finished' || report.playerId === onlinePlayer.id) appMode = 'onlineResults';
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -2282,7 +2124,6 @@ function eagerRefreshBetIfPending(): void {
 
 function syncOnlineBackground(): void {
   if (!document.hidden) return;
-  syncMatchmakingQueue();
   if (!onlineRoom) return;
   if (!['roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return;
 
@@ -2435,11 +2276,9 @@ function renderScreenOverlay(state: GameState): string {
     return renderPanel({
       eyebrow: 'MULTI JUGADOR',
       title: 'Multijugador',
-      meta: 'Matchmaking y partidas rápidas. La sala vive siempre en el panel lateral.',
+      meta: 'Crea una sala custom o unite por codigo para jugar con amigos.',
       actions: [
-        ['online-quick-duel', 'Quick Duel'],
-        ['online-league', 'League'],
-        ['online-quick-play', 'Quick Play'],
+        ['online-open', 'Salas custom'],
         ['main-menu', 'Volver'],
       ],
       actionsClass: 'mode-menu-actions',
@@ -2600,8 +2439,7 @@ function renderLobbyShell(main: string): string {
 }
 
 function renderOnlineMenuOverlay(): string {
-  const modeLabel = roomModeLabel(onlineRoomMode);
-  const matchmakingStatus = renderMatchmakingStatus();
+  const modeLabel = 'Custom';
   const publicRooms = onlinePublicRooms.length === 0
     ? '<div class="online-empty">Todavía no hay salas públicas. Creá una.</div>'
     : onlinePublicRooms.map((room) => `
@@ -2609,7 +2447,7 @@ function renderOnlineMenuOverlay(): string {
         ${renderOnlineAvatar({ name: room.hostName, avatarUrl: room.hostAvatarUrl })}
         <div class="cs2-room-row-info">
           <strong>${escapeHtml(room.id)}</strong>
-          <span>${escapeHtml(room.hostName)} · ${escapeHtml(matchTypeLabel(room.matchType))} · ${room.playerCount} jugador${room.playerCount === 1 ? '' : 'es'} · ${escapeHtml(roomStatusLabel(room.status))}${room.ranked ? ' · ranked' : ''}</span>
+          <span>${escapeHtml(room.hostName)} · ${room.playerCount} jugador${room.playerCount === 1 ? '' : 'es'} · ${escapeHtml(roomStatusLabel(room.status))}</span>
         </div>
         <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>
       </article>
@@ -2624,7 +2462,6 @@ function renderOnlineMenuOverlay(): string {
     </header>
     ${renderOnlineError()}
     ${renderLunaIdentityBadge()}
-    ${renderOnlineProfileSummary()}
     <section class="cs2-card">
       <label class="online-field">
         <span>Tu nombre</span>
@@ -2633,13 +2470,7 @@ function renderOnlineMenuOverlay(): string {
       <div class="cs2-play-actions">
         <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
         <button class="cs2-btn" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Sala privada</button>
-        <button class="cs2-btn" type="button" data-ui-action="online-quick-duel"${onlineBusy || onlineMatchmakingTicket ? ' disabled' : ''}>Quick Duel</button>
-        <button class="cs2-btn" type="button" data-ui-action="online-league"${onlineBusy || onlineMatchmakingTicket ? ' disabled' : ''}>League</button>
-        <button class="cs2-btn" type="button" data-ui-action="online-quick-play"${onlineBusy ? ' disabled' : ''}>Quick Play</button>
-        <button class="cs2-btn" type="button" data-ui-action="online-create-royale-public"${onlineBusy ? ' disabled' : ''}>Royale</button>
-        <button class="cs2-btn" type="button" data-ui-action="online-create-sprint-public"${onlineBusy ? ' disabled' : ''}>Sprint Race</button>
       </div>
-      ${matchmakingStatus}
       <div class="online-join-row">
         <label class="online-field">
           <span>Código de sala</span>
@@ -2654,22 +2485,8 @@ function renderOnlineMenuOverlay(): string {
         <button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Refrescar</button>
       </div>
       <div class="online-filters" aria-label="Filtros de salas">
-        <div>
-          ${ONLINE_ROOM_MATCH_FILTERS.map((filter) => `
-            <button class="${filter === onlineRoomMatchFilter ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-match-filter" data-match-filter="${filter}">
-              ${escapeHtml(filter === 'all' ? 'Todas' : matchTypeLabel(filter))}
-            </button>
-          `).join('')}
-        </div>
-        <div>
-          ${ONLINE_ROOM_RANK_FILTERS.map((filter) => `
-            <button class="${filter === onlineRoomRankFilter ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-rank-filter" data-rank-filter="${filter}">
-              ${escapeHtml(rankFilterLabel(filter))}
-            </button>
-          `).join('')}
-        </div>
+        <span>Solo salas custom</span>
       </div>
-      ${renderQuickPlayLeaderboard()}
       <div class="cs2-room-list">${publicRooms}</div>
     </section>
   `;
@@ -2734,7 +2551,7 @@ function renderOnlineLobbyOverlay(): string {
     <p class="cs2-subtitle">${host ? 'Sos el host.' : 'Esperando al host.'} ${escapeHtml(modeLabel)}: sobreviví, mandá garbage y quedá último en pie.</p>
     ${renderOnlineError()}
     ${renderOnlineSeriesStatus()}
-    ${host && onlineRoom.status === 'lobby' ? renderPersistentRoomModeSelector() : ''}
+    ${host && onlineRoom.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : ''}
     <section class="cs2-card cs2-team">
       <div class="cs2-card-head"><span>Jugadores</span><span class="cs2-friends-hint">Sala creada</span></div>
       <div class="cs2-team-grid">${slots}</div>
@@ -2887,101 +2704,17 @@ function onlineAvatarInitials(name: string): string {
 }
 
 function renderOnlineSeriesStatus(): string {
-  if (!onlineRoom?.series) return '';
-  const series = onlineRoom.series;
-  const score = series.scores
-    .map((scoreEntry) => {
-      const player = onlineRoom?.players.find((candidate) => candidate.id === scoreEntry.playerId);
-      return `${player?.name ?? scoreEntry.playerId}: ${scoreEntry.wins}`;
-    })
-    .join(' / ');
-  return `
-    <div class="online-series-status">
-      <span>Round ${series.currentRound} - FT${series.firstTo}</span>
-      <strong>${escapeHtml(score || '0 / 0')}</strong>
-    </div>
-  `;
+  return '';
 }
 
 function roomModeLabel(mode: OnlineRoomMode | undefined): string {
-  return mode === 'custom' ? 'Custom room' : 'Battle room';
+  void mode;
+  return 'Custom room';
 }
 
-function matchTypeLabel(matchType: OnlineMatchType | OnlineRoomMatchFilter): string {
-  if (matchType === 'duel') return 'Duel';
-  if (matchType === 'league') return 'League';
+function matchTypeLabel(matchType: OnlineMatchType): string {
   if (matchType === 'custom') return 'Custom';
-  if (matchType === 'quickPlay') return 'Quick Play';
-  if (matchType === 'sprintRace') return 'Sprint Race';
-  if (matchType === 'royale') return 'Royale';
-  return 'Battle';
-}
-
-function rankFilterLabel(filter: OnlineRoomRankFilter): string {
-  if (filter === 'ranked') return 'Ranked';
-  if (filter === 'casual') return 'Casual';
-  return 'All';
-}
-
-function renderMatchmakingStatus(): string {
-  if (!onlineMatchmakingTicket) return '';
-  if (onlineMatchmakingTicket.status !== 'queued') return '';
-  const queueLabel = onlineMatchmakingTicket.queue === 'league' ? 'League' : 'Quick Duel';
-  const rating = onlineMatchmakingTicket.rating === null ? '' : ` - ${onlineMatchmakingTicket.rating}`;
-  return `
-    <div class="online-matchmaking">
-      <div>
-        <strong>${escapeHtml(queueLabel)}</strong>
-        <span>Searching in ${escapeHtml(onlineMatchmakingTicket.region)}${escapeHtml(rating)}</span>
-      </div>
-      <button type="button" data-ui-action="online-cancel-matchmaking"${onlineBusy ? ' disabled' : ''}>Cancel</button>
-    </div>
-  `;
-}
-
-function renderOnlineProfileSummary(): string {
-  if (!onlineProfile) return '';
-  const latest = onlineRecentResults[0];
-  const latestParticipant = latest?.participants.find((participant) => participant.playerId === onlineProfile?.playerId);
-  const latestText = latest && latestParticipant
-    ? `${matchTypeLabel(latest.matchType)} ${latestParticipant.result} #${latestParticipant.placement}`
-    : 'No matches yet';
-  return `
-    <div class="online-profile-summary">
-      <div>
-        <span>League rating</span>
-        <strong>${onlineProfile.rating.value}</strong>
-      </div>
-      <div>
-        <span>League record</span>
-        <strong>${onlineProfile.leagueStats.wins}-${onlineProfile.leagueStats.losses}</strong>
-      </div>
-      <div>
-        <span>Latest</span>
-        <strong>${escapeHtml(latestText)}</strong>
-      </div>
-    </div>
-  `;
-}
-
-function renderQuickPlayLeaderboard(): string {
-  if (quickPlayLeaderboard.length === 0) return '';
-  return `
-    <div class="quickplay-leaderboard">
-      <div class="quickplay-leaderboard-head">
-        <span>Quick Play weekly</span>
-        <strong>${escapeHtml(quickPlayLeaderboard[0]?.weekId ?? '')}</strong>
-      </div>
-      ${quickPlayLeaderboard.slice(0, 5).map((entry, index) => `
-        <div class="quickplay-leaderboard-row">
-          <span>${index + 1}</span>
-          <strong>${escapeHtml(entry.displayName)}</strong>
-          <em>${entry.score}</em>
-          <b>${entry.koCount} KO</b>
-        </div>
-      `).join('')}
-    </div>
-  `;
+  return 'Custom';
 }
 
 function targetingModeLabel(mode: TargetingMode): string {
@@ -3783,7 +3516,6 @@ function renderEmptyPersistentRoomPanel(): string {
         </label>
         <button class="cs2-btn" type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse</button>
       </div>
-      ${renderMatchmakingStatus()}
       <div class="persistent-room-public">
         <div class="cs2-card-head"><span>Públicas</span></div>
         <div class="persistent-room-list">${publicRooms}</div>
@@ -3799,7 +3531,7 @@ function renderActivePersistentRoomPanel(): string {
   const allReady = onlineRoom.players.length > 0 && onlineRoom.players.every((candidate) => candidate.ready);
   const betReady = !onlineRoom.bet || onlineRoom.bet.status === 'funded';
   const readyCount = onlineRoom.players.filter((candidate) => candidate.ready).length;
-  const modeActions = host && onlineRoom.status === 'lobby' ? renderPersistentRoomModeSelector() : '';
+  const visibilityActions = host && onlineRoom.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : '';
   return `
     <aside class="persistent-room-panel" aria-label="Sala actual">
       <div class="persistent-room-head">
@@ -3811,7 +3543,7 @@ function renderActivePersistentRoomPanel(): string {
       </div>
       <p class="persistent-room-status">${escapeHtml(matchTypeLabel(onlineRoom.matchType))} · ${escapeHtml(roomStatusLabel(onlineRoom.status))}</p>
       ${renderOnlineError()}
-      ${modeActions}
+      ${visibilityActions}
       <div class="persistent-room-players">
         ${onlineRoom.players.map((candidate) => renderLobbyPlayer(candidate, host)).join('')}
       </div>
@@ -3827,15 +3559,16 @@ function renderActivePersistentRoomPanel(): string {
   `;
 }
 
-function renderPersistentRoomModeSelector(): string {
+function renderPersistentRoomVisibilityToggle(): string {
   if (!onlineRoom) return '';
   return `
-    <div class="persistent-room-modes" aria-label="Modo de sala">
-      ${ONLINE_ROOM_MODE_OPTIONS.map((matchType) => `
-        <button class="${onlineRoom?.matchType === matchType ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-mode" data-match-type="${matchType}"${onlineBusy ? ' disabled' : ''}>
-          ${escapeHtml(matchTypeLabel(matchType))}
-        </button>
-      `).join('')}
+    <div class="persistent-room-modes" aria-label="Visibilidad de sala">
+      <button class="${onlineRoom.visibility === 'private' ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="private"${onlineBusy ? ' disabled' : ''}>
+        Privada
+      </button>
+      <button class="${onlineRoom.visibility === 'public' ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="public"${onlineBusy ? ' disabled' : ''}>
+        Publica
+      </button>
     </div>
   `;
 }
@@ -3977,11 +3710,6 @@ function onlineRulesFromRoom(room = onlineRoom): GameRules {
 function parseControlAction(value: string | undefined): ControlAction | null {
   if (!value) return null;
   return CONTROL_ACTIONS.includes(value as ControlAction) ? value as ControlAction : null;
-}
-
-function parseConfigurableOnlineMatchType(value: string | undefined): ConfigurableOnlineMatchType | null {
-  if (!value) return null;
-  return ONLINE_ROOM_MODE_OPTIONS.includes(value as ConfigurableOnlineMatchType) ? value as ConfigurableOnlineMatchType : null;
 }
 
 function onlineRoomHasOtherPlayers(): boolean {
@@ -4130,14 +3858,6 @@ function currentOnlinePlayer(): OnlinePlayer | null {
 
 function parseTargetingMode(value: string | undefined): TargetingMode | null {
   return TARGETING_MODES.includes(value as TargetingMode) ? value as TargetingMode : null;
-}
-
-function isOnlineRoomMatchFilter(value: string | undefined): value is OnlineRoomMatchFilter {
-  return ONLINE_ROOM_MATCH_FILTERS.includes(value as OnlineRoomMatchFilter);
-}
-
-function isOnlineRoomRankFilter(value: string | undefined): value is OnlineRoomRankFilter {
-  return ONLINE_ROOM_RANK_FILTERS.includes(value as OnlineRoomRankFilter);
 }
 
 function prependUnique(values: string[], value: string, limit: number): string[] {

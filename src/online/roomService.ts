@@ -1,35 +1,25 @@
 import type {
   AttackRequest,
   CreateRoomRequest,
-  EnqueueMatchmakingRequest,
   EliminateRequest,
   JoinRoomRequest,
   KickPlayerRequest,
-  LeaveMatchmakingRequest,
   LeaveRoomRequest,
   LunaFriend,
   LunaNegraPlayer,
   LunaPresenceRequest,
-  MatchmakingHeartbeatRequest,
-  MatchmakingQueue,
-  MatchmakingTicket,
   OnlineAttack,
-  OnlineMatchResult,
   OnlineMatchType,
   OnlineGameSnapshot,
   OnlinePlayer,
   OnlinePeerSignal,
-  OnlineProfile,
   OnlineRoom,
   OnlineRoomMode,
   OnlineRuleset,
   OnlineRoomSummary,
-  OnlineSeriesState,
   PeerSignalRequest,
   ProgressRequest,
   PublicRoomsFilters,
-  QuickPlayEnterRequest,
-  QuickPlayLeaderboardEntry,
   ReadyRequest,
   RoomBet,
   RoomBetParticipant,
@@ -57,9 +47,6 @@ export const MAX_ATTACKS_PER_ROOM = 300;
 export const ONLINE_RULESET_VERSION = 1;
 export const TARGETING_MODES: TargetingMode[] = ['random', 'even', 'ko', 'attackers', 'leader', 'manual'];
 export const DEFAULT_ONLINE_REGION = 'gru1';
-export const MATCHMAKING_TICKET_TTL_MS = 30_000;
-export const MATCHMAKING_TTL_SECONDS = 60;
-export const QUICK_PLAY_DEFAULT_ROOM_ID = 'QPLY';
 
 /** Registro de presencia de un npub respecto a este juego (para amigos Luna Negra). */
 export interface LunaPresenceRecord {
@@ -85,18 +72,6 @@ export interface RoomStore {
   savePublicRoomIds(ids: string[], ttlSeconds?: number): Promise<void>;
   getPresenceRecords(): Promise<LunaPresenceRecord[]>;
   savePresenceRecords(records: LunaPresenceRecord[], ttlSeconds?: number): Promise<void>;
-  getMatchmakingTicket(id: string): Promise<MatchmakingTicket | null>;
-  saveMatchmakingTicket(ticket: MatchmakingTicket, ttlSeconds?: number): Promise<void>;
-  listMatchmakingTicketIds(queue: MatchmakingQueue): Promise<string[]>;
-  saveMatchmakingTicketIds(queue: MatchmakingQueue, ids: string[], ttlSeconds?: number): Promise<void>;
-  getProfile(playerId: string): Promise<OnlineProfile | null>;
-  saveProfile(profile: OnlineProfile, ttlSeconds?: number): Promise<void>;
-  getMatchResult(id: string): Promise<OnlineMatchResult | null>;
-  saveMatchResult(result: OnlineMatchResult, ttlSeconds?: number): Promise<void>;
-  listMatchResultIds(playerId: string): Promise<string[]>;
-  saveMatchResultIds(playerId: string, ids: string[], ttlSeconds?: number): Promise<void>;
-  getQuickPlayLeaderboard(weekId: string): Promise<QuickPlayLeaderboardEntry[]>;
-  saveQuickPlayLeaderboard(weekId: string, entries: QuickPlayLeaderboardEntry[], ttlSeconds?: number): Promise<void>;
 }
 
 export class OnlineRoomError extends Error {
@@ -118,8 +93,8 @@ export async function createRoom(
     ? normalizeRoomIdStrict(request.roomId)
     : await generateUniqueRoomId((candidate) => store.getRoom(candidate));
   if (await store.getRoom(id)) throw new OnlineRoomError('Room already exists.', 409);
-  const mode = normalizeRoomMode(request.mode);
-  const matchType = normalizeMatchType(request.matchType, mode);
+  const mode = normalizeRoomMode(request.mode, true);
+  const matchType = normalizeMatchType(request.matchType, mode, true);
   const ruleset = normalizeRuleset(request.ruleset, matchType, true);
   const room: OnlineRoom = {
     id,
@@ -136,7 +111,6 @@ export async function createRoom(
     startsAtServerMs: null,
     seed: randomSeed(),
     winnerPlayerId: null,
-    series: null,
     matchResultId: null,
     players: [player],
     peerSignals: [],
@@ -193,8 +167,8 @@ export async function enterLunaNegraRoom(
     name: player.name,
     avatarUrl: player.avatarUrl,
     visibility: 'private',
-    mode: 'battle',
-    matchType: 'battle',
+    mode: 'custom',
+    matchType: 'custom',
     rules: BATTLE_RULES,
   }, nowMs);
   return { room, player };
@@ -253,7 +227,6 @@ export async function startRoom(
   if (room.bet && room.bet.status !== 'funded') {
     throw new OnlineRoomError('La apuesta todavía no está fondeada por todos los jugadores.', 409);
   }
-  if (room.ruleset.objective.type === 'duelRounds') room.series = createSeriesState(room, nowMs);
   prepareRoundCountdown(room, nowMs, false);
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
@@ -268,9 +241,6 @@ export async function restartRoom(
   const room = await requireRoom(store, request.roomId);
   if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can restart.', 403);
   if (room.status !== 'finished') return room;
-  room.series = room.ruleset.objective.type === 'duelRounds'
-    ? createSeriesState(room, nowMs)
-    : null;
   room.matchResultId = null;
   prepareRoundCountdown(room, nowMs, true);
   room.updatedAtServerMs = nowMs;
@@ -290,14 +260,14 @@ export async function updateRoomSettings(
     throw new OnlineRoomError('No se puede cambiar el modo con una apuesta activa.', 409);
   }
 
-  const mode = normalizeRoomMode(request.mode ?? (request.matchType === 'custom' ? 'custom' : 'battle'));
-  const matchType = normalizeMatchType(request.matchType, mode);
+  const mode = normalizeRoomMode(request.mode, true);
+  const matchType = normalizeMatchType(request.matchType, mode, true);
   const ruleset = normalizeRuleset(request.ruleset, matchType, true);
-  room.mode = matchType === 'custom' ? 'custom' : 'battle';
+  room.visibility = normalizeVisibility(request.visibility ?? room.visibility);
+  room.mode = 'custom';
   room.matchType = matchType;
   room.ruleset = ruleset;
   room.rules = normalizeRoomRules(request.rules, room.mode, ruleset);
-  room.series = null;
   room.winnerPlayerId = null;
   room.matchResultId = null;
   room.startsAtServerMs = null;
@@ -485,7 +455,6 @@ export async function updateProgress(
   player.dangerLevel = calculateDangerLevel(player.game, player.pendingGarbage);
   player.updatedAtServerMs = nowMs;
   room.updatedAtServerMs = nowMs;
-  if (room.matchType === 'quickPlay') await updateQuickPlayLeaderboardEntry(store, room, player.id, nowMs);
   await persistRoom(store, room);
   return room;
 }
@@ -520,7 +489,6 @@ export async function submitResult(
     room.status = 'finished';
     room.winnerPlayerId = room.players.find((candidate) => candidate.status === 'won')?.id ?? null;
   }
-  if (room.status === 'finished') await persistMatchResultIfNeeded(store, room, nowMs);
   await persistRoom(store, room);
   return room;
 }
@@ -592,17 +560,8 @@ export async function eliminatePlayer(
   if (lastAttacker && lastAttacker.id !== player.id) {
     lastAttacker.koCount = normalizeNonNegativeInteger((lastAttacker.koCount ?? 0) + 1);
   }
-  if (room.matchType === 'quickPlay') {
-    await updateQuickPlayLeaderboardEntry(store, room, player.id, nowMs, true);
-    if (lastAttacker) await updateQuickPlayLeaderboardEntry(store, room, lastAttacker.id, nowMs);
-    ensureQuickPlayHost(room);
-    room.updatedAtServerMs = nowMs;
-    await persistRoom(store, room);
-    return room;
-  }
   finishRoomIfOnlyOneAlive(room, nowMs);
   room.updatedAtServerMs = nowMs;
-  if (room.status === 'finished') await persistMatchResultIfNeeded(store, room, nowMs);
   await persistRoom(store, room);
   return room;
 }
@@ -625,164 +584,6 @@ export async function listPublicRooms(
   return visible
     .map(roomSummary)
     .sort((a, b) => b.createdAtServerMs - a.createdAtServerMs);
-}
-
-export async function enqueueMatchmaking(
-  store: RoomStore,
-  request: EnqueueMatchmakingRequest,
-  nowMs = Date.now(),
-): Promise<{ ticket: MatchmakingTicket; room: OnlineRoom | null }> {
-  const queue = normalizeMatchmakingQueue(request.queue);
-  const playerId = normalizePlayerId(request.playerId);
-  const name = normalizePlayerName(request.name);
-  const region = normalizeRegion(request.region);
-  const profile = queue === 'league' ? await loadOrCreateProfile(store, playerId, name, nowMs) : null;
-  const rating = profile?.rating.value ?? null;
-  await cleanupMatchmakingQueue(store, queue, nowMs);
-  const queuedTickets = await loadQueuedMatchmakingTickets(store, queue, nowMs);
-  const opponent = queuedTickets.find((ticket) => ticket.playerId !== playerId && ticketsAreCompatible(ticket, queue, region, rating));
-  const ticket = createMatchmakingTicket(queue, playerId, name, request.avatarUrl, region, rating, nowMs);
-
-  if (!opponent) {
-    await persistMatchmakingTicket(store, ticket);
-    return { ticket, room: null };
-  }
-
-  const room = await createMatchedRoom(store, opponent, ticket, nowMs);
-  opponent.status = 'matched';
-  opponent.roomId = room.id;
-  opponent.updatedAtServerMs = nowMs;
-  ticket.status = 'matched';
-  ticket.roomId = room.id;
-  await persistMatchmakingTicket(store, opponent);
-  await persistMatchmakingTicket(store, ticket);
-  return { ticket, room };
-}
-
-export async function heartbeatMatchmaking(
-  store: RoomStore,
-  request: MatchmakingHeartbeatRequest,
-  nowMs = Date.now(),
-): Promise<{ ticket: MatchmakingTicket; room: OnlineRoom | null }> {
-  const ticket = await requireMatchmakingTicket(store, request.ticketId, request.playerId, nowMs);
-  if (ticket.status === 'queued') {
-    ticket.updatedAtServerMs = nowMs;
-    ticket.expiresAtServerMs = nowMs + MATCHMAKING_TICKET_TTL_MS;
-    await persistMatchmakingTicket(store, ticket);
-  }
-  const room = ticket.roomId ? await store.getRoom(ticket.roomId).then((value) => value ? normalizeRoomShape(value) : null) : null;
-  return { ticket, room };
-}
-
-export async function leaveMatchmaking(
-  store: RoomStore,
-  request: LeaveMatchmakingRequest,
-  nowMs = Date.now(),
-): Promise<{ ticket: MatchmakingTicket; room: OnlineRoom | null }> {
-  const ticket = await requireMatchmakingTicket(store, request.ticketId, request.playerId, nowMs, false);
-  ticket.status = ticket.status === 'matched' ? 'matched' : 'left';
-  ticket.updatedAtServerMs = nowMs;
-  await persistMatchmakingTicket(store, ticket);
-  const room = ticket.roomId ? await store.getRoom(ticket.roomId).then((value) => value ? normalizeRoomShape(value) : null) : null;
-  return { ticket, room };
-}
-
-export async function getMatchmakingTicket(
-  store: RoomStore,
-  ticketId: string,
-  playerId: string,
-  nowMs = Date.now(),
-): Promise<{ ticket: MatchmakingTicket; room: OnlineRoom | null }> {
-  const ticket = await requireMatchmakingTicket(store, ticketId, playerId, nowMs, false);
-  const room = ticket.roomId ? await store.getRoom(ticket.roomId).then((value) => value ? normalizeRoomShape(value) : null) : null;
-  return { ticket, room };
-}
-
-export async function getOnlineProfileState(
-  store: RoomStore,
-  playerId: string,
-  displayName = 'Player',
-  nowMs = Date.now(),
-): Promise<{ profile: OnlineProfile; recentResults: OnlineMatchResult[] }> {
-  const normalizedPlayerId = normalizePlayerId(playerId);
-  const profile = await loadOrCreateProfile(store, normalizedPlayerId, displayName, nowMs);
-  profile.displayName = normalizePlayerName(displayName);
-  profile.updatedAtServerMs = nowMs;
-  await store.saveProfile(profile);
-  const resultIds = await store.listMatchResultIds(normalizedPlayerId);
-  const recentResults = (await Promise.all(resultIds.slice(0, 10).map((id) => store.getMatchResult(id))))
-    .filter((result): result is OnlineMatchResult => result !== null);
-  return { profile, recentResults };
-}
-
-export async function enterQuickPlay(
-  store: RoomStore,
-  request: QuickPlayEnterRequest,
-  nowMs = Date.now(),
-): Promise<{ room: OnlineRoom; leaderboard: QuickPlayLeaderboardEntry[] }> {
-  const region = normalizeRegion(request.region);
-  const roomId = quickPlayRoomId(region);
-  const player = createPlayer(request.playerId, request.name, nowMs, request.avatarUrl);
-  player.ready = true;
-  player.status = 'ready';
-  let room = await store.getRoom(roomId).then((value) => value ? normalizeRoomShape(value) : null);
-
-  if (!room || room.matchType !== 'quickPlay') {
-    const ruleset = defaultRuleset('quickPlay');
-    room = {
-      id: roomId,
-      visibility: 'public',
-      mode: 'battle',
-      matchType: 'quickPlay',
-      region,
-      ruleset,
-      rules: normalizeRoomRules(undefined, 'battle', ruleset),
-      status: 'countdown',
-      hostPlayerId: player.id,
-      createdAtServerMs: nowMs,
-      updatedAtServerMs: nowMs,
-      startsAtServerMs: nowMs + ROOM_START_DELAY_MS,
-      seed: randomSeed(),
-      winnerPlayerId: null,
-      series: null,
-      matchResultId: null,
-      players: [player],
-      peerSignals: [],
-      attacks: [],
-      bet: null,
-      lunaGameId: null,
-    };
-  } else {
-    const existing = room.players.find((candidate) => candidate.id === player.id);
-    if (existing) resetQuickPlayPlayer(existing, player.name, nowMs, request.avatarUrl);
-    else room.players.push(player);
-    if (room.status === 'finished' || room.status === 'lobby') {
-      room.status = 'countdown';
-      room.startsAtServerMs = nowMs + ROOM_START_DELAY_MS;
-      room.seed = randomSeed();
-      room.winnerPlayerId = null;
-      room.matchResultId = null;
-      room.attacks = [];
-    }
-    ensureQuickPlayHost(room);
-    room.updatedAtServerMs = nowMs;
-  }
-
-  await persistRoom(store, room);
-  await updateQuickPlayLeaderboardEntry(store, room, player.id, nowMs);
-  return {
-    room,
-    leaderboard: await getQuickPlayLeaderboard(store, weeklyLeaderboardId(nowMs)),
-  };
-}
-
-export async function getQuickPlayLeaderboard(
-  store: RoomStore,
-  weekId = weeklyLeaderboardId(Date.now()),
-): Promise<QuickPlayLeaderboardEntry[]> {
-  return (await store.getQuickPlayLeaderboard(weekId))
-    .sort((a, b) => b.score - a.score || b.koCount - a.koCount || b.lines - a.lines || a.displayName.localeCompare(b.displayName))
-    .slice(0, 20);
 }
 
 export async function getRoomState(store: RoomStore, roomId: string, nowMs = Date.now()): Promise<OnlineRoom> {
@@ -846,244 +647,6 @@ function calculateDangerLevel(game: OnlineGameSnapshot | null, pendingGarbage: n
   return Math.min(10, Math.max(heightDanger, pendingDanger));
 }
 
-async function persistMatchResultIfNeeded(store: RoomStore, room: OnlineRoom, nowMs: number): Promise<void> {
-  if (room.matchResultId) return;
-  const ranked = room.ruleset.ranked === true;
-  const rankedLeagueSeries = ranked
-    && room.matchType === 'league'
-    && room.series?.objective === 'duelRounds'
-    && room.series.completed;
-  const rankedProfiles = rankedLeagueSeries
-    ? await loadProfilesForRoom(store, room, nowMs)
-    : new Map<string, OnlineProfile>();
-  const ratingBefore = new Map<string, number>();
-  const ratingAfter = new Map<string, number>();
-
-  if (rankedLeagueSeries && room.players.length === 2 && room.winnerPlayerId) {
-    for (const player of room.players) {
-      const profile = rankedProfiles.get(player.id) ?? createProfile(player.id, player.name, nowMs);
-      ratingBefore.set(player.id, profile.rating.value);
-    }
-    applyEloResult(rankedProfiles, room.winnerPlayerId);
-    for (const profile of rankedProfiles.values()) ratingAfter.set(profile.playerId, profile.rating.value);
-  }
-
-  for (const player of room.players) {
-    const profile = rankedProfiles.get(player.id) ?? await loadOrCreateProfile(store, player.id, player.name, nowMs);
-    updateProfileFromFinishedRoom(profile, room, player, nowMs, rankedLeagueSeries);
-    await store.saveProfile(profile);
-  }
-
-  const rankedPlayers = rankPlayers(room.players);
-  const result: OnlineMatchResult = {
-    id: `${room.id}-${nowMs}`,
-    roomId: room.id,
-    matchType: room.matchType,
-    rulesetId: room.ruleset.rulesetId,
-    rulesetVersion: room.ruleset.rulesetVersion,
-    ranked: rankedLeagueSeries,
-    seed: room.seed,
-    winnerPlayerId: room.winnerPlayerId,
-    participants: rankedPlayers.map((player, index) => ({
-      playerId: player.id,
-      name: player.name,
-      result: player.id === room.winnerPlayerId ? 'won' : 'lost',
-      placement: index + 1,
-      ratingBefore: ratingBefore.get(player.id) ?? null,
-      ratingAfter: ratingAfter.get(player.id) ?? null,
-      lines: normalizeNonNegativeInteger(player.lines),
-      pieces: normalizeNonNegativeInteger(player.pieces),
-      sentGarbage: normalizeNonNegativeInteger(player.sentGarbage),
-      receivedGarbage: normalizeNonNegativeInteger(player.receivedGarbage),
-      elapsedFrames: normalizeNonNegativeInteger(player.elapsedFrames),
-    })),
-    series: room.series ? JSON.parse(JSON.stringify(room.series)) as OnlineSeriesState : null,
-    createdAtServerMs: nowMs,
-  };
-  await store.saveMatchResult(result);
-  for (const participant of result.participants) {
-    const ids = await store.listMatchResultIds(participant.playerId);
-    await store.saveMatchResultIds(participant.playerId, [result.id, ...ids.filter((id) => id !== result.id)].slice(0, 50));
-  }
-  room.matchResultId = result.id;
-}
-
-async function loadProfilesForRoom(store: RoomStore, room: OnlineRoom, nowMs: number): Promise<Map<string, OnlineProfile>> {
-  const profiles = new Map<string, OnlineProfile>();
-  for (const player of room.players) {
-    profiles.set(player.id, await loadOrCreateProfile(store, player.id, player.name, nowMs));
-  }
-  return profiles;
-}
-
-async function loadOrCreateProfile(store: RoomStore, playerId: string, displayName: string, nowMs: number): Promise<OnlineProfile> {
-  return await store.getProfile(playerId) ?? createProfile(playerId, displayName, nowMs);
-}
-
-function createProfile(playerId: string, displayName: string, nowMs: number): OnlineProfile {
-  return {
-    playerId,
-    displayName,
-    createdAtServerMs: nowMs,
-    updatedAtServerMs: nowMs,
-    rating: {
-      system: 'elo-v1',
-      value: 1000,
-      deviation: 350,
-      gamesPlayed: 0,
-    },
-    casualStats: emptyModeStats(),
-    leagueStats: emptyModeStats(),
-    quickPlayStats: emptyModeStats(),
-  };
-}
-
-function emptyModeStats() {
-  return {
-    played: 0,
-    wins: 0,
-    losses: 0,
-    sentGarbage: 0,
-    receivedGarbage: 0,
-  };
-}
-
-function updateProfileFromFinishedRoom(
-  profile: OnlineProfile,
-  room: OnlineRoom,
-  player: OnlinePlayer,
-  nowMs: number,
-  rankedLeagueSeries: boolean,
-): void {
-  profile.displayName = player.name;
-  profile.updatedAtServerMs = nowMs;
-  const stats = room.matchType === 'quickPlay'
-    ? profile.quickPlayStats
-    : rankedLeagueSeries ? profile.leagueStats : profile.casualStats;
-  stats.played += 1;
-  if (player.id === room.winnerPlayerId) stats.wins += 1;
-  else stats.losses += 1;
-  stats.sentGarbage += normalizeNonNegativeInteger(player.sentGarbage);
-  stats.receivedGarbage += normalizeNonNegativeInteger(player.receivedGarbage);
-}
-
-function applyEloResult(profiles: Map<string, OnlineProfile>, winnerPlayerId: string): void {
-  const players = [...profiles.values()];
-  if (players.length !== 2) return;
-  const [first, second] = players;
-  const firstScore = first.playerId === winnerPlayerId ? 1 : 0;
-  const secondScore = second.playerId === winnerPlayerId ? 1 : 0;
-  const firstRating = first.rating.value;
-  const secondRating = second.rating.value;
-  updateEloRating(first, secondRating, firstScore);
-  updateEloRating(second, firstRating, secondScore);
-}
-
-function updateEloRating(profile: OnlineProfile, opponentRating: number, score: number): void {
-  const expected = 1 / (1 + (10 ** ((opponentRating - profile.rating.value) / 400)));
-  const next = profile.rating.value + 32 * (score - expected);
-  profile.rating.value = Math.round(next);
-  profile.rating.gamesPlayed += 1;
-  profile.rating.deviation = Math.max(80, Math.round(profile.rating.deviation * 0.95));
-}
-
-async function updateQuickPlayLeaderboardEntry(
-  store: RoomStore,
-  room: OnlineRoom,
-  playerId: string,
-  nowMs: number,
-  countFinishedRun = false,
-): Promise<void> {
-  const player = room.players.find((candidate) => candidate.id === playerId);
-  if (!player) return;
-  const weekId = weeklyLeaderboardId(nowMs);
-  const entries = await store.getQuickPlayLeaderboard(weekId);
-  const previous = entries.find((entry) => entry.playerId === player.id);
-  const next: QuickPlayLeaderboardEntry = {
-    playerId: player.id,
-    displayName: player.name,
-    weekId,
-    score: quickPlayScore(player),
-    lines: Math.max(previous?.lines ?? 0, normalizeNonNegativeInteger(player.lines)),
-    koCount: Math.max(previous?.koCount ?? 0, normalizeNonNegativeInteger(player.koCount)),
-    survivalFrames: Math.max(previous?.survivalFrames ?? 0, normalizeNonNegativeInteger(player.elapsedFrames)),
-    sentGarbage: Math.max(previous?.sentGarbage ?? 0, normalizeNonNegativeInteger(player.sentGarbage)),
-    receivedGarbage: Math.max(previous?.receivedGarbage ?? 0, normalizeNonNegativeInteger(player.receivedGarbage)),
-    updatedAtServerMs: nowMs,
-  };
-  next.score = Math.max(previous?.score ?? 0, next.score);
-  await store.saveQuickPlayLeaderboard(
-    weekId,
-    [next, ...entries.filter((entry) => entry.playerId !== player.id)]
-      .sort((a, b) => b.score - a.score || b.koCount - a.koCount || b.lines - a.lines)
-      .slice(0, 50),
-  );
-
-  if (countFinishedRun) {
-    const profile = await loadOrCreateProfile(store, player.id, player.name, nowMs);
-    profile.displayName = player.name;
-    profile.updatedAtServerMs = nowMs;
-    profile.quickPlayStats.played += 1;
-    profile.quickPlayStats.losses += player.status === 'eliminated' ? 1 : 0;
-    profile.quickPlayStats.wins += player.status === 'winner' ? 1 : 0;
-    profile.quickPlayStats.sentGarbage += normalizeNonNegativeInteger(player.sentGarbage);
-    profile.quickPlayStats.receivedGarbage += normalizeNonNegativeInteger(player.receivedGarbage);
-    await store.saveProfile(profile);
-  }
-}
-
-function quickPlayScore(player: OnlinePlayer): number {
-  return normalizeNonNegativeInteger(player.lines) * 10
-    + normalizeNonNegativeInteger(player.koCount) * 250
-    + Math.floor(normalizeNonNegativeInteger(player.elapsedFrames) / 60)
-    + normalizeNonNegativeInteger(player.sentGarbage) * 3;
-}
-
-function resetQuickPlayPlayer(player: OnlinePlayer, name: string, nowMs: number, avatarUrl?: string | null): void {
-  player.name = normalizePlayerName(name);
-  if (avatarUrl !== undefined) player.avatarUrl = normalizeAvatarUrl(avatarUrl);
-  player.ready = true;
-  player.status = 'ready';
-  player.lines = 0;
-  player.pieces = 0;
-  player.elapsedFrames = 0;
-  player.sentGarbage = 0;
-  player.receivedGarbage = 0;
-  player.pendingGarbage = 0;
-  player.alive = true;
-  player.finishedAtServerMs = null;
-  player.eliminatedAtFrame = null;
-  player.eliminatedAtServerMs = null;
-  player.game = null;
-  player.currentTargetPlayerId = null;
-  player.recentAttackers = [];
-  player.receivedGarbageThisRound = 0;
-  player.dangerLevel = 0;
-  player.updatedAtServerMs = nowMs;
-}
-
-function ensureQuickPlayHost(room: OnlineRoom): void {
-  const host = room.players.find((player) => player.id === room.hostPlayerId);
-  if (host && host.alive && host.status !== 'eliminated' && host.status !== 'disconnected') return;
-  const replacement = room.players.find((player) => player.alive && player.status !== 'eliminated' && player.status !== 'disconnected');
-  if (replacement) room.hostPlayerId = replacement.id;
-}
-
-function quickPlayRoomId(region: string): string {
-  if (region === DEFAULT_ONLINE_REGION) return QUICK_PLAY_DEFAULT_ROOM_ID;
-  let hash = 0;
-  for (const char of region) hash = ((hash * 31) + char.charCodeAt(0)) >>> 0;
-  return `QP${ROOM_CODE_ALPHABET[hash % ROOM_CODE_ALPHABET.length]}${ROOM_CODE_ALPHABET[(hash >>> 5) % ROOM_CODE_ALPHABET.length]}`;
-}
-
-function weeklyLeaderboardId(nowMs: number): string {
-  const date = new Date(nowMs);
-  const utcDate = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  const day = new Date(utcDate).getUTCDay() || 7;
-  const monday = utcDate - (day - 1) * 86_400_000;
-  return new Date(monday).toISOString().slice(0, 10);
-}
-
 export async function generateUniqueRoomId(
   getExistingRoom: (id: string) => Promise<OnlineRoom | null>,
 ): Promise<string> {
@@ -1127,12 +690,6 @@ function enterExistingLunaNegraRoom(
 export class MemoryRoomStore implements RoomStore {
   private rooms = new Map<string, OnlineRoom>();
   private publicIds: string[] = [];
-  private matchmakingTickets = new Map<string, MatchmakingTicket>();
-  private matchmakingIds = new Map<MatchmakingQueue, string[]>();
-  private profiles = new Map<string, OnlineProfile>();
-  private matchResults = new Map<string, OnlineMatchResult>();
-  private matchResultIds = new Map<string, string[]>();
-  private quickPlayLeaderboards = new Map<string, QuickPlayLeaderboardEntry[]>();
   private presence: LunaPresenceRecord[] = [];
 
   async getRoom(id: string): Promise<OnlineRoom | null> {
@@ -1145,6 +702,8 @@ export class MemoryRoomStore implements RoomStore {
     this.rooms.set(normalized.id, normalized);
     if (normalized.visibility === 'public' && !this.publicIds.includes(normalized.id)) {
       this.publicIds = [normalized.id, ...this.publicIds];
+    } else if (normalized.visibility !== 'public') {
+      this.publicIds = this.publicIds.filter((roomId) => roomId !== normalized.id);
     }
   }
 
@@ -1170,69 +729,15 @@ export class MemoryRoomStore implements RoomStore {
     this.presence = records.map((record) => ({ ...record }));
   }
 
-  async getMatchmakingTicket(id: string): Promise<MatchmakingTicket | null> {
-    return cloneMatchmakingTicket(this.matchmakingTickets.get(id) ?? null);
-  }
-
-  async saveMatchmakingTicket(ticket: MatchmakingTicket): Promise<void> {
-    const normalized = cloneMatchmakingTicket(ticket);
-    if (!normalized) return;
-    this.matchmakingTickets.set(normalized.id, normalized);
-    if (normalized.status === 'queued') {
-      const ids = this.matchmakingIds.get(normalized.queue) ?? [];
-      if (!ids.includes(normalized.id)) this.matchmakingIds.set(normalized.queue, [normalized.id, ...ids]);
-    }
-  }
-
-  async listMatchmakingTicketIds(queue: MatchmakingQueue): Promise<string[]> {
-    return [...(this.matchmakingIds.get(queue) ?? [])];
-  }
-
-  async saveMatchmakingTicketIds(queue: MatchmakingQueue, ids: string[]): Promise<void> {
-    this.matchmakingIds.set(queue, [...new Set(ids)]);
-  }
-
-  async getProfile(playerId: string): Promise<OnlineProfile | null> {
-    return cloneProfile(this.profiles.get(playerId) ?? null);
-  }
-
-  async saveProfile(profile: OnlineProfile): Promise<void> {
-    const normalized = cloneProfile(profile);
-    if (normalized) this.profiles.set(normalized.playerId, normalized);
-  }
-
-  async getMatchResult(id: string): Promise<OnlineMatchResult | null> {
-    return cloneMatchResult(this.matchResults.get(id) ?? null);
-  }
-
-  async saveMatchResult(result: OnlineMatchResult): Promise<void> {
-    const normalized = cloneMatchResult(result);
-    if (normalized) this.matchResults.set(normalized.id, normalized);
-  }
-
-  async listMatchResultIds(playerId: string): Promise<string[]> {
-    return [...(this.matchResultIds.get(playerId) ?? [])];
-  }
-
-  async saveMatchResultIds(playerId: string, ids: string[]): Promise<void> {
-    this.matchResultIds.set(playerId, [...new Set(ids)]);
-  }
-
-  async getQuickPlayLeaderboard(weekId: string): Promise<QuickPlayLeaderboardEntry[]> {
-    return cloneQuickPlayLeaderboard(this.quickPlayLeaderboards.get(weekId) ?? []);
-  }
-
-  async saveQuickPlayLeaderboard(weekId: string, entries: QuickPlayLeaderboardEntry[]): Promise<void> {
-    this.quickPlayLeaderboards.set(weekId, cloneQuickPlayLeaderboard(entries));
-  }
 }
 
 async function persistRoom(store: RoomStore, room: OnlineRoom): Promise<void> {
   await store.saveRoom(room, ROOM_TTL_SECONDS);
-  if (room.visibility === 'public') {
-    const publicIds = await store.listPublicRoomIds();
-    await store.savePublicRoomIds([room.id, ...publicIds.filter((id) => id !== room.id)], ROOM_TTL_SECONDS);
-  }
+  const publicIds = await store.listPublicRoomIds();
+  const nextPublicIds = room.visibility === 'public'
+    ? [room.id, ...publicIds.filter((id) => id !== room.id)]
+    : publicIds.filter((id) => id !== room.id);
+  await store.savePublicRoomIds(nextPublicIds, ROOM_TTL_SECONDS);
 }
 
 async function requireRoom(store: RoomStore, roomId: string): Promise<OnlineRoom> {
@@ -1301,7 +806,6 @@ function roomSummary(room: OnlineRoom): OnlineRoomSummary {
     mode: room.mode,
     matchType: room.matchType,
     region: room.region,
-    ranked: room.ruleset.ranked,
     customPreset: room.matchType === 'custom' ? room.ruleset.rulesetId : null,
     ruleset: room.ruleset,
     status: room.status,
@@ -1331,10 +835,6 @@ function finishRoomIfOnlyOneAlive(room: OnlineRoom, nowMs: number): void {
   if (room.status !== 'playing' && room.status !== 'countdown') return;
   const alive = room.players.filter((player) => player.alive && player.status !== 'eliminated');
   if (alive.length !== 1 || room.players.length < 2) return;
-  if (room.ruleset.objective.type === 'duelRounds') {
-    finishDuelRound(room, alive[0], nowMs);
-    return;
-  }
   const winner = alive[0];
   winner.status = 'winner';
   winner.alive = true;
@@ -1342,41 +842,6 @@ function finishRoomIfOnlyOneAlive(room: OnlineRoom, nowMs: number): void {
   winner.updatedAtServerMs = nowMs;
   room.winnerPlayerId = winner.id;
   room.status = 'finished';
-}
-
-function finishDuelRound(room: OnlineRoom, winner: OnlinePlayer, nowMs: number): void {
-  const series = room.series?.objective === 'duelRounds'
-    ? room.series
-    : createSeriesState(room, nowMs);
-  const score = series.scores.find((candidate) => candidate.playerId === winner.id);
-  if (score) score.wins += 1;
-  else series.scores.push({ playerId: winner.id, wins: 1 });
-  series.rounds.push({
-    round: series.currentRound,
-    roundId: series.roundId,
-    winnerPlayerId: winner.id,
-    finishedAtServerMs: nowMs,
-  });
-
-  if ((score?.wins ?? 1) >= series.firstTo) {
-    series.completed = true;
-    series.winnerPlayerId = winner.id;
-    winner.status = 'winner';
-    winner.alive = true;
-    winner.finishedAtServerMs = nowMs;
-    winner.updatedAtServerMs = nowMs;
-    room.series = series;
-    room.winnerPlayerId = winner.id;
-    room.status = 'finished';
-    return;
-  }
-
-  series.currentRound += 1;
-  series.roundId = createRoundId(room.id, series.currentRound, nowMs);
-  series.completed = false;
-  series.winnerPlayerId = null;
-  room.series = series;
-  prepareRoundCountdown(room, nowMs, true);
 }
 
 function finishSprintRace(room: OnlineRoom, winner: OnlinePlayer, nowMs: number): void {
@@ -1395,20 +860,6 @@ function finishSprintRace(room: OnlineRoom, winner: OnlinePlayer, nowMs: number)
     player.finishedAtServerMs = nowMs;
     player.updatedAtServerMs = nowMs;
   }
-}
-
-function createSeriesState(room: OnlineRoom, nowMs: number): OnlineSeriesState {
-  const firstTo = room.ruleset.objective.type === 'duelRounds' ? room.ruleset.objective.firstTo : 1;
-  return {
-    objective: 'duelRounds',
-    firstTo,
-    currentRound: 1,
-    roundId: createRoundId(room.id, 1, nowMs),
-    scores: room.players.map((player) => ({ playerId: player.id, wins: 0 })),
-    rounds: [],
-    completed: false,
-    winnerPlayerId: null,
-  };
 }
 
 function prepareRoundCountdown(room: OnlineRoom, nowMs: number, reseed: boolean): void {
@@ -1437,10 +888,6 @@ function prepareRoundCountdown(room: OnlineRoom, nowMs: number, reseed: boolean)
     player.dangerLevel = 0;
     player.updatedAtServerMs = nowMs;
   });
-}
-
-function createRoundId(roomId: string, round: number, nowMs: number): string {
-  return `${roomId}-r${round}-${nowMs}`;
 }
 
 function isTerminalPlayer(player: OnlinePlayer): boolean {
@@ -1475,23 +922,17 @@ function normalizeRegion(value: unknown): string {
   return normalized || DEFAULT_ONLINE_REGION;
 }
 
-function normalizeRoomMode(value: unknown): OnlineRoomMode {
-  return value === 'custom' ? 'custom' : 'battle';
+function normalizeRoomMode(value: unknown, strict = false): OnlineRoomMode {
+  if (value === undefined || value === null || value === 'custom') return 'custom';
+  if (!strict) return 'custom';
+  throw new OnlineRoomError('Only custom online rooms are supported.');
 }
 
-function normalizeMatchType(value: unknown, mode: OnlineRoomMode): OnlineMatchType {
-  if (
-    value === 'battle'
-    || value === 'duel'
-    || value === 'league'
-    || value === 'royale'
-    || value === 'quickPlay'
-    || value === 'custom'
-    || value === 'sprintRace'
-  ) {
-    return value;
-  }
-  return mode === 'custom' ? 'custom' : 'battle';
+function normalizeMatchType(value: unknown, mode: OnlineRoomMode, strict = false): OnlineMatchType {
+  void mode;
+  if (value === undefined || value === null || value === 'custom') return 'custom';
+  if (!strict) return 'custom';
+  throw new OnlineRoomError('Only custom online rooms are supported.');
 }
 
 function normalizeRuleset(value: unknown, matchType: OnlineMatchType, strict = false): OnlineRuleset {
@@ -1506,58 +947,17 @@ function normalizeRuleset(value: unknown, matchType: OnlineMatchType, strict = f
   const objective = normalizeObjective(value.objective, fallback.objective, strict);
   const attackTable = normalizeAttackTable(value.attackTable, fallback.attackTable, strict);
   const targeting = normalizeTargetingMode(value.targeting, strict, fallback.targeting);
-  const ranked = typeof value.ranked === 'boolean' ? value.ranked : fallback.ranked;
-  return { rulesetId, rulesetVersion, objective, attackTable, targeting, ranked };
+  return { rulesetId, rulesetVersion, objective, attackTable, targeting };
 }
 
 function defaultRuleset(matchType: OnlineMatchType): OnlineRuleset {
-  if (matchType === 'duel') {
-    return {
-      rulesetId: 'duel-ft3-simple',
-      rulesetVersion: ONLINE_RULESET_VERSION,
-      objective: { type: 'duelRounds', firstTo: 3 },
-      attackTable: 'simple',
-      targeting: 'random',
-      ranked: false,
-    };
-  }
-  if (matchType === 'league') {
-    return {
-      rulesetId: 'league-ft3-simple',
-      rulesetVersion: ONLINE_RULESET_VERSION,
-      objective: { type: 'duelRounds', firstTo: 3 },
-      attackTable: 'simple',
-      targeting: 'random',
-      ranked: true,
-    };
-  }
-  if (matchType === 'quickPlay') {
-    return {
-      rulesetId: 'quick-play-climb-simple',
-      rulesetVersion: ONLINE_RULESET_VERSION,
-      objective: { type: 'quickPlayClimb', floorSystem: 'weekly' },
-      attackTable: 'simple',
-      targeting: 'even',
-      ranked: false,
-    };
-  }
-  if (matchType === 'sprintRace') {
-    return {
-      rulesetId: 'sprint-40l-simple',
-      rulesetVersion: ONLINE_RULESET_VERSION,
-      objective: { type: 'sprint', targetLines: 40 },
-      attackTable: 'simple',
-      targeting: 'random',
-      ranked: false,
-    };
-  }
+  void matchType;
   return {
-    rulesetId: matchType === 'custom' ? 'custom-survival-simple' : 'battle-survival-simple',
+    rulesetId: 'custom-survival-simple',
     rulesetVersion: ONLINE_RULESET_VERSION,
     objective: { type: 'lastStanding' },
     attackTable: 'simple',
     targeting: 'random',
-    ranked: false,
   };
 }
 
@@ -1580,9 +980,6 @@ function normalizeRulesetVersion(value: unknown, fallback: number, strict: boole
 function normalizeObjective(value: unknown, fallback: OnlineRuleset['objective'], strict: boolean): OnlineRuleset['objective'] {
   if (isObject(value)) {
     if (value.type === 'lastStanding') return { type: 'lastStanding' };
-    if (value.type === 'duelRounds') {
-      return { type: 'duelRounds', firstTo: normalizeObjectiveInteger(value.firstTo, 1, 15, fallback.type === 'duelRounds' ? fallback.firstTo : 3, strict) };
-    }
     if (value.type === 'sprint') {
       return { type: 'sprint', targetLines: normalizeObjectiveInteger(value.targetLines, 1, 200, fallback.type === 'sprint' ? fallback.targetLines : 40, strict) };
     }
@@ -1591,12 +988,6 @@ function normalizeObjective(value: unknown, fallback: OnlineRuleset['objective']
         ? null
         : normalizeObjectiveInteger(value.durationSeconds, 10, 3600, fallback.type === 'survivalScore' ? fallback.durationSeconds ?? 120 : 120, strict);
       return { type: 'survivalScore', durationSeconds: duration };
-    }
-    if (value.type === 'quickPlayClimb') {
-      const floorSystem = typeof value.floorSystem === 'string' && value.floorSystem.trim().length > 0
-        ? value.floorSystem.trim().slice(0, 32)
-        : fallback.type === 'quickPlayClimb' ? fallback.floorSystem : 'weekly';
-      return { type: 'quickPlayClimb', floorSystem };
     }
   }
   if (strict) throw new OnlineRoomError('Invalid objective.');
@@ -1622,12 +1013,6 @@ function normalizeTargetingMode(value: unknown, strict = false, fallback: Target
   return fallback;
 }
 
-function normalizeMatchmakingQueue(value: unknown): MatchmakingQueue {
-  if (value === undefined || value === null || value === 'quickDuel') return 'quickDuel';
-  if (value === 'league') return 'league';
-  throw new OnlineRoomError('Invalid matchmaking queue.');
-}
-
 function normalizeOptionalInteger(value: unknown, min: number, max: number): number | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   const numeric = Number(value);
@@ -1639,145 +1024,12 @@ function roomMatchesPublicFilters(room: OnlineRoom, filters: PublicRoomsFilters)
   if (filters.matchType && room.matchType !== filters.matchType) return false;
   if (filters.status && room.status !== filters.status) return false;
   if (filters.region && room.region !== normalizeRegion(filters.region)) return false;
-  if (typeof filters.ranked === 'boolean' && room.ruleset.ranked !== filters.ranked) return false;
   if (filters.customPreset && room.ruleset.rulesetId !== filters.customPreset) return false;
   const minPlayers = normalizeOptionalInteger(filters.minPlayers, 1, 99);
   const maxPlayers = normalizeOptionalInteger(filters.maxPlayers, 1, 99);
   if (minPlayers !== undefined && room.players.length < minPlayers) return false;
   if (maxPlayers !== undefined && room.players.length > maxPlayers) return false;
   return true;
-}
-
-function createMatchmakingTicket(
-  queue: MatchmakingQueue,
-  playerId: string,
-  name: string,
-  avatarUrl: string | null | undefined,
-  region: string,
-  rating: number | null,
-  nowMs: number,
-): MatchmakingTicket {
-  return {
-    id: `${queue}-${nowMs}-${Math.random().toString(36).slice(2, 10)}`,
-    queue,
-    playerId,
-    name,
-    avatarUrl: normalizeAvatarUrl(avatarUrl),
-    region,
-    rating,
-    status: 'queued',
-    roomId: null,
-    createdAtServerMs: nowMs,
-    updatedAtServerMs: nowMs,
-    expiresAtServerMs: nowMs + MATCHMAKING_TICKET_TTL_MS,
-  };
-}
-
-function ticketsAreCompatible(ticket: MatchmakingTicket, queue: MatchmakingQueue, region: string, rating: number | null): boolean {
-  if (ticket.region !== region) return false;
-  if (queue !== 'league') return true;
-  if (ticket.rating === null || rating === null) return true;
-  return Math.abs(ticket.rating - rating) <= 400;
-}
-
-async function createMatchedRoom(
-  store: RoomStore,
-  first: MatchmakingTicket,
-  second: MatchmakingTicket,
-  nowMs: number,
-): Promise<OnlineRoom> {
-  const matchType: OnlineMatchType = first.queue === 'league' ? 'league' : 'duel';
-  let room = await createRoom(store, {
-    playerId: first.playerId,
-    name: first.name,
-    avatarUrl: first.avatarUrl,
-    visibility: 'private',
-    mode: 'battle',
-    matchType,
-    region: first.region,
-  }, nowMs);
-  room = await joinRoom(store, { roomId: room.id, playerId: second.playerId, name: second.name, avatarUrl: second.avatarUrl }, nowMs);
-  room = await setPlayerReady(store, { roomId: room.id, playerId: first.playerId, ready: true }, nowMs);
-  room = await setPlayerReady(store, { roomId: room.id, playerId: second.playerId, ready: true }, nowMs);
-  return startRoom(store, { roomId: room.id, playerId: first.playerId }, nowMs);
-}
-
-async function loadQueuedMatchmakingTickets(
-  store: RoomStore,
-  queue: MatchmakingQueue,
-  nowMs: number,
-): Promise<MatchmakingTicket[]> {
-  const ids = await store.listMatchmakingTicketIds(queue);
-  const tickets = await Promise.all(ids.map((id) => store.getMatchmakingTicket(id)));
-  return tickets
-    .filter((ticket): ticket is MatchmakingTicket => ticket !== null)
-    .map((ticket) => normalizeMatchmakingTicket(ticket, nowMs))
-    .filter((ticket) => ticket.status === 'queued' && ticket.expiresAtServerMs > nowMs)
-    .sort((a, b) => a.createdAtServerMs - b.createdAtServerMs);
-}
-
-async function cleanupMatchmakingQueue(store: RoomStore, queue: MatchmakingQueue, nowMs: number): Promise<void> {
-  const ids = await store.listMatchmakingTicketIds(queue);
-  const kept: string[] = [];
-  for (const id of ids) {
-    const ticket = await store.getMatchmakingTicket(id);
-    if (!ticket) continue;
-    const normalized = normalizeMatchmakingTicket(ticket, nowMs);
-    if (normalized.status === 'queued' && normalized.expiresAtServerMs <= nowMs) {
-      normalized.status = 'expired';
-      normalized.updatedAtServerMs = nowMs;
-      await store.saveMatchmakingTicket(normalized, MATCHMAKING_TTL_SECONDS);
-      continue;
-    }
-    if (normalized.status === 'queued') kept.push(normalized.id);
-  }
-  await store.saveMatchmakingTicketIds(queue, kept, MATCHMAKING_TTL_SECONDS);
-}
-
-async function persistMatchmakingTicket(store: RoomStore, ticket: MatchmakingTicket): Promise<void> {
-  await store.saveMatchmakingTicket(ticket, MATCHMAKING_TTL_SECONDS);
-  if (ticket.status !== 'queued') return;
-  const ids = await store.listMatchmakingTicketIds(ticket.queue);
-  await store.saveMatchmakingTicketIds(ticket.queue, [ticket.id, ...ids.filter((id) => id !== ticket.id)], MATCHMAKING_TTL_SECONDS);
-}
-
-async function requireMatchmakingTicket(
-  store: RoomStore,
-  ticketId: string,
-  playerId: string,
-  nowMs: number,
-  expireQueued = true,
-): Promise<MatchmakingTicket> {
-  const ticket = await store.getMatchmakingTicket(ticketId);
-  if (!ticket) throw new OnlineRoomError('Matchmaking ticket not found.', 404);
-  const normalized = normalizeMatchmakingTicket(ticket, nowMs);
-  if (normalized.playerId !== playerId) throw new OnlineRoomError('Ticket belongs to another player.', 403);
-  if (expireQueued && normalized.status === 'queued' && normalized.expiresAtServerMs <= nowMs) {
-    normalized.status = 'expired';
-    normalized.updatedAtServerMs = nowMs;
-    await store.saveMatchmakingTicket(normalized, MATCHMAKING_TTL_SECONDS);
-  }
-  return normalized;
-}
-
-function normalizeMatchmakingTicket(ticket: MatchmakingTicket, nowMs: number): MatchmakingTicket {
-  const status = ticket.status === 'matched' || ticket.status === 'left' || ticket.status === 'expired'
-    ? ticket.status
-    : ticket.expiresAtServerMs <= nowMs ? 'expired' : 'queued';
-  return {
-    ...ticket,
-    queue: ticket.queue === 'league' ? 'league' : 'quickDuel',
-    playerId: normalizePlayerId(ticket.playerId),
-    name: normalizePlayerName(ticket.name),
-    avatarUrl: normalizeAvatarUrl(ticket.avatarUrl),
-    region: normalizeRegion(ticket.region),
-    rating: typeof ticket.rating === 'number' && Number.isFinite(ticket.rating) ? Math.round(ticket.rating) : null,
-    status,
-    roomId: typeof ticket.roomId === 'string' ? normalizeRoomId(ticket.roomId) : null,
-    createdAtServerMs: normalizeNonNegativeInteger(ticket.createdAtServerMs),
-    updatedAtServerMs: normalizeNonNegativeInteger(ticket.updatedAtServerMs),
-    expiresAtServerMs: normalizeNonNegativeInteger(ticket.expiresAtServerMs),
-  };
 }
 
 function normalizeManualTarget(room: OnlineRoom, playerId: string, value: unknown): string | null {
@@ -2023,53 +1275,6 @@ function prependUnique(values: string[], value: string, limit: number): string[]
   return [value, ...values.filter((candidate) => candidate !== value)].slice(0, limit);
 }
 
-function normalizeSeriesState(value: unknown, room: OnlineRoom, ruleset: OnlineRuleset): OnlineSeriesState | null {
-  if (ruleset.objective.type !== 'duelRounds') return null;
-  if (!isObject(value)) {
-    if (room.status === 'lobby') return null;
-    return createSeriesState({ ...room, ruleset }, room.createdAtServerMs);
-  }
-  const firstTo = normalizeObjectiveInteger(value.firstTo, 1, 15, ruleset.objective.firstTo, false);
-  const currentRound = normalizeObjectiveInteger(value.currentRound, 1, 99, 1, false);
-  const roundId = typeof value.roundId === 'string' && value.roundId.length > 0
-    ? value.roundId.slice(0, 80)
-    : createRoundId(room.id, currentRound, room.createdAtServerMs);
-  const scores = Array.isArray(value.scores)
-    ? value.scores
-      .filter((score): score is Record<string, unknown> => isObject(score) && typeof score.playerId === 'string')
-      .map((score) => ({
-        playerId: String(score.playerId),
-        wins: normalizeNonNegativeInteger(Number(score.wins ?? 0)),
-      }))
-    : [];
-  const scoreIds = new Set(scores.map((score) => score.playerId));
-  for (const player of room.players) {
-    if (!scoreIds.has(player.id)) scores.push({ playerId: player.id, wins: 0 });
-  }
-  const rounds = Array.isArray(value.rounds)
-    ? value.rounds
-      .filter((round): round is Record<string, unknown> => isObject(round) && typeof round.winnerPlayerId === 'string')
-      .map((round) => ({
-        round: normalizeObjectiveInteger(round.round, 1, 99, 1, false),
-        roundId: typeof round.roundId === 'string' && round.roundId.length > 0 ? round.roundId.slice(0, 80) : roundId,
-        winnerPlayerId: String(round.winnerPlayerId),
-        finishedAtServerMs: normalizeNonNegativeInteger(Number(round.finishedAtServerMs ?? room.updatedAtServerMs)),
-      }))
-    : [];
-  const completed = value.completed === true;
-  const winnerPlayerId = typeof value.winnerPlayerId === 'string' ? value.winnerPlayerId : null;
-  return {
-    objective: 'duelRounds',
-    firstTo,
-    currentRound,
-    roundId,
-    scores,
-    rounds,
-    completed,
-    winnerPlayerId,
-  };
-}
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -2080,22 +1285,6 @@ function randomSeed(): number {
 
 function cloneRoom(room: OnlineRoom | null): OnlineRoom | null {
   return room ? JSON.parse(JSON.stringify(room)) as OnlineRoom : null;
-}
-
-function cloneMatchmakingTicket(ticket: MatchmakingTicket | null): MatchmakingTicket | null {
-  return ticket ? JSON.parse(JSON.stringify(ticket)) as MatchmakingTicket : null;
-}
-
-function cloneProfile(profile: OnlineProfile | null): OnlineProfile | null {
-  return profile ? JSON.parse(JSON.stringify(profile)) as OnlineProfile : null;
-}
-
-function cloneMatchResult(result: OnlineMatchResult | null): OnlineMatchResult | null {
-  return result ? JSON.parse(JSON.stringify(result)) as OnlineMatchResult : null;
-}
-
-function cloneQuickPlayLeaderboard(entries: QuickPlayLeaderboardEntry[]): QuickPlayLeaderboardEntry[] {
-  return JSON.parse(JSON.stringify(entries)) as QuickPlayLeaderboardEntry[];
 }
 
 function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
@@ -2110,7 +1299,6 @@ function normalizeRoomShape(room: OnlineRoom): OnlineRoom {
     ruleset,
     rules: normalizeRoomRules(room.rules, mode, ruleset),
     winnerPlayerId: room.winnerPlayerId ?? null,
-    series: normalizeSeriesState(room.series, room, ruleset),
     matchResultId: room.matchResultId ?? null,
     bet: normalizeBet(room.bet),
     lunaGameId: normalizeNullableString(room.lunaGameId),

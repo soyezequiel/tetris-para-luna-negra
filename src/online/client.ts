@@ -2,28 +2,20 @@ import type {
   AttackRequest,
   CreateRoomRequest,
   EliminateRequest,
-  EnqueueMatchmakingRequest,
   JoinRoomRequest,
   KickPlayerRequest,
-  LeaveMatchmakingRequest,
   LeaveRoomRequest,
   LeaveRoomResponse,
   CreateBetRequest,
   LunaNegraEnterRequest,
   LunaNegraEnterResponse,
-  MatchmakingHeartbeatRequest,
   RoomBetActionRequest,
-  MatchmakingTicketResponse,
   OnlineErrorResponse,
-  OnlineProfileResponse,
   OnlineRoomResponse,
   PeerSignalRequest,
   ProgressRequest,
   PublicRoomsFilters,
   PublicRoomsResponse,
-  QuickPlayEnterRequest,
-  QuickPlayEnterResponse,
-  QuickPlayLeaderboardResponse,
   ReadyRequest,
   RestartRoomRequest,
   ResultRequest,
@@ -33,10 +25,7 @@ import type {
 } from './protocol';
 
 export class OnlineClient {
-  constructor(
-    private readonly basePath = '/api/rooms',
-    private readonly matchmakingBasePath = '/api/matchmaking',
-  ) {}
+  constructor(private readonly basePath = '/api/rooms') {}
 
   createRoom(request: CreateRoomRequest): Promise<OnlineRoomResponse> {
     return this.post('/create', request);
@@ -123,58 +112,12 @@ export class OnlineClient {
     return this.get(`/public${query}`);
   }
 
-  enqueueMatchmaking(request: EnqueueMatchmakingRequest): Promise<MatchmakingTicketResponse> {
-    return this.postMatchmaking('/enqueue', request);
-  }
-
-  heartbeatMatchmaking(request: MatchmakingHeartbeatRequest): Promise<MatchmakingTicketResponse> {
-    return this.postMatchmaking('/heartbeat', request);
-  }
-
-  leaveMatchmaking(request: LeaveMatchmakingRequest): Promise<MatchmakingTicketResponse> {
-    return this.postMatchmaking('/leave', request);
-  }
-
-  getMatchmakingTicket(ticketId: string, playerId: string): Promise<MatchmakingTicketResponse> {
-    return this.request<MatchmakingTicketResponse>(
-      `${this.matchmakingBasePath}/ticket?ticketId=${encodeURIComponent(ticketId)}&playerId=${encodeURIComponent(playerId)}`,
-      { method: 'GET' },
-    );
-  }
-
-  getProfileState(playerId: string, name: string): Promise<OnlineProfileResponse> {
-    return this.request<OnlineProfileResponse>(
-      `/api/profiles/state?playerId=${encodeURIComponent(playerId)}&name=${encodeURIComponent(name)}`,
-      { method: 'GET' },
-    );
-  }
-
-  enterQuickPlay(request: QuickPlayEnterRequest): Promise<QuickPlayEnterResponse> {
-    return this.request<QuickPlayEnterResponse>('/api/quickplay/enter', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(request),
-    });
-  }
-
-  getQuickPlayLeaderboard(): Promise<QuickPlayLeaderboardResponse> {
-    return this.request<QuickPlayLeaderboardResponse>('/api/quickplay/leaderboard', { method: 'GET' });
-  }
-
   private async get<T>(path: string): Promise<T> {
     return this.request<T>(path, { method: 'GET' });
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  }
-
-  private async postMatchmaking<T>(path: string, body: unknown): Promise<T> {
-    return this.request<T>(`${this.matchmakingBasePath}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -212,7 +155,6 @@ function filtersToQuery(filters: PublicRoomsFilters): string {
   if (filters.matchType) params.set('matchType', filters.matchType);
   if (filters.status) params.set('status', filters.status);
   if (filters.region) params.set('region', filters.region);
-  if (typeof filters.ranked === 'boolean') params.set('ranked', String(filters.ranked));
   if (filters.customPreset) params.set('customPreset', filters.customPreset);
   if (filters.minPlayers !== undefined) params.set('minPlayers', String(filters.minPlayers));
   if (filters.maxPlayers !== undefined) params.set('maxPlayers', String(filters.maxPlayers));

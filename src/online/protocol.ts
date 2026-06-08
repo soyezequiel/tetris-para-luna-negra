@@ -1,8 +1,8 @@
 import type { ActivePiece, AttackTableId, Cell, GameEngineSnapshot, GameRules } from '../game/types';
 
 export type RoomVisibility = 'public' | 'private';
-export type OnlineRoomMode = 'battle' | 'custom';
-export type OnlineMatchType = 'battle' | 'duel' | 'league' | 'royale' | 'quickPlay' | 'custom' | 'sprintRace';
+export type OnlineRoomMode = 'custom';
+export type OnlineMatchType = 'custom';
 export type OnlineRoomStatus = 'lobby' | 'countdown' | 'playing' | 'finished';
 export type OnlinePlayerStatus = 'joined' | 'ready' | 'playing' | 'eliminated' | 'winner' | 'won' | 'lost' | 'disconnected';
 export type OnlineAttackTable = AttackTableId;
@@ -10,10 +10,8 @@ export type TargetingMode = 'random' | 'even' | 'ko' | 'attackers' | 'leader' | 
 
 export type OnlineObjective =
   | { type: 'lastStanding' }
-  | { type: 'duelRounds'; firstTo: number }
   | { type: 'sprint'; targetLines: number }
-  | { type: 'survivalScore'; durationSeconds: number | null }
-  | { type: 'quickPlayClimb'; floorSystem: string };
+  | { type: 'survivalScore'; durationSeconds: number | null };
 
 export interface OnlineRuleset {
   rulesetId: string;
@@ -21,84 +19,6 @@ export interface OnlineRuleset {
   objective: OnlineObjective;
   attackTable: OnlineAttackTable;
   targeting: TargetingMode;
-  ranked: boolean;
-}
-
-export interface OnlineSeriesScore {
-  playerId: string;
-  wins: number;
-}
-
-export interface OnlineRoundRecord {
-  round: number;
-  roundId: string;
-  winnerPlayerId: string;
-  finishedAtServerMs: number;
-}
-
-export interface OnlineSeriesState {
-  objective: 'duelRounds';
-  firstTo: number;
-  currentRound: number;
-  roundId: string;
-  scores: OnlineSeriesScore[];
-  rounds: OnlineRoundRecord[];
-  completed: boolean;
-  winnerPlayerId: string | null;
-}
-
-export interface OnlineRating {
-  system: 'elo-v1';
-  value: number;
-  deviation: number;
-  gamesPlayed: number;
-}
-
-export interface OnlineModeStats {
-  played: number;
-  wins: number;
-  losses: number;
-  sentGarbage: number;
-  receivedGarbage: number;
-}
-
-export interface OnlineProfile {
-  playerId: string;
-  displayName: string;
-  createdAtServerMs: number;
-  updatedAtServerMs: number;
-  rating: OnlineRating;
-  casualStats: OnlineModeStats;
-  leagueStats: OnlineModeStats;
-  quickPlayStats: OnlineModeStats;
-}
-
-export interface OnlineMatchParticipantResult {
-  playerId: string;
-  name: string;
-  result: 'won' | 'lost';
-  placement: number;
-  ratingBefore: number | null;
-  ratingAfter: number | null;
-  lines: number;
-  pieces: number;
-  sentGarbage: number;
-  receivedGarbage: number;
-  elapsedFrames: number;
-}
-
-export interface OnlineMatchResult {
-  id: string;
-  roomId: string;
-  matchType: OnlineMatchType;
-  rulesetId: string;
-  rulesetVersion: number;
-  ranked: boolean;
-  seed: number;
-  winnerPlayerId: string | null;
-  participants: OnlineMatchParticipantResult[];
-  series: OnlineSeriesState | null;
-  createdAtServerMs: number;
 }
 
 export interface OnlineGameSnapshot {
@@ -230,7 +150,6 @@ export interface OnlineRoom {
   startsAtServerMs: number | null;
   seed: number;
   winnerPlayerId: string | null;
-  series: OnlineSeriesState | null;
   matchResultId: string | null;
   players: OnlinePlayer[];
   peerSignals: OnlinePeerSignal[];
@@ -248,7 +167,6 @@ export interface OnlineRoomSummary {
   mode: OnlineRoomMode;
   matchType: OnlineMatchType;
   region: string;
-  ranked: boolean;
   customPreset: string | null;
   ruleset: OnlineRuleset;
   status: OnlineRoomStatus;
@@ -259,7 +177,6 @@ export interface PublicRoomsFilters {
   matchType?: OnlineMatchType;
   status?: OnlineRoomStatus;
   region?: string;
-  ranked?: boolean;
   customPreset?: string;
   minPlayers?: number;
   maxPlayers?: number;
@@ -307,6 +224,7 @@ export interface RestartRoomRequest {
 export interface UpdateRoomSettingsRequest {
   roomId: string;
   playerId: string;
+  visibility?: RoomVisibility;
   mode?: OnlineRoomMode;
   matchType: OnlineMatchType;
   ruleset?: Partial<OnlineRuleset>;
@@ -526,86 +444,5 @@ export interface RoomBetActionRequest {
 
 export interface PublicRoomsResponse {
   rooms: OnlineRoomSummary[];
-  serverNowMs: number;
-}
-
-export type MatchmakingQueue = 'quickDuel' | 'league';
-
-export type MatchmakingTicketStatus = 'queued' | 'matched' | 'left' | 'expired';
-
-export interface MatchmakingTicket {
-  id: string;
-  queue: MatchmakingQueue;
-  playerId: string;
-  name: string;
-  avatarUrl: string | null;
-  region: string;
-  rating: number | null;
-  status: MatchmakingTicketStatus;
-  roomId: string | null;
-  createdAtServerMs: number;
-  updatedAtServerMs: number;
-  expiresAtServerMs: number;
-}
-
-export interface EnqueueMatchmakingRequest {
-  queue?: MatchmakingQueue;
-  playerId: string;
-  name: string;
-  avatarUrl?: string | null;
-  region?: string;
-}
-
-export interface MatchmakingHeartbeatRequest {
-  ticketId: string;
-  playerId: string;
-}
-
-export interface LeaveMatchmakingRequest {
-  ticketId: string;
-  playerId: string;
-}
-
-export interface MatchmakingTicketResponse {
-  ticket: MatchmakingTicket;
-  room: OnlineRoom | null;
-  serverNowMs: number;
-}
-
-export interface OnlineProfileResponse {
-  profile: OnlineProfile;
-  recentResults: OnlineMatchResult[];
-  serverNowMs: number;
-}
-
-export interface QuickPlayEnterRequest {
-  playerId: string;
-  name: string;
-  avatarUrl?: string | null;
-  region?: string;
-}
-
-export interface QuickPlayLeaderboardEntry {
-  playerId: string;
-  displayName: string;
-  weekId: string;
-  score: number;
-  lines: number;
-  koCount: number;
-  survivalFrames: number;
-  sentGarbage: number;
-  receivedGarbage: number;
-  updatedAtServerMs: number;
-}
-
-export interface QuickPlayEnterResponse {
-  room: OnlineRoom;
-  leaderboard: QuickPlayLeaderboardEntry[];
-  serverNowMs: number;
-}
-
-export interface QuickPlayLeaderboardResponse {
-  weekId: string;
-  entries: QuickPlayLeaderboardEntry[];
   serverNowMs: number;
 }

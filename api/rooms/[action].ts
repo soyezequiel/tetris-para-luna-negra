@@ -148,7 +148,6 @@ function filtersFromRequest(request: Request): PublicRoomsFilters {
     matchType: readMatchType(params.get('matchType')),
     status: readStatus(params.get('status')),
     region: readString(params.get('region')),
-    ranked: readBoolean(params.get('ranked')),
     customPreset: readString(params.get('customPreset')),
     minPlayers: readInteger(params.get('minPlayers')),
     maxPlayers: readInteger(params.get('maxPlayers')),
@@ -156,26 +155,12 @@ function filtersFromRequest(request: Request): PublicRoomsFilters {
 }
 
 function readMatchType(value: string | null): OnlineMatchType | undefined {
-  if (
-    value === 'battle'
-    || value === 'duel'
-    || value === 'league'
-    || value === 'royale'
-    || value === 'quickPlay'
-    || value === 'custom'
-    || value === 'sprintRace'
-  ) return value;
+  if (value === 'custom') return value;
   return undefined;
 }
 
 function readStatus(value: string | null): OnlineRoomStatus | undefined {
   if (value === 'lobby' || value === 'countdown' || value === 'playing' || value === 'finished') return value;
-  return undefined;
-}
-
-function readBoolean(value: string | null): boolean | undefined {
-  if (value === 'true') return true;
-  if (value === 'false') return false;
   return undefined;
 }
 

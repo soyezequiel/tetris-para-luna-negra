@@ -33,13 +33,8 @@ import {
   addAttack,
   createRoom,
   createRoomCode,
-  enqueueMatchmaking,
   enterLunaNegraRoom,
-  enterQuickPlay,
-  getQuickPlayLeaderboard,
   getRoomState,
-  getOnlineProfileState,
-  heartbeatMatchmaking,
   eliminatePlayer,
   joinRoom,
   kickPlayer,
@@ -1423,7 +1418,22 @@ describe('core stacker engine', () => {
     expect(frameForPendingInputReplay({ frame: 4, action: 'moveLeft', sequence: 2 }, 10)).toBe(11);
   });
 
-  it('lists public online rooms but keeps private rooms hidden', async () => {
+  it('creates custom online rooms by default', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-default-custom',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+
+    expect(room.mode).toBe('custom');
+    expect(room.matchType).toBe('custom');
+    expect(room.ruleset.rulesetId).toBe('custom-survival-simple');
+    expect(room.ruleset.objective).toEqual({ type: 'lastStanding' });
+    expect(room.rules.targetLines).toBeNull();
+  });
+
+  it('lists public custom rooms but keeps private rooms hidden', async () => {
     const store = new MemoryRoomStore();
     const publicRoom = await createRoom(store, {
       playerId: 'player-public-1',
@@ -1442,158 +1452,48 @@ describe('core stacker engine', () => {
     expect(rooms[0].id).toBe(publicRoom.id);
     expect(rooms[0].hostName).toBe('Public');
     expect(rooms[0].region).toBe('gru1');
-    expect(rooms[0].ranked).toBe(false);
-    expect(rooms[0].customPreset).toBeNull();
+    expect(rooms[0].matchType).toBe('custom');
+    expect(rooms[0].customPreset).toBe('custom-survival-simple');
   });
 
-  it('filters public online rooms by match type and ranked flag', async () => {
+  it('lets the lobby host toggle custom room visibility', async () => {
     const store = new MemoryRoomStore();
-    await createRoom(store, {
-      playerId: 'player-filter-battle',
-      name: 'Battle',
-      visibility: 'public',
-      matchType: 'battle',
+    const room = await createRoom(store, {
+      playerId: 'player-visibility-host',
+      name: 'Host',
+      visibility: 'private',
     }, 1000);
-    const league = await createRoom(store, {
-      playerId: 'player-filter-league',
-      name: 'League',
+    await joinRoom(store, { roomId: room.id, playerId: 'player-visibility-guest', name: 'Guest' }, 1100);
+
+    await expect(updateRoomSettings(store, {
+      roomId: room.id,
+      playerId: 'player-visibility-guest',
+      matchType: 'custom',
       visibility: 'public',
-      matchType: 'league',
-    }, 1100);
+    }, 1200)).rejects.toThrow('Only the host can change room settings.');
 
-    const rankedRooms = await listPublicRooms(store, 1200, { ranked: true });
-    const leagueRooms = await listPublicRooms(store, 1200, { matchType: 'league' });
+    const published = await updateRoomSettings(store, {
+      roomId: room.id,
+      playerId: 'player-visibility-host',
+      matchType: 'custom',
+      visibility: 'public',
+    }, 1300);
 
-    expect(rankedRooms.map((room) => room.id)).toEqual([league.id]);
-    expect(leagueRooms.map((room) => room.id)).toEqual([league.id]);
-    expect(leagueRooms[0].matchType).toBe('league');
-    expect(leagueRooms[0].ranked).toBe(true);
-  });
+    expect(published.visibility).toBe('public');
+    expect(published.mode).toBe('custom');
+    expect(published.matchType).toBe('custom');
+    expect(published.players.every((player) => !player.ready && player.status === 'joined')).toBe(true);
+    expect((await listPublicRooms(store, 1400)).map((summary) => summary.id)).toEqual([room.id]);
 
-  it('matches two players through Quick Duel into a private duel countdown room', async () => {
-    const store = new MemoryRoomStore();
-    const first = await enqueueMatchmaking(store, {
-      playerId: 'player-quick-duel-a',
-      name: 'A',
-    }, 1000);
-    const second = await enqueueMatchmaking(store, {
-      playerId: 'player-quick-duel-b',
-      name: 'B',
+    const hidden = await updateRoomSettings(store, {
+      roomId: room.id,
+      playerId: 'player-visibility-host',
+      matchType: 'custom',
+      visibility: 'private',
     }, 1500);
 
-    expect(first.room).toBeNull();
-    expect(first.ticket.status).toBe('queued');
-    expect(second.ticket.status).toBe('matched');
-    expect(second.room).not.toBeNull();
-    expect(second.room?.visibility).toBe('private');
-    expect(second.room?.matchType).toBe('duel');
-    expect(second.room?.status).toBe('countdown');
-    expect(second.room?.players.map((player) => player.ready)).toEqual([true, true]);
-
-    const firstTicket = await heartbeatMatchmaking(store, {
-      ticketId: first.ticket.id,
-      playerId: 'player-quick-duel-a',
-    }, 1600);
-    expect(firstTicket.ticket.status).toBe('matched');
-    expect(firstTicket.room?.id).toBe(second.room?.id);
-  });
-
-  it('matches two players through League matchmaking into a ranked league room', async () => {
-    const store = new MemoryRoomStore();
-    const first = await enqueueMatchmaking(store, {
-      queue: 'league',
-      playerId: 'player-league-queue-a',
-      name: 'A',
-    }, 1000);
-    const second = await enqueueMatchmaking(store, {
-      queue: 'league',
-      playerId: 'player-league-queue-b',
-      name: 'B',
-    }, 1500);
-
-    expect(first.ticket.rating).toBe(1000);
-    expect(second.ticket.status).toBe('matched');
-    expect(second.room?.matchType).toBe('league');
-    expect(second.room?.ruleset.ranked).toBe(true);
-    expect(second.room?.series?.firstTo).toBe(3);
-  });
-
-  it('lets players enter and reenter the persistent Quick Play lobby', async () => {
-    const store = new MemoryRoomStore();
-    const first = await enterQuickPlay(store, {
-      playerId: 'player-quickplay-a',
-      name: 'A',
-    }, 1000);
-    const second = await enterQuickPlay(store, {
-      playerId: 'player-quickplay-b',
-      name: 'B',
-    }, 1100);
-
-    expect(first.room.id).toBe('QPLY');
-    expect(second.room.id).toBe(first.room.id);
-    expect(second.room.matchType).toBe('quickPlay');
-    expect(second.room.players.map((player) => player.id)).toEqual(['player-quickplay-a', 'player-quickplay-b']);
-
-    await getRoomState(store, first.room.id, 7000);
-    const eliminated = await eliminatePlayer(store, {
-      roomId: first.room.id,
-      authorityPlayerId: 'player-quickplay-a',
-      playerId: 'player-quickplay-b',
-      seed: second.room.seed,
-      frame: 360,
-      lines: 12,
-      pieces: 30,
-      elapsedFrames: 360,
-      sentGarbage: 4,
-      receivedGarbage: 8,
-    }, 7100);
-
-    expect(eliminated.status).toBe('playing');
-    expect(eliminated.winnerPlayerId).toBeNull();
-    expect(eliminated.players.find((player) => player.id === 'player-quickplay-b')?.status).toBe('eliminated');
-
-    const reentered = await enterQuickPlay(store, {
-      playerId: 'player-quickplay-b',
-      name: 'B Again',
-    }, 7200);
-    const player = reentered.room.players.find((candidate) => candidate.id === 'player-quickplay-b');
-    expect(reentered.room.id).toBe(first.room.id);
-    expect(player).toMatchObject({
-      name: 'B Again',
-      alive: true,
-      status: 'ready',
-      lines: 0,
-    });
-  });
-
-  it('updates the weekly Quick Play leaderboard from progress and eliminations', async () => {
-    const store = new MemoryRoomStore();
-    const joined = await enterQuickPlay(store, {
-      playerId: 'player-quickplay-score',
-      name: 'Scorer',
-    }, Date.UTC(2026, 5, 6));
-    await getRoomState(store, joined.room.id, Date.UTC(2026, 5, 6) + 6000);
-    await updateProgress(store, {
-      roomId: joined.room.id,
-      authorityPlayerId: 'player-quickplay-score',
-      playerId: 'player-quickplay-score',
-      seed: joined.room.seed,
-      lines: 20,
-      pieces: 50,
-      elapsedFrames: 1800,
-      sentGarbage: 10,
-      receivedGarbage: 5,
-    }, Date.UTC(2026, 5, 6) + 7000);
-
-    const leaderboard = await getQuickPlayLeaderboard(store, '2026-06-01');
-
-    expect(leaderboard[0]).toMatchObject({
-      playerId: 'player-quickplay-score',
-      displayName: 'Scorer',
-      lines: 20,
-      sentGarbage: 10,
-    });
-    expect(leaderboard[0].score).toBeGreaterThan(0);
+    expect(hidden.visibility).toBe('private');
+    expect(await listPublicRooms(store, 1600)).toEqual([]);
   });
 
   it('stores custom online room rules while keeping online survival as the objective', async () => {
@@ -1621,99 +1521,30 @@ describe('core stacker engine', () => {
     expect(room.rules.targetLines).toBeNull();
   });
 
-  it('creates versioned online rulesets for new match types', async () => {
+  it('rejects removed online match types', async () => {
     const store = new MemoryRoomStore();
-    const duel = await createRoom(store, {
-      playerId: 'player-duel-1',
-      name: 'Duel',
+
+    await expect(createRoom(store, {
+      playerId: 'player-old-mode-create',
+      name: 'Old',
       visibility: 'private',
-      matchType: 'duel',
-    }, 1000);
-    const league = await createRoom(store, {
-      playerId: 'player-league-1',
-      name: 'League',
-      visibility: 'private',
-      matchType: 'league',
-    }, 1100);
+      matchType: 'duel' as unknown as 'custom',
+    }, 1000)).rejects.toThrow('Only custom online rooms are supported.');
 
-    expect(duel.mode).toBe('battle');
-    expect(duel.matchType).toBe('duel');
-    expect(duel.ruleset).toMatchObject({
-      rulesetId: 'duel-ft3-simple',
-      rulesetVersion: 1,
-      objective: { type: 'duelRounds', firstTo: 3 },
-      attackTable: 'simple',
-      targeting: 'random',
-      ranked: false,
-    });
-    expect(league.ruleset.ranked).toBe(true);
-    expect(league.ruleset.objective).toEqual({ type: 'duelRounds', firstTo: 3 });
-  });
-
-  it('maps online objectives to engine target lines only for sprint races', async () => {
-    const store = new MemoryRoomStore();
-    const sprint = await createRoom(store, {
-      playerId: 'player-sprint-1',
-      name: 'Sprint',
-      visibility: 'public',
-      matchType: 'sprintRace',
-    }, 1000);
-    const royale = await createRoom(store, {
-      playerId: 'player-royale-1',
-      name: 'Royale',
-      visibility: 'public',
-      matchType: 'royale',
-    }, 1100);
-
-    expect(sprint.ruleset.objective).toEqual({ type: 'sprint', targetLines: 40 });
-    expect(sprint.rules.targetLines).toBe(40);
-    expect(royale.ruleset.objective).toEqual({ type: 'lastStanding' });
-    expect(royale.rules.targetLines).toBeNull();
-  });
-
-  it('lets only the lobby host change room mode while keeping the same room and players', async () => {
-    const store = new MemoryRoomStore();
     const room = await createRoom(store, {
-      playerId: 'player-mode-host',
+      playerId: 'player-old-mode-host',
       name: 'Host',
       visibility: 'private',
-    }, 1000);
-    await joinRoom(store, { roomId: room.id, playerId: 'player-mode-guest', name: 'Guest' }, 1100);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-mode-host', ready: true }, 1200);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-mode-guest', ready: true }, 1200);
+    }, 1100);
 
     await expect(updateRoomSettings(store, {
       roomId: room.id,
-      playerId: 'player-mode-guest',
-      matchType: 'royale',
-    }, 1300)).rejects.toThrow('Only the host can change room settings.');
-
-    const updated = await updateRoomSettings(store, {
-      roomId: room.id,
-      playerId: 'player-mode-host',
-      matchType: 'sprintRace',
-    }, 1400);
-
-    expect(updated.id).toBe(room.id);
-    expect(updated.hostPlayerId).toBe('player-mode-host');
-    expect(updated.players.map((player) => player.id)).toEqual(['player-mode-host', 'player-mode-guest']);
-    expect(updated.players.every((player) => !player.ready && player.status === 'joined')).toBe(true);
-    expect(updated.mode).toBe('battle');
-    expect(updated.matchType).toBe('sprintRace');
-    expect(updated.ruleset.objective).toEqual({ type: 'sprint', targetLines: 40 });
-    expect(updated.rules.targetLines).toBe(40);
-
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-mode-host', ready: true }, 1500);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-mode-guest', ready: true }, 1500);
-    await startRoom(store, { roomId: room.id, playerId: 'player-mode-host' }, 1600);
-    await expect(updateRoomSettings(store, {
-      roomId: room.id,
-      playerId: 'player-mode-host',
-      matchType: 'battle',
-    }, 1700)).rejects.toThrow('Room settings can only change in the lobby.');
+      playerId: 'player-old-mode-host',
+      matchType: 'sprintRace' as unknown as 'custom',
+    }, 1200)).rejects.toThrow('Only custom online rooms are supported.');
   });
 
-  it('blocks room mode changes when an active bet exists', async () => {
+  it('blocks custom room visibility changes when an active bet exists', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, {
       playerId: 'player-bet-mode-host',
@@ -1746,216 +1577,26 @@ describe('core stacker engine', () => {
       roomId: room.id,
       playerId: 'player-bet-mode-host',
       matchType: 'custom',
+      visibility: 'public',
     }, 1100)).rejects.toThrow('No se puede cambiar el modo con una apuesta activa.');
   });
 
-  it('finishes a sprint race when the first player submits a clear result', async () => {
+  it('blocks custom room visibility changes after the lobby starts', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, {
-      playerId: 'player-sprint-host',
+      playerId: 'player-started-visibility-host',
       name: 'Host',
       visibility: 'private',
-      matchType: 'sprintRace',
     }, 1000);
-    await joinRoom(store, { roomId: room.id, playerId: 'player-sprint-guest', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-started-visibility-host', ready: true }, 1100);
+    await startRoom(store, { roomId: room.id, playerId: 'player-started-visibility-host' }, 1200);
 
-    const finished = await submitResult(store, {
+    await expect(updateRoomSettings(store, {
       roomId: room.id,
-      authorityPlayerId: 'player-sprint-host',
-      playerId: 'player-sprint-guest',
-      seed: room.seed,
-      result: 'won',
-      lines: 40,
-      pieces: 101,
-      elapsedFrames: 3200,
-    }, 5000);
-
-    expect(finished.status).toBe('finished');
-    expect(finished.winnerPlayerId).toBe('player-sprint-guest');
-    expect(finished.players.find((player) => player.id === 'player-sprint-guest')?.status).toBe('won');
-    expect(finished.players.find((player) => player.id === 'player-sprint-host')?.status).toBe('lost');
-  });
-
-  it('accumulates duel rounds in the same room until first-to is reached', async () => {
-    const store = new MemoryRoomStore();
-    const room = await createRoom(store, {
-      playerId: 'player-duel-host',
-      name: 'Host',
-      visibility: 'private',
-      matchType: 'duel',
-    }, 1000);
-    await joinRoom(store, { roomId: room.id, playerId: 'player-duel-guest', name: 'Guest' }, 1100);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-duel-host', ready: true }, 1200);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-duel-guest', ready: true }, 1200);
-    const started = await startRoom(store, { roomId: room.id, playerId: 'player-duel-host' }, 1300);
-
-    expect(started.series).toMatchObject({
-      objective: 'duelRounds',
-      firstTo: 3,
-      currentRound: 1,
-      completed: false,
-    });
-
-    let playing = await getRoomState(store, room.id, 7000);
-    const firstRound = await eliminatePlayer(store, {
-      roomId: room.id,
-      authorityPlayerId: 'player-duel-host',
-      playerId: 'player-duel-guest',
-      seed: playing.seed,
-      frame: 300,
-      lines: 10,
-      pieces: 20,
-      elapsedFrames: 300,
-    }, 7100);
-
-    expect(playing.status).toBe('playing');
-    expect(firstRound.status).toBe('countdown');
-    expect(firstRound.winnerPlayerId).toBeNull();
-    expect(firstRound.series?.currentRound).toBe(2);
-    expect(firstRound.series?.scores.find((score) => score.playerId === 'player-duel-host')?.wins).toBe(1);
-    expect(firstRound.series?.rounds).toHaveLength(1);
-    expect(firstRound.players.every((player) => player.alive && player.status === 'ready')).toBe(true);
-
-    playing = await getRoomState(store, room.id, 13000);
-    const secondRound = await eliminatePlayer(store, {
-      roomId: room.id,
-      authorityPlayerId: 'player-duel-host',
-      playerId: 'player-duel-guest',
-      seed: playing.seed,
-      frame: 280,
-      lines: 12,
-      pieces: 18,
-      elapsedFrames: 280,
-    }, 13100);
-
-    expect(playing.status).toBe('playing');
-    expect(secondRound.status).toBe('countdown');
-    expect(secondRound.series?.currentRound).toBe(3);
-    expect(secondRound.series?.scores.find((score) => score.playerId === 'player-duel-host')?.wins).toBe(2);
-
-    playing = await getRoomState(store, room.id, 19000);
-    const finished = await eliminatePlayer(store, {
-      roomId: room.id,
-      authorityPlayerId: 'player-duel-host',
-      playerId: 'player-duel-guest',
-      seed: playing.seed,
-      frame: 260,
-      lines: 14,
-      pieces: 16,
-      elapsedFrames: 260,
-    }, 19100);
-
-    expect(finished.status).toBe('finished');
-    expect(finished.winnerPlayerId).toBe('player-duel-host');
-    expect(finished.series).toMatchObject({
-      completed: true,
-      winnerPlayerId: 'player-duel-host',
-    });
-    expect(finished.series?.rounds).toHaveLength(3);
-  });
-
-  it('stores casual duel results without changing rating', async () => {
-    const store = new MemoryRoomStore();
-    const room = await createRoom(store, {
-      playerId: 'player-casual-host',
-      name: 'Host',
-      visibility: 'private',
-      matchType: 'duel',
-      ruleset: {
-        rulesetId: 'duel-ft1-simple',
-        rulesetVersion: 1,
-        objective: { type: 'duelRounds', firstTo: 1 },
-        attackTable: 'simple',
-        targeting: 'random',
-        ranked: false,
-      },
-    }, 1000);
-    await joinRoom(store, { roomId: room.id, playerId: 'player-casual-guest', name: 'Guest' }, 1100);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-casual-host', ready: true }, 1200);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-casual-guest', ready: true }, 1200);
-    await startRoom(store, { roomId: room.id, playerId: 'player-casual-host' }, 1300);
-    const playing = await getRoomState(store, room.id, 7000);
-
-    const finished = await eliminatePlayer(store, {
-      roomId: room.id,
-      authorityPlayerId: 'player-casual-host',
-      playerId: 'player-casual-guest',
-      seed: playing.seed,
-      frame: 240,
-      lines: 8,
-      pieces: 16,
-      elapsedFrames: 240,
-    }, 7100);
-
-    const hostProfile = await store.getProfile('player-casual-host');
-    const [resultId] = await store.listMatchResultIds('player-casual-host');
-    const result = await store.getMatchResult(resultId);
-
-    expect(finished.matchResultId).toBe(resultId);
-    expect(hostProfile?.rating.value).toBe(1000);
-    expect(hostProfile?.casualStats.played).toBe(1);
-    expect(hostProfile?.leagueStats.played).toBe(0);
-    expect(result?.ranked).toBe(false);
-    expect(result?.participants.find((participant) => participant.playerId === 'player-casual-host')?.ratingAfter).toBeNull();
-  });
-
-  it('updates league Elo only when the ranked series completes', async () => {
-    const store = new MemoryRoomStore();
-    const room = await createRoom(store, {
-      playerId: 'player-league-host',
-      name: 'Host',
-      visibility: 'private',
-      matchType: 'league',
-      ruleset: {
-        rulesetId: 'league-ft1-simple',
-        rulesetVersion: 1,
-        objective: { type: 'duelRounds', firstTo: 1 },
-        attackTable: 'simple',
-        targeting: 'random',
-        ranked: true,
-      },
-    }, 1000);
-    await joinRoom(store, { roomId: room.id, playerId: 'player-league-guest', name: 'Guest' }, 1100);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-league-host', ready: true }, 1200);
-    await setPlayerReady(store, { roomId: room.id, playerId: 'player-league-guest', ready: true }, 1200);
-    await startRoom(store, { roomId: room.id, playerId: 'player-league-host' }, 1300);
-    const playing = await getRoomState(store, room.id, 7000);
-
-    const finished = await eliminatePlayer(store, {
-      roomId: room.id,
-      authorityPlayerId: 'player-league-host',
-      playerId: 'player-league-guest',
-      seed: playing.seed,
-      frame: 240,
-      lines: 8,
-      pieces: 16,
-      elapsedFrames: 240,
-    }, 7100);
-
-    const hostProfile = await store.getProfile('player-league-host');
-    const guestProfile = await store.getProfile('player-league-guest');
-    const [resultId] = await store.listMatchResultIds('player-league-host');
-    const result = await store.getMatchResult(resultId);
-
-    expect(finished.matchResultId).toBe(resultId);
-    expect(hostProfile?.rating.value).toBe(1016);
-    expect(guestProfile?.rating.value).toBe(984);
-    expect(hostProfile?.leagueStats.played).toBe(1);
-    expect(hostProfile?.casualStats.played).toBe(0);
-    expect(result?.ranked).toBe(true);
-    expect(result?.participants.find((participant) => participant.playerId === 'player-league-host')).toMatchObject({
-      ratingBefore: 1000,
-      ratingAfter: 1016,
-    });
-  });
-
-  it('returns online profile state with recent persisted match results', async () => {
-    const store = new MemoryRoomStore();
-    const profileState = await getOnlineProfileState(store, 'player-profile-state', 'Profile', 1000);
-
-    expect(profileState.profile.rating.value).toBe(1000);
-    expect(profileState.profile.displayName).toBe('Profile');
-    expect(profileState.recentResults).toEqual([]);
+      playerId: 'player-started-visibility-host',
+      matchType: 'custom',
+      visibility: 'public',
+    }, 1300)).rejects.toThrow('Room settings can only change in the lobby.');
   });
 
   it('rejects invalid explicit online rulesets', async () => {
@@ -1964,7 +1605,7 @@ describe('core stacker engine', () => {
       playerId: 'player-bad-ruleset',
       name: 'Bad',
       visibility: 'private',
-      matchType: 'duel',
+      matchType: 'custom',
       ruleset: {
         rulesetId: 'bad ruleset',
         rulesetVersion: 999,
