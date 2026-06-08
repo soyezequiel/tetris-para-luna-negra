@@ -3588,9 +3588,6 @@ function renderDashboardMenu(state: GameState): string {
             Ajustes
           </button>
         </div>
-        <div class="dash-sidebar-footer">
-          © 2026 TETRA<br>Todos los derechos reservados.
-        </div>
       </nav>
       
       <!-- HERO CENTER -->
