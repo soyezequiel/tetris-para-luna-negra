@@ -12,7 +12,7 @@ import {
 } from './app/runHistory';
 import { soundCueForRunProgress } from './app/runEffects';
 import { createRunSummary, RunSplitTracker, type LineSplit, type RunSummary } from './app/runStats';
-import { canAdvanceGame, canCommitLocalOnlineTerminal, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
+import { canAdvanceGame, canCommitLocalOnlineTerminal, gameOverReasonMessage, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import {
   CUSTOM_NUMBER_SETTING_META,
   CUSTOM_TABS,
@@ -2345,7 +2345,7 @@ function renderScreenOverlay(state: GameState): string {
   return renderPanel({
     eyebrow: terminal,
     title: formatRunSummary(state),
-    meta: state.status === 'finished' ? 'Saved if this beats your local best.' : 'The stack topped out.',
+    meta: state.status === 'finished' ? 'Guardado si supera tu mejor marca local.' : gameOverReasonMessage(state.stats.gameOverReason),
     details: renderAdvancedRunStats(currentRunSummary(state)),
     actions,
   });
@@ -2647,6 +2647,9 @@ function renderOnlineCountdownOverlay(): string {
 }
 
 function renderOnlineResultsOverlay(state: GameState): string {
+  const ownReason = state.status === 'gameover'
+    ? `<div class="panel-note">${escapeHtml(gameOverReasonMessage(state.stats.gameOverReason))}</div>`
+    : '';
   const ownSummary = terminalLabel(state.status)
     ? `<div class="panel-note">${escapeHtml(formatRunSummary(state, appMode === 'onlineResults' || appMode === 'onlinePlaying'))}</div>`
     : '';
@@ -2664,6 +2667,7 @@ function renderOnlineResultsOverlay(state: GameState): string {
         <p>${winner ? `${escapeHtml(winner.name)} wins. ` : ''}Ranking is based on survival, then elapsed frames.</p>
         ${renderOnlineBetResult()}
         ${renderOnlineSeriesStatus()}
+        ${ownReason}
         ${ownSummary}
         ${renderOnlineStandings()}
         <div class="panel-actions">
@@ -3538,6 +3542,37 @@ function renderPersistentRoomPanel(): string {
   return onlineRoom ? renderActivePersistentRoomPanel() : renderEmptyPersistentRoomPanel();
 }
 
+function renderFloatingParticles(): string {
+  return `
+    <div class="dash-particles" aria-hidden="true">
+      <!-- T-Piece (purple) -->
+      <svg class="dash-particle particle-1" viewBox="0 0 120 80" width="60" height="40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M40 0h40v40H40V0zM0 40h120v40H0V40z" fill="var(--dash-neon-purple)" fill-opacity="0.15" stroke="var(--dash-neon-purple)" stroke-width="2" />
+      </svg>
+      <!-- I-Piece (cyan) -->
+      <svg class="dash-particle particle-2" viewBox="0 0 160 40" width="80" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 0h160v40H0V0z" fill="var(--dash-neon-cyan)" fill-opacity="0.15" stroke="var(--dash-neon-cyan)" stroke-width="2" />
+      </svg>
+      <!-- O-Piece (yellow) -->
+      <svg class="dash-particle particle-3" viewBox="0 0 80 80" width="40" height="40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 0h80v80H0V0z" fill="#f59e0b" fill-opacity="0.1" stroke="#f59e0b" stroke-width="2" />
+      </svg>
+      <!-- Z-Piece (pink) -->
+      <svg class="dash-particle particle-4" viewBox="0 0 120 80" width="60" height="40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 0h80v40H0V0zm40 40h80v40H40V40z" fill="var(--dash-neon-pink)" fill-opacity="0.15" stroke="var(--dash-neon-pink)" stroke-width="2" />
+      </svg>
+      <!-- S-Piece (green) -->
+      <svg class="dash-particle particle-5" viewBox="0 0 120 80" width="60" height="40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M40 0h80v40H40V0zM0 40h80v40H0V40z" fill="var(--dash-success)" fill-opacity="0.15" stroke="var(--dash-success)" stroke-width="2" />
+      </svg>
+      <!-- L-Piece (orange) -->
+      <svg class="dash-particle particle-6" viewBox="0 0 120 80" width="60" height="40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 0h40v80H0V0zm40 40h80v40H40V40z" fill="#f97316" fill-opacity="0.15" stroke="#f97316" stroke-width="2" />
+      </svg>
+    </div>
+  `;
+}
+
 function renderDashboardMenu(state: GameState): string {
   const userDisplayName = onlineName.trim() || 'Jugador';
   const avatarLetter = userDisplayName.charAt(0).toUpperCase();
@@ -3557,7 +3592,9 @@ function renderDashboardMenu(state: GameState): string {
 
   return `
     <div class="dash-layout ${layoutClass}">
+      ${renderFloatingParticles()}
       <!-- TOP BAR -->
+
       <header class="dash-topbar">
         <h1 class="dash-logo">TETRA</h1>
         
@@ -3613,6 +3650,7 @@ function renderDashboardCenterContent(_state: GameState): string {
       <div class="dash-hero-container">
         <div class="dash-hero-image-wrapper">
           <img class="dash-hero-image" src="/tetris-hero.png" alt="Tetris Board Art" />
+          <div class="dash-scanlines"></div>
         </div>
       </div>
     `;

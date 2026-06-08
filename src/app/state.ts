@@ -1,4 +1,4 @@
-import type { GameState } from '../game/types';
+import type { GameOverReason, GameState } from '../game/types';
 
 export type AppMode =
   | 'menu'
@@ -65,4 +65,21 @@ export function terminalLabel(status: GameState['status']): string | null {
   if (status === 'finished') return 'CLEAR';
   if (status === 'gameover') return 'TOP OUT';
   return null;
+}
+
+export function gameOverReasonMessage(reason: GameOverReason | null | undefined): string {
+  switch (reason) {
+    case 'blockOut':
+      return 'La pieza no pudo aparecer — la pila llegó al tope.';
+    case 'lockOut':
+      return 'La pieza se trabó por encima del área visible.';
+    case 'garbageTopOut':
+      return 'Las líneas de basura empujaron tus bloques más allá del tope.';
+    case 'garbageCollision':
+      return 'Las líneas de basura aplastaron tu pieza activa.';
+    case 'holdBlockOut':
+      return 'La pieza del hold no pudo aparecer — no hay espacio.';
+    default:
+      return 'La pila superó el tope.';
+  }
 }

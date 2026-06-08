@@ -8,6 +8,13 @@ export type AttackTableId = 'simple' | 'modern';
 
 export type SpinType = 'none' | 'mini' | 'full';
 
+export type GameOverReason =
+  | 'blockOut'
+  | 'lockOut'
+  | 'garbageTopOut'
+  | 'garbageCollision'
+  | 'holdBlockOut';
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -120,6 +127,7 @@ export interface GameStats {
   startFrame: number;
   finishFrame: number | null;
   gameOverFrame: number | null;
+  gameOverReason: GameOverReason | null;
 }
 
 export interface GameState {
@@ -149,6 +157,7 @@ export interface GameEngineSnapshot {
   startFrame: number;
   finishFrame: number | null;
   gameOverFrame: number | null;
+  gameOverReason: GameOverReason | null;
   sentGarbage: number;
   receivedGarbage: number;
   pendingGarbage: PendingGarbage[];

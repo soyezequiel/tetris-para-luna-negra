@@ -5,7 +5,7 @@ import { currentGravityCellsPerFrame } from './gravity';
 import { cellsFor, kicksFor, nextRotation } from './pieces';
 import { SeededRng } from './rng';
 import { DEFAULT_RULES } from './rules';
-import type { ActivePiece, Cell, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, PendingGarbage, PieceType, SpinType, Vec2 } from './types';
+import type { ActivePiece, Cell, GameEngineSnapshot, GameEvent, GameInput, GameOverReason, GameRules, GameState, InputAction, PendingGarbage, PieceType, SpinType, Vec2 } from './types';
 
 export class GameEngine {
   private readonly rules: GameRules;
@@ -23,6 +23,7 @@ export class GameEngine {
   private startFrame = 0;
   private finishFrame: number | null = null;
   private gameOverFrame: number | null = null;
+  private gameOverReason: GameOverReason | null = null;
   private sentGarbage = 0;
   private receivedGarbage = 0;
   private pendingGarbage: PendingGarbage[] = [];
@@ -69,6 +70,7 @@ export class GameEngine {
         startFrame: this.startFrame,
         finishFrame: this.finishFrame,
         gameOverFrame: this.gameOverFrame,
+        gameOverReason: this.gameOverReason,
       },
       status: this.status,
       seed: this.seed,
@@ -91,6 +93,7 @@ export class GameEngine {
       startFrame: this.startFrame,
       finishFrame: this.finishFrame,
       gameOverFrame: this.gameOverFrame,
+      gameOverReason: this.gameOverReason,
       sentGarbage: this.sentGarbage,
       receivedGarbage: this.receivedGarbage,
       pendingGarbage: this.pendingGarbage.map((garbage) => ({ ...garbage })),
@@ -119,6 +122,7 @@ export class GameEngine {
     this.startFrame = snapshot.startFrame;
     this.finishFrame = snapshot.finishFrame;
     this.gameOverFrame = snapshot.gameOverFrame;
+    this.gameOverReason = snapshot.gameOverReason ?? null;
     this.sentGarbage = snapshot.sentGarbage;
     this.receivedGarbage = snapshot.receivedGarbage;
     this.pendingGarbage = snapshot.pendingGarbage.map((garbage) => ({ ...garbage }));
@@ -212,6 +216,7 @@ export class GameEngine {
     this.startFrame = 0;
     this.finishFrame = null;
     this.gameOverFrame = null;
+    this.gameOverReason = null;
     this.sentGarbage = 0;
     this.receivedGarbage = 0;
     this.pendingGarbage = [];
@@ -250,6 +255,7 @@ export class GameEngine {
     if (this.collides(this.active)) {
       this.status = 'gameover';
       this.gameOverFrame = this.frame;
+      this.gameOverReason = 'blockOut';
     }
   }
 
@@ -321,6 +327,7 @@ export class GameEngine {
       if (this.collides(this.active)) {
         this.status = 'gameover';
         this.gameOverFrame = this.frame;
+        this.gameOverReason = 'holdBlockOut';
       }
     } else {
       this.hold = current;
@@ -387,6 +394,7 @@ export class GameEngine {
       if (cell.y < 0) {
         this.status = 'gameover';
         this.gameOverFrame = this.frame;
+        this.gameOverReason = 'lockOut';
         return;
       }
       this.board[cell.y][cell.x] = cell.type;
@@ -517,6 +525,7 @@ export class GameEngine {
       if (result.toppedOut) {
         this.status = 'gameover';
         this.gameOverFrame = frame;
+        this.gameOverReason = 'garbageTopOut';
         this.active = null;
         break;
       }
@@ -524,6 +533,7 @@ export class GameEngine {
     if (this.status === 'playing' && this.active && this.collides(this.active)) {
       this.status = 'gameover';
       this.gameOverFrame = frame;
+      this.gameOverReason = 'garbageCollision';
       this.active = null;
     }
     this.events.push({ type: 'appliedGarbage', frame, lines: appliedLines });
