@@ -3293,3 +3293,67 @@ canvas {
   font-family: inherit !important;
   font-weight: 700;
 }
+
+/* Settings panel overrides for Dashboard */
+.dash-hero .settings-panel h1 {
+  font-family: inherit !important;
+  font-weight: 800;
+  font-size: 36px;
+  margin: 8px 0 16px;
+}
+
+.dash-hero .binding-row span {
+  font-family: inherit !important;
+  font-weight: 700;
+  color: var(--dash-text);
+}
+
+.dash-hero .binding-button {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--dash-border);
+  color: var(--dash-text-dim);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.dash-hero .binding-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--dash-text);
+  border-color: var(--dash-accent);
+}
+
+.dash-hero .binding-button-active {
+  background: rgba(124, 92, 252, 0.2) !important;
+  border-color: var(--dash-accent) !important;
+  color: var(--dash-text) !important;
+  box-shadow: 0 0 10px rgba(124, 92, 252, 0.1);
+}
+
+.dash-hero .timing-row span,
+.dash-hero .timing-row strong {
+  font-family: inherit !important;
+  font-weight: 700;
+  color: var(--dash-text);
+}
+
+.dash-hero .timing-row button {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--dash-border);
+  color: var(--dash-text-dim);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.dash-hero .timing-row button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--dash-text);
+  border-color: var(--dash-accent);
+}
