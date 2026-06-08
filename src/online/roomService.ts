@@ -40,6 +40,7 @@ import type {
   SetTargetingRequest,
   StartRoomRequest,
   TargetingMode,
+  UpdateRoomSettingsRequest,
 } from './protocol';
 import { BATTLE_RULES } from '../game/rules.js';
 import type { GameRules } from '../game/types';
@@ -272,6 +273,41 @@ export async function restartRoom(
     : null;
   room.matchResultId = null;
   prepareRoundCountdown(room, nowMs, true);
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return room;
+}
+
+export async function updateRoomSettings(
+  store: RoomStore,
+  request: UpdateRoomSettingsRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, request.roomId);
+  if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can change room settings.', 403);
+  if (room.status !== 'lobby') throw new OnlineRoomError('Room settings can only change in the lobby.', 409);
+  if (room.bet && room.bet.status !== 'cancelled' && room.bet.status !== 'expired' && room.bet.status !== 'refunded') {
+    throw new OnlineRoomError('No se puede cambiar el modo con una apuesta activa.', 409);
+  }
+
+  const mode = normalizeRoomMode(request.mode ?? (request.matchType === 'custom' ? 'custom' : 'battle'));
+  const matchType = normalizeMatchType(request.matchType, mode);
+  const ruleset = normalizeRuleset(request.ruleset, matchType, true);
+  room.mode = matchType === 'custom' ? 'custom' : 'battle';
+  room.matchType = matchType;
+  room.ruleset = ruleset;
+  room.rules = normalizeRoomRules(request.rules, room.mode, ruleset);
+  room.series = null;
+  room.winnerPlayerId = null;
+  room.matchResultId = null;
+  room.startsAtServerMs = null;
+  room.attacks = [];
+  room.players = room.players.map((player) => ({
+    ...player,
+    ready: false,
+    status: 'joined',
+    updatedAtServerMs: nowMs,
+  }));
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
   return room;

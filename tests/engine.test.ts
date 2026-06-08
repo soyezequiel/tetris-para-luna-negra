@@ -55,6 +55,7 @@ import {
   setPlayerReady,
   startRoom,
   submitResult,
+  updateRoomSettings,
   updateProgress,
 } from '../src/online/roomService';
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
@@ -72,7 +73,7 @@ import {
   updateInputTiming,
 } from '../src/input/settings';
 import type { ActivePiece, Cell, GameEvent, GameInput, PendingGarbage } from '../src/game/types';
-import type { OnlineGameSnapshot, OnlinePlayer, OnlinePlayerStatus } from '../src/online/protocol';
+import type { OnlineGameSnapshot, OnlinePlayer, OnlinePlayerStatus, RoomBet } from '../src/online/protocol';
 
 describe('core stacker engine', () => {
   it('creates deterministic 7-bags with all pieces once', () => {
@@ -1668,6 +1669,84 @@ describe('core stacker engine', () => {
     expect(sprint.rules.targetLines).toBe(40);
     expect(royale.ruleset.objective).toEqual({ type: 'lastStanding' });
     expect(royale.rules.targetLines).toBeNull();
+  });
+
+  it('lets only the lobby host change room mode while keeping the same room and players', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-mode-host',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-mode-guest', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-mode-host', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-mode-guest', ready: true }, 1200);
+
+    await expect(updateRoomSettings(store, {
+      roomId: room.id,
+      playerId: 'player-mode-guest',
+      matchType: 'royale',
+    }, 1300)).rejects.toThrow('Only the host can change room settings.');
+
+    const updated = await updateRoomSettings(store, {
+      roomId: room.id,
+      playerId: 'player-mode-host',
+      matchType: 'sprintRace',
+    }, 1400);
+
+    expect(updated.id).toBe(room.id);
+    expect(updated.hostPlayerId).toBe('player-mode-host');
+    expect(updated.players.map((player) => player.id)).toEqual(['player-mode-host', 'player-mode-guest']);
+    expect(updated.players.every((player) => !player.ready && player.status === 'joined')).toBe(true);
+    expect(updated.mode).toBe('battle');
+    expect(updated.matchType).toBe('sprintRace');
+    expect(updated.ruleset.objective).toEqual({ type: 'sprint', targetLines: 40 });
+    expect(updated.rules.targetLines).toBe(40);
+
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-mode-host', ready: true }, 1500);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-mode-guest', ready: true }, 1500);
+    await startRoom(store, { roomId: room.id, playerId: 'player-mode-host' }, 1600);
+    await expect(updateRoomSettings(store, {
+      roomId: room.id,
+      playerId: 'player-mode-host',
+      matchType: 'battle',
+    }, 1700)).rejects.toThrow('Room settings can only change in the lobby.');
+  });
+
+  it('blocks room mode changes when an active bet exists', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-bet-mode-host',
+      npub: 'npub-host',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    room.bet = {
+      betId: 'bet-mode-1',
+      status: 'funded',
+      stakeSats: 50,
+      potSats: 100,
+      potTargetSats: 100,
+      feeSats: 1,
+      feePct: 1,
+      netPayoutSats: 99,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [],
+      winnerNpubs: null,
+      resultReported: false,
+      createdByPlayerId: 'player-bet-mode-host',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1000,
+    } satisfies RoomBet;
+    await store.saveRoom(room);
+
+    await expect(updateRoomSettings(store, {
+      roomId: room.id,
+      playerId: 'player-bet-mode-host',
+      matchType: 'custom',
+    }, 1100)).rejects.toThrow('No se puede cambiar el modo con una apuesta activa.');
   });
 
   it('finishes a sprint race when the first player submits a clear result', async () => {

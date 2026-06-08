@@ -2,7 +2,7 @@ import { expect, type Page, type Route, test } from '@playwright/test';
 import { action, appMode, openFreshApp, writeReplayFixture } from './fixtures';
 import { BATTLE_RULES } from '../../src/game/rules';
 import type { Cell, GameRules, PieceType } from '../../src/game/types';
-import type { MatchmakingTicket, OnlineGameSnapshot, OnlineMatchType, OnlineRoomMode, OnlineRuleset, OnlineSeriesState, QuickPlayLeaderboardEntry, TargetingMode } from '../../src/online/protocol';
+import type { MatchmakingTicket, OnlineGameSnapshot, OnlineMatchType, OnlineRoomMode, OnlineRuleset, OnlineSeriesState, QuickPlayLeaderboardEntry, RoomBet, TargetingMode, UpdateRoomSettingsRequest } from '../../src/online/protocol';
 
 test.describe('STACK/40 browser flows', () => {
   test('serves online API during local Vite dev', async ({ page }) => {
@@ -207,15 +207,14 @@ test.describe('STACK/40 browser flows', () => {
   });
 
   test('shows public rooms, joins by listing, and keeps private rooms hidden', async ({ page }) => {
-    await mockOnlineApi(page);
+    const requests = await mockOnlineApi(page);
     await openFreshApp(page);
 
-    await action(page, 'multiplayer-menu').click();
-    await expect.poll(() => appMode(page)).toBe('multiplayerMenu');
-    await action(page, 'online-open').click();
-    await expect.poll(() => appMode(page)).toBe('onlineMenu');
+    await expect.poll(() => appMode(page)).toBe('menu');
+    await expect(page.getByRole('heading', { name: 'Disponible' })).toBeVisible();
     await expect(page.getByText('PUB1')).toBeVisible();
     await expect(page.getByText('PRV1')).toBeHidden();
+    expect(requests.lastCreate).toBeNull();
 
     await action(page, 'online-join-public').click();
     await expect.poll(() => appMode(page)).toBe('roomLobby');
@@ -227,7 +226,6 @@ test.describe('STACK/40 browser flows', () => {
     await openFreshApp(page);
 
     await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Duelist');
     await action(page, 'online-quick-duel').click();
 
@@ -242,7 +240,6 @@ test.describe('STACK/40 browser flows', () => {
     await openFreshApp(page);
 
     await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Ranked');
     await action(page, 'online-league').click();
 
@@ -257,7 +254,6 @@ test.describe('STACK/40 browser flows', () => {
     await openFreshApp(page);
 
     await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Climber');
     await action(page, 'online-quick-play').click();
 
@@ -270,9 +266,7 @@ test.describe('STACK/40 browser flows', () => {
     await mockOnlineApi(page);
     await openFreshApp(page);
 
-    await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
-    await expect.poll(() => appMode(page)).toBe('onlineMenu');
+    await expect.poll(() => appMode(page)).toBe('menu');
 
     const nameField = page.locator('[data-online-field="name"]');
     await nameField.fill('');
@@ -285,7 +279,7 @@ test.describe('STACK/40 browser flows', () => {
         ? document.activeElement.dataset.onlineField ?? null
         : null
     ))).toBe('name');
-    await expect.poll(() => appMode(page)).toBe('onlineMenu');
+    await expect.poll(() => appMode(page)).toBe('menu');
   });
 
   test('allows browser copy shortcut when UI text is selected', async ({ page }) => {
@@ -308,17 +302,14 @@ test.describe('STACK/40 browser flows', () => {
     await mockOnlineApi(page);
     await openFreshApp(page);
 
-    await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Host');
-    await expect(page.getByText('Battle room - last player standing')).toBeVisible();
     await action(page, 'online-create-private').click();
     await expect.poll(() => appMode(page)).toBe('roomLobby');
     await expect(page.getByRole('heading', { name: 'ROOM' })).toBeVisible();
-    await expect(page.getByText('Battle room: survive')).toBeVisible();
+    await expect(page.getByText('Battle room: sobreviví')).toBeVisible();
 
     await action(page, 'online-ready').click();
-    await expect(page.locator('.online-lobby-player-status')).toHaveText('Ready');
+    await expect(page.locator('.cs2-player-status').first()).toContainText('Listo');
 
     await action(page, 'online-start').click();
     await expect.poll(() => appMode(page)).toBe('onlineCountdown');
@@ -330,8 +321,6 @@ test.describe('STACK/40 browser flows', () => {
     const requests = await mockOnlineApi(page, { finishedCreatedRoom: true });
     await openFreshApp(page);
 
-    await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Host');
     await action(page, 'online-create-private').click();
     await expect.poll(() => appMode(page)).toBe('onlineResults');
@@ -349,8 +338,6 @@ test.describe('STACK/40 browser flows', () => {
     const requests = await mockOnlineApi(page, { largePlayingRoom: true });
     await openFreshApp(page);
 
-    await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Host');
     await action(page, 'online-create-private').click();
     await action(page, 'online-ready').click();
@@ -368,8 +355,6 @@ test.describe('STACK/40 browser flows', () => {
     await mockOnlineApi(page, { createdPlayingGuestRoom: true });
     await openFreshApp(page);
 
-    await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Guest');
     await action(page, 'online-create-private').click();
     await expect.poll(() => appMode(page)).toBe('onlinePlaying');
@@ -395,8 +380,6 @@ test.describe('STACK/40 browser flows', () => {
     await mockOnlineApi(page, { largePlayingRoom: true });
     await openFreshApp(page);
 
-    await action(page, 'multiplayer-menu').click();
-    await action(page, 'online-open').click();
     await page.locator('[data-online-field="name"]').fill('Host');
     await action(page, 'online-create-private').click();
     await expect.poll(() => appMode(page)).toBe('roomLobby');
@@ -512,30 +495,56 @@ test.describe('STACK/40 browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
   });
 
-  test('creates a custom online room from the multiplayer menu', async ({ page }) => {
+  test('changes room mode from the lobby while preserving the room', async ({ page }) => {
     const requests = await mockOnlineApi(page);
     await openFreshApp(page);
 
-    await action(page, 'multiplayer-menu').click();
-    await expect(action(page, 'online-custom-open')).toHaveText('Custom room');
-    await action(page, 'online-custom-open').click();
-    await expect.poll(() => appMode(page)).toBe('onlineMenu');
-    await expect(page.getByRole('heading', { name: 'Custom room' })).toBeVisible();
-    await expect(page.getByText('Custom room - usa la configuracion custom del host')).toBeVisible();
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ROOM');
+    await page.locator('[data-ui-action="online-room-mode"][data-match-type="custom"]').click();
+
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.mode)).toBe('custom');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.rules.gravityCellsPerFrame)).toBe(0.02);
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ROOM');
+    expect(requests.lastCreate?.mode).toBe('battle');
+    expect(requests.lastSettings?.matchType).toBe('custom');
+    expect(requests.lastSettings?.rules?.targetLines).toBeNull();
+  });
+
+  test('blocks solo mode while other players are in the current room', async ({ page }) => {
+    await mockOnlineApi(page, { createdLobbyGuestRoom: true });
+    await openFreshApp(page);
 
     await action(page, 'online-create-private').click();
     await expect.poll(() => appMode(page)).toBe('roomLobby');
-    await expect(page.getByText('Custom room: survive')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.mode)).toBe('custom');
-    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.rules.gravityCellsPerFrame)).toBe(0.02);
-    expect(requests.lastCreate?.mode).toBe('custom');
-    expect(requests.lastCreate?.rules?.targetLines).toBeNull();
+    await action(page, 'main-menu').click();
+    await expect.poll(() => appMode(page)).toBe('menu');
+
+    await action(page, 'solo-menu').click();
+    await action(page, 'start').click();
+
+    await expect.poll(() => appMode(page)).toBe('soloMenu');
+    await expect(page.getByText('No podés jugar modo solo mientras hay otras personas en la sala.')).toBeVisible();
+  });
+
+  test('allows solo mode while the current room only has this player', async ({ page }) => {
+    await mockOnlineApi(page);
+    await openFreshApp(page);
+
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await action(page, 'main-menu').click();
+    await action(page, 'solo-menu').click();
+    await action(page, 'start').click();
+
+    await expect.poll(() => appMode(page)).toBe('playing');
   });
 });
 
 async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Promise<MockOnlineApiRequests> {
   const now = Date.now();
-  const requests: MockOnlineApiRequests = { lastCreate: null, restartCount: 0, restartOnNextState: false };
+  const requests: MockOnlineApiRequests = { lastCreate: null, lastSettings: null, restartCount: 0, restartOnNextState: false };
   let room = createMockRoom('ROOM', 'private', now);
   const publicRoom = createMockRoom('PUB1', 'public', now);
   const quickPlayLeaderboard = [createMockQuickPlayLeaderboardEntry('player-leader', 'Leader', now)];
@@ -654,6 +663,15 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
       const body = route.request().postDataJSON() as MockCreateRequest;
       requests.lastCreate = body;
       room = createMockRoom('ROOM', body.visibility, Date.now(), body.playerId, body.name, body.mode, body.rules, body.matchType, body.avatarUrl ?? null);
+      if (options.createdLobbyGuestRoom) {
+        room = {
+          ...room,
+          players: [
+            room.players[0],
+            createMockPlayer('player-lobby-guest', 'Guest', Date.now()),
+          ],
+        };
+      }
       if (options.createdPlayingGuestRoom) room = createMockPlayingGuestRoom(room, Date.now());
       if (options.finishedCreatedRoom) room = createMockFinishedRoom(room, Date.now());
       await fulfillRoom(route, room);
@@ -693,6 +711,23 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
     if (path.endsWith('/restart')) {
       requests.restartCount += 1;
       room = restartMockRoom(room, Date.now());
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/settings')) {
+      const body = route.request().postDataJSON() as UpdateRoomSettingsRequest;
+      requests.lastSettings = body;
+      const matchType = body.matchType;
+      const ruleset = defaultMockRuleset(matchType);
+      room = {
+        ...room,
+        mode: matchType === 'custom' ? 'custom' : 'battle',
+        matchType,
+        ruleset,
+        rules: normalizeMockRulesForMatchType(body.rules ?? BATTLE_RULES, matchType),
+        updatedAtServerMs: Date.now(),
+        players: room.players.map((player) => ({ ...player, ready: false, status: 'joined' })),
+      };
       await fulfillRoom(route, room);
       return;
     }
@@ -765,10 +800,12 @@ type MockOnlineApiOptions = {
   largePlayingRoom?: boolean;
   finishedCreatedRoom?: boolean;
   createdPlayingGuestRoom?: boolean;
+  createdLobbyGuestRoom?: boolean;
 };
 
 type MockOnlineApiRequests = {
   lastCreate: MockCreateRequest | null;
+  lastSettings: UpdateRoomSettingsRequest | null;
   restartCount: number;
   restartOnNextState: boolean;
 };
@@ -784,6 +821,7 @@ function createMockRoom(
   matchType: OnlineMatchType = mode === 'custom' ? 'custom' : 'battle',
   avatarUrl: string | null = null,
 ): MockRoom {
+  const normalizedRules = normalizeMockRulesForMatchType(rules, matchType);
   return {
     id,
     visibility,
@@ -791,7 +829,7 @@ function createMockRoom(
     matchType,
     region: 'gru1',
     ruleset: defaultMockRuleset(matchType),
-    rules: { ...rules, targetLines: null },
+    rules: normalizedRules,
     status: 'lobby',
     hostPlayerId: playerId,
     createdAtServerMs: now,
@@ -804,6 +842,8 @@ function createMockRoom(
     players: [createMockPlayer(playerId, name, now, avatarUrl)],
     peerSignals: [],
     attacks: [],
+    bet: null,
+    lunaGameId: null,
   };
 }
 
@@ -959,6 +999,8 @@ type MockRoom = {
   players: MockPlayer[];
   peerSignals: unknown[];
   attacks: unknown[];
+  bet: RoomBet | null;
+  lunaGameId: string | null;
 };
 
 function createMockPlayer(id: string, name: string, now: number, avatarUrl: string | null = null): MockPlayer {
@@ -1100,6 +1142,16 @@ function defaultMockRuleset(matchType: OnlineMatchType): OnlineRuleset {
       ranked: false,
     };
   }
+  if (matchType === 'sprintRace') {
+    return {
+      rulesetId: 'sprint-40l-simple',
+      rulesetVersion: 1,
+      objective: { type: 'sprint', targetLines: 40 },
+      attackTable: 'simple',
+      targeting: 'random',
+      ranked: false,
+    };
+  }
   return {
     rulesetId: matchType === 'custom' ? 'custom-survival-simple' : 'battle-survival-simple',
     rulesetVersion: 1,
@@ -1107,5 +1159,12 @@ function defaultMockRuleset(matchType: OnlineMatchType): OnlineRuleset {
     attackTable: 'simple',
     targeting: 'random',
     ranked: false,
+  };
+}
+
+function normalizeMockRulesForMatchType(rules: GameRules, matchType: OnlineMatchType): GameRules {
+  return {
+    ...rules,
+    targetLines: matchType === 'sprintRace' ? 40 : null,
   };
 }

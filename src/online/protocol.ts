@@ -304,6 +304,15 @@ export interface RestartRoomRequest {
   playerId: string;
 }
 
+export interface UpdateRoomSettingsRequest {
+  roomId: string;
+  playerId: string;
+  mode?: OnlineRoomMode;
+  matchType: OnlineMatchType;
+  ruleset?: Partial<OnlineRuleset>;
+  rules?: GameRules;
+}
+
 export interface SetTargetingRequest {
   roomId: string;
   playerId: string;

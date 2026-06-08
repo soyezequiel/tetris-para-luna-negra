@@ -64,7 +64,7 @@ import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBr
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LunaIdentity, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
+import type { AttackRequest, LunaIdentity, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode, UpdateRoomSettingsRequest } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -79,6 +79,7 @@ const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_ROOM_MATCH_FILTERS = ['all', 'battle', 'royale', 'duel', 'league', 'quickPlay', 'sprintRace', 'custom'] as const;
 const ONLINE_ROOM_RANK_FILTERS = ['all', 'casual', 'ranked'] as const;
+const ONLINE_ROOM_MODE_OPTIONS = ['battle', 'royale', 'sprintRace', 'custom'] as const;
 const ONLINE_POLL_MS = 1000;
 const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_PEER_BROADCAST_MS = 100;
@@ -89,6 +90,7 @@ const GAME_FRAME_MS = 1000 / 60;
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 type OnlineRoomMatchFilter = typeof ONLINE_ROOM_MATCH_FILTERS[number];
 type OnlineRoomRankFilter = typeof ONLINE_ROOM_RANK_FILTERS[number];
+type ConfigurableOnlineMatchType = typeof ONLINE_ROOM_MODE_OPTIONS[number];
 type RunKind = 'standard' | 'custom' | 'online';
 type SequencedOnlineInput = GameInput & { sequence: number };
 
@@ -146,6 +148,7 @@ let onlineMatchmakingTicket: MatchmakingTicket | null = null;
 let onlineProfile: OnlineProfile | null = null;
 let onlineRecentResults: OnlineMatchResult[] = [];
 let quickPlayLeaderboard: QuickPlayLeaderboardEntry[] = [];
+let localRunError: string | null = null;
 let onlineError: string | null = null;
 let onlineBusy = false;
 let onlinePollInFlight = false;
@@ -427,6 +430,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-refresh') refreshPublicRooms();
   if (action === 'online-room-match-filter') setOnlineRoomMatchFilter(control.dataset.matchFilter);
   if (action === 'online-room-rank-filter') setOnlineRoomRankFilter(control.dataset.rankFilter);
+  if (action === 'online-room-mode') setOnlineRoomMode(control.dataset.matchType);
   if (action === 'online-quick-duel') enqueueOnlineMatchmaking('quickDuel');
   if (action === 'online-league') enqueueOnlineMatchmaking('league');
   if (action === 'online-quick-play') enterOnlineQuickPlay();
@@ -586,6 +590,11 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
 }
 
 function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nextRunKind: RunKind = nextMode === 'onlinePlaying' ? 'online' : 'standard'): void {
+  if (nextRunKind !== 'online' && onlineRoomHasOtherPlayers()) {
+    localRunError = 'No podés jugar modo solo mientras hay otras personas en la sala.';
+    input.releaseAll();
+    return;
+  }
   input.releaseAll();
   bindingCapture = null;
   pendingConfirmAction = null;
@@ -593,6 +602,7 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   lastCustomExportName = null;
   replayImportError = null;
   libraryError = null;
+  localRunError = null;
   importedReplayName = null;
   playback = null;
   currentRunKind = nextRunKind;
@@ -786,7 +796,11 @@ async function bootstrapOnlineStartup(): Promise<void> {
   }
   if (nextParams.get('join')?.trim()) {
     await bootstrapJoinLink(nextParams.get('join')!.trim());
+    return;
   }
+  void refreshPublicRooms();
+  void refreshOnlineProfile();
+  void refreshQuickPlayLeaderboard();
 }
 
 // Login automático. El juego se abre desde Luna Negra con el entitlement JWT en
@@ -1185,6 +1199,41 @@ async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: 
   } finally {
     onlineBusy = false;
   }
+}
+
+async function setOnlineRoomMode(value: string | undefined): Promise<void> {
+  if (!onlineRoom || onlineBusy) return;
+  const matchType = parseConfigurableOnlineMatchType(value);
+  if (!matchType) return;
+  if (onlineRoom.hostPlayerId !== onlinePlayer.id) {
+    onlineError = 'Solo el host puede cambiar el modo de la sala.';
+    return;
+  }
+  if (onlineRoom.status !== 'lobby') {
+    onlineError = 'El modo solo se puede cambiar en el lobby.';
+    return;
+  }
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.updateRoomSettings(createOnlineRoomSettingsRequest(matchType));
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'roomLobby');
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+function createOnlineRoomSettingsRequest(matchType: ConfigurableOnlineMatchType): UpdateRoomSettingsRequest {
+  const mode: OnlineRoomMode = matchType === 'custom' ? 'custom' : 'battle';
+  return {
+    roomId: onlineRoom?.id ?? '',
+    playerId: onlinePlayer.id,
+    matchType,
+    mode,
+    rules: matchType === 'custom' ? onlineCustomRulesFromSettings() : battleRulesFromSettings(inputSettings),
+  };
 }
 
 async function joinOnlineRoom(roomId: string): Promise<void> {
@@ -1767,7 +1816,7 @@ async function heartbeatQuickDuelQueue(): Promise<void> {
 
 function shouldPollOnline(now: number): boolean {
   if (onlinePollInFlight) return false;
-  if (!['roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return false;
+  if (!['menu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return false;
   return now - onlineLastPollAt >= ONLINE_POLL_MS;
 }
 
@@ -2386,10 +2435,11 @@ function renderScreenOverlay(state: GameState): string {
     return renderPanel({
       eyebrow: 'MULTI JUGADOR',
       title: 'Multijugador',
-      meta: 'Todos los modos disponibles para jugar con otras personas.',
+      meta: 'Matchmaking y partidas rápidas. La sala vive siempre en el panel lateral.',
       actions: [
-        ['online-open', 'Battle room'],
-        ['online-custom-open', 'Custom room'],
+        ['online-quick-duel', 'Quick Duel'],
+        ['online-league', 'League'],
+        ['online-quick-play', 'Quick Play'],
         ['main-menu', 'Volver'],
       ],
       actionsClass: 'mode-menu-actions',
@@ -2684,6 +2734,7 @@ function renderOnlineLobbyOverlay(): string {
     <p class="cs2-subtitle">${host ? 'Sos el host.' : 'Esperando al host.'} ${escapeHtml(modeLabel)}: sobreviví, mandá garbage y quedá último en pie.</p>
     ${renderOnlineError()}
     ${renderOnlineSeriesStatus()}
+    ${host && onlineRoom.status === 'lobby' ? renderPersistentRoomModeSelector() : ''}
     <section class="cs2-card cs2-team">
       <div class="cs2-card-head"><span>Jugadores</span><span class="cs2-friends-hint">Sala creada</span></div>
       <div class="cs2-team-grid">${slots}</div>
@@ -2695,6 +2746,7 @@ function renderOnlineLobbyOverlay(): string {
         ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
         : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
       ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}
+      <button class="cs2-btn" type="button" data-ui-action="main-menu">Menú</button>
       <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
     </div>
   `;
@@ -3429,9 +3481,9 @@ function setText(selector: string, value: string): void {
 
 function renderCustomOverlay(): string {
   const exported = lastCustomExportName ? `<div class="panel-note">Exported ${escapeHtml(lastCustomExportName)}</div>` : '';
-  return `
-    <div class="menu-scrim custom-scrim">
-      <section class="menu-panel custom-panel" aria-label="Custom mode">
+  const runError = localRunError ? `<div class="panel-note panel-error">${escapeHtml(localRunError)}</div>` : '';
+  const panel = `
+    <section class="menu-panel custom-panel" aria-label="Custom mode">
         <div class="custom-header">
           <div>
             <div class="panel-eyebrow">CUSTOM</div>
@@ -3455,13 +3507,14 @@ function renderCustomOverlay(): string {
           ${renderCustomTabBody()}
         </div>
         ${exported}
+        ${runError}
         <div class="panel-actions custom-actions">
           <button type="button" data-ui-action="custom-back">Back</button>
           <button type="button" data-ui-action="custom-reset">Reset defaults</button>
         </div>
       </section>
-    </div>
   `;
+  return renderPersistentMenuShell(panel, 'custom-scrim');
 }
 
 function renderCustomTabBody(): string {
@@ -3646,20 +3699,143 @@ function renderPanel(options: {
 }): string {
   const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
   const importError = replayImportError ? `<div class="panel-note panel-error">${escapeHtml(replayImportError)}</div>` : '';
+  const runError = localRunError ? `<div class="panel-note panel-error">${escapeHtml(localRunError)}</div>` : '';
   const actions = options.actions.map(([action, label]) => (
     `<button type="button" data-ui-action="${action}">${label}</button>`
   )).join('');
-  return `
-    <div class="menu-scrim">
-      <section class="menu-panel" aria-label="${escapeHtml(options.eyebrow)}">
+  const panel = `
+    <section class="menu-panel" aria-label="${escapeHtml(options.eyebrow)}">
         <div class="panel-eyebrow">${escapeHtml(options.eyebrow)}</div>
         <h1>${escapeHtml(options.title)}</h1>
         <p>${escapeHtml(options.meta)}</p>
         ${options.details ?? ''}
         ${exported}
         ${importError}
+        ${runError}
         <div class="panel-actions ${options.actionsClass ?? ''}">${actions}</div>
       </section>
+  `;
+  if (!isPersistentRoomPanelMode(appMode)) {
+    return `<div class="menu-scrim">${panel}</div>`;
+  }
+  return renderPersistentMenuShell(panel);
+}
+
+function renderPersistentMenuShell(panel: string, extraClass = ''): string {
+  return `
+    <div class="menu-scrim ${extraClass}">
+      <div class="persistent-menu-shell">
+        ${panel}
+        ${renderPersistentRoomPanel()}
+      </div>
+    </div>
+  `;
+}
+
+function isPersistentRoomPanelMode(mode: AppMode): boolean {
+  return mode === 'menu'
+    || mode === 'soloMenu'
+    || mode === 'multiplayerMenu'
+    || mode === 'historyMenu'
+    || mode === 'configMenu'
+    || mode === 'custom';
+}
+
+function renderPersistentRoomPanel(): string {
+  return onlineRoom ? renderActivePersistentRoomPanel() : renderEmptyPersistentRoomPanel();
+}
+
+function renderEmptyPersistentRoomPanel(): string {
+  const publicRooms = onlinePublicRooms.length === 0
+    ? '<div class="online-empty">No hay salas públicas.</div>'
+    : onlinePublicRooms.slice(0, 4).map((room) => `
+      <article class="persistent-room-row">
+        <div>
+          <strong>${escapeHtml(room.id)}</strong>
+          <span>${escapeHtml(room.hostName)} · ${escapeHtml(matchTypeLabel(room.matchType))} · ${room.playerCount}</span>
+        </div>
+        <button class="cs2-btn cs2-btn-sm" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>
+      </article>
+    `).join('');
+  return `
+    <aside class="persistent-room-panel" aria-label="Sala">
+      <div class="persistent-room-head">
+        <div>
+          <span class="panel-eyebrow">SALA</span>
+          <h2>Disponible</h2>
+        </div>
+        <button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Refresh</button>
+      </div>
+      ${renderOnlineError()}
+      ${renderLunaIdentityBadge()}
+      <label class="online-field">
+        <span>Tu nombre</span>
+        <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
+      </label>
+      <div class="persistent-room-actions">
+        <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Crear pública</button>
+        <button class="cs2-btn" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Crear privada</button>
+      </div>
+      <div class="online-join-row">
+        <label class="online-field">
+          <span>Código</span>
+          <input type="text" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
+        </label>
+        <button class="cs2-btn" type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse</button>
+      </div>
+      ${renderMatchmakingStatus()}
+      <div class="persistent-room-public">
+        <div class="cs2-card-head"><span>Públicas</span></div>
+        <div class="persistent-room-list">${publicRooms}</div>
+      </div>
+    </aside>
+  `;
+}
+
+function renderActivePersistentRoomPanel(): string {
+  if (!onlineRoom) return '';
+  const host = onlineRoom.hostPlayerId === onlinePlayer.id;
+  const player = currentOnlinePlayer();
+  const allReady = onlineRoom.players.length > 0 && onlineRoom.players.every((candidate) => candidate.ready);
+  const betReady = !onlineRoom.bet || onlineRoom.bet.status === 'funded';
+  const readyCount = onlineRoom.players.filter((candidate) => candidate.ready).length;
+  const modeActions = host && onlineRoom.status === 'lobby' ? renderPersistentRoomModeSelector() : '';
+  return `
+    <aside class="persistent-room-panel" aria-label="Sala actual">
+      <div class="persistent-room-head">
+        <div>
+          <span class="panel-eyebrow">${escapeHtml(onlineRoom.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')}</span>
+          <h2>${escapeHtml(onlineRoom.id)}</h2>
+        </div>
+        <span class="cs2-ready-pill">${readyCount}/${onlineRoom.players.length}</span>
+      </div>
+      <p class="persistent-room-status">${escapeHtml(matchTypeLabel(onlineRoom.matchType))} · ${escapeHtml(roomStatusLabel(onlineRoom.status))}</p>
+      ${renderOnlineError()}
+      ${modeActions}
+      <div class="persistent-room-players">
+        ${onlineRoom.players.map((candidate) => renderLobbyPlayer(candidate, host)).join('')}
+      </div>
+      ${renderLunaInviteAction(host)}
+      <div class="cs2-lobby-actions">
+        ${player?.ready
+          ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
+          : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
+        ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar</button>` : ''}
+        <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
+      </div>
+    </aside>
+  `;
+}
+
+function renderPersistentRoomModeSelector(): string {
+  if (!onlineRoom) return '';
+  return `
+    <div class="persistent-room-modes" aria-label="Modo de sala">
+      ${ONLINE_ROOM_MODE_OPTIONS.map((matchType) => `
+        <button class="${onlineRoom?.matchType === matchType ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-mode" data-match-type="${matchType}"${onlineBusy ? ' disabled' : ''}>
+          ${escapeHtml(matchTypeLabel(matchType))}
+        </button>
+      `).join('')}
     </div>
   `;
 }
@@ -3801,6 +3977,15 @@ function onlineRulesFromRoom(room = onlineRoom): GameRules {
 function parseControlAction(value: string | undefined): ControlAction | null {
   if (!value) return null;
   return CONTROL_ACTIONS.includes(value as ControlAction) ? value as ControlAction : null;
+}
+
+function parseConfigurableOnlineMatchType(value: string | undefined): ConfigurableOnlineMatchType | null {
+  if (!value) return null;
+  return ONLINE_ROOM_MODE_OPTIONS.includes(value as ConfigurableOnlineMatchType) ? value as ConfigurableOnlineMatchType : null;
+}
+
+function onlineRoomHasOtherPlayers(): boolean {
+  return !!onlineRoom && onlineRoom.players.some((player) => player.id !== onlinePlayer.id);
 }
 
 function touchSourceId(pointerId: number): string {

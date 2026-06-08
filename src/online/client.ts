@@ -29,6 +29,7 @@ import type {
   ResultRequest,
   SetTargetingRequest,
   StartRoomRequest,
+  UpdateRoomSettingsRequest,
 } from './protocol';
 
 export class OnlineClient {
@@ -83,6 +84,10 @@ export class OnlineClient {
 
   restartRoom(request: RestartRoomRequest): Promise<OnlineRoomResponse> {
     return this.post('/restart', request);
+  }
+
+  updateRoomSettings(request: UpdateRoomSettingsRequest): Promise<OnlineRoomResponse> {
+    return this.post('/settings', request);
   }
 
   setTargeting(request: SetTargetingRequest): Promise<OnlineRoomResponse> {

@@ -15,6 +15,7 @@ import type {
   ResultRequest,
   SetTargetingRequest,
   StartRoomRequest,
+  UpdateRoomSettingsRequest,
 } from '../../src/online/protocol.js';
 import {
   addAttack,
@@ -31,6 +32,7 @@ import {
   setPlayerTargeting,
   startRoom,
   submitResult,
+  updateRoomSettings,
   updateProgress,
 } from '../../src/online/roomService.js';
 import { maybeReportRoomBetResult } from '../../src/online/lunaNegraBets.js';
@@ -102,6 +104,10 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (action === 'restart') {
       const room = await restartRoom(getRoomStore(), await readJsonBody<RestartRoomRequest>(request));
+      return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'settings') {
+      const room = await updateRoomSettings(getRoomStore(), await readJsonBody<UpdateRoomSettingsRequest>(request));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'signal') {
