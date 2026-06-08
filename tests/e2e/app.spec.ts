@@ -443,14 +443,41 @@ test.describe('STACK/40 browser flows', () => {
 
     await expect.poll(() => appMode(page)).toBe('roomLobby');
     await expect(page.getByRole('heading', { name: 'ABC12345' })).toBeVisible();
-    await expect(page.locator('.online-lobby-player strong')).toContainText('Nostr Host');
+    const lunaPlayer = page.locator('.cs2-player-card').filter({ hasText: 'Nostr Host' }).first();
+    await expect(lunaPlayer.locator('strong')).toContainText('Nostr Host');
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer())).toEqual({
       id: 'pubkey-host-luna',
       name: 'Nostr Host',
       avatarUrl: 'https://example.com/nostr-host.png',
     });
-    await expect(page.locator('.online-lobby-player img')).toHaveAttribute('src', 'https://example.com/nostr-host.png');
+    await expect(lunaPlayer.locator('img')).toHaveAttribute('src', 'https://example.com/nostr-host.png');
     await expect.poll(() => page.evaluate(() => window.location.search.includes('inviteToken'))).toBe(false);
+  });
+
+  test('enters a Luna Negra room from an accepted invite message in the open game', async ({ page }) => {
+    await mockOnlineApi(page);
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?lnToken=fake-session&lnOrigin=https%3A%2F%2Fluna.example');
+    await expect.poll(() => appMode(page)).toBe('menu');
+    await expect.poll(() => page.evaluate(() => window.location.search.includes('lnOrigin'))).toBe(false);
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: 'https://luna.example',
+        data: {
+          type: 'luna-negra:enter-room',
+          inviteToken: 'fake-invite-token',
+          roomId: 'abc12345',
+        },
+      }));
+    });
+
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect(page.getByRole('heading', { name: 'ABC12345' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
   });
 
   test('creates a custom online room from the multiplayer menu', async ({ page }) => {

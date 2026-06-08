@@ -173,8 +173,12 @@ let onlineActiveRoundId: string | null = null;
 let lunaIdentity: LunaIdentity | null = null;
 let lunaInviteWindowBusy = false;
 let lunaInviteNotice: string | null = null;
+let trustedLunaOrigin: string | null = null;
 
 const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
+const LUNA_ORIGIN_KEY = 'stack40.lunaOrigin.v1';
+const LUNA_ENTER_ROOM_MESSAGE_TYPE = 'luna-negra:enter-room';
+trustedLunaOrigin = loadTrustedLunaOrigin();
 // La presencia caduca a los 20s sin heartbeat (ver docs/luna-negra-social-spec.md).
 // Latimos cada 10s (la mitad del TTL) para que un jugador activo nunca expire,
 // pero SOLO mientras la pestaña está visible: si el jugador cambia de app, minimiza
@@ -192,6 +196,7 @@ document.body.appendChild(replayFileInput);
 
 window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
 window.addEventListener('wheel', handleVolumeWheel, { passive: false });
+window.addEventListener('message', handleLunaNegraWindowMessage);
 window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
   if (lunaIdentity && isPlayerActivelyPresent()) void syncLunaPresence();
@@ -712,6 +717,14 @@ async function bootstrapLunaNegraEntry(): Promise<void> {
   const inviteToken = params.get('inviteToken')?.trim() ?? '';
   if (!inviteToken) return;
   const roomId = params.get('room')?.trim() ?? '';
+  await enterLunaNegraRoomFromInvite(inviteToken, roomId, { cleanUrl: true });
+}
+
+async function enterLunaNegraRoomFromInvite(
+  inviteToken: string,
+  roomId: string,
+  options: { cleanUrl?: boolean } = {},
+): Promise<void> {
   appMode = 'onlineMenu';
   settingsReturnMode = 'menu';
   input.releaseAll();
@@ -719,9 +732,14 @@ async function bootstrapLunaNegraEntry(): Promise<void> {
     onlineError = 'Missing Luna Negra room id.';
     return;
   }
+  if (onlineBusy) {
+    onlineError = 'Ya hay una acción online en curso.';
+    return;
+  }
   onlineBusy = true;
   onlineError = null;
   try {
+    await leaveCurrentRoomBeforeNew(roomId);
     const response = await onlineClient.enterLunaNegraRoom({ inviteToken, roomId });
     onlinePlayer = saveOnlinePlayer({
       id: response.player.id,
@@ -731,7 +749,8 @@ async function bootstrapLunaNegraEntry(): Promise<void> {
     onlineName = response.player.name;
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
-    removeLunaNegraTokenFromUrl();
+    if (options.cleanUrl) removeLunaNegraTokenFromUrl();
+    void syncLunaPresence();
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
@@ -742,6 +761,7 @@ async function bootstrapLunaNegraEntry(): Promise<void> {
 function removeLunaNegraTokenFromUrl(): void {
   const url = new URL(window.location.href);
   url.searchParams.delete('inviteToken');
+  url.searchParams.delete('lnOrigin');
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }
 
@@ -751,14 +771,16 @@ function removeLunaNegraTokenFromUrl(): void {
 // automático al abrir el juego desde Luna Negra), después atiende un invite token
 // (sala privada) o un link de invitación de amigo (?join=).
 async function bootstrapOnlineStartup(): Promise<void> {
-  await bootstrapLunaSession();
   const params = new URLSearchParams(window.location.search);
-  if (params.get('inviteToken')?.trim()) {
+  rememberTrustedLunaOriginFromStartup(params);
+  await bootstrapLunaSession();
+  const nextParams = new URLSearchParams(window.location.search);
+  if (nextParams.get('inviteToken')?.trim()) {
     await bootstrapLunaNegraEntry();
     return;
   }
-  if (params.get('join')?.trim()) {
-    await bootstrapJoinLink(params.get('join')!.trim());
+  if (nextParams.get('join')?.trim()) {
+    await bootstrapJoinLink(nextParams.get('join')!.trim());
   }
 }
 
@@ -841,11 +863,74 @@ function saveStoredLunaIdentity(identity: LunaIdentity): void {
   }
 }
 
+function loadTrustedLunaOrigin(): string | null {
+  try {
+    const origin = localStorage.getItem(LUNA_ORIGIN_KEY);
+    return origin && isHttpOrigin(origin) ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberTrustedLunaOriginFromStartup(params: URLSearchParams): void {
+  const hasLunaEntry =
+    Boolean(params.get('inviteToken')?.trim())
+    || Boolean(params.get('lnToken')?.trim())
+    || Boolean(params.get('entitlement')?.trim())
+    || Boolean(params.get('lnDemo')?.trim());
+  if (!hasLunaEntry) return;
+
+  const origin =
+    parseHttpOrigin(params.get('lnOrigin') ?? '')
+    ?? parseHttpOrigin(document.referrer);
+  if (!origin) return;
+  trustedLunaOrigin = origin;
+  try {
+    localStorage.setItem(LUNA_ORIGIN_KEY, origin);
+  } catch {
+    // Sin localStorage, el origen queda en memoria para esta pestaña.
+  }
+}
+
+function handleLunaNegraWindowMessage(event: MessageEvent): void {
+  const message = parseLunaEnterRoomMessage(event.data);
+  if (!message) return;
+  if (!trustedLunaOrigin || event.origin !== trustedLunaOrigin) return;
+  void enterLunaNegraRoomFromInvite(message.inviteToken, message.roomId);
+}
+
+function parseLunaEnterRoomMessage(
+  value: unknown,
+): { inviteToken: string; roomId: string } | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  if (record.type !== LUNA_ENTER_ROOM_MESSAGE_TYPE) return null;
+  const inviteToken = typeof record.inviteToken === 'string' ? record.inviteToken.trim() : '';
+  const roomId = typeof record.roomId === 'string' ? record.roomId.trim() : '';
+  if (!inviteToken || !roomId) return null;
+  return { inviteToken, roomId };
+}
+
+function parseHttpOrigin(value: string): string | null {
+  if (!value.trim()) return null;
+  try {
+    const url = new URL(value);
+    return isHttpOrigin(url.origin) ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function isHttpOrigin(origin: string): boolean {
+  return /^https?:\/\//.test(origin);
+}
+
 function removeLunaSessionParamsFromUrl(): void {
   const url = new URL(window.location.href);
   url.searchParams.delete('lnToken');
   url.searchParams.delete('entitlement');
   url.searchParams.delete('lnDemo');
+  url.searchParams.delete('lnOrigin');
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }
 
