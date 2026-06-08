@@ -319,7 +319,7 @@ canvas {
   margin-top: 22px;
 }
 
-.panel-actions button,
+.panel-actions button:not(.dash-action-btn),
 .binding-button,
 .timing-row button,
 .custom-header button,
@@ -381,7 +381,7 @@ canvas {
   background: rgba(235, 68, 90, 0.28);
 }
 
-.panel-actions button:hover,
+.panel-actions button:not(.dash-action-btn):hover,
 .binding-button:hover,
 .timing-row button:hover,
 .custom-header button:hover,
@@ -3356,4 +3356,377 @@ canvas {
   background: rgba(255, 255, 255, 0.1);
   color: var(--dash-text);
   border-color: var(--dash-accent);
+}
+
+/* Custom mode overrides for Dashboard */
+.dash-hero .custom-panel h1 {
+  font-family: inherit !important;
+  font-weight: 800;
+  font-size: 36px;
+  margin: 8px 0 16px;
+}
+
+.dash-hero .custom-header button {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--dash-border) !important;
+  color: var(--dash-text-dim) !important;
+  border-radius: 4px !important;
+  padding: 6px 12px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  font-family: inherit !important;
+}
+
+.dash-hero .custom-header button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--dash-text) !important;
+  border-color: var(--dash-accent) !important;
+}
+
+.dash-hero .custom-start-button {
+  background: var(--dash-success) !important;
+  border: none !important;
+  border-radius: 6px !important;
+  padding: 8px 16px !important;
+  font-weight: 700 !important;
+  color: #0c1018 !important;
+  font-family: inherit !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 12px rgba(57, 212, 154, 0.2) !important;
+  transition: all 0.2s ease !important;
+}
+
+.dash-hero .custom-start-button:hover {
+  background: #2cb884 !important;
+}
+
+.dash-hero .custom-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--dash-border);
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+}
+
+.dash-hero .custom-tabs button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid transparent !important;
+  border-radius: 4px !important;
+  background: transparent !important;
+  color: var(--dash-text-dim) !important;
+  cursor: pointer !important;
+  font-family: inherit !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  transition: all 0.2s ease !important;
+  letter-spacing: 0 !important;
+}
+
+.dash-hero .custom-tabs button:hover,
+.dash-hero .custom-tabs .custom-tab-active {
+  background: rgba(124, 92, 252, 0.16) !important;
+  border-color: var(--dash-accent) !important;
+  color: var(--dash-text) !important;
+  box-shadow: 0 0 10px rgba(124, 92, 252, 0.1);
+}
+
+.dash-hero .custom-section h2 {
+  font-family: inherit !important;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--dash-text-muted);
+}
+
+.dash-hero .custom-row label {
+  color: var(--dash-text-dim) !important;
+  font-family: inherit !important;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.dash-hero .custom-control select,
+.dash-hero .custom-number-control input {
+  background: rgba(0, 0, 0, 0.2) !important;
+  border: 1px solid var(--dash-border) !important;
+  color: var(--dash-text) !important;
+  border-radius: 6px !important;
+  padding: 6px 10px !important;
+  font-size: 13px !important;
+  font-family: inherit !important;
+  transition: all 0.2s ease !important;
+}
+
+.dash-hero .custom-control select:focus,
+.dash-hero .custom-number-control input:focus {
+  outline: none !important;
+  border-color: var(--dash-accent) !important;
+  box-shadow: 0 0 0 3px rgba(124, 92, 252, 0.2) !important;
+}
+
+.dash-hero .custom-number-control button {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--dash-border) !important;
+  color: var(--dash-text-dim) !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  width: 28px !important;
+  height: 28px !important;
+  font-family: inherit !important;
+  transition: all 0.2s ease !important;
+}
+
+.dash-hero .custom-number-control button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--dash-text) !important;
+  border-color: var(--dash-accent) !important;
+}
+
+.dash-hero .custom-toggle {
+  font-family: inherit !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  padding: 6px 12px !important;
+  min-height: auto !important;
+  transition: all 0.2s ease !important;
+}
+
+.dash-hero .custom-toggle-off {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: var(--dash-border) !important;
+  color: var(--dash-text-dim) !important;
+}
+
+.dash-hero .custom-toggle-off:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: var(--dash-accent) !important;
+  color: var(--dash-text) !important;
+}
+
+.dash-hero .custom-toggle-on {
+  background: rgba(57, 212, 154, 0.12) !important;
+  border-color: var(--dash-success) !important;
+  color: var(--dash-success) !important;
+}
+
+.dash-hero .custom-toggle-on:hover {
+  background: rgba(57, 212, 154, 0.2) !important;
+}
+
+/* Modal Overlays (menu-scrim, menu-panel) Premium Restyling */
+.menu-scrim,
+.menu-panel {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+.menu-scrim {
+  background: rgba(10, 14, 23, 0.85) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.menu-panel {
+  border: 1px solid var(--dash-border-accent) !important;
+  border-radius: 16px !important;
+  background: rgba(10, 14, 23, 0.90) !important;
+  backdrop-filter: blur(20px) !important;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), 0 0 40px rgba(124, 92, 252, 0.15) !important;
+  padding: 32px !important;
+}
+
+.panel-eyebrow {
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 2px !important;
+  color: var(--dash-accent) !important;
+  margin-bottom: 8px !important;
+}
+
+.menu-panel h1 {
+  font-size: 32px !important;
+  font-weight: 850 !important;
+  letter-spacing: -1px !important;
+  color: var(--dash-text) !important;
+  margin: 0 0 10px 0 !important;
+  line-height: 1.1 !important;
+}
+
+.menu-panel p {
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  line-height: 1.5 !important;
+  color: var(--dash-text-dim) !important;
+  margin: 0 0 24px 0 !important;
+}
+
+.run-stats-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid var(--dash-border) !important;
+  border-radius: 8px !important;
+  padding: 16px 12px !important;
+  margin: 20px 0 !important;
+}
+
+.run-stats-grid div {
+  border: none !important;
+  padding: 0 !important;
+  text-align: center !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+}
+
+.run-stats-grid span {
+  font-family: inherit !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  color: var(--dash-text-muted) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+}
+
+.run-stats-grid strong {
+  font-family: inherit !important;
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  color: var(--dash-text) !important;
+  line-height: 1.2 !important;
+}
+
+.split-list {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  margin: 16px 0 !important;
+}
+
+.split-list div {
+  background: rgba(255, 255, 255, 0.01) !important;
+  border: 1px solid var(--dash-border) !important;
+  border-radius: 6px !important;
+  padding: 8px !important;
+  text-align: center !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+}
+
+.split-list span {
+  font-family: inherit !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  color: var(--dash-text-muted) !important;
+}
+
+.split-list strong {
+  font-family: inherit !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  color: var(--dash-accent) !important;
+}
+
+.split-list-empty {
+  display: block !important;
+  text-align: center !important;
+  color: var(--dash-text-muted) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  margin: 20px 0 !important;
+  font-style: italic !important;
+}
+
+.menu-panel .panel-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 10px !important;
+  margin-top: 28px !important;
+}
+
+.menu-panel .dash-action-btn {
+  font-family: inherit !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 10px 20px !important;
+  border-radius: 8px !important;
+  transition: all 0.2s ease !important;
+}
+
+.menu-panel .dash-action-btn:hover:not(:disabled) {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+}
+
+.menu-panel .dash-action-btn:active:not(:disabled) {
+  transform: translateY(1px) !important;
+}
+
+/* Settings overlay modernization */
+.menu-panel .binding-row {
+  border-bottom: 1px solid var(--dash-border) !important;
+}
+
+.menu-panel .binding-row span {
+  font-family: inherit !important;
+  font-weight: 700 !important;
+  color: var(--dash-text) !important;
+}
+
+.menu-panel .binding-button {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--dash-border) !important;
+  color: var(--dash-text-dim) !important;
+  border-radius: 4px !important;
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.menu-panel .binding-button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--dash-text) !important;
+  border-color: var(--dash-accent) !important;
+}
+
+.menu-panel .binding-button-active {
+  background: rgba(124, 92, 252, 0.2) !important;
+  border-color: var(--dash-accent) !important;
+  color: var(--dash-text) !important;
+  box-shadow: 0 0 10px rgba(124, 92, 252, 0.1) !important;
+}
+
+.menu-panel .timing-row span,
+.menu-panel .timing-row strong {
+  font-family: inherit !important;
+  font-weight: 700 !important;
+  color: var(--dash-text) !important;
+}
+
+.menu-panel .timing-row button {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--dash-border) !important;
+  color: var(--dash-text-dim) !important;
+  border-radius: 4px !important;
+  padding: 4px 8px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.menu-panel .timing-row button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--dash-text) !important;
+  border-color: var(--dash-accent) !important;
 }

@@ -381,6 +381,15 @@ function handleOverlayClick(event: MouseEvent): void {
     return;
   }
 
+  if (action === 'sidebar-play') {
+    if (!onlineRoom || !onlineRoomHasOtherPlayers()) {
+      startNewRun();
+    } else {
+      startOnlineRoom();
+    }
+    return;
+  }
+
   if (action === 'start') startNewRun();
   if (action === 'restart') restartCurrentRun();
   if (action === 'solo-menu') openModeMenu('soloMenu');
@@ -1162,6 +1171,10 @@ async function setOnlineReady(ready: boolean): Promise<void> {
 
 async function startOnlineRoom(): Promise<void> {
   if (!onlineRoom || onlineBusy) return;
+  if (!onlineRoomHasOtherPlayers()) {
+    startNewRun();
+    return;
+  }
   onlineBusy = true;
   try {
     const response = await onlineClient.startRoom({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
@@ -1176,6 +1189,10 @@ async function startOnlineRoom(): Promise<void> {
 
 async function restartOnlineRoom(): Promise<void> {
   if (!onlineRoom || onlineBusy) return;
+  if (!onlineRoomHasOtherPlayers()) {
+    startNewRun();
+    return;
+  }
   onlineBusy = true;
   try {
     const response = await onlineClient.restartRoom({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
@@ -2374,8 +2391,8 @@ function renderConfirmOverlay(action: DestructiveRunAction): string {
         <h1>${escapeHtml(confirmTitle(action))}</h1>
         <p>${escapeHtml(confirmMeta(action))}</p>
         <div class="panel-actions confirm-actions">
-          <button type="button" data-ui-action="cancel-confirm">Cancel</button>
-          <button class="danger-action" type="button" data-ui-action="confirm-destructive">Confirm</button>
+          <button class="dash-action-btn" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="cancel-confirm">Cancel</button>
+          <button class="dash-action-btn danger" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="confirm-destructive">Confirm</button>
         </div>
       </section>
     </div>
@@ -3223,9 +3240,10 @@ function renderCustomPanelContent(): string {
         </div>
         ${exported}
         ${runError}
-        <div class="panel-actions custom-actions">
-          <button type="button" data-ui-action="custom-back">Back</button>
-          <button type="button" data-ui-action="custom-reset">Reset defaults</button>
+        <div class="panel-actions custom-actions" style="display: flex; gap: 12px; margin-top: 24px;">
+          <button class="dash-action-btn" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="custom-back">Volver</button>
+          <button class="dash-action-btn accent" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="start">Jugar 40 líneas</button>
+          <button class="dash-action-btn danger" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="custom-reset">Restablecer</button>
         </div>
       </section>
   `;
@@ -3424,9 +3442,12 @@ function renderPanel(options: {
   const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
   const importError = replayImportError ? `<div class="panel-note panel-error">${escapeHtml(replayImportError)}</div>` : '';
   const runError = localRunError ? `<div class="panel-note panel-error">${escapeHtml(localRunError)}</div>` : '';
-  const actions = options.actions.map(([action, label]) => (
-    `<button type="button" data-ui-action="${action}">${label}</button>`
-  )).join('');
+  const actions = options.actions.map(([action, label]) => {
+    const isPrimary = action === 'resume' || action === 'restart';
+    const isDanger = action === 'main-menu' || action === 'online-leave';
+    const btnClass = isPrimary ? 'dash-action-btn accent' : isDanger ? 'dash-action-btn danger' : 'dash-action-btn';
+    return `<button class="${btnClass}" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="${action}">${label}</button>`;
+  }).join('');
   const panel = `
     <section class="menu-panel" aria-label="${escapeHtml(options.eyebrow)}">
         <div class="panel-eyebrow">${escapeHtml(options.eyebrow)}</div>
@@ -3500,7 +3521,7 @@ function renderDashboardMenu(state: GameState): string {
       <!-- SIDEBAR -->
       <nav class="dash-sidebar">
         <div class="dash-sidebar-nav">
-          <button class="dash-sidebar-btn ${playClass}" type="button" data-ui-action="main-menu">
+          <button class="dash-sidebar-btn ${playClass}" type="button" data-ui-action="sidebar-play">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z"/></svg>
             Jugar
           </button>
@@ -3509,9 +3530,6 @@ function renderDashboardMenu(state: GameState): string {
             Historial
           </button>
           <button class="dash-sidebar-btn ${settingsClass}" type="button" data-ui-action="settings">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-            Ajustes
-          </button>
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
             Ajustes
           </button>
@@ -3544,11 +3562,8 @@ function renderDashboardCenterContent(_state: GameState): string {
         <div class="dash-hero-image-wrapper">
           <img class="dash-hero-image" src="/tetris-hero.png" alt="Tetris Board Art" />
         </div>
-        <span class="dash-hero-eyebrow">SALA DESTACADA</span>
-        <h1 class="dash-hero-title">STACK/40</h1>
-        <p class="dash-hero-subtitle">Entra. Encaja. Supera tus límites.</p>
         <div style="display: flex; gap: 12px; margin-top: 24px;">
-          <button class="dash-action-btn accent" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="solo-menu">SOLO</button>
+          <button class="dash-action-btn accent" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="custom-open">SOLO</button>
           <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="multiplayer-menu">MULTIJUGADOR</button>
         </div>
       </div>
