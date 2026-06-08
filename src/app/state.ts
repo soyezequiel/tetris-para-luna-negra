@@ -39,6 +39,7 @@ export function requiresRunConfirmation(
   action: string | undefined,
   mode: AppMode,
   status: GameState['status'],
+  settingsReturnMode: AppMode = 'menu',
 ): action is DestructiveRunAction {
   if (status !== 'playing') return false;
   if (
@@ -55,6 +56,7 @@ export function requiresRunConfirmation(
     || mode === 'onlineCountdown'
     || mode === 'onlineResults'
     || mode === 'soloCountdown'
+    || (mode === 'settings' && settingsReturnMode !== 'paused')
   ) return false;
   return action === 'restart' || action === 'main-menu' || action === 'import-replay' || action === 'online-leave';
 }

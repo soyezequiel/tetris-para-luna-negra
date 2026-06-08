@@ -382,7 +382,7 @@ function handleOverlayClick(event: MouseEvent): void {
     return;
   }
   if (pendingConfirmAction) return;
-  if (requiresRunConfirmation(action, appMode, engine.getState().status)) {
+  if (requiresRunConfirmation(action, appMode, engine.getState().status, settingsReturnMode)) {
     requestRunConfirmation(action);
     return;
   }

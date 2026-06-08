@@ -926,7 +926,8 @@ describe('core stacker engine', () => {
   it('requires confirmation only for destructive actions during active runs', () => {
     expect(requiresRunConfirmation('restart', 'playing', 'playing')).toBe(true);
     expect(requiresRunConfirmation('main-menu', 'paused', 'playing')).toBe(true);
-    expect(requiresRunConfirmation('import-replay', 'settings', 'playing')).toBe(true);
+    expect(requiresRunConfirmation('import-replay', 'settings', 'playing', 'paused')).toBe(true);
+    expect(requiresRunConfirmation('import-replay', 'settings', 'playing', 'menu')).toBe(false);
 
     expect(requiresRunConfirmation('restart', 'menu', 'playing')).toBe(false);
     expect(requiresRunConfirmation('restart', 'playing', 'finished')).toBe(false);
