@@ -431,6 +431,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-leave') leaveOnlineRoom();
   if (action === 'online-kick') kickOnlinePlayer(control.dataset.targetPlayerId ?? '');
   if (action === 'online-open-invite') openLunaInviteWindow();
+  if (action === 'online-copy-code') {
+    copyToClipboard(control.dataset.code ?? '');
+  }
   if (action === 'resume') resumeGame();
   if (action === 'settings') openSettings();
   if (action === 'settings-back') closeSettings();
@@ -970,10 +973,15 @@ async function syncLunaLaunchRequest(): Promise<void> {
 }
 
 async function openLunaInviteWindow(): Promise<void> {
-  if (!onlineRoom || lunaInviteWindowBusy) return;
+  if (lunaInviteWindowBusy) return;
   if (!lunaIdentity?.gameId) {
     onlineError = 'Abri el juego desde Luna Negra para invitar amigos.';
     return;
+  }
+
+  if (!onlineRoom) {
+    await createOnlineRoom('private');
+    if (!onlineRoom) return;
   }
 
   const popup = window.open('', 'luna-negra-invite', 'popup=yes,width=420,height=640');
@@ -2246,18 +2254,7 @@ function renderScreenOverlay(state: GameState): string {
   if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
   if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
   if (appMode === 'menu') {
-    return renderPanel({
-      eyebrow: 'MENU',
-      title: 'STACK/40',
-      meta: 'Elegí dónde querés jugar, revisar o configurar.',
-      actions: [
-        ['solo-menu', 'SOLO'],
-        ['multiplayer-menu', 'Multi jugador'],
-        ['history-menu', 'Historial'],
-        ['config-menu', 'config'],
-      ],
-      actionsClass: 'main-menu-actions',
-    });
+    return renderDashboardMenu(state);
   }
   if (appMode === 'soloMenu') {
     return renderPanel({
@@ -3477,6 +3474,241 @@ function isPersistentRoomPanelMode(mode: AppMode): boolean {
 function renderPersistentRoomPanel(): string {
   return onlineRoom ? renderActivePersistentRoomPanel() : renderEmptyPersistentRoomPanel();
 }
+
+function renderDashboardMenu(_state: GameState): string {
+  const userDisplayName = onlineName.trim() || 'Jugador';
+  const avatarLetter = userDisplayName.charAt(0).toUpperCase();
+
+  return `
+    <div class="dash-layout">
+      <!-- TOP BAR -->
+      <header class="dash-topbar">
+        <div class="dash-logo">STACK/40</div>
+        <div class="dash-user">
+          <div class="dash-user-avatar" style="display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700;">
+            ${avatarLetter}
+          </div>
+          <span class="dash-user-name">${escapeHtml(userDisplayName)}</span>
+        </div>
+      </header>
+      
+      <!-- SIDEBAR -->
+      <nav class="dash-sidebar">
+        <div class="dash-sidebar-nav">
+          <button class="dash-sidebar-btn dash-sidebar-btn--active" type="button" data-ui-action="solo-menu">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z"/></svg>
+            Jugar
+          </button>
+          <button class="dash-sidebar-btn" type="button" data-ui-action="history-menu">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+            Historial
+          </button>
+          <button class="dash-sidebar-btn" type="button" data-ui-action="config-menu">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+            Ajustes
+          </button>
+        </div>
+        <div class="dash-sidebar-footer">
+          © 2026 STACK/40<br>Todos los derechos reservados.
+        </div>
+      </nav>
+      
+      <!-- HERO CENTER -->
+      <main class="dash-hero">
+        <div class="dash-hero-container">
+          <div class="dash-hero-image-wrapper">
+            <img class="dash-hero-image" src="/tetris-hero.png" alt="Tetris Board Art" />
+          </div>
+          <span class="dash-hero-eyebrow">SALA DESTACADA</span>
+          <h1 class="dash-hero-title">STACK/40</h1>
+          <p class="dash-hero-subtitle">Entra. Encaja. Supera tus límites.</p>
+        </div>
+      </main>
+      
+      <!-- ROOM PANEL (derecha) -->
+      <aside class="dash-room">
+        ${renderDashboardRoomPanel()}
+      </aside>
+    </div>
+  `;
+}
+
+function renderDashboardRoomPanel(): string {
+  const room = onlineRoom;
+  const inviteUnavailable = !lunaIdentity?.gameId;
+  const inviteStatusText = lunaInviteNotice
+    ? lunaInviteNotice
+    : inviteUnavailable
+      ? 'Disponible al abrir desde Luna Negra.'
+      : 'Abre la lista de amigos en Luna Negra.';
+
+  const inviteSectionHtml = `
+    <div class="dash-invite-section ${!room ? 'glow' : ''}">
+      <button class="dash-invite-btn" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy || inviteUnavailable ? ' disabled' : ''}>
+        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}
+      </button>
+      <span class="dash-invite-text">${escapeHtml(inviteStatusText)}</span>
+    </div>
+  `;
+
+  if (!room) {
+    // Cuando no hay sala activa
+    const publicRooms = onlinePublicRooms.length === 0
+      ? '<div class="online-empty" style="font-size: 12px; color: var(--dash-text-muted); text-align: center; padding: 12px 0;">No hay salas públicas activas.</div>'
+      : onlinePublicRooms.slice(0, 3).map((candidateRoom) => `
+        <div class="dash-player-card" style="margin-bottom: 6px;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 13px; font-weight: 700; color: var(--dash-text);">${escapeHtml(candidateRoom.id)}</span>
+            <span style="font-size: 11px; color: var(--dash-text-muted);">${escapeHtml(candidateRoom.hostName)} · ${escapeHtml(matchTypeLabel(candidateRoom.matchType))} · ${candidateRoom.playerCount} jug.</span>
+          </div>
+          <button class="dash-copy-btn" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(candidateRoom.id)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>
+        </div>
+      `).join('');
+
+    return `
+      <div class="dash-room-header">
+        <div class="dash-room-title-area">
+          <span class="dash-room-eyebrow">SALA ONLINE</span>
+          <h2 style="margin: 0; font-size: 20px; font-weight: 800;">Disponible</h2>
+        </div>
+        <button class="dash-copy-btn" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Actualizar</button>
+      </div>
+      
+      ${renderOnlineError()}
+      
+      ${inviteSectionHtml}
+
+      <div class="dash-empty-state">
+        <div class="dash-field-group">
+          <label for="dash-name-input">Tu nombre</label>
+          <input id="dash-name-input" class="dash-input" type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
+        </div>
+        
+        <div class="dash-field-group">
+          <label>Crear Sala</label>
+          <div class="dash-buttons-row">
+            <button class="dash-action-btn accent" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Privada</button>
+            <button class="dash-action-btn" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Pública</button>
+          </div>
+        </div>
+        
+        <div class="dash-field-group">
+          <label for="dash-code-input">Unirse con código</label>
+          <div class="dash-join-row">
+            <input id="dash-code-input" class="dash-input" type="text" style="text-transform: uppercase;" placeholder="CÓDIGO" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
+            <button class="dash-action-btn accent" type="button" style="width: auto; padding: 8px 16px;" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="dash-field-group" style="margin-top: 10px;">
+        <label>Salas Públicas</label>
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
+          ${publicRooms}
+        </div>
+      </div>
+    `;
+  }
+
+  // Cuando hay una sala activa
+  const host = room.hostPlayerId === onlinePlayer.id;
+  const player = currentOnlinePlayer();
+  const allReady = room.players.length > 0 && room.players.every((candidate) => candidate.ready);
+  const betReady = !room.bet || room.bet.status === 'funded';
+  const readyCount = room.players.filter((candidate) => candidate.ready).length;
+  
+  const playersHtml = room.players.map((candidate) => {
+    const isHost = candidate.id === room.hostPlayerId;
+    const isSelf = candidate.id === onlinePlayer.id;
+    const isReady = candidate.ready;
+    const avatarLetter = (candidate.name || 'J').charAt(0).toUpperCase();
+    return `
+      <div class="dash-player-card">
+        <div class="dash-player-info">
+          <div class="dash-player-avatar-circle">
+            ${avatarLetter}
+            ${isHost ? '<span class="dash-player-host-crown">👑</span>' : ''}
+          </div>
+          <span class="dash-player-name">${escapeHtml(candidate.name)}${isSelf ? ' (Tú)' : ''}</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          ${isReady 
+            ? '<span class="dash-player-ready-indicator ready">Listo</span>' 
+            : '<span class="dash-player-ready-indicator waiting">Esperando</span>'}
+          ${host && !isSelf 
+            ? `<button class="dash-copy-btn" style="color: var(--dash-danger); border-color: rgba(235, 68, 90, 0.2);" type="button" data-ui-action="online-kick" data-target-player-id="${escapeHtml(candidate.id)}">Kick</button>`
+            : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const visibilityText = room.visibility === 'private' ? 'Privada' : 'Pública';
+  const speedLevelText = `Nivel ${room.rules?.gravityStartingLevel ?? 1}`;
+
+  return `
+    <div class="dash-room-header">
+      <div class="dash-room-title-area">
+        <span class="dash-room-eyebrow">${escapeHtml(room.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')}</span>
+        <div class="dash-room-code-wrapper">
+          <span class="dash-room-code">${escapeHtml(room.id)}</span>
+          <button class="dash-copy-btn" type="button" data-ui-action="online-copy-code" data-code="${escapeHtml(room.id)}">Copiar</button>
+        </div>
+      </div>
+      <span class="dash-player-ready-indicator ready">${readyCount}/${room.players.length}</span>
+    </div>
+
+    <p style="margin: 0; font-size: 13px; color: var(--dash-text-dim);">${escapeHtml(matchTypeLabel(room.matchType))} · ${escapeHtml(roomStatusLabel(room.status))}</p>
+    
+    ${renderOnlineError()}
+
+    ${host && room.status === 'lobby' ? `
+      <div class="dash-field-group">
+        <label>Visibilidad</label>
+        <div class="dash-buttons-row" style="margin-top: 4px;">
+          <button class="dash-action-btn ${room.visibility === 'private' ? 'accent' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="private"${onlineBusy ? ' disabled' : ''}>Privada</button>
+          <button class="dash-action-btn ${room.visibility === 'public' ? 'accent' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="public"${onlineBusy ? ' disabled' : ''}>Pública</button>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="dash-field-group">
+      <label>Jugadores</label>
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
+        ${playersHtml}
+      </div>
+    </div>
+
+    ${inviteSectionHtml}
+
+    <div class="dash-field-group">
+      <label>Configuración de Sala</label>
+      <div class="dash-room-settings-list" style="margin-top: 6px;">
+        <div class="dash-room-setting-row">
+          <span class="dash-room-setting-label">Tipo</span>
+          <span class="dash-room-setting-value">${escapeHtml(matchTypeLabel(room.matchType))}</span>
+        </div>
+        <div class="dash-room-setting-row">
+          <span class="dash-room-setting-label">Visibilidad</span>
+          <span class="dash-room-setting-value">${escapeHtml(visibilityText)}</span>
+        </div>
+        <div class="dash-room-setting-row">
+          <span class="dash-room-setting-label">Velocidad</span>
+          <span class="dash-room-setting-value">${escapeHtml(speedLevelText)}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-room-actions-group">
+      ${player?.ready
+        ? '<button class="dash-action-btn" type="button" data-ui-action="online-unready">No listo</button>'
+        : '<button class="dash-action-btn accent" type="button" data-ui-action="online-ready">Listo</button>'}
+      ${host ? `<button class="dash-action-btn success" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar juego</button>` : ''}
+      <button class="dash-action-btn danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
+    </div>
+  `;
+}
+
 
 function renderEmptyPersistentRoomPanel(): string {
   const publicRooms = onlinePublicRooms.length === 0
