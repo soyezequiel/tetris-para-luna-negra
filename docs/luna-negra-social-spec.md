@@ -1,5 +1,21 @@
 # Integración social con Luna Negra (amigos / presencia / login SSO / invitaciones)
 
+> **Estado: IMPLEMENTADO por Luna Negra** (4 endpoints live, CORS abierto, envelope
+> estándar de `src/lib/api.ts`). El juego ya tolera el envelope (`unwrapEnvelope` en
+> `src/online/lunaNegraSocial.ts`) y canjea el `lnToken` una sola vez al cargar
+> (persistiendo la **identidad**, no el token, porque el entitlement expira a ~5 min).
+>
+> **A coordinar todavía:**
+> 1. **Nombre del parámetro de apertura**: el juego se abre desde Luna Negra con el
+>    entitlement en la URL. El contrato del juego espera `?lnToken=<jwt>` (también
+>    acepta `?entitlement=`). Confirmar cuál usa `play-button.tsx`.
+> 2. **Expiración del token (5 min)**: alcanza para canjearlo al cargar. Si en el
+>    futuro el juego necesitara revalidar la sesión más tarde, haría falta un token
+>    de sesión más largo (follow-up corto del lado de Luna Negra).
+> 3. **Verificación E2E** con `ln_sk_…` + `lnToken` reales: confirmar que `source`
+>    pasa de `"mock"` a `"luna-negra"` y que la presencia cae a offline tras 30s.
+
+
 STACK/40 ya integra a Luna Negra como **escrow de apuestas** (`/api/v1/bets/*`),
 verificación de invites de sala (`/api/v1/rooms/verify`) y webhooks
 (`/api/v1/provider/webhook`). Para la pantalla de salas estilo Counter‑Strike 2

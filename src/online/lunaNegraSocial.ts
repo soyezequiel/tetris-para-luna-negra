@@ -41,7 +41,7 @@ async function lunaGet<T>(config: LunaConfig, path: string, bearer = config.apiK
       headers: { authorization: `Bearer ${bearer}` },
     });
     if (!response.ok) return null;
-    return (await response.json().catch(() => null)) as T | null;
+    return unwrapEnvelope<T>(await response.json().catch(() => null));
   } catch {
     return null;
   }
@@ -55,10 +55,22 @@ async function lunaPost<T>(config: LunaConfig, path: string, body: unknown): Pro
       body: JSON.stringify(body),
     });
     if (!response.ok) return null;
-    return (await response.json().catch(() => null)) as T | null;
+    return unwrapEnvelope<T>(await response.json().catch(() => null));
   } catch {
     return null;
   }
+}
+
+// Luna Negra envuelve estos endpoints sociales en el envelope estándar de
+// src/lib/api.ts (p. ej. { data: {...} } / { success, data }). Los endpoints de
+// apuestas devuelven el objeto crudo. Desenvolvemos `data` cuando está presente
+// para tolerar ambas formas sin romper si en el futuro dejan de envolver.
+function unwrapEnvelope<T>(raw: unknown): T | null {
+  if (raw && typeof raw === 'object' && 'data' in raw) {
+    const data = (raw as { data: unknown }).data;
+    if (data && typeof data === 'object') return data as T;
+  }
+  return raw as T | null;
 }
 
 // ───────────────────────────── Sesión / login SSO ─────────────────────────────
@@ -151,12 +163,14 @@ export async function listLunaFriends(
   const config = readConfig();
   if (config && self) {
     // Endpoint propuesto: amigos del usuario con su presencia en este juego.
-    const payload = await lunaGet<{ friends?: LunaFriendPayload[] }>(
+    const payload = await lunaGet<{ friends?: LunaFriendPayload[] } | LunaFriendPayload[]>(
       config,
       `/api/v1/friends?npub=${encodeURIComponent(self)}&presence=true`,
     );
-    if (payload?.friends) {
-      const friends = payload.friends
+    // El envelope puede devolver { friends: [...] } o directamente el array.
+    const list = Array.isArray(payload) ? payload : payload?.friends;
+    if (list) {
+      const friends = list
         .filter((entry): entry is LunaFriendPayload & { npub: string } => typeof entry.npub === 'string')
         .map((entry) => normalizeFriendPayload(entry));
       return { friends: sortLunaFriends(friends), source: 'luna-negra' };
@@ -209,12 +223,14 @@ export async function heartbeatLunaPresence(
 export async function sendLunaInvite(
   request: LunaInviteRequest,
   inviteUrl: string,
+  fromNpub: string | null,
 ): Promise<{ delivered: boolean; source: 'luna-negra' | 'mock' }> {
   const config = readConfig();
   if (config) {
-    // Endpoint propuesto: notifica al amigo (push/deep-link) sobre la invitación.
+    // Luna Negra es dueña de la entrega: notifica al amigo (toast in-app /
+    // deep-link). fromNpub alimenta el "X te invitó" del toast.
     const result = await lunaPost<{ delivered?: boolean }>(config, '/api/v1/friends/invite', {
-      fromNpub: null,
+      fromNpub,
       toNpub: request.friendNpub,
       roomId: request.roomId,
       inviteUrl,

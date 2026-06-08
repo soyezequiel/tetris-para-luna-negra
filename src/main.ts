@@ -177,7 +177,7 @@ let lunaFriendsBusy = false;
 let lunaInviteNotice: string | null = null;
 let lunaLastInviteUrl: string | null = null;
 
-const LUNA_TOKEN_KEY = 'stack40.lunaToken.v1';
+const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
 const LUNA_FRIENDS_POLL_MS = 5000;
 const LUNA_PRESENCE_HEARTBEAT_MS = 10000;
 
@@ -768,29 +768,50 @@ async function bootstrapOnlineStartup(): Promise<void> {
   }
 }
 
-// Login automático: lee el token de sesión de Luna Negra desde la URL (?lnToken=)
-// o, en desarrollo, ?lnDemo=Nombre. Lo persiste para sobrevivir recargas y resuelve
-// la identidad (npub, nombre, avatar) contra /api/luna-negra/session.
+// Login automático. El juego se abre desde Luna Negra con el entitlement JWT en
+// ?lnToken= (en desarrollo, ?lnDemo=Nombre). Ese token EXPIRA a los ~5 min y solo
+// sirve para canjearlo UNA vez al cargar: lo cambiamos por la identidad (npub,
+// nombre, avatar) contra /api/luna-negra/session y PERSISTIMOS LA IDENTIDAD, no el
+// token. En recargas posteriores sin token, restauramos la identidad guardada
+// (presencia y amigos usan la API key del servidor, no el token del usuario).
 async function bootstrapLunaSession(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
-  const token = (params.get('lnToken')?.trim() || params.get('lnDemo')?.trim() || loadStoredLunaToken()).trim();
-  if (!token) return;
-  try {
-    const response = await lunaSocialClient.resolveSession(token);
-    lunaIdentity = response.identity;
-    saveStoredLunaToken(token);
-    onlinePlayer = saveOnlinePlayer({
-      ...onlinePlayer,
-      name: response.identity.name,
-      avatarUrl: response.identity.avatarUrl ?? onlinePlayer.avatarUrl,
-    });
-    onlineName = onlinePlayer.name;
-    removeLunaSessionParamsFromUrl();
-    await syncLunaPresence();
-    await refreshLunaFriends();
-  } catch {
-    // Si la sesión no resuelve, el juego sigue en modo anónimo (sin panel de amigos).
+  // Aceptamos varios nombres por las dudas; el contrato es ?lnToken=<entitlement>.
+  const freshToken = (
+    params.get('lnToken')?.trim()
+    || params.get('entitlement')?.trim()
+    || params.get('lnDemo')?.trim()
+    || ''
+  ).trim();
+  if (freshToken) {
+    try {
+      const response = await lunaSocialClient.resolveSession(freshToken);
+      applyLunaIdentity(response.identity);
+      saveStoredLunaIdentity(response.identity);
+    } catch {
+      // El token pudo haber expirado; caemos a la identidad persistida si la hay.
+      const stored = loadStoredLunaIdentity();
+      if (stored) applyLunaIdentity(stored);
+    } finally {
+      removeLunaSessionParamsFromUrl();
+    }
+  } else {
+    const stored = loadStoredLunaIdentity();
+    if (stored) applyLunaIdentity(stored);
   }
+  if (!lunaIdentity) return;
+  await syncLunaPresence();
+  await refreshLunaFriends();
+}
+
+function applyLunaIdentity(identity: LunaIdentity): void {
+  lunaIdentity = identity;
+  onlinePlayer = saveOnlinePlayer({
+    ...onlinePlayer,
+    name: identity.name,
+    avatarUrl: identity.avatarUrl ?? onlinePlayer.avatarUrl,
+  });
+  onlineName = onlinePlayer.name;
 }
 
 async function bootstrapJoinLink(roomId: string): Promise<void> {
@@ -801,25 +822,36 @@ async function bootstrapJoinLink(roomId: string): Promise<void> {
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }
 
-function loadStoredLunaToken(): string {
+function loadStoredLunaIdentity(): LunaIdentity | null {
   try {
-    return localStorage.getItem(LUNA_TOKEN_KEY) ?? '';
+    const raw = localStorage.getItem(LUNA_IDENTITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LunaIdentity>;
+    if (typeof parsed.npub !== 'string' || !parsed.npub) return null;
+    return {
+      npub: parsed.npub,
+      pubkey: typeof parsed.pubkey === 'string' ? parsed.pubkey : null,
+      name: typeof parsed.name === 'string' && parsed.name ? parsed.name : parsed.npub.slice(0, 12),
+      avatarUrl: typeof parsed.avatarUrl === 'string' ? parsed.avatarUrl : null,
+      gameId: typeof parsed.gameId === 'string' ? parsed.gameId : null,
+    };
   } catch {
-    return '';
+    return null;
   }
 }
 
-function saveStoredLunaToken(token: string): void {
+function saveStoredLunaIdentity(identity: LunaIdentity): void {
   try {
-    localStorage.setItem(LUNA_TOKEN_KEY, token);
+    localStorage.setItem(LUNA_IDENTITY_KEY, JSON.stringify(identity));
   } catch {
-    // localStorage puede estar bloqueado; la sesión vivirá solo en memoria.
+    // localStorage puede estar bloqueado; la identidad vivirá solo en memoria.
   }
 }
 
 function removeLunaSessionParamsFromUrl(): void {
   const url = new URL(window.location.href);
   url.searchParams.delete('lnToken');
+  url.searchParams.delete('entitlement');
   url.searchParams.delete('lnDemo');
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }

@@ -8,7 +8,7 @@ import {
   resolveLunaSession,
   sendLunaInvite,
 } from '../../src/online/lunaNegraSocial.js';
-import { OnlineRoomError, normalizeRoomId } from '../../src/online/roomService.js';
+import { OnlineRoomError, loadRoom, normalizeRoomId } from '../../src/online/roomService.js';
 import {
   getRoomStore,
   handleApiError,
@@ -61,7 +61,8 @@ export async function POST(request: Request): Promise<Response> {
       if (!roomId) throw new OnlineRoomError('Falta la sala.', 400);
       if (!body.friendNpub) throw new OnlineRoomError('Falta el amigo a invitar.', 400);
       const inviteUrl = buildInviteUrl(request, roomId);
-      const { delivered, source } = await sendLunaInvite({ ...body, roomId }, inviteUrl);
+      const fromNpub = await inviterNpub(roomId, body.playerId);
+      const { delivered, source } = await sendLunaInvite({ ...body, roomId }, inviteUrl, fromNpub);
       return sendJson(200, { ok: true, delivered, inviteUrl, source, serverNowMs: Date.now() });
     }
     return sendMethodNotAllowed();
@@ -73,6 +74,16 @@ export async function POST(request: Request): Promise<Response> {
 function actionFromRequest(request: Request): string {
   const pathname = new URL(request.url).pathname;
   return pathname.split('/').filter(Boolean).at(-1) ?? '';
+}
+
+// npub del jugador que invita (para el toast "X te invitó" de Luna Negra).
+async function inviterNpub(roomId: string, playerId: string): Promise<string | null> {
+  try {
+    const room = await loadRoom(getRoomStore(), roomId);
+    return room.players.find((player) => player.id === playerId)?.npub ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function buildInviteUrl(request: Request, roomId: string): string {

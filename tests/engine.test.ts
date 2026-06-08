@@ -57,6 +57,7 @@ import {
   submitResult,
   updateProgress,
 } from '../src/online/roomService';
+import { listLunaFriends } from '../src/online/lunaNegraSocial';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
 import { selectAttackTarget } from '../src/online/targeting';
 import { InputController } from '../src/input';
@@ -1305,6 +1306,37 @@ describe('core stacker engine', () => {
 
     const friends = await listLunaFriendsMock(store, 'npub-self', 1000 + 60_000);
     expect(friends).toEqual([]);
+  });
+
+  it('parses the Luna Negra enveloped friends response and reports source luna-negra', async () => {
+    const store = new MemoryRoomStore();
+    const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
+    const previousApiKey = process.env.LUNA_NEGRA_API_KEY;
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    // Respuesta envuelta en el envelope estándar { data: { friends: [...] } }.
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      data: {
+        friends: [
+          { npub: 'npub-online', displayName: 'Online', presence: 'online', roomId: null },
+          { npub: 'npub-ingame', displayName: 'InGame', presence: 'in-game', roomId: 'AB12' },
+        ],
+      },
+    })));
+
+    const { friends, source } = await listLunaFriends(store, 'npub-self');
+
+    expect(source).toBe('luna-negra');
+    expect(friends.map((friend) => [friend.npub, friend.presence])).toEqual([
+      ['npub-ingame', 'in-game'],
+      ['npub-online', 'online'],
+    ]);
+
+    vi.unstubAllGlobals();
+    if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
+    else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
+    if (previousApiKey === undefined) delete process.env.LUNA_NEGRA_API_KEY;
+    else process.env.LUNA_NEGRA_API_KEY = previousApiKey;
   });
 
   it('returns clear Luna Negra API errors for missing config and invalid tokens', async () => {
