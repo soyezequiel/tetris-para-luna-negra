@@ -3045,13 +3045,13 @@ function renderLibraryPanelContent(): string {
   const error = libraryError ? `<div class="panel-note panel-error">${escapeHtml(libraryError)}</div>` : '';
   return `
       <section class="menu-panel history-panel library-panel" aria-label="Replay library">
-        <div class="panel-eyebrow">REPLAY LIBRARY</div>
-        <h1>Runs</h1>
+        <div class="panel-eyebrow">HISTORIAL DE PARTIDAS</div>
+        <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: inherit; font-weight: 800;">Runs</h1>
         <div class="library-toolbar" aria-label="Replay filters">
-          ${renderLibraryFilterButton('all', 'All')}
-          ${renderLibraryFilterButton('clear', 'Clears')}
-          ${renderLibraryFilterButton('topout', 'Top outs')}
-          ${renderLibraryFilterButton('best', 'Best times')}
+          ${renderLibraryFilterButton('all', 'Todos')}
+          ${renderLibraryFilterButton('clear', 'Completadas')}
+          ${renderLibraryFilterButton('topout', 'Derrotas')}
+          ${renderLibraryFilterButton('best', 'Mejores tiempos')}
         </div>
         ${exported}
         ${error}
@@ -3059,10 +3059,10 @@ function renderLibraryPanelContent(): string {
           <div class="history-list">${rows}</div>
           ${renderLibraryDetails(selectedEntry)}
         </div>
-        <div class="panel-actions">
-          <button type="button" data-ui-action="library-back">Volver</button>
-          <button class="dash-action-btn accent" style="width: auto; padding: 0 14px;" type="button" data-ui-action="import-replay">Importar partida</button>
-          <button class="dash-action-btn danger" style="width: auto; padding: 0 14px;" type="button" data-ui-action="clear-history"${runHistory.length === 0 ? ' disabled' : ''}>Borrar historial</button>
+        <div class="panel-actions" style="display: flex; gap: 12px; margin-top: 24px;">
+          <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="library-back">Volver</button>
+          <button class="dash-action-btn accent" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="import-replay">Importar partida</button>
+          <button class="dash-action-btn danger" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="clear-history"${runHistory.length === 0 ? ' disabled' : ''}>Borrar historial</button>
         </div>
       </section>
   `;
@@ -3082,6 +3082,7 @@ function renderLibraryFilterButton(filter: LibraryFilter, label: string): string
 }
 
 function renderLibraryRow(entry: RunHistoryEntry, selected: boolean): string {
+  const activeClass = selected ? 'dash-copy-btn--active' : '';
   return `
     <article class="history-row library-row ${selected ? 'library-row-selected' : ''}">
       <div>
@@ -3090,11 +3091,11 @@ function renderLibraryRow(entry: RunHistoryEntry, selected: boolean): string {
       </div>
       <div class="history-stats">
         <span>${entry.lines}L</span>
-        <span>${entry.pieces} pieces</span>
+        <span>${entry.pieces} piezas</span>
         <span>${entry.pps.toFixed(2)} PPS</span>
         <span>${entry.inputsPerPiece.toFixed(2)} IPP</span>
       </div>
-      <button type="button" data-ui-action="select-history-entry" data-history-id="${escapeHtml(entry.id)}">${selected ? 'Selected' : 'Details'}</button>
+      <button class="dash-copy-btn ${activeClass}" type="button" data-ui-action="select-history-entry" data-history-id="${escapeHtml(entry.id)}">${selected ? 'Seleccionado' : 'Detalles'}</button>
     </article>
   `;
 }
@@ -3102,32 +3103,32 @@ function renderLibraryRow(entry: RunHistoryEntry, selected: boolean): string {
 function renderLibraryDetails(entry: RunHistoryEntry | null): string {
   if (!entry) {
     return `
-      <aside class="library-details">
-        <div class="panel-eyebrow">NO REPLAY</div>
-        <p>Saved terminal runs will appear here after a clear or top out.</p>
+      <aside class="library-details" style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 24px; color: var(--dash-text-dim);">
+        <div class="panel-eyebrow" style="font-size: 11px; color: var(--dash-text-muted); font-weight: 800; letter-spacing: 1.5px;">SIN SELECCIÓN</div>
+        <p style="font-size: 13px; line-height: 1.5; margin-top: 8px;">Seleccioná una partida para ver detalles y controles de replay.</p>
       </aside>
     `;
   }
   const id = escapeHtml(entry.id);
   return `
     <aside class="library-details">
-      <div class="panel-eyebrow">SELECTED REPLAY</div>
+      <div class="panel-eyebrow">DETALLES DE PARTIDA</div>
       <h2>${escapeHtml(formatHistoryStatus(entry.status))} ${escapeHtml(formatFrames(entry.elapsedFrames))}</h2>
       <dl>
-        <div><dt>Date</dt><dd>${escapeHtml(formatDateTime(entry.createdAt))}</dd></div>
+        <div><dt>Fecha</dt><dd>${escapeHtml(formatDateTime(entry.createdAt))}</dd></div>
         <div><dt>Seed</dt><dd>${entry.seed}</dd></div>
-        <div><dt>Lines</dt><dd>${entry.lines}/40</dd></div>
-        <div><dt>Pieces</dt><dd>${entry.pieces}</dd></div>
+        <div><dt>Líneas</dt><dd>${entry.lines}/40</dd></div>
+        <div><dt>Piezas</dt><dd>${entry.pieces}</dd></div>
         <div><dt>PPS</dt><dd>${entry.pps.toFixed(2)}</dd></div>
         <div><dt>LPM</dt><dd>${entry.linesPerMinute.toFixed(1)}</dd></div>
         <div><dt>Inputs</dt><dd>${entry.inputCount}</dd></div>
         <div><dt>IPP</dt><dd>${entry.inputsPerPiece.toFixed(2)}</dd></div>
       </dl>
       ${renderSplitList(entry.splits)}
-      <div class="panel-actions replay-actions">
-        <button type="button" data-ui-action="play-history-replay" data-history-id="${id}">Play replay</button>
-        <button type="button" data-ui-action="export-history-replay" data-history-id="${id}">Export</button>
-        <button type="button" data-ui-action="delete-history-entry" data-history-id="${id}">Delete</button>
+      <div class="panel-actions replay-actions" style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px;">
+        <button class="dash-action-btn accent" type="button" data-ui-action="play-history-replay" data-history-id="${id}">Play replay</button>
+        <button class="dash-action-btn" type="button" data-ui-action="export-history-replay" data-history-id="${id}">Export</button>
+        <button class="dash-action-btn danger" type="button" data-ui-action="delete-history-entry" data-history-id="${id}">Delete</button>
       </div>
     </aside>
   `;
