@@ -5,6 +5,7 @@ import type {
 import {
   heartbeatLunaPresence,
   listLunaFriends,
+  consumeLunaLaunchRequest,
   resolveLunaSession,
   sendLunaInvite,
 } from '../../src/online/lunaNegraSocial.js';
@@ -53,6 +54,12 @@ export async function GET(request: Request): Promise<Response> {
         throw new OnlineRoomError('Solo el host puede invitar amigos.', 403);
       }
       return sendJson(200, { url: buildInviteWindowUrl(gameId, roomId), serverNowMs: Date.now() });
+    }
+    if (action === 'launch-request') {
+      const npub = queryParam(request, 'npub');
+      if (!npub) throw new OnlineRoomError('Falta el npub.', 400);
+      const { request: launchRequest, source } = await consumeLunaLaunchRequest(npub);
+      return sendJson(200, { request: launchRequest, source, serverNowMs: Date.now() });
     }
     return sendMethodNotAllowed();
   } catch (error) {

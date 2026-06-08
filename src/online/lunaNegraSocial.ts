@@ -10,6 +10,7 @@ import type {
   LunaIdentity,
   LunaInviteRequest,
   LunaPresenceRequest,
+  LunaLaunchRequest,
 } from './protocol';
 
 // Capa social de Luna Negra (login SSO, amigos, presencia, invitaciones).
@@ -239,4 +240,44 @@ export async function sendLunaInvite(
   }
   // Mock: no hay canal de notificación; el host comparte el link manualmente.
   return { delivered: false, source: 'mock' };
+}
+
+export async function consumeLunaLaunchRequest(
+  selfNpub: string,
+): Promise<{ request: LunaLaunchRequest | null; source: 'luna-negra' | 'mock' }> {
+  const self = normalizeNpub(selfNpub) ?? '';
+  const config = readConfig();
+  if (config && self) {
+    const payload = await lunaGet<{ request?: unknown }>(
+      config,
+      `/api/v1/launch-requests?npub=${encodeURIComponent(self)}`,
+    );
+    if (payload && 'request' in payload) {
+      return { request: normalizeLaunchRequest(payload.request), source: 'luna-negra' };
+    }
+  }
+  return { request: null, source: 'mock' };
+}
+
+function normalizeLaunchRequest(value: unknown): LunaLaunchRequest | null {
+  if (!value || typeof value !== 'object') return null;
+  const entry = value as Partial<Record<keyof LunaLaunchRequest, unknown>>;
+  if (
+    typeof entry.id !== 'string'
+    || typeof entry.roomId !== 'string'
+    || typeof entry.inviteToken !== 'string'
+    || typeof entry.slug !== 'string'
+    || typeof entry.title !== 'string'
+    || typeof entry.gameUrl !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: entry.id,
+    roomId: entry.roomId,
+    inviteToken: entry.inviteToken,
+    slug: entry.slug,
+    title: entry.title,
+    gameUrl: entry.gameUrl,
+  };
 }

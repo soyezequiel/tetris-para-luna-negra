@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import * as health from './api/health';
+import * as lunaNegraAction from './api/luna-negra/[action]';
 import * as lunaNegraEnter from './api/rooms/luna-negra/enter';
 import * as matchmakingAction from './api/matchmaking/[action]';
 import * as quickplayAction from './api/quickplay/[action]';
@@ -10,6 +11,12 @@ type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
 
 const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/health', health],
+  ['/api/luna-negra/friends', lunaNegraAction],
+  ['/api/luna-negra/invite', lunaNegraAction],
+  ['/api/luna-negra/invite-window', lunaNegraAction],
+  ['/api/luna-negra/launch-request', lunaNegraAction],
+  ['/api/luna-negra/presence', lunaNegraAction],
+  ['/api/luna-negra/session', lunaNegraAction],
   ['/api/matchmaking/enqueue', matchmakingAction],
   ['/api/matchmaking/heartbeat', matchmakingAction],
   ['/api/matchmaking/leave', matchmakingAction],

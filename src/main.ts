@@ -174,6 +174,7 @@ let lunaIdentity: LunaIdentity | null = null;
 let lunaInviteWindowBusy = false;
 let lunaInviteNotice: string | null = null;
 let trustedLunaOrigin: string | null = null;
+let lunaLaunchPollInFlight = false;
 
 const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
 const LUNA_ORIGIN_KEY = 'stack40.lunaOrigin.v1';
@@ -185,6 +186,7 @@ trustedLunaOrigin = loadTrustedLunaOrigin();
 // o cierra el juego dejamos de latir y a los ~20s deja de figurar "jugando".
 const LUNA_PRESENCE_TTL_MS = 20000;
 const LUNA_PRESENCE_HEARTBEAT_MS = LUNA_PRESENCE_TTL_MS / 2;
+const LUNA_LAUNCH_POLL_MS = 2_000;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -201,6 +203,9 @@ window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
   if (lunaIdentity && isPlayerActivelyPresent()) void syncLunaPresence();
 }, LUNA_PRESENCE_HEARTBEAT_MS);
+window.setInterval(() => {
+  void syncLunaLaunchRequest();
+}, LUNA_LAUNCH_POLL_MS);
 document.addEventListener('visibilitychange', syncOnlineVisibilityChange);
 window.addEventListener('focus', eagerRefreshBetIfPending);
 replayFileInput.addEventListener('change', handleReplayFileChange);
@@ -827,6 +832,7 @@ function applyLunaIdentity(identity: LunaIdentity): void {
     avatarUrl: identity.avatarUrl ?? onlinePlayer.avatarUrl,
   });
   onlineName = onlinePlayer.name;
+  void syncLunaLaunchRequest();
 }
 
 async function bootstrapJoinLink(roomId: string): Promise<void> {
@@ -956,6 +962,25 @@ async function syncLunaPresence(): Promise<void> {
     });
   } catch {
     // La presencia es best-effort.
+  }
+}
+
+async function syncLunaLaunchRequest(): Promise<void> {
+  if (!lunaIdentity || onlineBusy || lunaLaunchPollInFlight) return;
+  lunaLaunchPollInFlight = true;
+  try {
+    const response = await lunaSocialClient.launchRequest(lunaIdentity.npub);
+    syncOnlineClock(response.serverNowMs);
+    const request = response.request;
+    if (!request) return;
+    const targetRoomId = request.roomId.trim();
+    if (!targetRoomId) return;
+    if (onlineRoom && normalizeRoomId(onlineRoom.id) === normalizeRoomId(targetRoomId)) return;
+    await enterLunaNegraRoomFromInvite(request.inviteToken, targetRoomId);
+  } catch {
+    // La orden pendiente es best-effort; la UI de Luna conserva el fallback de abrir/navegar.
+  } finally {
+    lunaLaunchPollInFlight = false;
   }
 }
 

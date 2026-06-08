@@ -480,6 +480,38 @@ test.describe('STACK/40 browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
   });
 
+  test('enters a Luna Negra room from a pending launch request in the open game', async ({ page }) => {
+    await mockOnlineApi(page);
+    let deliveredLaunch = false;
+    await page.route('**/api/luna-negra/launch-request**', async (route) => {
+      const body = deliveredLaunch
+        ? { request: null, source: 'luna-negra', serverNowMs: Date.now() }
+        : {
+          request: {
+            id: 'launch-1',
+            roomId: 'abc12345',
+            inviteToken: 'fake-invite-token',
+            slug: 'stack40',
+            title: 'STACK/40',
+            gameUrl: 'http://127.0.0.1:5173/',
+          },
+          source: 'luna-negra',
+          serverNowMs: Date.now(),
+        };
+      deliveredLaunch = true;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?lnDemo=AlreadyOpen');
+
+    await expect.poll(() => appMode(page), { timeout: 7000 }).toBe('roomLobby');
+    await expect(page.getByRole('heading', { name: 'ABC12345' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
+  });
+
   test('creates a custom online room from the multiplayer menu', async ({ page }) => {
     const requests = await mockOnlineApi(page);
     await openFreshApp(page);

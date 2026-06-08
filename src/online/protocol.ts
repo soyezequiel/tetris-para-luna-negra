@@ -488,6 +488,21 @@ export interface LunaInviteWindowResponse {
   serverNowMs: number;
 }
 
+export interface LunaLaunchRequest {
+  id: string;
+  roomId: string;
+  inviteToken: string;
+  slug: string;
+  title: string;
+  gameUrl: string;
+}
+
+export interface LunaLaunchRequestResponse {
+  request: LunaLaunchRequest | null;
+  serverNowMs: number;
+  source: 'luna-negra' | 'mock';
+}
+
 export interface CreateBetRequest {
   roomId: string;
   playerId: string;
