@@ -1,4 +1,4 @@
-# STACK/40
+# TETRA
 
 Juego web de tetris con capacidad multijugador basado en las herramientas proporcionadas por luna negra otro proyecto a presentar en la hackatón, creado para la hackathon de La Crypta. Este mes la consigna es gaming, asi que el proyecto apunta a una experiencia directa: entrar y jugas con tus amigos de nostr.
 Podes apostar satoshis gracias a la integracion de luna negra que hace de scrow.

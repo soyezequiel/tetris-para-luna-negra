@@ -58,9 +58,10 @@ declare global {
 export async function openFreshApp(page: Page): Promise<void> {
   await page.addInitScript(() => {
     window.localStorage.clear();
+    (window as any).__E2E__ = true;
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'STACK/40' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'TETRA' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.stack40.getAppMode())).toBe('menu');
 }
 

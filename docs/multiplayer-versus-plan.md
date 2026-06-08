@@ -1,7 +1,7 @@
 # Arquitectura Multiplayer Versus
 
 Este archivo ya no es un plan pendiente. Es el documento de arquitectura vigente
-del modo online battle royale de STACK/40.
+del modo online battle royale de TETRA.
 
 Se mantiene porque el multijugador tiene decisiones que no son obvias al leer
 solo `src/main.ts`: quien tiene la verdad, que viaja por WebRTC, que persiste el
@@ -9,7 +9,7 @@ servidor y como se evita que el jugador no-host se sienta trabado.
 
 ## Resumen
 
-- El modo local sigue siendo STACK/40: 40 lineas, historial y replays locales.
+- El modo local sigue siendo TETRA: 40 lineas, historial y replays locales.
 - El modo online usa reglas battle: `targetLines: null`.
 - El creador de la sala es el host-authoritative peer (host autoritativo).
 - El host simula la partida real de todos los invitados.

@@ -4,7 +4,7 @@ import { BATTLE_RULES } from '../../src/game/rules';
 import type { Cell, GameRules, PieceType } from '../../src/game/types';
 import type { OnlineGameSnapshot, OnlineMatchType, OnlineRoomMode, OnlineRuleset, RoomBet, TargetingMode, UpdateRoomSettingsRequest } from '../../src/online/protocol';
 
-test.describe('STACK/40 browser flows', () => {
+test.describe('TETRA browser flows', () => {
   test('serves online API during local Vite dev', async ({ page }) => {
     await openFreshApp(page);
     const health = await page.request.get('/api/health');
@@ -272,7 +272,7 @@ test.describe('STACK/40 browser flows', () => {
     });
     await page.keyboard.press('Control+C');
 
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('STACK/40');
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('TETRA');
   });
 
   test('creates an online room, readies, and starts countdown', async ({ page }) => {
@@ -452,8 +452,8 @@ test.describe('STACK/40 browser flows', () => {
             id: 'launch-1',
             roomId: 'abc12345',
             inviteToken: 'fake-invite-token',
-            slug: 'stack40',
-            title: 'STACK/40',
+            slug: 'TETRA',
+            title: 'TETRA',
             gameUrl: 'http://127.0.0.1:5173/',
           },
           source: 'luna-negra',

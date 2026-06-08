@@ -8,7 +8,7 @@ Este plan cubre los puntos 1, 2, 3 y 6 de la comparacion con TETR.IO:
 6. Targeting, o seleccion de objetivo.
 
 No busca copiar la marca, interfaz, assets ni reglas exactas de TETR.IO. Busca
-llevar STACK/40 a una arquitectura comparable: varios modos online, reglas
+llevar TETRA a una arquitectura comparable: varios modos online, reglas
 separadas, mas profundidad competitiva y targeting legible.
 
 ## Punto De Partida Verificado

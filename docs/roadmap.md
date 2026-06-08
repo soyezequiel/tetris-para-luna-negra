@@ -1,4 +1,4 @@
-# STACK/40 Roadmap
+# TETRA Roadmap
 
 Este documento ignora el README y parte del estado actual del codigo: juego 40L jugable, menu/pausa, input settings, export/import de replay y playback basico.
 

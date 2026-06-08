@@ -16,7 +16,7 @@
 >    pasa de `"mock"` a `"luna-negra"` y que la presencia cae a offline tras 20s.
 
 
-STACK/40 ya integra a Luna Negra como **escrow de apuestas** (`/api/v1/bets/*`),
+TETRA ya integra a Luna Negra como **escrow de apuestas** (`/api/v1/bets/*`),
 verificación de invites de sala (`/api/v1/rooms/verify`) y webhooks
 (`/api/v1/provider/webhook`). Para la pantalla de salas estilo Counter‑Strike 2
 necesitamos una **capa social** que Luna Negra todavía **no expone**:
@@ -157,7 +157,7 @@ detecta y deja de usar el mock automáticamente (el campo `source` pasa de
 
 ## Prompt listo para enviar al equipo de Luna Negra
 
-> Hola 👋 Estamos integrando STACK/40 (juego de Tetris de la hackathon) con Luna
+> Hola 👋 Estamos integrando TETRA (juego de Tetris de la hackathon) con Luna
 > Negra. Ya usamos su API de apuestas (`/api/v1/bets/*`), verificación de salas
 > (`/api/v1/rooms/verify`) y webhooks. Para la nueva pantalla de salas (estilo
 > Counter‑Strike 2) necesitamos 4 endpoints de **capa social**. Detalle y ejemplos

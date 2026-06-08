@@ -16,7 +16,8 @@ export type AppMode =
   | 'roomLobby'
   | 'onlineCountdown'
   | 'onlinePlaying'
-  | 'onlineResults';
+  | 'onlineResults'
+  | 'soloCountdown';
 export type DestructiveRunAction = 'restart' | 'main-menu' | 'import-replay' | 'online-leave';
 
 export function canAdvanceGame(mode: AppMode, status: GameState['status']): boolean {
@@ -53,6 +54,7 @@ export function requiresRunConfirmation(
     || mode === 'roomLobby'
     || mode === 'onlineCountdown'
     || mode === 'onlineResults'
+    || mode === 'soloCountdown'
   ) return false;
   return action === 'restart' || action === 'main-menu' || action === 'import-replay' || action === 'online-leave';
 }

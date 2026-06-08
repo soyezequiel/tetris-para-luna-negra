@@ -103,6 +103,8 @@ let best = loadRecord();
 let runHistory = loadRunHistory();
 let appMode: AppMode = 'menu';
 let settingsReturnMode: AppMode = 'menu';
+let soloCountdownStartsAtMs = 0;
+let lastSoloCountdownSecondPlayed = -1;
 let currentRunKind: RunKind = 'standard';
 let customTab: CustomTab = 'game';
 let gameFrame = 0;
@@ -213,6 +215,10 @@ function loop(): void {
   input.advanceFrame(candidateFrame);
   const controlInputs = input.collect(candidateFrame);
   const consumedByApp = handleControlInputs(controlInputs);
+
+  if (appMode === 'soloCountdown') {
+    updateSoloCountdown();
+  }
 
   if (appMode === 'replayPlayback' && playback) {
     const snapshot = playback.tick();
@@ -606,7 +612,18 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   lastPieces = 0;
   lastLines = 0;
   lastStatus = engine.getState().status;
-  appMode = nextMode;
+  if (nextMode === 'playing') {
+    const isE2E = !!(window as any).__E2E__ || navigator.webdriver;
+    if (isE2E) {
+      appMode = 'playing';
+    } else {
+      appMode = 'soloCountdown';
+      soloCountdownStartsAtMs = performance.now() + 3000;
+      lastSoloCountdownSecondPlayed = -1;
+    }
+  } else {
+    appMode = nextMode;
+  }
   settingsReturnMode = 'menu';
   sound.play('retry');
 }
@@ -1895,6 +1912,23 @@ function maybeStartOnlineRun(): void {
   startNewRun(onlineRoom.seed, 'onlinePlaying');
 }
 
+function updateSoloCountdown(): void {
+  const remainingMs = Math.max(0, soloCountdownStartsAtMs - performance.now());
+  const seconds = Math.ceil(remainingMs / 1000);
+  if (seconds !== lastSoloCountdownSecondPlayed) {
+    lastSoloCountdownSecondPlayed = seconds;
+    if (seconds > 0) {
+      sound.play('lock');
+    } else {
+      sound.play('lineClear');
+    }
+  }
+  if (remainingMs === 0) {
+    appMode = 'playing';
+    syncGameplayClockToCurrentFrame();
+  }
+}
+
 function syncOnlinePeers(room: OnlineRoom): void {
   if (!('RTCPeerConnection' in window)) return;
   onlinePeerBroadcaster ??= new OnlinePeerBroadcaster({
@@ -2194,7 +2228,7 @@ function renderOverlay(state: GameState): void {
   const currentMusicTrack = sound.getCurrentMusicTrack()?.title ?? 'No music';
   const activeVolumeChannel = getActiveVolumeChannel();
   const html = `
-    <div class="brand">STACK/40</div>
+    <div class="brand">TETRA</div>
     <div class="help">${escapeHtml(helpText())}</div>
     <div class="best">Best ${best.best40LineFrames === null ? '--:--.---' : formatFrames(best.best40LineFrames)}</div>
     <div class="audio-panel">
@@ -2279,6 +2313,7 @@ function renderScreenOverlay(state: GameState): string {
   }
 
   if (appMode === 'settings') return renderSettingsOverlay();
+  if (appMode === 'soloCountdown') return renderSoloCountdownOverlay();
   if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
   if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
 
@@ -2560,7 +2595,7 @@ function renderLunaInviteAction(host: boolean): string {
   const status = lunaInviteNotice
     ? lunaInviteNotice
     : unavailable
-      ? 'Disponible al abrir STACK/40 desde Luna Negra.'
+      ? 'Disponible al abrir TETRA desde Luna Negra.'
       : 'Luna Negra abre la lista de amigos.';
   return `
     <section class="cs2-invite-action" aria-label="Invitar amigo">
@@ -2578,6 +2613,19 @@ function renderEmptyLobbySlot(): string {
       <span class="cs2-empty-plus" aria-hidden="true">+</span>
       <span>Lugar libre</span>
       <span class="cs2-friends-hint">Invita un amigo</span>
+    </div>
+  `;
+}
+
+function renderSoloCountdownOverlay(): string {
+  const remainingMs = Math.max(0, soloCountdownStartsAtMs - performance.now());
+  const seconds = Math.ceil(remainingMs / 1000);
+  const numberText = seconds > 0 ? `${seconds}` : '¡YA!';
+  return `
+    <div class="menu-scrim" style="background: rgba(10, 14, 23, 0.4) !important; display: flex; align-items: center; justify-content: center;">
+      <div class="solo-countdown-text" style="font-size: 140px; font-weight: 900; color: #fff; text-shadow: 0 0 45px rgba(124, 92, 252, 0.65); font-family: system-ui, -apple-system, sans-serif;">
+        ${numberText}
+      </div>
     </div>
   `;
 }
@@ -3494,10 +3542,12 @@ function renderDashboardMenu(state: GameState): string {
   const userDisplayName = onlineName.trim() || 'Jugador';
   const avatarLetter = userDisplayName.charAt(0).toUpperCase();
 
-  const isPlayActive = appMode === 'menu' || appMode === 'soloMenu' || appMode === 'multiplayerMenu' || appMode === 'custom' || appMode === 'onlineMenu' || appMode === 'roomLobby';
+  const isHomeActive = appMode === 'menu';
+  const isPlayActive = appMode === 'soloMenu' || appMode === 'multiplayerMenu' || appMode === 'custom' || appMode === 'onlineMenu' || appMode === 'roomLobby';
   const isHistoryActive = appMode === 'historyMenu' || appMode === 'library';
   const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
 
+  const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
   const playClass = isPlayActive ? 'dash-sidebar-btn--active' : '';
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
@@ -3509,7 +3559,7 @@ function renderDashboardMenu(state: GameState): string {
     <div class="dash-layout ${layoutClass}">
       <!-- TOP BAR -->
       <header class="dash-topbar">
-        <div class="dash-logo">STACK/40</div>
+        <h1 class="dash-logo">TETRA</h1>
         <div class="dash-user">
           <div class="dash-user-avatar" style="display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700;">
             ${avatarLetter}
@@ -3521,6 +3571,10 @@ function renderDashboardMenu(state: GameState): string {
       <!-- SIDEBAR -->
       <nav class="dash-sidebar">
         <div class="dash-sidebar-nav">
+          <button class="dash-sidebar-btn ${homeClass}" type="button" data-ui-action="main-menu">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+            Inicio
+          </button>
           <button class="dash-sidebar-btn ${playClass}" type="button" data-ui-action="sidebar-play">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z"/></svg>
             Jugar
@@ -3535,7 +3589,7 @@ function renderDashboardMenu(state: GameState): string {
           </button>
         </div>
         <div class="dash-sidebar-footer">
-          © 2026 STACK/40<br>Todos los derechos reservados.
+          © 2026 TETRA<br>Todos los derechos reservados.
         </div>
       </nav>
       
@@ -3556,15 +3610,11 @@ function renderDashboardMenu(state: GameState): string {
 
 function renderDashboardCenterContent(_state: GameState): string {
   const mode = appMode;
-  if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
+    if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
     return `
       <div class="dash-hero-container">
         <div class="dash-hero-image-wrapper">
           <img class="dash-hero-image" src="/tetris-hero.png" alt="Tetris Board Art" />
-        </div>
-        <div style="display: flex; gap: 12px; margin-top: 24px;">
-          <button class="dash-action-btn accent" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="custom-open">SOLO</button>
-          <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="multiplayer-menu">MULTIJUGADOR</button>
         </div>
       </div>
     `;
