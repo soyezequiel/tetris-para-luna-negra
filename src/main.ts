@@ -2827,15 +2827,15 @@ function renderOnlineBetPanel(host: boolean): string {
     const canCreate = !blocked && !onlineBetBusy;
     return `
       <div class="online-bet-panel">
-        <div class="panel-eyebrow">APUESTA (OPCIONAL)</div>
-        <p class="online-bet-note">Creá un pozo: cada jugador deposita el mismo monto y el ganador se lleva todo (menos la comisión de Luna Negra).</p>
-        <div class="online-bet-create">
-          <label>Monto por jugador (sats)
-            <input type="text" inputmode="numeric" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50" />
-          </label>
-          <button type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>Crear apuesta</button>
+        <div class="dash-field-group">
+          <label style="color: #f7c850; font-weight: 800; font-size: 11px;">APUESTA (OPCIONAL)</label>
+          <p class="online-bet-note" style="margin: 4px 0 8px; font-size: 12px; line-height: 1.4; color: var(--dash-text-dim);">Creá un pozo: cada jugador deposita el mismo monto y el ganador se lleva todo (menos la comisión de Luna Negra).</p>
+          <div class="dash-join-row">
+            <input type="text" inputmode="numeric" class="dash-input" style="width: 100%;" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50" />
+            <button class="dash-action-btn accent" type="button" style="width: auto; padding: 8px 16px;" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>Crear</button>
+          </div>
+          ${blocked ? `<p class="online-bet-note" style="color: var(--dash-danger); margin-top: 6px;">⚠️ ${escapeHtml(blocked)}</p>` : ''}
         </div>
-        ${blocked ? `<p class="online-bet-note">⚠️ ${escapeHtml(blocked)}</p>` : ''}
       </div>
     `;
   }
@@ -2843,7 +2843,7 @@ function renderOnlineBetPanel(host: boolean): string {
   const mine = currentOnlinePlayer();
   const myEntry = mine?.npub ? bet.participants.find((entry) => entry.npub === mine.npub) : undefined;
   const rows = bet.participants.map((entry) => `
-    <div class="online-bet-row">
+    <div class="online-bet-row" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--dash-text-dim);">
       <span>${escapeHtml(betParticipantName(entry))}</span>
       <span>${depositStatusLabel(entry.depositStatus)}</span>
     </div>
@@ -2851,12 +2851,12 @@ function renderOnlineBetPanel(host: boolean): string {
 
   const myDeposit = myEntry && myEntry.depositStatus === 'pending' && (myEntry.bolt11 || myEntry.payUrl)
     ? `
-      <div class="online-bet-deposit">
-        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
-        <div class="online-bet-deposit-actions">
-          ${myEntry.payUrl ? `<a class="online-bet-pay" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener">Pagar en Luna Negra</a>` : ''}
-          ${myEntry.bolt11 ? `<button type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
-          ${myEntry.lnurl ? `<button type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.lnurl)}">Copiar LNURL</button>` : ''}
+      <div class="online-bet-deposit" style="margin-top: 8px; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.2); border: 1px solid var(--dash-border); display: flex; flex-direction: column; gap: 8px;">
+        <strong style="font-size: 12px; color: var(--dash-text);">Depositá tus ${bet.stakeSats} sats:</strong>
+        <div class="online-bet-deposit-actions" style="display: flex; flex-direction: column; gap: 6px;">
+          ${myEntry.payUrl ? `<a class="dash-action-btn accent" style="text-align: center; text-decoration: none; display: block; font-size: 12px; padding: 6px 12px;" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener">Pagar en Luna Negra</a>` : ''}
+          ${myEntry.bolt11 ? `<button class="dash-copy-btn" type="button" style="width: 100%;" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
+          ${myEntry.lnurl ? `<button class="dash-copy-btn" type="button" style="width: 100%;" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.lnurl)}">Copiar LNURL</button>` : ''}
         </div>
       </div>
     `
@@ -2865,13 +2865,20 @@ function renderOnlineBetPanel(host: boolean): string {
   const terminal = ['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status);
   return `
     <div class="online-bet-panel">
-      <div class="panel-eyebrow">APUESTA · ${escapeHtml(betStatusLabel(bet.status))}</div>
-      <p class="online-bet-note">Pozo ${bet.potSats}/${bet.potTargetSats} sats · stake ${bet.stakeSats} · el ganador cobra ${bet.netPayoutSats} sats (comisión ${bet.feeSats}).</p>
-      <div class="online-bet-rows">${rows}</div>
-      ${myDeposit}
-      <div class="online-bet-actions">
-        <button type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
-        ${host && !terminal ? `<button type="button" class="danger-action" data-ui-action="online-bet-cancel"${onlineBetBusy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
+      <div class="dash-field-group">
+        <label style="color: #f7c850; font-weight: 800; font-size: 11px;">APUESTA · ${escapeHtml(betStatusLabel(bet.status))}</label>
+        <p class="online-bet-note" style="margin: 4px 0 8px; font-size: 11px; line-height: 1.4; color: var(--dash-text-dim);">Pozo ${bet.potSats}/${bet.potTargetSats} sats · stake ${bet.stakeSats} · el ganador cobra ${bet.netPayoutSats} sats (comisión ${bet.feeSats}).</p>
+        
+        <div class="online-bet-rows" style="display: flex; flex-direction: column; gap: 6px; margin: 4px 0;">
+          ${rows}
+        </div>
+        
+        ${myDeposit}
+        
+        <div class="online-bet-actions" style="display: flex; gap: 8px; margin-top: 6px;">
+          <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
+          ${host && !terminal ? `<button class="dash-copy-btn" style="color: var(--dash-danger); border-color: rgba(235, 68, 90, 0.2);" type="button" data-ui-action="online-bet-cancel"${onlineBetBusy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
+        </div>
       </div>
     </div>
   `;
@@ -3473,8 +3480,11 @@ function renderDashboardMenu(state: GameState): string {
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
 
+  const showRightRoomPanel = true;
+  const layoutClass = '';
+
   return `
-    <div class="dash-layout">
+    <div class="dash-layout ${layoutClass}">
       <!-- TOP BAR -->
       <header class="dash-topbar">
         <div class="dash-logo">STACK/40</div>
@@ -3513,16 +3523,18 @@ function renderDashboardMenu(state: GameState): string {
       </main>
       
       <!-- ROOM PANEL (derecha) -->
-      <aside class="dash-room">
-        ${renderDashboardRoomPanel()}
-      </aside>
+      ${showRightRoomPanel ? `
+        <aside class="dash-room">
+          ${renderDashboardRoomPanel()}
+        </aside>
+      ` : ''}
     </div>
   `;
 }
 
 function renderDashboardCenterContent(_state: GameState): string {
   const mode = appMode;
-  if (mode === 'menu') {
+  if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
     return `
       <div class="dash-hero-container">
         <div class="dash-hero-image-wrapper">
@@ -3600,12 +3612,6 @@ function renderDashboardCenterContent(_state: GameState): string {
   }
   if (mode === 'settings') {
     return renderSettingsPanelContent();
-  }
-  if (mode === 'onlineMenu') {
-    return renderOnlineMenuPanelContent();
-  }
-  if (mode === 'roomLobby') {
-    return renderOnlineLobbyPanelContent();
   }
   return '';
 }
@@ -3775,6 +3781,8 @@ function renderDashboardRoomPanel(): string {
         </div>
       </div>
     </div>
+
+    ${renderOnlineBetPanel(host)}
 
     <div class="dash-room-actions-group">
       ${player?.ready
