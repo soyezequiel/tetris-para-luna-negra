@@ -3122,3 +3122,24 @@ canvas {
     max-height: none;
   }
 }
+
+/* Overrides for menu panels nested inside the dashboard center */
+.dash-hero .menu-panel {
+  width: 100%;
+  max-width: 680px;
+  max-height: 100%;
+  border-color: rgba(124, 92, 252, 0.3);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  background: rgba(12, 16, 24, 0.85);
+  backdrop-filter: blur(10px);
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.dash-hero .library-panel {
+  max-width: 900px;
+}
+
+.dash-hero .cs2-header {
+  padding-top: 0;
+}

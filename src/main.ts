@@ -2246,66 +2246,25 @@ function restoreOverlayFieldFocus(snapshot: OverlayFieldFocusSnapshot | null): v
 function renderScreenOverlay(state: GameState): string {
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
-  if (appMode === 'custom') return renderCustomOverlay();
-  if (appMode === 'settings') return renderSettingsOverlay();
-  if (appMode === 'library') return renderLibraryOverlay();
-  if (appMode === 'onlineMenu') return renderOnlineMenuOverlay();
-  if (appMode === 'roomLobby') return renderOnlineLobbyOverlay();
-  if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
-  if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
-  if (appMode === 'menu') {
+  if (
+    appMode === 'menu'
+    || appMode === 'soloMenu'
+    || appMode === 'multiplayerMenu'
+    || appMode === 'historyMenu'
+    || appMode === 'configMenu'
+    || appMode === 'custom'
+    || appMode === 'library'
+    || appMode === 'onlineMenu'
+    || appMode === 'roomLobby'
+    || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'))
+  ) {
     return renderDashboardMenu(state);
   }
-  if (appMode === 'soloMenu') {
-    return renderPanel({
-      eyebrow: 'SOLO',
-      title: 'Modos solo',
-      meta: 'Todos los modos disponibles para jugar local.',
-      actions: [
-        ['start', '40 líneas'],
-        ['custom-open', 'Custom'],
-        ['main-menu', 'Volver'],
-      ],
-      actionsClass: 'mode-menu-actions',
-    });
-  }
-  if (appMode === 'multiplayerMenu') {
-    return renderPanel({
-      eyebrow: 'MULTI JUGADOR',
-      title: 'Multijugador',
-      meta: 'Crea una sala custom o unite por codigo para jugar con amigos.',
-      actions: [
-        ['online-open', 'Salas custom'],
-        ['main-menu', 'Volver'],
-      ],
-      actionsClass: 'mode-menu-actions',
-    });
-  }
-  if (appMode === 'historyMenu') {
-    return renderPanel({
-      eyebrow: 'HISTORIAL',
-      title: 'Historial',
-      meta: 'Replays guardados e importación de partidas.',
-      actions: [
-        ['replay-library', 'Replay library'],
-        ['import-replay', 'Import replay'],
-        ['main-menu', 'Volver'],
-      ],
-      actionsClass: 'mode-menu-actions',
-    });
-  }
-  if (appMode === 'configMenu') {
-    return renderPanel({
-      eyebrow: 'CONFIG',
-      title: 'config',
-      meta: 'Configuración disponible del juego.',
-      actions: [
-        ['settings', 'Input settings'],
-        ['main-menu', 'Volver'],
-      ],
-      actionsClass: 'mode-menu-actions',
-    });
-  }
+
+  if (appMode === 'settings') return renderSettingsOverlay();
+  if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
+  if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
+
   if (appMode === 'paused') {
     const actions: [string, string][] = [
       ['resume', 'Resume'],
@@ -2435,7 +2394,7 @@ function renderLobbyShell(main: string): string {
   `;
 }
 
-function renderOnlineMenuOverlay(): string {
+function renderOnlineMenuPanelContent(): string {
   const modeLabel = 'Custom';
   const publicRooms = onlinePublicRooms.length === 0
     ? '<div class="online-empty">Todavía no hay salas públicas. Creá una.</div>'
@@ -2449,45 +2408,50 @@ function renderOnlineMenuOverlay(): string {
         <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>
       </article>
     `).join('');
-  const main = `
-    <header class="cs2-header">
-      <div>
-        <div class="panel-eyebrow">MULTIJUGADOR · ${escapeHtml(modeLabel.toUpperCase())}</div>
-        <h1>Salas</h1>
-      </div>
-      <button class="cs2-btn cs2-btn-ghost" type="button" data-ui-action="main-menu">Volver</button>
-    </header>
-    ${renderOnlineError()}
-    ${renderLunaIdentityBadge()}
-    <section class="cs2-card">
-      <label class="online-field">
-        <span>Tu nombre</span>
-        <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
-      </label>
-      <div class="cs2-play-actions">
-        <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
-        <button class="cs2-btn" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Sala privada</button>
-      </div>
-      <div class="online-join-row">
+  return `
+    <div class="menu-panel online-panel" style="width: 100%; border: none; background: transparent; box-shadow: none; padding: 0;">
+      <header class="cs2-header" style="padding-top: 0;">
+        <div>
+          <div class="panel-eyebrow">MULTIJUGADOR · ${escapeHtml(modeLabel.toUpperCase())}</div>
+          <h1>Salas</h1>
+        </div>
+        <button class="cs2-btn cs2-btn-ghost" type="button" data-ui-action="main-menu">Volver</button>
+      </header>
+      ${renderOnlineError()}
+      ${renderLunaIdentityBadge()}
+      <section class="cs2-card">
         <label class="online-field">
-          <span>Código de sala</span>
-          <input type="text" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
+          <span>Tu nombre</span>
+          <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
         </label>
-        <button class="cs2-btn" type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse por código</button>
-      </div>
-    </section>
-    <section class="cs2-card cs2-rooms">
-      <div class="cs2-card-head">
-        <span>Salas públicas</span>
-        <button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Refrescar</button>
-      </div>
-      <div class="online-filters" aria-label="Filtros de salas">
-        <span>Solo salas custom</span>
-      </div>
-      <div class="cs2-room-list">${publicRooms}</div>
-    </section>
+        <div class="cs2-play-actions">
+          <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
+          <button class="cs2-btn" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Sala privada</button>
+        </div>
+        <div class="online-join-row">
+          <label class="online-field">
+            <span>Código de sala</span>
+            <input type="text" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
+          </label>
+          <button class="cs2-btn" type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse por código</button>
+        </div>
+      </section>
+      <section class="cs2-card cs2-rooms" style="margin-bottom: 0;">
+        <div class="cs2-card-head">
+          <span>Salas públicas</span>
+          <button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Refrescar</button>
+        </div>
+        <div class="online-filters" aria-label="Filtros de salas">
+          <span>Solo salas custom</span>
+        </div>
+        <div class="cs2-room-list">${publicRooms}</div>
+      </section>
+    </div>
   `;
-  return renderLobbyShell(main);
+}
+
+export function renderOnlineMenuOverlay(): string {
+  return renderLobbyShell(renderOnlineMenuPanelContent());
 }
 
 function roomStatusLabel(status: OnlineRoom['status']): string {
@@ -2521,50 +2485,56 @@ function renderLunaIdentityBadge(): string {
 
 // ───────────────────────── Lobby online ─────────────────────
 
-function renderOnlineLobbyOverlay(): string {
-  if (!onlineRoom) return renderOnlineMenuOverlay();
+function renderOnlineLobbyPanelContent(): string {
+  const room = onlineRoom;
+  if (!room) return renderOnlineMenuPanelContent();
   const player = currentOnlinePlayer();
-  const host = onlineRoom.hostPlayerId === onlinePlayer.id;
-  const allReady = onlineRoom.players.length > 0 && onlineRoom.players.every((candidate) => candidate.ready);
-  const betReady = !onlineRoom.bet || onlineRoom.bet.status === 'funded';
-  const modeLabel = roomModeLabel(onlineRoom.mode);
-  const readyCount = onlineRoom.players.filter((candidate) => candidate.ready).length;
+  const host = room.hostPlayerId === onlinePlayer.id;
+  const allReady = room.players.length > 0 && room.players.every((candidate) => candidate.ready);
+  const betReady = !room.bet || room.bet.status === 'funded';
+  const modeLabel = roomModeLabel(room.mode);
+  const readyCount = room.players.filter((candidate) => candidate.ready).length;
   // Mostramos los jugadores + un par de slots vacios para que se vea como lobby.
-  const emptySlots = Math.max(0, Math.min(2, 4 - onlineRoom.players.length));
+  const emptySlots = Math.max(0, Math.min(2, 4 - room.players.length));
   const slots = [
-    ...onlineRoom.players.map((candidate) => renderLobbyPlayer(candidate, host)),
+    ...room.players.map((candidate) => renderLobbyPlayer(candidate, host)),
     ...Array.from({ length: emptySlots }, () => renderEmptyLobbySlot()),
   ].join('');
-  const main = `
-    <header class="cs2-header">
-      <div>
-        <div class="panel-eyebrow">${escapeHtml(onlineRoom.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')} · ${escapeHtml(modeLabel.toUpperCase())}</div>
-        <h1>${escapeHtml(onlineRoom.id)}</h1>
+  return `
+    <div class="menu-panel online-panel" style="width: 100%; border: none; background: transparent; box-shadow: none; padding: 0;">
+      <header class="cs2-header" style="padding-top: 0;">
+        <div>
+          <div class="panel-eyebrow">${escapeHtml(room.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')} · ${escapeHtml(modeLabel.toUpperCase())}</div>
+          <h1>${escapeHtml(room.id)}</h1>
+        </div>
+        <div class="cs2-lobby-meta">
+          <span class="cs2-ready-pill">${readyCount}/${room.players.length} listos</span>
+        </div>
+      </header>
+      <p class="cs2-subtitle">${host ? 'Sos el host.' : 'Esperando al host.'} ${escapeHtml(modeLabel)}: sobreviví, mandá garbage y quedá último en pie.</p>
+      ${renderOnlineError()}
+      ${renderOnlineSeriesStatus()}
+      ${host && room.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : ''}
+      <section class="cs2-card cs2-team">
+        <div class="cs2-card-head"><span>Jugadores</span><span class="cs2-friends-hint">Sala creada</span></div>
+        <div class="cs2-team-grid">${slots}</div>
+      </section>
+      ${renderLunaInviteAction(host)}
+      ${renderOnlineBetPanel(host)}
+      <div class="cs2-lobby-actions">
+        ${player?.ready
+          ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
+          : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
+        ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}
+        <button class="cs2-btn" type="button" data-ui-action="main-menu">Menú</button>
+        <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
       </div>
-      <div class="cs2-lobby-meta">
-        <span class="cs2-ready-pill">${readyCount}/${onlineRoom.players.length} listos</span>
-      </div>
-    </header>
-    <p class="cs2-subtitle">${host ? 'Sos el host.' : 'Esperando al host.'} ${escapeHtml(modeLabel)}: sobreviví, mandá garbage y quedá último en pie.</p>
-    ${renderOnlineError()}
-    ${renderOnlineSeriesStatus()}
-    ${host && onlineRoom.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : ''}
-    <section class="cs2-card cs2-team">
-      <div class="cs2-card-head"><span>Jugadores</span><span class="cs2-friends-hint">Sala creada</span></div>
-      <div class="cs2-team-grid">${slots}</div>
-    </section>
-    ${renderLunaInviteAction(host)}
-    ${renderOnlineBetPanel(host)}
-    <div class="cs2-lobby-actions">
-      ${player?.ready
-        ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
-        : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
-      ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}
-      <button class="cs2-btn" type="button" data-ui-action="main-menu">Menú</button>
-      <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
     </div>
   `;
-  return renderLobbyShell(main);
+}
+
+export function renderOnlineLobbyOverlay(): string {
+  return renderLobbyShell(renderOnlineLobbyPanelContent());
 }
 
 function renderLunaInviteAction(host: boolean): string {
@@ -3057,7 +3027,7 @@ function confirmMeta(action: DestructiveRunAction): string {
   return 'The current board and timer will be discarded.';
 }
 
-function renderLibraryOverlay(): string {
+function renderLibraryPanelContent(): string {
   syncLibrarySelection();
   const visibleEntries = getVisibleLibraryEntries();
   const selectedEntry = getSelectedLibraryEntry(visibleEntries);
@@ -3067,7 +3037,6 @@ function renderLibraryOverlay(): string {
   const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
   const error = libraryError ? `<div class="panel-note panel-error">${escapeHtml(libraryError)}</div>` : '';
   return `
-    <div class="menu-scrim">
       <section class="menu-panel history-panel library-panel" aria-label="Replay library">
         <div class="panel-eyebrow">REPLAY LIBRARY</div>
         <h1>Runs</h1>
@@ -3088,6 +3057,13 @@ function renderLibraryOverlay(): string {
           <button type="button" data-ui-action="clear-history"${runHistory.length === 0 ? ' disabled' : ''}>Clear</button>
         </div>
       </section>
+  `;
+}
+
+export function renderLibraryOverlay(): string {
+  return `
+    <div class="menu-scrim">
+      ${renderLibraryPanelContent()}
     </div>
   `;
 }
@@ -3209,10 +3185,10 @@ function setText(selector: string, value: string): void {
   if (element && element.textContent !== value) element.textContent = value;
 }
 
-function renderCustomOverlay(): string {
+function renderCustomPanelContent(): string {
   const exported = lastCustomExportName ? `<div class="panel-note">Exported ${escapeHtml(lastCustomExportName)}</div>` : '';
   const runError = localRunError ? `<div class="panel-note panel-error">${escapeHtml(localRunError)}</div>` : '';
-  const panel = `
+  return `
     <section class="menu-panel custom-panel" aria-label="Custom mode">
         <div class="custom-header">
           <div>
@@ -3244,7 +3220,10 @@ function renderCustomOverlay(): string {
         </div>
       </section>
   `;
-  return renderPersistentMenuShell(panel, 'custom-scrim');
+}
+
+export function renderCustomOverlay(): string {
+  return renderPersistentMenuShell(renderCustomPanelContent(), 'custom-scrim');
 }
 
 function renderCustomTabBody(): string {
@@ -3378,7 +3357,7 @@ function renderCustomRow(label: string, control: string): string {
   `;
 }
 
-function renderSettingsOverlay(): string {
+function renderSettingsPanelContent(): string {
   const captureText = bindingCapture ? `Press a key for ${CONTROL_ACTION_LABELS[bindingCapture]}` : 'Input settings';
   const bindingRows = CONTROL_ACTIONS.map((action) => `
     <div class="binding-row">
@@ -3390,7 +3369,6 @@ function renderSettingsOverlay(): string {
   `).join('');
 
   return `
-    <div class="menu-scrim">
       <section class="menu-panel settings-panel" aria-label="Input settings">
         <div class="panel-eyebrow">${escapeHtml(captureText)}</div>
         <h1>Controls</h1>
@@ -3404,6 +3382,13 @@ function renderSettingsOverlay(): string {
           <button type="button" data-ui-action="settings-reset">Reset</button>
         </div>
       </section>
+  `;
+}
+
+function renderSettingsOverlay(): string {
+  return `
+    <div class="menu-scrim">
+      ${renderSettingsPanelContent()}
     </div>
   `;
 }
@@ -3475,9 +3460,17 @@ function renderPersistentRoomPanel(): string {
   return onlineRoom ? renderActivePersistentRoomPanel() : renderEmptyPersistentRoomPanel();
 }
 
-function renderDashboardMenu(_state: GameState): string {
+function renderDashboardMenu(state: GameState): string {
   const userDisplayName = onlineName.trim() || 'Jugador';
   const avatarLetter = userDisplayName.charAt(0).toUpperCase();
+
+  const isPlayActive = appMode === 'menu' || appMode === 'soloMenu' || appMode === 'multiplayerMenu' || appMode === 'custom' || appMode === 'onlineMenu' || appMode === 'roomLobby';
+  const isHistoryActive = appMode === 'historyMenu' || appMode === 'library';
+  const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
+
+  const playClass = isPlayActive ? 'dash-sidebar-btn--active' : '';
+  const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
+  const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
 
   return `
     <div class="dash-layout">
@@ -3495,15 +3488,15 @@ function renderDashboardMenu(_state: GameState): string {
       <!-- SIDEBAR -->
       <nav class="dash-sidebar">
         <div class="dash-sidebar-nav">
-          <button class="dash-sidebar-btn dash-sidebar-btn--active" type="button" data-ui-action="solo-menu">
+          <button class="dash-sidebar-btn ${playClass}" type="button" data-ui-action="main-menu">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z"/></svg>
             Jugar
           </button>
-          <button class="dash-sidebar-btn" type="button" data-ui-action="history-menu">
+          <button class="dash-sidebar-btn ${historyClass}" type="button" data-ui-action="history-menu">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
             Historial
           </button>
-          <button class="dash-sidebar-btn" type="button" data-ui-action="config-menu">
+          <button class="dash-sidebar-btn ${settingsClass}" type="button" data-ui-action="config-menu">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
             Ajustes
           </button>
@@ -3515,14 +3508,7 @@ function renderDashboardMenu(_state: GameState): string {
       
       <!-- HERO CENTER -->
       <main class="dash-hero">
-        <div class="dash-hero-container">
-          <div class="dash-hero-image-wrapper">
-            <img class="dash-hero-image" src="/tetris-hero.png" alt="Tetris Board Art" />
-          </div>
-          <span class="dash-hero-eyebrow">SALA DESTACADA</span>
-          <h1 class="dash-hero-title">STACK/40</h1>
-          <p class="dash-hero-subtitle">Entra. Encaja. Supera tus límites.</p>
-        </div>
+        ${renderDashboardCenterContent(state)}
       </main>
       
       <!-- ROOM PANEL (derecha) -->
@@ -3531,6 +3517,96 @@ function renderDashboardMenu(_state: GameState): string {
       </aside>
     </div>
   `;
+}
+
+function renderDashboardCenterContent(_state: GameState): string {
+  const mode = appMode;
+  if (mode === 'menu') {
+    return `
+      <div class="dash-hero-container">
+        <div class="dash-hero-image-wrapper">
+          <img class="dash-hero-image" src="/tetris-hero.png" alt="Tetris Board Art" />
+        </div>
+        <span class="dash-hero-eyebrow">SALA DESTACADA</span>
+        <h1 class="dash-hero-title">STACK/40</h1>
+        <p class="dash-hero-subtitle">Entra. Encaja. Supera tus límites.</p>
+        <div style="display: flex; gap: 12px; margin-top: 24px;">
+          <button class="dash-action-btn accent" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="solo-menu">SOLO</button>
+          <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="multiplayer-menu">MULTIJUGADOR</button>
+        </div>
+      </div>
+    `;
+  }
+  if (mode === 'soloMenu') {
+    return `
+      <div class="menu-panel" style="width: 100%; max-width: 440px; border: none; background: transparent; box-shadow: none; padding: 0;">
+        <div class="panel-eyebrow">SOLO</div>
+        <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Modos solo</h1>
+        <p style="color: var(--dash-text-dim); margin-bottom: 24px; font-size: 14px; font-weight: 500;">Todos los modos disponibles para jugar local.</p>
+        <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px;">
+          <button class="dash-action-btn accent" type="button" data-ui-action="start">40 líneas</button>
+          <button class="dash-action-btn" type="button" data-ui-action="custom-open">Custom</button>
+          <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
+        </div>
+      </div>
+    `;
+  }
+  if (mode === 'multiplayerMenu') {
+    return `
+      <div class="menu-panel" style="width: 100%; max-width: 440px; border: none; background: transparent; box-shadow: none; padding: 0;">
+        <div class="panel-eyebrow">MULTI JUGADOR</div>
+        <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Multijugador</h1>
+        <p style="color: var(--dash-text-dim); margin-bottom: 24px; font-size: 14px; font-weight: 500;">Crea una sala custom o unite por código para jugar con amigos.</p>
+        <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px;">
+          <button class="dash-action-btn accent" type="button" data-ui-action="online-open">Salas custom</button>
+          <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
+        </div>
+      </div>
+    `;
+  }
+  if (mode === 'historyMenu') {
+    return `
+      <div class="menu-panel" style="width: 100%; max-width: 440px; border: none; background: transparent; box-shadow: none; padding: 0;">
+        <div class="panel-eyebrow">HISTORIAL</div>
+        <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Historial</h1>
+        <p style="color: var(--dash-text-dim); margin-bottom: 24px; font-size: 14px; font-weight: 500;">Replays guardados e importación de partidas.</p>
+        <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px;">
+          <button class="dash-action-btn accent" type="button" data-ui-action="replay-library">Replay library</button>
+          <button class="dash-action-btn" type="button" data-ui-action="import-replay">Import replay</button>
+          <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
+        </div>
+      </div>
+    `;
+  }
+  if (mode === 'configMenu') {
+    return `
+      <div class="menu-panel" style="width: 100%; max-width: 440px; border: none; background: transparent; box-shadow: none; padding: 0;">
+        <div class="panel-eyebrow">AJUSTES</div>
+        <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Ajustes</h1>
+        <p style="color: var(--dash-text-dim); margin-bottom: 24px; font-size: 14px; font-weight: 500;">Configuración disponible del juego.</p>
+        <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px;">
+          <button class="dash-action-btn accent" type="button" data-ui-action="settings">Input settings</button>
+          <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
+        </div>
+      </div>
+    `;
+  }
+  if (mode === 'custom') {
+    return renderCustomPanelContent();
+  }
+  if (mode === 'library') {
+    return renderLibraryPanelContent();
+  }
+  if (mode === 'settings') {
+    return renderSettingsPanelContent();
+  }
+  if (mode === 'onlineMenu') {
+    return renderOnlineMenuPanelContent();
+  }
+  if (mode === 'roomLobby') {
+    return renderOnlineLobbyPanelContent();
+  }
+  return '';
 }
 
 function renderDashboardRoomPanel(): string {
