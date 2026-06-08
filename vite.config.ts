@@ -2,8 +2,6 @@ import { defineConfig } from 'vite';
 import * as health from './api/health';
 import * as lunaNegraAction from './api/luna-negra/[action]';
 import * as lunaNegraEnter from './api/rooms/luna-negra/enter';
-import * as matchmakingAction from './api/matchmaking/[action]';
-import * as quickplayAction from './api/quickplay/[action]';
 import * as roomsAction from './api/rooms/[action]';
 
 type LocalApiHandler = (request: Request) => Response | Promise<Response>;
@@ -17,12 +15,7 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/luna-negra/launch-request', lunaNegraAction],
   ['/api/luna-negra/presence', lunaNegraAction],
   ['/api/luna-negra/session', lunaNegraAction],
-  ['/api/matchmaking/enqueue', matchmakingAction],
-  ['/api/matchmaking/heartbeat', matchmakingAction],
-  ['/api/matchmaking/leave', matchmakingAction],
-  ['/api/matchmaking/ticket', matchmakingAction],
-  ['/api/quickplay/enter', quickplayAction],
-  ['/api/quickplay/leaderboard', quickplayAction],
+
   ['/api/rooms/attack', roomsAction],
   ['/api/rooms/create', roomsAction],
   ['/api/rooms/eliminate', roomsAction],
