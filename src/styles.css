@@ -2003,6 +2003,11 @@ canvas {
   margin: auto;
 }
 
+.cs2-shell-single {
+  grid-template-columns: minmax(0, 1fr);
+  width: min(940px, 100%);
+}
+
 .cs2-main {
   display: flex;
   flex-direction: column;
@@ -2356,6 +2361,27 @@ canvas {
 .cs2-lobby-actions .cs2-btn {
   flex: 1 1 auto;
   min-width: 120px;
+}
+
+.cs2-invite-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(78, 161, 255, 0.24);
+  border-radius: 10px;
+  background: rgba(78, 161, 255, 0.08);
+}
+
+.cs2-invite-action .cs2-btn {
+  min-width: 160px;
+}
+
+.cs2-invite-action span {
+  color: rgba(247, 247, 242, 0.62);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 /* Panel de amigos */

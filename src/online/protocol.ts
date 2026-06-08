@@ -482,6 +482,12 @@ export interface LunaInviteResponse {
   source: 'luna-negra' | 'mock';
 }
 
+export interface LunaInviteWindowResponse {
+  /** URL first-party de Luna Negra que renderiza el selector de amigos. */
+  url: string;
+  serverNowMs: number;
+}
+
 export interface CreateBetRequest {
   roomId: string;
   playerId: string;

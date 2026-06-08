@@ -41,6 +41,19 @@ export async function GET(request: Request): Promise<Response> {
       const { friends, source } = await listLunaFriends(getRoomStore(), npub);
       return sendJson(200, { friends, source, serverNowMs: Date.now() });
     }
+    if (action === 'invite-window') {
+      const gameId = queryParam(request, 'gameId')?.trim() ?? '';
+      const roomId = normalizeRoomId(queryParam(request, 'roomId') ?? '');
+      const playerId = queryParam(request, 'playerId')?.trim() ?? '';
+      if (!gameId) throw new OnlineRoomError('Falta el gameId de Luna Negra.', 400);
+      if (!roomId) throw new OnlineRoomError('Falta la sala.', 400);
+      if (!playerId) throw new OnlineRoomError('Falta el jugador.', 400);
+      const room = await loadRoom(getRoomStore(), roomId);
+      if (room.hostPlayerId !== playerId) {
+        throw new OnlineRoomError('Solo el host puede invitar amigos.', 403);
+      }
+      return sendJson(200, { url: buildInviteWindowUrl(gameId, roomId), serverNowMs: Date.now() });
+    }
     return sendMethodNotAllowed();
   } catch (error) {
     return handleApiError(error);
@@ -90,4 +103,13 @@ function buildInviteUrl(request: Request, roomId: string): string {
   const url = new URL(request.url);
   const origin = (process.env.PUBLIC_BASE_URL ?? '').replace(/\/+$/, '') || url.origin;
   return `${origin}/?join=${encodeURIComponent(roomId)}`;
+}
+
+function buildInviteWindowUrl(gameId: string, roomId: string): string {
+  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
+  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL is not configured.', 500);
+  const url = new URL('/invite-friend', baseUrl);
+  url.searchParams.set('gameId', gameId);
+  url.searchParams.set('roomId', roomId);
+  return url.toString();
 }
