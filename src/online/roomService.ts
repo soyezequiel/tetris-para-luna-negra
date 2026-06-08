@@ -4,8 +4,12 @@ import type {
   EnqueueMatchmakingRequest,
   EliminateRequest,
   JoinRoomRequest,
+  KickPlayerRequest,
   LeaveMatchmakingRequest,
+  LeaveRoomRequest,
+  LunaFriend,
   LunaNegraPlayer,
+  LunaPresenceRequest,
   MatchmakingHeartbeatRequest,
   MatchmakingQueue,
   MatchmakingTicket,
@@ -56,11 +60,27 @@ export const MATCHMAKING_TICKET_TTL_MS = 30_000;
 export const MATCHMAKING_TTL_SECONDS = 60;
 export const QUICK_PLAY_DEFAULT_ROOM_ID = 'QPLY';
 
+/** Registro de presencia de un npub respecto a este juego (para amigos Luna Negra). */
+export interface LunaPresenceRecord {
+  npub: string;
+  name: string;
+  avatarUrl: string | null;
+  status: 'in-game' | 'online';
+  roomId: string | null;
+  updatedAtServerMs: number;
+}
+
+export const LUNA_PRESENCE_TTL_MS = 30_000;
+export const LUNA_PRESENCE_TTL_SECONDS = 120;
+
 export interface RoomStore {
   getRoom(id: string): Promise<OnlineRoom | null>;
   saveRoom(room: OnlineRoom, ttlSeconds?: number): Promise<void>;
+  deleteRoom(id: string): Promise<void>;
   listPublicRoomIds(): Promise<string[]>;
   savePublicRoomIds(ids: string[], ttlSeconds?: number): Promise<void>;
+  getPresenceRecords(): Promise<LunaPresenceRecord[]>;
+  savePresenceRecords(records: LunaPresenceRecord[], ttlSeconds?: number): Promise<void>;
   getMatchmakingTicket(id: string): Promise<MatchmakingTicket | null>;
   saveMatchmakingTicket(ticket: MatchmakingTicket, ttlSeconds?: number): Promise<void>;
   listMatchmakingTicketIds(queue: MatchmakingQueue): Promise<string[]>;
@@ -252,6 +272,136 @@ export async function restartRoom(
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
   return room;
+}
+
+/**
+ * Saca a un jugador de su sala. Si era el host, migra el host al siguiente
+ * jugador que queda. Si la sala queda vacía, la elimina. Devuelve la sala
+ * resultante (o null si se eliminó) y a quién se le pasó el host.
+ */
+export async function leaveRoom(
+  store: RoomStore,
+  request: LeaveRoomRequest,
+  nowMs = Date.now(),
+): Promise<{ room: OnlineRoom | null; hostMigratedTo: string | null }> {
+  const room = await store.getRoom(normalizeRoomId(request.roomId)).then((value) => (value ? normalizeRoomShape(value) : null));
+  if (!room) return { room: null, hostMigratedTo: null };
+  const before = room.players.length;
+  room.players = room.players.filter((player) => player.id !== request.playerId);
+  if (room.players.length === before) {
+    // El jugador no estaba en la sala; no hay cambios.
+    return { room, hostMigratedTo: null };
+  }
+
+  if (room.players.length === 0) {
+    await removeRoomEverywhere(store, room.id);
+    return { room: null, hostMigratedTo: null };
+  }
+
+  const hostMigratedTo = migrateHostIfNeeded(room);
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return { room, hostMigratedTo };
+}
+
+/** El host expulsa a otro jugador de la sala. Solo el host puede hacerlo. */
+export async function kickPlayer(
+  store: RoomStore,
+  request: KickPlayerRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, request.roomId);
+  if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Solo el host puede expulsar jugadores.', 403);
+  if (request.targetPlayerId === room.hostPlayerId) throw new OnlineRoomError('El host no puede expulsarse a sí mismo.', 409);
+  if (room.status !== 'lobby') throw new OnlineRoomError('Solo se puede expulsar en el lobby.', 409);
+  const before = room.players.length;
+  room.players = room.players.filter((player) => player.id !== request.targetPlayerId);
+  if (room.players.length === before) throw new OnlineRoomError('El jugador no está en la sala.', 404);
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return room;
+}
+
+/**
+ * Asegura que el host de la sala siga presente. Si el host actual ya no está en
+ * la lista de jugadores, le pasa la autoridad al primer jugador que queda
+ * (el siguiente en la sala). Devuelve el nuevo hostPlayerId si hubo migración.
+ */
+function migrateHostIfNeeded(room: OnlineRoom): string | null {
+  if (room.players.some((player) => player.id === room.hostPlayerId)) return null;
+  const next = room.players[0];
+  if (!next) return null;
+  room.hostPlayerId = next.id;
+  return next.id;
+}
+
+async function removeRoomEverywhere(store: RoomStore, roomId: string): Promise<void> {
+  await store.deleteRoom(roomId);
+  const publicIds = await store.listPublicRoomIds();
+  if (publicIds.includes(roomId)) {
+    await store.savePublicRoomIds(publicIds.filter((id) => id !== roomId), ROOM_TTL_SECONDS);
+  }
+}
+
+// ───────────────────── Presencia / amigos de Luna Negra ─────────────────────
+
+/** Registra/actualiza la presencia de un npub (tiene el juego abierto / está en sala). */
+export async function recordLunaPresence(
+  store: RoomStore,
+  request: LunaPresenceRequest,
+  nowMs = Date.now(),
+): Promise<void> {
+  const npub = normalizeNpub(request.npub);
+  if (!npub) throw new OnlineRoomError('npub inválido.', 400);
+  const records = prunePresence(await store.getPresenceRecords(), nowMs);
+  const filtered = records.filter((record) => record.npub !== npub);
+  filtered.push({
+    npub,
+    name: normalizePlayerName(request.name),
+    avatarUrl: normalizeAvatarUrl(request.avatarUrl),
+    status: request.status === 'in-game' ? 'in-game' : 'online',
+    roomId: typeof request.roomId === 'string' && request.roomId.trim() ? normalizeRoomId(request.roomId) : null,
+    updatedAtServerMs: nowMs,
+  });
+  await store.savePresenceRecords(filtered, LUNA_PRESENCE_TTL_SECONDS);
+}
+
+/**
+ * Devuelve la lista de amigos (mock): todos los npubs con presencia reciente en
+ * este juego, excepto uno mismo, ordenados in-game → online. El grafo real de
+ * amistades lo provee Luna Negra; hasta entonces "amigos" = jugadores presentes.
+ */
+export async function listLunaFriendsMock(
+  store: RoomStore,
+  selfNpub: string,
+  nowMs = Date.now(),
+): Promise<LunaFriend[]> {
+  const self = normalizeNpub(selfNpub);
+  const records = prunePresence(await store.getPresenceRecords(), nowMs);
+  const friends: LunaFriend[] = records
+    .filter((record) => record.npub !== self)
+    .map((record) => ({
+      npub: record.npub,
+      name: record.name,
+      avatarUrl: record.avatarUrl,
+      presence: record.status === 'in-game' ? 'in-game' : 'online',
+      roomId: record.roomId,
+      lastSeenMs: record.updatedAtServerMs,
+    }));
+  return sortLunaFriends(friends);
+}
+
+/** Ordena: primero los que tienen el juego abierto (in-game), luego online, luego offline. */
+export function sortLunaFriends(friends: LunaFriend[]): LunaFriend[] {
+  const rank: Record<LunaFriend['presence'], number> = { 'in-game': 0, online: 1, offline: 2 };
+  return [...friends].sort((a, b) => {
+    if (rank[a.presence] !== rank[b.presence]) return rank[a.presence] - rank[b.presence];
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function prunePresence(records: LunaPresenceRecord[], nowMs: number): LunaPresenceRecord[] {
+  return records.filter((record) => nowMs - record.updatedAtServerMs <= LUNA_PRESENCE_TTL_MS);
 }
 
 export async function setPlayerTargeting(
@@ -944,6 +1094,7 @@ export class MemoryRoomStore implements RoomStore {
   private matchResults = new Map<string, OnlineMatchResult>();
   private matchResultIds = new Map<string, string[]>();
   private quickPlayLeaderboards = new Map<string, QuickPlayLeaderboardEntry[]>();
+  private presence: LunaPresenceRecord[] = [];
 
   async getRoom(id: string): Promise<OnlineRoom | null> {
     return cloneRoom(this.rooms.get(normalizeRoomId(id)) ?? null);
@@ -958,12 +1109,26 @@ export class MemoryRoomStore implements RoomStore {
     }
   }
 
+  async deleteRoom(id: string): Promise<void> {
+    const normalized = normalizeRoomId(id);
+    this.rooms.delete(normalized);
+    this.publicIds = this.publicIds.filter((roomId) => roomId !== normalized);
+  }
+
   async listPublicRoomIds(): Promise<string[]> {
     return [...this.publicIds];
   }
 
   async savePublicRoomIds(ids: string[]): Promise<void> {
     this.publicIds = [...new Set(ids.map(normalizeRoomId))];
+  }
+
+  async getPresenceRecords(): Promise<LunaPresenceRecord[]> {
+    return this.presence.map((record) => ({ ...record }));
+  }
+
+  async savePresenceRecords(records: LunaPresenceRecord[]): Promise<void> {
+    this.presence = records.map((record) => ({ ...record }));
   }
 
   async getMatchmakingTicket(id: string): Promise<MatchmakingTicket | null> {

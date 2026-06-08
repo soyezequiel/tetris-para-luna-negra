@@ -1975,3 +1975,540 @@ canvas {
     display: none;
   }
 }
+
+/* ─────────────────────────── Lobby estilo CS2 ─────────────────────────── */
+
+.cs2-scrim {
+  --cs2-accent: #4ea1ff;
+  --cs2-accent-strong: #2f7fe0;
+  --cs2-go: #39d49a;
+  --cs2-danger: #e0533f;
+  --cs2-panel: rgba(10, 14, 20, 0.92);
+  --cs2-card: rgba(255, 255, 255, 0.04);
+  --cs2-line: rgba(255, 255, 255, 0.1);
+  align-items: stretch;
+  padding: clamp(12px, 2.5vw, 32px);
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(78, 161, 255, 0.12), transparent 60%),
+    linear-gradient(180deg, rgba(3, 5, 8, 0.55), rgba(3, 5, 8, 0.78));
+}
+
+.cs2-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(260px, 26vw, 340px);
+  gap: 16px;
+  width: min(1180px, 100%);
+  height: 100%;
+  max-height: calc(100vh - 48px);
+  margin: auto;
+}
+
+.cs2-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(16px, 2vw, 26px);
+  border: 1px solid var(--cs2-line);
+  border-radius: 12px;
+  background: var(--cs2-panel);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5);
+}
+
+.cs2-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cs2-header h1 {
+  margin: 4px 0 0;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: clamp(24px, 3vw, 36px);
+  line-height: 1;
+  letter-spacing: 1px;
+}
+
+.cs2-subtitle {
+  margin: 0;
+  color: rgba(247, 247, 242, 0.66);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.cs2-lobby-meta {
+  display: flex;
+  gap: 8px;
+}
+
+.cs2-ready-pill {
+  padding: 6px 12px;
+  border: 1px solid var(--cs2-line);
+  border-radius: 999px;
+  background: var(--cs2-card);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+
+/* Cards */
+.cs2-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--cs2-line);
+  border-radius: 10px;
+  background: var(--cs2-card);
+}
+
+.cs2-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(247, 247, 242, 0.82);
+}
+
+/* Botones */
+.cs2-btn {
+  appearance: none;
+  padding: 11px 16px;
+  border: 1px solid var(--cs2-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f7f7f2;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: transform 0.06s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.cs2-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.cs2-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.cs2-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cs2-btn-accent {
+  border-color: transparent;
+  background: linear-gradient(180deg, var(--cs2-accent), var(--cs2-accent-strong));
+  color: #04121f;
+}
+
+.cs2-btn-accent:hover:not(:disabled) {
+  background: linear-gradient(180deg, #66b1ff, #3f8cee);
+}
+
+.cs2-btn-go {
+  border-color: transparent;
+  background: linear-gradient(180deg, #45e0a8, #21b07f);
+  color: #04140d;
+}
+
+.cs2-btn-danger {
+  border-color: rgba(224, 83, 63, 0.5);
+  color: #ff8a76;
+}
+
+.cs2-btn-danger:hover:not(:disabled) {
+  background: rgba(224, 83, 63, 0.16);
+}
+
+.cs2-btn-ghost {
+  background: transparent;
+}
+
+.cs2-btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.cs2-play-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cs2-play-actions .cs2-btn {
+  flex: 1 1 auto;
+}
+
+/* Identidad */
+.cs2-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--cs2-line);
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(78, 161, 255, 0.12), transparent);
+}
+
+.cs2-identity-anon {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cs2-identity strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.cs2-identity span {
+  color: rgba(247, 247, 242, 0.62);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Lista de salas */
+.cs2-room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cs2-room-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--cs2-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cs2-room-row:hover {
+  border-color: rgba(78, 161, 255, 0.4);
+}
+
+.cs2-room-row-info {
+  min-width: 0;
+}
+
+.cs2-room-row-info strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.cs2-room-row-info span {
+  display: block;
+  overflow: hidden;
+  color: rgba(247, 247, 242, 0.6);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Grilla de jugadores (lobby) */
+.cs2-team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.cs2-player-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--cs2-line);
+  border-left: 3px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cs2-player-card.cs2-player-ready {
+  border-left-color: var(--cs2-go);
+  background: rgba(57, 212, 154, 0.08);
+}
+
+.cs2-player-card.cs2-player-self {
+  outline: 1px solid rgba(78, 161, 255, 0.35);
+}
+
+.cs2-player-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cs2-player-name strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs2-player-badges {
+  display: flex;
+  gap: 4px;
+}
+
+.cs2-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+
+.cs2-badge-host {
+  background: rgba(255, 196, 0, 0.18);
+  color: #ffce4d;
+}
+
+.cs2-badge-self {
+  background: rgba(78, 161, 255, 0.2);
+  color: #8cc4ff;
+}
+
+.cs2-player-status {
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(247, 247, 242, 0.5);
+}
+
+.cs2-player-status.is-ready {
+  color: var(--cs2-go);
+}
+
+.cs2-kick {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(224, 83, 63, 0.4);
+  border-radius: 6px;
+  background: rgba(224, 83, 63, 0.12);
+  color: #ff8a76;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cs2-kick:hover:not(:disabled) {
+  background: rgba(224, 83, 63, 0.28);
+}
+
+.cs2-kick:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cs2-player-empty {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-style: dashed;
+  border-left: 1px dashed var(--cs2-line);
+  color: rgba(247, 247, 242, 0.42);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.cs2-empty-plus {
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+  color: rgba(247, 247, 242, 0.3);
+}
+
+.cs2-lobby-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.cs2-lobby-actions .cs2-btn {
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+
+/* Panel de amigos */
+.cs2-friends {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px;
+  border: 1px solid var(--cs2-line);
+  border-radius: 12px;
+  background: var(--cs2-panel);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5);
+}
+
+.cs2-friends-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--cs2-line);
+}
+
+.cs2-friends-title {
+  display: block;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+
+.cs2-friends-count {
+  display: block;
+  margin-top: 2px;
+  color: rgba(247, 247, 242, 0.5);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cs2-friends-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.cs2-friend-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cs2-friend-row:hover {
+  border-color: var(--cs2-line);
+}
+
+.cs2-friend-info {
+  min-width: 0;
+}
+
+.cs2-friend-info strong {
+  display: block;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs2-friend-info span {
+  display: block;
+  color: rgba(247, 247, 242, 0.5);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cs2-presence-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(247, 247, 242, 0.25);
+  box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+}
+
+.cs2-friend-in-game .cs2-presence-dot {
+  background: var(--cs2-go);
+  box-shadow: 0 0 8px rgba(57, 212, 154, 0.7);
+}
+
+.cs2-friend-online .cs2-presence-dot {
+  background: var(--cs2-accent);
+  box-shadow: 0 0 8px rgba(78, 161, 255, 0.6);
+}
+
+.cs2-friend-in-game .cs2-friend-info span {
+  color: var(--cs2-go);
+}
+
+.cs2-friend-offline {
+  opacity: 0.55;
+}
+
+.cs2-friend-tag {
+  font-size: 10px;
+  font-weight: 800;
+  color: rgba(247, 247, 242, 0.4);
+}
+
+.cs2-friends-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 8px;
+  text-align: center;
+  color: rgba(247, 247, 242, 0.6);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cs2-friends-hint {
+  color: rgba(247, 247, 242, 0.4);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cs2-invite-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(57, 212, 154, 0.3);
+  border-radius: 8px;
+  background: rgba(57, 212, 154, 0.1);
+  color: #8ff0c8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+@media (max-width: 760px) {
+  .cs2-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    max-height: none;
+  }
+
+  .cs2-friends {
+    max-height: 38vh;
+  }
+}

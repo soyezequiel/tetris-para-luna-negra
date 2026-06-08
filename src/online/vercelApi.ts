@@ -1,4 +1,4 @@
-import { MemoryRoomStore, OnlineRoomError, type RoomStore } from './roomService.js';
+import { MemoryRoomStore, OnlineRoomError, type LunaPresenceRecord, type RoomStore } from './roomService.js';
 import type { MatchmakingQueue, MatchmakingTicket, OnlineMatchResult, OnlineProfile, QuickPlayLeaderboardEntry } from './protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -29,6 +29,10 @@ class UpstashRoomStore implements RoomStore {
     else await this.command(['SET', key, value]);
   }
 
+  async deleteRoom(id: string): Promise<void> {
+    await this.command(['DEL', roomKey(id)]);
+  }
+
   async listPublicRoomIds(): Promise<string[]> {
     const raw = await this.command<string | null>(['GET', publicRoomsKey()]);
     if (!raw) return [];
@@ -44,6 +48,23 @@ class UpstashRoomStore implements RoomStore {
     const value = JSON.stringify(ids);
     if (ttlSeconds) await this.command(['SET', publicRoomsKey(), value, 'EX', ttlSeconds]);
     else await this.command(['SET', publicRoomsKey(), value]);
+  }
+
+  async getPresenceRecords(): Promise<LunaPresenceRecord[]> {
+    const raw = await this.command<string | null>(['GET', presenceKey()]);
+    if (!raw) return [];
+    try {
+      const value = JSON.parse(raw);
+      return Array.isArray(value) ? value as LunaPresenceRecord[] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async savePresenceRecords(records: LunaPresenceRecord[], ttlSeconds?: number): Promise<void> {
+    const value = JSON.stringify(records);
+    if (ttlSeconds) await this.command(['SET', presenceKey(), value, 'EX', ttlSeconds]);
+    else await this.command(['SET', presenceKey(), value]);
   }
 
   async getMatchmakingTicket(id: string): Promise<MatchmakingTicket | null> {
@@ -247,6 +268,10 @@ function roomKey(id: string): string {
 
 function publicRoomsKey(): string {
   return 'stack40:publicRooms';
+}
+
+function presenceKey(): string {
+  return 'stack40:luna:presence';
 }
 
 function matchmakingTicketKey(id: string): string {

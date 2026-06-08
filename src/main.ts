@@ -57,13 +57,14 @@ import {
   updateInputTiming,
 } from './input/settings';
 import { OnlineClient } from './online/client';
+import { LunaSocialClient } from './online/lunaNegraFriendsClient';
 import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostAuthority';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBroadcast';
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
+import type { AttackRequest, LunaFriend, LunaIdentity, MatchmakingQueue, MatchmakingTicket, OnlineAttack, OnlineGameSnapshot, OnlineMatchResult, OnlineMatchType, OnlinePlayer, OnlineProfile, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, QuickPlayLeaderboardEntry, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -101,6 +102,7 @@ const input = new InputController(inputSettings);
 const renderer = new PixiGameRenderer(root);
 const sound = new SoundEngine(loadRecord().soundMuted, MUSIC_TRACKS, loadRecord().sfxVolume, loadRecord().musicVolume);
 const onlineClient = new OnlineClient();
+const lunaSocialClient = new LunaSocialClient();
 
 let best = loadRecord();
 let runHistory = loadRunHistory();
@@ -168,6 +170,16 @@ let onlineLastAuthoritativeFrame = 0;
 let onlineInputSequence = 0;
 let onlineInputOutbox: SequencedOnlineInput[] = [];
 let onlineActiveRoundId: string | null = null;
+let lunaIdentity: LunaIdentity | null = null;
+let lunaFriends: LunaFriend[] = [];
+let lunaFriendsSource: 'luna-negra' | 'mock' = 'mock';
+let lunaFriendsBusy = false;
+let lunaInviteNotice: string | null = null;
+let lunaLastInviteUrl: string | null = null;
+
+const LUNA_TOKEN_KEY = 'stack40.lunaToken.v1';
+const LUNA_FRIENDS_POLL_MS = 5000;
+const LUNA_PRESENCE_HEARTBEAT_MS = 10000;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -180,6 +192,12 @@ document.body.appendChild(replayFileInput);
 window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
 window.addEventListener('wheel', handleVolumeWheel, { passive: false });
 window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
+window.setInterval(() => {
+  if (lunaIdentity && (appMode === 'onlineMenu' || appMode === 'roomLobby')) void refreshLunaFriends();
+}, LUNA_FRIENDS_POLL_MS);
+window.setInterval(() => {
+  if (lunaIdentity) void syncLunaPresence();
+}, LUNA_PRESENCE_HEARTBEAT_MS);
 document.addEventListener('visibilitychange', syncOnlineVisibilityChange);
 window.addEventListener('focus', eagerRefreshBetIfPending);
 replayFileInput.addEventListener('change', handleReplayFileChange);
@@ -242,6 +260,8 @@ Object.assign(window, {
     getOnlineRoom: () => onlineRoom,
     getOnlinePublicRooms: () => onlinePublicRooms,
     getOnlinePlayer: () => onlinePlayer,
+    getLunaIdentity: () => lunaIdentity,
+    getLunaFriends: () => lunaFriends,
     clearRunHistory: () => {
       clearStoredRunHistory();
       runHistory = [];
@@ -270,7 +290,7 @@ Object.assign(window, {
   },
 });
 
-void bootstrapLunaNegraEntry();
+void bootstrapOnlineStartup();
 
 function targetGameplayFrame(now = performance.now()): number {
   const elapsedFrames = Math.floor((now - gameClockOriginMs) / GAME_FRAME_MS);
@@ -422,6 +442,10 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-targeting') setOnlineTargeting(control.dataset.targetingMode);
   if (action === 'online-manual-target') setOnlineTargeting('manual', control.dataset.targetPlayerId ?? null);
   if (action === 'online-leave') leaveOnlineRoom();
+  if (action === 'online-kick') kickOnlinePlayer(control.dataset.targetPlayerId ?? '');
+  if (action === 'online-invite-friend') inviteFriendToRoom(control.dataset.friendNpub ?? '');
+  if (action === 'online-friends-refresh') refreshLunaFriends();
+  if (action === 'online-copy-invite') copyToClipboard(lunaLastInviteUrl ?? '');
   if (action === 'resume') resumeGame();
   if (action === 'settings') openSettings();
   if (action === 'settings-back') closeSettings();
@@ -686,6 +710,7 @@ function openOnlineMenu(mode: OnlineRoomMode = 'battle'): void {
   refreshPublicRooms();
   refreshOnlineProfile();
   refreshQuickPlayLeaderboard();
+  if (lunaIdentity) void refreshLunaFriends();
 }
 
 async function bootstrapLunaNegraEntry(): Promise<void> {
@@ -724,6 +749,155 @@ function removeLunaNegraTokenFromUrl(): void {
   const url = new URL(window.location.href);
   url.searchParams.delete('inviteToken');
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+// ─────────────── Login SSO + amigos / presencia de Luna Negra ───────────────
+
+// Orquesta el arranque online: primero resuelve la sesión de Luna Negra (login
+// automático al abrir el juego desde Luna Negra), después atiende un invite token
+// (sala privada) o un link de invitación de amigo (?join=).
+async function bootstrapOnlineStartup(): Promise<void> {
+  await bootstrapLunaSession();
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('inviteToken')?.trim()) {
+    await bootstrapLunaNegraEntry();
+    return;
+  }
+  if (params.get('join')?.trim()) {
+    await bootstrapJoinLink(params.get('join')!.trim());
+  }
+}
+
+// Login automático: lee el token de sesión de Luna Negra desde la URL (?lnToken=)
+// o, en desarrollo, ?lnDemo=Nombre. Lo persiste para sobrevivir recargas y resuelve
+// la identidad (npub, nombre, avatar) contra /api/luna-negra/session.
+async function bootstrapLunaSession(): Promise<void> {
+  const params = new URLSearchParams(window.location.search);
+  const token = (params.get('lnToken')?.trim() || params.get('lnDemo')?.trim() || loadStoredLunaToken()).trim();
+  if (!token) return;
+  try {
+    const response = await lunaSocialClient.resolveSession(token);
+    lunaIdentity = response.identity;
+    saveStoredLunaToken(token);
+    onlinePlayer = saveOnlinePlayer({
+      ...onlinePlayer,
+      name: response.identity.name,
+      avatarUrl: response.identity.avatarUrl ?? onlinePlayer.avatarUrl,
+    });
+    onlineName = onlinePlayer.name;
+    removeLunaSessionParamsFromUrl();
+    await syncLunaPresence();
+    await refreshLunaFriends();
+  } catch {
+    // Si la sesión no resuelve, el juego sigue en modo anónimo (sin panel de amigos).
+  }
+}
+
+async function bootstrapJoinLink(roomId: string): Promise<void> {
+  openOnlineMenu('battle');
+  await joinOnlineRoom(roomId);
+  const url = new URL(window.location.href);
+  url.searchParams.delete('join');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+function loadStoredLunaToken(): string {
+  try {
+    return localStorage.getItem(LUNA_TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function saveStoredLunaToken(token: string): void {
+  try {
+    localStorage.setItem(LUNA_TOKEN_KEY, token);
+  } catch {
+    // localStorage puede estar bloqueado; la sesión vivirá solo en memoria.
+  }
+}
+
+function removeLunaSessionParamsFromUrl(): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('lnToken');
+  url.searchParams.delete('lnDemo');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+// Reporta que este jugador tiene el juego abierto (online) o está en una sala
+// (in-game). Alimenta el orden del panel de amigos de los demás.
+async function syncLunaPresence(): Promise<void> {
+  if (!lunaIdentity) return;
+  try {
+    await lunaSocialClient.heartbeat({
+      npub: lunaIdentity.npub,
+      name: onlinePlayer.name,
+      avatarUrl: onlinePlayer.avatarUrl,
+      status: onlineRoom ? 'in-game' : 'online',
+      roomId: onlineRoom?.id ?? null,
+    });
+  } catch {
+    // La presencia es best-effort.
+  }
+}
+
+async function refreshLunaFriends(): Promise<void> {
+  if (!lunaIdentity || lunaFriendsBusy) return;
+  lunaFriendsBusy = true;
+  try {
+    const response = await lunaSocialClient.listFriends(lunaIdentity.npub);
+    lunaFriends = response.friends;
+    lunaFriendsSource = response.source;
+  } catch {
+    // Mantenemos la última lista conocida.
+  } finally {
+    lunaFriendsBusy = false;
+  }
+}
+
+async function inviteFriendToRoom(friendNpub: string): Promise<void> {
+  if (!onlineRoom || !friendNpub || lunaFriendsBusy) return;
+  lunaFriendsBusy = true;
+  lunaInviteNotice = null;
+  try {
+    const response = await lunaSocialClient.invite({
+      roomId: onlineRoom.id,
+      playerId: onlinePlayer.id,
+      friendNpub,
+    });
+    lunaLastInviteUrl = response.inviteUrl;
+    if (response.delivered) {
+      lunaInviteNotice = 'Invitación enviada por Luna Negra.';
+    } else {
+      await copyToClipboard(response.inviteUrl);
+      lunaInviteNotice = 'Link de invitación copiado al portapapeles.';
+    }
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    lunaFriendsBusy = false;
+  }
+}
+
+async function kickOnlinePlayer(targetPlayerId: string): Promise<void> {
+  if (!onlineRoom || onlineBusy || !targetPlayerId) return;
+  if (targetPlayerId === onlinePlayer.id) return;
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.kickPlayer({
+      roomId: onlineRoom.id,
+      playerId: onlinePlayer.id,
+      targetPlayerId,
+    });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
 }
 
 async function refreshPublicRooms(): Promise<void> {
@@ -847,11 +1021,15 @@ async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: 
   if (onlineBusy) return;
   onlineBusy = true;
   try {
+    // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
+    await leaveCurrentRoomBeforeNew();
     onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
     const matchType = explicitMatchType ?? (onlineRoomMode === 'custom' ? 'custom' : 'battle');
     const mode: OnlineRoomMode = matchType === 'custom' ? 'custom' : 'battle';
     const response = await onlineClient.createRoom({
       playerId: onlinePlayer.id,
+      npub: lunaIdentity?.npub ?? null,
+      lunaGameId: lunaIdentity?.gameId ?? null,
       name: onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
       visibility,
@@ -861,6 +1039,7 @@ async function createOnlineRoom(visibility: RoomVisibility, explicitMatchType?: 
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
+    void syncLunaPresence();
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
@@ -876,15 +1055,19 @@ async function joinOnlineRoom(roomId: string): Promise<void> {
   }
   onlineBusy = true;
   try {
+    // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
+    await leaveCurrentRoomBeforeNew(normalizedRoomId);
     onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
     const response = await onlineClient.joinRoom({
       roomId: normalizedRoomId,
       playerId: onlinePlayer.id,
+      npub: lunaIdentity?.npub ?? null,
       name: onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
+    void syncLunaPresence();
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
@@ -1033,6 +1216,32 @@ async function setOnlineTargeting(mode: string | undefined, manualTargetPlayerId
 }
 
 function leaveOnlineRoom(): void {
+  // Avisamos al servidor para que migre el host (si yo era el host, se lo pasa al
+  // siguiente que queda) o elimine la sala si queda vacía. No esperamos la
+  // respuesta: la salida local es inmediata.
+  const room = onlineRoom;
+  if (room) {
+    void onlineClient.leaveRoom({ roomId: room.id, playerId: onlinePlayer.id }).catch(() => {});
+  }
+  resetOnlineRoomState();
+  goToMenu();
+  void syncLunaPresence();
+}
+
+// Sale de la sala actual (si hay) antes de crear/unirse a otra, para que una
+// persona nunca tenga dos salas a la vez. Espera el leave del servidor.
+async function leaveCurrentRoomBeforeNew(targetRoomId?: string): Promise<void> {
+  const room = onlineRoom;
+  if (!room || room.id === targetRoomId) return;
+  try {
+    await onlineClient.leaveRoom({ roomId: room.id, playerId: onlinePlayer.id });
+  } catch {
+    // Si el leave falla seguimos: la sala vieja expira por TTL.
+  }
+  resetOnlineRoomState();
+}
+
+function resetOnlineRoomState(): void {
   onlinePeerBroadcaster?.close();
   onlinePeerBroadcaster = null;
   onlinePeerStates = new Map();
@@ -1058,7 +1267,6 @@ function leaveOnlineRoom(): void {
   onlineLastProgressAt = 0;
   onlineLastPeerBroadcastAt = 0;
   onlineActiveRoundId = null;
-  goToMenu();
 }
 
 function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
@@ -1440,6 +1648,18 @@ async function pollOnlineRoom(): Promise<void> {
   try {
     const response = await onlineClient.getRoomState(onlineRoom.id);
     syncOnlineClock(response.serverNowMs);
+    // Si ya no estoy entre los jugadores y la sala sigue en lobby, me expulsaron.
+    if (
+      (appMode === 'roomLobby' || appMode === 'onlineCountdown')
+      && response.room.status === 'lobby'
+      && !response.room.players.some((player) => player.id === onlinePlayer.id)
+    ) {
+      resetOnlineRoomState();
+      goToMenu();
+      onlineError = 'Te sacaron de la sala.';
+      void syncLunaPresence();
+      return;
+    }
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
     applyRoomAttacks(response.room);
@@ -2174,79 +2394,191 @@ function renderConfirmOverlay(action: DestructiveRunAction): string {
   `;
 }
 
+// Envoltorio estilo CS2: contenido principal a la izquierda, panel de amigos de
+// Luna Negra a la derecha.
+function renderLobbyShell(main: string): string {
+  return `
+    <div class="menu-scrim cs2-scrim">
+      <div class="cs2-shell">
+        <main class="cs2-main">${main}</main>
+        ${renderFriendsSidebar()}
+      </div>
+    </div>
+  `;
+}
+
 function renderOnlineMenuOverlay(): string {
   const modeLabel = roomModeLabel(onlineRoomMode);
-  const modeDescription = onlineRoomMode === 'custom'
-    ? 'Custom room - usa la configuracion custom del host, con victoria por supervivencia online.'
-    : 'Battle room - last player standing. Clears send garbage; top out and you are eliminated.';
   const matchmakingStatus = renderMatchmakingStatus();
   const publicRooms = onlinePublicRooms.length === 0
-    ? '<div class="online-empty">No public rooms yet.</div>'
+    ? '<div class="online-empty">Todavía no hay salas públicas. Creá una.</div>'
     : onlinePublicRooms.map((room) => `
-      <article class="online-room-row">
+      <article class="cs2-room-row">
         ${renderOnlineAvatar({ name: room.hostName, avatarUrl: room.hostAvatarUrl })}
-        <div>
+        <div class="cs2-room-row-info">
           <strong>${escapeHtml(room.id)}</strong>
-          <span>${escapeHtml(room.hostName)} - ${escapeHtml(matchTypeLabel(room.matchType))} - ${room.playerCount} player${room.playerCount === 1 ? '' : 's'} - ${escapeHtml(room.status)} - ${escapeHtml(room.region)}${room.ranked ? ' - ranked' : ''}</span>
+          <span>${escapeHtml(room.hostName)} · ${escapeHtml(matchTypeLabel(room.matchType))} · ${room.playerCount} jugador${room.playerCount === 1 ? '' : 'es'} · ${escapeHtml(roomStatusLabel(room.status))}${room.ranked ? ' · ranked' : ''}</span>
         </div>
-        <button type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}">Join</button>
+        <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>
       </article>
     `).join('');
-  return `
-    <div class="menu-scrim">
-      <section class="menu-panel online-panel" aria-label="Online rooms">
-        <div class="panel-eyebrow">${escapeHtml(modeLabel.toUpperCase())}</div>
-        <h1>${escapeHtml(modeLabel)}</h1>
-        <p>${escapeHtml(modeDescription)}</p>
-        ${renderOnlineError()}
-        ${renderOnlineProfileSummary()}
+  const main = `
+    <header class="cs2-header">
+      <div>
+        <div class="panel-eyebrow">MULTIJUGADOR · ${escapeHtml(modeLabel.toUpperCase())}</div>
+        <h1>Salas</h1>
+      </div>
+      <button class="cs2-btn cs2-btn-ghost" type="button" data-ui-action="main-menu">Volver</button>
+    </header>
+    ${renderOnlineError()}
+    ${renderLunaIdentityBadge()}
+    ${renderOnlineProfileSummary()}
+    <section class="cs2-card">
+      <label class="online-field">
+        <span>Tu nombre</span>
+        <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
+      </label>
+      <div class="cs2-play-actions">
+        <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
+        <button class="cs2-btn" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Sala privada</button>
+        <button class="cs2-btn" type="button" data-ui-action="online-quick-duel"${onlineBusy || onlineMatchmakingTicket ? ' disabled' : ''}>Quick Duel</button>
+        <button class="cs2-btn" type="button" data-ui-action="online-league"${onlineBusy || onlineMatchmakingTicket ? ' disabled' : ''}>League</button>
+        <button class="cs2-btn" type="button" data-ui-action="online-quick-play"${onlineBusy ? ' disabled' : ''}>Quick Play</button>
+        <button class="cs2-btn" type="button" data-ui-action="online-create-royale-public"${onlineBusy ? ' disabled' : ''}>Royale</button>
+        <button class="cs2-btn" type="button" data-ui-action="online-create-sprint-public"${onlineBusy ? ' disabled' : ''}>Sprint Race</button>
+      </div>
+      ${matchmakingStatus}
+      <div class="online-join-row">
         <label class="online-field">
-          <span>Name</span>
-          <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
+          <span>Código de sala</span>
+          <input type="text" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
         </label>
-        <div class="online-create-actions">
-          <button type="button" data-ui-action="online-quick-duel"${onlineBusy || onlineMatchmakingTicket ? ' disabled' : ''}>Quick Duel</button>
-          <button type="button" data-ui-action="online-league"${onlineBusy || onlineMatchmakingTicket ? ' disabled' : ''}>League</button>
-          <button type="button" data-ui-action="online-quick-play"${onlineBusy ? ' disabled' : ''}>Quick Play</button>
-          <button type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Create private</button>
-          <button type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Create public</button>
-          <button type="button" data-ui-action="online-create-royale-public"${onlineBusy ? ' disabled' : ''}>Create Royale</button>
-          <button type="button" data-ui-action="online-create-sprint-public"${onlineBusy ? ' disabled' : ''}>Create Sprint Race</button>
+        <button class="cs2-btn" type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse por código</button>
+      </div>
+    </section>
+    <section class="cs2-card cs2-rooms">
+      <div class="cs2-card-head">
+        <span>Salas públicas</span>
+        <button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Refrescar</button>
+      </div>
+      <div class="online-filters" aria-label="Filtros de salas">
+        <div>
+          ${ONLINE_ROOM_MATCH_FILTERS.map((filter) => `
+            <button class="${filter === onlineRoomMatchFilter ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-match-filter" data-match-filter="${filter}">
+              ${escapeHtml(filter === 'all' ? 'Todas' : matchTypeLabel(filter))}
+            </button>
+          `).join('')}
         </div>
-        ${matchmakingStatus}
-        <div class="online-join-row">
-          <label class="online-field">
-            <span>Room ID</span>
-            <input type="text" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
-          </label>
-          <button type="button" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Join ID</button>
+        <div>
+          ${ONLINE_ROOM_RANK_FILTERS.map((filter) => `
+            <button class="${filter === onlineRoomRankFilter ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-rank-filter" data-rank-filter="${filter}">
+              ${escapeHtml(rankFilterLabel(filter))}
+            </button>
+          `).join('')}
         </div>
-        <div class="online-public-heading">
-          <span>Public rooms</span>
-          <button type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Refresh</button>
+      </div>
+      ${renderQuickPlayLeaderboard()}
+      <div class="cs2-room-list">${publicRooms}</div>
+    </section>
+  `;
+  return renderLobbyShell(main);
+}
+
+function roomStatusLabel(status: OnlineRoom['status']): string {
+  if (status === 'lobby') return 'en lobby';
+  if (status === 'countdown') return 'arrancando';
+  if (status === 'playing') return 'jugando';
+  return 'terminada';
+}
+
+function renderLunaIdentityBadge(): string {
+  if (lunaIdentity) {
+    return `
+      <div class="cs2-identity">
+        ${renderOnlineAvatar({ name: lunaIdentity.name, avatarUrl: lunaIdentity.avatarUrl }, 'small')}
+        <div>
+          <strong>${escapeHtml(lunaIdentity.name)}</strong>
+          <span>Conectado con Luna Negra${lunaFriendsSource === 'mock' ? ' (modo demo)' : ''}</span>
         </div>
-        <div class="online-filters" aria-label="Public room filters">
-          <div>
-            ${ONLINE_ROOM_MATCH_FILTERS.map((filter) => `
-              <button class="${filter === onlineRoomMatchFilter ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-match-filter" data-match-filter="${filter}">
-                ${escapeHtml(filter === 'all' ? 'All' : matchTypeLabel(filter))}
-              </button>
-            `).join('')}
-          </div>
-          <div>
-            ${ONLINE_ROOM_RANK_FILTERS.map((filter) => `
-              <button class="${filter === onlineRoomRankFilter ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-rank-filter" data-rank-filter="${filter}">
-                ${escapeHtml(rankFilterLabel(filter))}
-              </button>
-            `).join('')}
-          </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="cs2-identity cs2-identity-anon">
+      <div>
+        <strong>Sin cuenta de Luna Negra</strong>
+        <span>Abrí el juego desde Luna Negra para ver a tus amigos e invitarlos.</span>
+      </div>
+    </div>
+  `;
+}
+
+// ───────────────────────── Panel de amigos (estilo CS2) ─────────────────────
+
+function renderFriendsSidebar(): string {
+  const inRoom = !!onlineRoom;
+  const roomPlayerNpubs = new Set((onlineRoom?.players ?? []).map((player) => player.npub).filter(Boolean) as string[]);
+  let body: string;
+  if (!lunaIdentity) {
+    body = `
+      <div class="cs2-friends-empty">
+        <p>Conectá tu cuenta de Luna Negra para ver a tus amigos.</p>
+        <p class="cs2-friends-hint">Abrí STACK/40 desde Luna Negra y se logueará solo.</p>
+      </div>
+    `;
+  } else if (lunaFriends.length === 0) {
+    body = `
+      <div class="cs2-friends-empty">
+        <p>Ningún amigo conectado ahora.</p>
+        <p class="cs2-friends-hint">Cuando un amigo abra el juego, aparece acá arriba.</p>
+      </div>
+    `;
+  } else {
+    body = `<div class="cs2-friends-list">${lunaFriends.map((friend) => renderFriendRow(friend, inRoom, roomPlayerNpubs)).join('')}</div>`;
+  }
+  const inviteNotice = lunaInviteNotice
+    ? `<div class="cs2-invite-notice">${escapeHtml(lunaInviteNotice)}${lunaLastInviteUrl ? ' <button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="online-copy-invite">Copiar link</button>' : ''}</div>`
+    : '';
+  const inGame = lunaFriends.filter((friend) => friend.presence === 'in-game').length;
+  const online = lunaFriends.filter((friend) => friend.presence === 'online').length;
+  return `
+    <aside class="cs2-friends" aria-label="Amigos de Luna Negra">
+      <div class="cs2-friends-head">
+        <div>
+          <span class="cs2-friends-title">AMIGOS</span>
+          <span class="cs2-friends-count">${inGame} jugando · ${online} en línea</span>
         </div>
-        ${renderQuickPlayLeaderboard()}
-        <div class="online-room-list">${publicRooms}</div>
-        <div class="panel-actions">
-          <button type="button" data-ui-action="main-menu">Back</button>
-        </div>
-      </section>
+        <button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="online-friends-refresh"${lunaFriendsBusy || !lunaIdentity ? ' disabled' : ''}>↻</button>
+      </div>
+      ${inviteNotice}
+      ${body}
+    </aside>
+  `;
+}
+
+function renderFriendRow(friend: LunaFriend, inRoom: boolean, roomPlayerNpubs: Set<string>): string {
+  const presenceLabel = friend.presence === 'in-game'
+    ? (friend.roomId ? `En sala ${escapeHtml(friend.roomId)}` : 'En el juego')
+    : friend.presence === 'online' ? 'En línea' : 'Desconectado';
+  const alreadyHere = roomPlayerNpubs.has(friend.npub);
+  const canJoinFriend = friend.presence === 'in-game' && friend.roomId && friend.roomId !== onlineRoom?.id;
+  const actions: string[] = [];
+  if (inRoom && !alreadyHere) {
+    actions.push(`<button class="cs2-btn cs2-btn-accent cs2-btn-sm" type="button" data-ui-action="online-invite-friend" data-friend-npub="${escapeHtml(friend.npub)}"${lunaFriendsBusy ? ' disabled' : ''}>Invitar</button>`);
+  } else if (canJoinFriend) {
+    actions.push(`<button class="cs2-btn cs2-btn-sm" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(friend.roomId!)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>`);
+  } else if (inRoom && alreadyHere) {
+    actions.push('<span class="cs2-friend-tag">En tu sala</span>');
+  }
+  return `
+    <div class="cs2-friend-row cs2-friend-${friend.presence}">
+      <span class="cs2-presence-dot" aria-hidden="true"></span>
+      ${renderOnlineAvatar({ name: friend.name, avatarUrl: friend.avatarUrl }, 'small')}
+      <div class="cs2-friend-info">
+        <strong>${escapeHtml(friend.name)}</strong>
+        <span>${presenceLabel}</span>
+      </div>
+      <div class="cs2-friend-actions">${actions.join('')}</div>
     </div>
   `;
 }
@@ -2258,24 +2590,49 @@ function renderOnlineLobbyOverlay(): string {
   const allReady = onlineRoom.players.length > 0 && onlineRoom.players.every((candidate) => candidate.ready);
   const betReady = !onlineRoom.bet || onlineRoom.bet.status === 'funded';
   const modeLabel = roomModeLabel(onlineRoom.mode);
-  return `
-    <div class="menu-scrim">
-      <section class="menu-panel online-panel" aria-label="Online lobby">
-        <div class="panel-eyebrow">${onlineRoom.visibility.toUpperCase()} ${escapeHtml(modeLabel.toUpperCase())}</div>
+  const readyCount = onlineRoom.players.filter((candidate) => candidate.ready).length;
+  // Mostramos los jugadores + un par de slots vacíos "invitá un amigo" para que se
+  // vea como el lobby de CS2 con lugares por llenar.
+  const emptySlots = Math.max(0, Math.min(2, 4 - onlineRoom.players.length));
+  const slots = [
+    ...onlineRoom.players.map((candidate) => renderLobbyPlayer(candidate, host)),
+    ...Array.from({ length: emptySlots }, () => renderEmptyLobbySlot()),
+  ].join('');
+  const main = `
+    <header class="cs2-header">
+      <div>
+        <div class="panel-eyebrow">${escapeHtml(onlineRoom.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')} · ${escapeHtml(modeLabel.toUpperCase())}</div>
         <h1>${escapeHtml(onlineRoom.id)}</h1>
-        <p>${host ? 'You are host.' : 'Waiting for host.'} ${escapeHtml(modeLabel)}: survive, send garbage, and be the last player standing.</p>
-        ${renderOnlineError()}
-        ${renderOnlineSeriesStatus()}
-        <div class="online-lobby-list">${onlineRoom.players.map(renderLobbyPlayer).join('')}</div>
-        ${renderOnlineBetPanel(host)}
-        <div class="panel-actions">
-          ${player?.ready
-            ? '<button type="button" data-ui-action="online-unready">Unready</button>'
-            : '<button type="button" data-ui-action="online-ready">Ready</button>'}
-          ${host ? `<button type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Start</button>` : ''}
-          <button type="button" data-ui-action="online-leave">Leave</button>
-        </div>
-      </section>
+      </div>
+      <div class="cs2-lobby-meta">
+        <span class="cs2-ready-pill">${readyCount}/${onlineRoom.players.length} listos</span>
+      </div>
+    </header>
+    <p class="cs2-subtitle">${host ? 'Sos el host.' : 'Esperando al host.'} ${escapeHtml(modeLabel)}: sobreviví, mandá garbage y quedá último en pie.</p>
+    ${renderOnlineError()}
+    ${renderOnlineSeriesStatus()}
+    <section class="cs2-card cs2-team">
+      <div class="cs2-card-head"><span>Jugadores</span><span class="cs2-friends-hint">Invitá amigos desde el panel derecho →</span></div>
+      <div class="cs2-team-grid">${slots}</div>
+    </section>
+    ${renderOnlineBetPanel(host)}
+    <div class="cs2-lobby-actions">
+      ${player?.ready
+        ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
+        : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
+      ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}
+      <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
+    </div>
+  `;
+  return renderLobbyShell(main);
+}
+
+function renderEmptyLobbySlot(): string {
+  return `
+    <div class="cs2-player-card cs2-player-empty">
+      <span class="cs2-empty-plus" aria-hidden="true">+</span>
+      <span>Lugar libre</span>
+      <span class="cs2-friends-hint">Invitá un amigo</span>
     </div>
   `;
 }
@@ -2550,14 +2907,26 @@ function renderOnlineTargetingControls(): string {
   `;
 }
 
-function renderLobbyPlayer(player: OnlinePlayer): string {
+function renderLobbyPlayer(player: OnlinePlayer, viewerIsHost = false): string {
+  const isHost = player.id === onlineRoom?.hostPlayerId;
+  const isSelf = player.id === onlinePlayer.id;
+  const badges = [
+    isHost ? '<span class="cs2-badge cs2-badge-host">HOST</span>' : '',
+    isSelf ? '<span class="cs2-badge cs2-badge-self">VOS</span>' : '',
+  ].join('');
+  // El host puede expulsar a cualquiera menos a sí mismo.
+  const kick = viewerIsHost && !isSelf
+    ? `<button class="cs2-kick" type="button" data-ui-action="online-kick" data-target-player-id="${escapeHtml(player.id)}" aria-label="Expulsar a ${escapeHtml(player.name)}"${onlineBusy ? ' disabled' : ''}>✕</button>`
+    : '';
   return `
-    <div class="online-lobby-player ${player.id === onlinePlayer.id ? 'online-standing-self' : ''}">
+    <div class="cs2-player-card ${player.ready ? 'cs2-player-ready' : ''} ${isSelf ? 'cs2-player-self' : ''}">
+      ${kick}
       ${renderOnlineAvatar(player)}
-      <div>
-        <strong>${escapeHtml(player.name)}${player.id === onlineRoom?.hostPlayerId ? ' HOST' : ''}</strong>
+      <div class="cs2-player-name">
+        <strong>${escapeHtml(player.name)}</strong>
+        <span class="cs2-player-badges">${badges}</span>
       </div>
-      <span class="online-lobby-player-status">${player.ready ? 'Ready' : 'Not ready'}</span>
+      <span class="cs2-player-status ${player.ready ? 'is-ready' : ''}">${player.ready ? '✓ Listo' : 'Sin listo'}</span>
     </div>
   `;
 }

@@ -4,7 +4,10 @@ import type {
   EliminateRequest,
   EnqueueMatchmakingRequest,
   JoinRoomRequest,
+  KickPlayerRequest,
   LeaveMatchmakingRequest,
+  LeaveRoomRequest,
+  LeaveRoomResponse,
   CreateBetRequest,
   LunaNegraEnterRequest,
   LunaNegraEnterResponse,
@@ -40,6 +43,14 @@ export class OnlineClient {
 
   joinRoom(request: JoinRoomRequest): Promise<OnlineRoomResponse> {
     return this.post('/join', request);
+  }
+
+  leaveRoom(request: LeaveRoomRequest): Promise<LeaveRoomResponse> {
+    return this.post('/leave', request);
+  }
+
+  kickPlayer(request: KickPlayerRequest): Promise<OnlineRoomResponse> {
+    return this.post('/kick', request);
   }
 
   enterLunaNegraRoom(request: LunaNegraEnterRequest): Promise<LunaNegraEnterResponse> {

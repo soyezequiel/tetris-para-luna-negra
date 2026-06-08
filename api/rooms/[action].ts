@@ -3,6 +3,8 @@ import type {
   CreateRoomRequest,
   EliminateRequest,
   JoinRoomRequest,
+  KickPlayerRequest,
+  LeaveRoomRequest,
   OnlineMatchType,
   OnlineRoomStatus,
   PeerSignalRequest,
@@ -21,6 +23,8 @@ import {
   eliminatePlayer,
   getRoomState,
   joinRoom,
+  kickPlayer,
+  leaveRoom,
   listPublicRooms,
   restartRoom,
   setPlayerReady,
@@ -74,6 +78,14 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (action === 'join') {
       const room = await joinRoom(getRoomStore(), await readJsonBody<JoinRoomRequest>(request));
+      return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'leave') {
+      const { room, hostMigratedTo } = await leaveRoom(getRoomStore(), await readJsonBody<LeaveRoomRequest>(request));
+      return sendJson(200, { room, hostMigratedTo, serverNowMs: Date.now() });
+    }
+    if (action === 'kick') {
+      const room = await kickPlayer(getRoomStore(), await readJsonBody<KickPlayerRequest>(request));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'progress') {

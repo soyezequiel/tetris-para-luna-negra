@@ -383,6 +383,105 @@ export interface LunaNegraEnterResponse extends OnlineRoomResponse {
   player: LunaNegraPlayer;
 }
 
+// ───────────────────────── Salir / echar de la sala ─────────────────────────
+
+export interface LeaveRoomRequest {
+  roomId: string;
+  playerId: string;
+}
+
+export interface KickPlayerRequest {
+  roomId: string;
+  /** Host que ejecuta el kick. */
+  playerId: string;
+  /** Jugador a expulsar. */
+  targetPlayerId: string;
+}
+
+/**
+ * Respuesta de salir de una sala. `room` es null cuando la sala quedó vacía y se
+ * eliminó. `hostMigratedTo` indica el nuevo host cuando se migró la autoridad.
+ */
+export interface LeaveRoomResponse {
+  room: OnlineRoom | null;
+  hostMigratedTo: string | null;
+  serverNowMs: number;
+}
+
+// ───────────────────── Identidad / amigos de Luna Negra ─────────────────────
+
+/** Presencia de un amigo respecto a ESTE juego. */
+export type LunaPresenceState = 'in-game' | 'online' | 'offline';
+
+/** Identidad resuelta de Luna Negra (login SSO al abrir el juego desde Luna Negra). */
+export interface LunaIdentity {
+  npub: string;
+  pubkey: string | null;
+  name: string;
+  avatarUrl: string | null;
+  /** gameId de Luna Negra asociado a la sesión (para apuestas / invites). */
+  gameId: string | null;
+}
+
+export interface LunaSessionResponse {
+  identity: LunaIdentity;
+  serverNowMs: number;
+  /** 'luna-negra' cuando vino del proveedor real; 'mock' en fallback de desarrollo. */
+  source: 'luna-negra' | 'mock';
+}
+
+export interface LunaFriend {
+  npub: string;
+  name: string;
+  avatarUrl: string | null;
+  presence: LunaPresenceState;
+  /** Sala actual del amigo dentro de este juego, si está in-game. */
+  roomId: string | null;
+  /** Última vez que se lo vio con el juego abierto (ms epoch) o null. */
+  lastSeenMs: number | null;
+}
+
+export interface LunaFriendsResponse {
+  friends: LunaFriend[];
+  serverNowMs: number;
+  source: 'luna-negra' | 'mock';
+}
+
+/** Heartbeat de presencia: avisa que este npub tiene el juego abierto / está en sala. */
+export interface LunaPresenceRequest {
+  npub: string;
+  name: string;
+  avatarUrl?: string | null;
+  /** 'in-game' si está dentro de una sala; 'online' si solo tiene el juego abierto. */
+  status: 'in-game' | 'online';
+  roomId?: string | null;
+}
+
+export interface LunaPresenceResponse {
+  ok: boolean;
+  serverNowMs: number;
+  source: 'luna-negra' | 'mock';
+}
+
+export interface LunaInviteRequest {
+  /** Sala a la que se invita. */
+  roomId: string;
+  /** Host/jugador que invita. */
+  playerId: string;
+  /** npub del amigo invitado. */
+  friendNpub: string;
+}
+
+export interface LunaInviteResponse {
+  ok: boolean;
+  /** true si Luna Negra confirmó que notificó al amigo. */
+  delivered: boolean;
+  /** Link de unión para copiar/compartir como fallback. */
+  inviteUrl: string;
+  serverNowMs: number;
+  source: 'luna-negra' | 'mock';
+}
+
 export interface CreateBetRequest {
   roomId: string;
   playerId: string;

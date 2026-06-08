@@ -42,7 +42,11 @@ import {
   heartbeatMatchmaking,
   eliminatePlayer,
   joinRoom,
+  kickPlayer,
+  leaveRoom,
+  listLunaFriendsMock,
   listPublicRooms,
+  recordLunaPresence,
   MemoryRoomStore,
   normalizeRoomId,
   rankPlayers,
@@ -1241,6 +1245,66 @@ describe('core stacker engine', () => {
       hostPubkey: 'different-host-pubkey',
       expiresAt: null,
     }, 1100)).rejects.toThrow('Luna Negra host does not match this room.');
+  });
+
+  it('migrates the host to the next player when the host leaves the room', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, { playerId: 'host-player-1', name: 'Host', visibility: 'public' }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'guest-player-2', name: 'Guest2' }, 1010);
+    await joinRoom(store, { roomId: room.id, playerId: 'guest-player-3', name: 'Guest3' }, 1020);
+
+    const result = await leaveRoom(store, { roomId: room.id, playerId: 'host-player-1' }, 1030);
+
+    expect(result.room).not.toBeNull();
+    expect(result.hostMigratedTo).toBe('guest-player-2');
+    expect(result.room?.hostPlayerId).toBe('guest-player-2');
+    expect(result.room?.players.map((player) => player.id)).toEqual(['guest-player-2', 'guest-player-3']);
+  });
+
+  it('deletes the room when the last player leaves', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, { playerId: 'solo-player-1', name: 'Solo', visibility: 'public' }, 1000);
+
+    const result = await leaveRoom(store, { roomId: room.id, playerId: 'solo-player-1' }, 1010);
+
+    expect(result.room).toBeNull();
+    expect(await store.getRoom(room.id)).toBeNull();
+    expect(await store.listPublicRoomIds()).not.toContain(room.id);
+  });
+
+  it('lets the host kick a player but rejects non-hosts and self-kicks', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, { playerId: 'host-player-k', name: 'Host', visibility: 'public' }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'guest-player-k', name: 'Guest' }, 1010);
+
+    await expect(kickPlayer(store, { roomId: room.id, playerId: 'guest-player-k', targetPlayerId: 'host-player-k' }, 1020))
+      .rejects.toThrow('Solo el host puede expulsar jugadores.');
+    await expect(kickPlayer(store, { roomId: room.id, playerId: 'host-player-k', targetPlayerId: 'host-player-k' }, 1020))
+      .rejects.toThrow('El host no puede expulsarse a sí mismo.');
+
+    const kicked = await kickPlayer(store, { roomId: room.id, playerId: 'host-player-k', targetPlayerId: 'guest-player-k' }, 1030);
+    expect(kicked.players.map((player) => player.id)).toEqual(['host-player-k']);
+  });
+
+  it('sorts Luna friends by presence (in-game first) and excludes self', async () => {
+    const store = new MemoryRoomStore();
+    await recordLunaPresence(store, { npub: 'npub-self', name: 'Me', status: 'online' }, 1000);
+    await recordLunaPresence(store, { npub: 'npub-online', name: 'Online', status: 'online' }, 1000);
+    await recordLunaPresence(store, { npub: 'npub-ingame', name: 'InGame', status: 'in-game', roomId: 'ab12' }, 1000);
+
+    const friends = await listLunaFriendsMock(store, 'npub-self', 1500);
+
+    expect(friends.map((friend) => friend.npub)).toEqual(['npub-ingame', 'npub-online']);
+    expect(friends[0].presence).toBe('in-game');
+    expect(friends[0].roomId).toBe('AB12');
+  });
+
+  it('drops stale Luna presence records past the TTL', async () => {
+    const store = new MemoryRoomStore();
+    await recordLunaPresence(store, { npub: 'npub-old', name: 'Old', status: 'online' }, 1000);
+
+    const friends = await listLunaFriendsMock(store, 'npub-self', 1000 + 60_000);
+    expect(friends).toEqual([]);
   });
 
   it('returns clear Luna Negra API errors for missing config and invalid tokens', async () => {
