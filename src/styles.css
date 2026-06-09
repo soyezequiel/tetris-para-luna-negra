@@ -1045,6 +1045,55 @@ canvas {
   background: rgba(235, 68, 90, 0.16);
 }
 
+.online-bet-log {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid rgba(247, 247, 242, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.online-bet-log > strong {
+  color: rgba(247, 247, 242, 0.72);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.online-bet-log-row {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 8px;
+  align-items: start;
+  color: rgba(247, 247, 242, 0.74);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.online-bet-log-row span {
+  color: rgba(247, 247, 242, 0.42);
+  font-family: Consolas, "Courier New", monospace;
+}
+
+.online-bet-log-row p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.online-bet-log-ok p {
+  color: #0de3a8;
+}
+
+.online-bet-log-warn p {
+  color: #f7c850;
+}
+
+.online-bet-log-error p {
+  color: #eb445a;
+}
+
 .online-room-row span,
 .online-lobby-player span,
 .online-empty {

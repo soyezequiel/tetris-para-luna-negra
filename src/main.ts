@@ -65,7 +65,7 @@ import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBr
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode, UpdateRoomSettingsRequest } from './online/protocol';
+import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode, UpdateRoomSettingsRequest } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -82,6 +82,7 @@ const ONLINE_POLL_MS = 1000;
 const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_BET_FAST_POLL_MS = 750;
 const ONLINE_BET_FAST_POLL_WINDOW_MS = 45_000;
+const ONLINE_BET_LOG_LIMIT = 10;
 const ONLINE_PEER_BROADCAST_MS = 100;
 const ONLINE_KO_BROADCAST_RETRY_MS = 1000;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
@@ -91,6 +92,15 @@ type LibraryFilter = typeof LIBRARY_FILTERS[number];
 type RunKind = 'standard' | 'custom' | 'online';
 type SequencedOnlineInput = GameInput & { sequence: number };
 type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: string };
+type OnlineBetLogLevel = 'info' | 'ok' | 'warn' | 'error';
+type OnlineBetRefreshReason = 'manual' | 'auto' | 'focus' | 'pay' | 'copy' | 'queued';
+
+type OnlineBetLogEntry = {
+  id: number;
+  createdAtMs: number;
+  level: OnlineBetLogLevel;
+  message: string;
+};
 
 let inputSettings = loadInputSettings();
 let customSettings = loadCustomSettings();
@@ -141,6 +151,8 @@ let onlineBetBusy = false;
 let onlineLastBetPollAt = 0;
 let onlineBetFastPollUntil = 0;
 let onlineBetRefreshQueued = false;
+let onlineBetLogSequence = 0;
+let onlineBetLogs: OnlineBetLogEntry[] = [];
 let onlineRoom: OnlineRoom | null = null;
 let onlinePublicRooms: OnlineRoomSummary[] = [];
 let localRunError: string | null = null;
@@ -459,13 +471,13 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-create') createOnlineBet();
   if (action === 'online-bet-cancel') cancelOnlineBet();
   if (action === 'online-bet-settle') settleOnlineBet();
-  if (action === 'online-bet-refresh') refreshOnlineBet(false);
+  if (action === 'online-bet-refresh') refreshOnlineBet(false, { reason: 'manual', logSuccess: true });
   if (action === 'online-bet-pay') {
-    wakeUpBetDetection();
+    wakeUpBetDetection('pay');
   }
   if (action === 'online-bet-copy') {
     copyToClipboard(control.dataset.copy ?? '');
-    wakeUpBetDetection();
+    wakeUpBetDetection('copy');
   }
   if (action === 'online-targeting') setOnlineTargeting(control.dataset.targetingMode);
   if (action === 'online-manual-target') setOnlineTargeting('manual', control.dataset.targetPlayerId ?? null);
@@ -1292,14 +1304,18 @@ async function createOnlineBet(): Promise<void> {
     onlineError = 'Ingresá un monto de apuesta válido (sats).';
     return;
   }
+  clearOnlineBetLog();
+  appendOnlineBetLog('info', `Creando apuesta Luna Negra por ${stakeSats} sats por jugador.`);
   onlineBetBusy = true;
   try {
     const response = await onlineClient.createBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id, stakeSats });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     armOnlineBetFastPolling();
+    appendOnlineBetLog('ok', `Apuesta creada. ${describeRoomBet(response.room.bet)}`);
     onlineError = null;
   } catch (error) {
+    appendOnlineBetLog('error', `No pude crear la apuesta: ${onlineErrorText(error)}`);
     onlineError = onlineErrorText(error);
   } finally {
     onlineBetBusy = false;
@@ -1336,28 +1352,41 @@ async function settleOnlineBet(): Promise<void> {
   }
 }
 
-async function refreshOnlineBet(silent: boolean, options: { queueIfBusy?: boolean } = {}): Promise<void> {
+async function refreshOnlineBet(
+  silent: boolean,
+  options: { queueIfBusy?: boolean; reason?: OnlineBetRefreshReason; logSuccess?: boolean } = {},
+): Promise<void> {
   if (!onlineRoom?.bet) return;
   if (onlineBetBusy) {
-    if (options.queueIfBusy) onlineBetRefreshQueued = true;
+    if (options.queueIfBusy) {
+      onlineBetRefreshQueued = true;
+      appendOnlineBetLog('warn', 'Verificacion en curso; deje otra consulta en cola.');
+    }
     return;
   }
   const requestedRoomId = onlineRoom.id;
   onlineBetBusy = true;
   onlineLastBetPollAt = performance.now();
+  if (options.logSuccess) {
+    appendOnlineBetLog('info', `Verificando cobro (${refreshReasonLabel(options.reason)}): POST /api/bets/refresh...`);
+  }
   try {
-    const response = await onlineClient.refreshBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
-    syncOnlineClock(response.serverNowMs);
-    adoptOnlineRoom(response.room);
+    const result = await requestOnlineBetRefresh(onlineRoom.id, onlinePlayer.id);
+    syncOnlineClock(result.payload.serverNowMs);
+    adoptOnlineRoom(result.payload.room);
+    if (options.logSuccess) {
+      appendOnlineBetLog('ok', `Verificacion OK: /api/bets/refresh ${result.status} en ${formatElapsedMs(result.elapsedMs)}. ${describeRoomBet(result.payload.room.bet)}`);
+    }
     if (!silent) onlineError = null;
   } catch (error) {
+    appendOnlineBetLog('error', `Fallo verificacion: ${describeOnlineBetError(error)}`);
     if (!silent) onlineError = onlineErrorText(error);
   } finally {
     onlineBetBusy = false;
     const shouldRefreshAgain = onlineBetRefreshQueued;
     onlineBetRefreshQueued = false;
     if (shouldRefreshAgain && onlineRoom?.id === requestedRoomId && isRefreshableRoomBet(onlineRoom.bet)) {
-      void refreshOnlineBet(true);
+      void refreshOnlineBet(true, { reason: 'queued', logSuccess: true });
     }
   }
 }
@@ -1371,16 +1400,122 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
-function wakeUpServer(): void {
+async function wakeUpServer(): Promise<void> {
   // Realiza un fetch simple a un endpoint ligero (/api/health) para despertar al servidor
   // si está en un entorno serverless o free hosting (como Render/Railway) que se va a dormir.
-  fetch('/api/health').catch(() => {});
+  const startedAt = performance.now();
+  appendOnlineBetLog('info', 'Despertando backend: GET /api/health...');
+  try {
+    const response = await fetch('/api/health', { cache: 'no-store' });
+    const elapsedMs = performance.now() - startedAt;
+    if (response.ok) {
+      appendOnlineBetLog('ok', `Backend despierto: /api/health ${response.status} en ${formatElapsedMs(elapsedMs)}.`);
+    } else {
+      appendOnlineBetLog('error', `Backend respondio mal: /api/health ${response.status} en ${formatElapsedMs(elapsedMs)}.`);
+    }
+  } catch (error) {
+    const elapsedMs = performance.now() - startedAt;
+    appendOnlineBetLog('error', `No pude despertar backend: /api/health fallo en ${formatElapsedMs(elapsedMs)}. ${onlineErrorText(error)}`);
+  }
 }
 
-function wakeUpBetDetection(): void {
-  wakeUpServer();
+function wakeUpBetDetection(reason: Extract<OnlineBetRefreshReason, 'pay' | 'copy'>): void {
+  const trigger = reason === 'pay' ? 'Pagar en Luna Negra' : 'copiar pago';
+  appendOnlineBetLog('info', `${trigger}: activo polling rapido por ${Math.round(ONLINE_BET_FAST_POLL_WINDOW_MS / 1000)}s para detectar el deposito.`);
   armOnlineBetFastPolling();
-  void refreshOnlineBet(true, { queueIfBusy: true });
+  void (async () => {
+    await wakeUpServer();
+    await refreshOnlineBet(true, { queueIfBusy: true, reason, logSuccess: true });
+  })();
+}
+
+class OnlineBetDiagnosticError extends Error {
+  constructor(message: string, readonly status: number | null, readonly elapsedMs: number | null) {
+    super(message);
+    this.name = 'OnlineBetDiagnosticError';
+  }
+}
+
+async function requestOnlineBetRefresh(roomId: string, playerId: string): Promise<{ payload: OnlineRoomResponse; status: number; elapsedMs: number }> {
+  const startedAt = performance.now();
+  const response = await fetch('/api/bets/refresh', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ roomId, playerId }),
+  });
+  const elapsedMs = performance.now() - startedAt;
+  const text = await response.text();
+  let payload: unknown = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text) as unknown;
+    } catch {
+      throw new OnlineBetDiagnosticError(`Respuesta no JSON (${response.status}): ${text.slice(0, 120)}`, response.status, elapsedMs);
+    }
+  }
+  if (!response.ok) {
+    const message = isOnlineErrorResponse(payload) ? payload.error : 'Online bet refresh failed.';
+    throw new OnlineBetDiagnosticError(message, response.status, elapsedMs);
+  }
+  if (!isOnlineRoomResponse(payload)) {
+    throw new OnlineBetDiagnosticError('Respuesta sin room/serverNowMs.', response.status, elapsedMs);
+  }
+  return { payload, status: response.status, elapsedMs };
+}
+
+function appendOnlineBetLog(level: OnlineBetLogLevel, message: string): void {
+  const entry = {
+    id: ++onlineBetLogSequence,
+    createdAtMs: Date.now(),
+    level,
+    message,
+  };
+  onlineBetLogs = [entry, ...onlineBetLogs].slice(0, ONLINE_BET_LOG_LIMIT);
+  const log = level === 'error' ? console.warn : console.info;
+  log(`[Luna Negra bet] ${message}`);
+}
+
+function clearOnlineBetLog(): void {
+  onlineBetLogs = [];
+}
+
+function refreshReasonLabel(reason: OnlineBetRefreshReason | undefined): string {
+  if (reason === 'pay') return 'pagar';
+  if (reason === 'copy') return 'copiar';
+  if (reason === 'focus') return 'volver al juego';
+  if (reason === 'queued') return 'consulta en cola';
+  if (reason === 'manual') return 'manual';
+  return 'automatico';
+}
+
+function formatElapsedMs(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'tiempo desconocido';
+  return `${Math.max(0, Math.round(value))}ms`;
+}
+
+function describeRoomBet(bet: RoomBet | null): string {
+  if (!bet) return 'La sala ya no tiene apuesta.';
+  return `Luna Negra informa estado ${bet.status}, depositos ${bet.depositsReceived}/${bet.depositsTotal}, pozo ${bet.potSats}/${bet.potTargetSats} sats.`;
+}
+
+function describeOnlineBetError(error: unknown): string {
+  if (error instanceof OnlineBetDiagnosticError) {
+    const status = error.status === null ? 'sin status HTTP' : `HTTP ${error.status}`;
+    return `/api/bets/refresh ${status} en ${formatElapsedMs(error.elapsedMs)}. ${error.message}`;
+  }
+  return onlineErrorText(error);
+}
+
+function isOnlineErrorResponse(value: unknown): value is OnlineErrorResponse {
+  return typeof value === 'object' && value !== null && 'error' in value && typeof (value as OnlineErrorResponse).error === 'string';
+}
+
+function isOnlineRoomResponse(value: unknown): value is OnlineRoomResponse {
+  return typeof value === 'object'
+    && value !== null
+    && 'room' in value
+    && 'serverNowMs' in value
+    && typeof (value as OnlineRoomResponse).serverNowMs === 'number';
 }
 
 async function setOnlineTargeting(mode: string | undefined, manualTargetPlayerId: string | null = null): Promise<void> {
@@ -1444,6 +1579,7 @@ function resetOnlineRoomState(): void {
   onlineLastBetPollAt = 0;
   onlineBetFastPollUntil = 0;
   onlineBetRefreshQueued = false;
+  clearOnlineBetLog();
   onlineResultSubmitted = false;
   onlineRunStarted = false;
   onlineAttackSequence = 0;
@@ -1861,7 +1997,7 @@ function maybeRefreshBet(): void {
     return;
   }
   if (now - onlineLastBetPollAt < pollMs) return;
-  void refreshOnlineBet(true, { queueIfBusy: true });
+  void refreshOnlineBet(true, { queueIfBusy: true, reason: 'auto' });
 }
 
 function isRefreshableRoomBet(bet: RoomBet | null | undefined): bet is RoomBet {
@@ -2324,7 +2460,7 @@ function eagerRefreshBetIfPending(): void {
   const bet = onlineRoom?.bet;
   if (!isRefreshableRoomBet(bet)) return;
   armOnlineBetFastPolling();
-  void refreshOnlineBet(true, { queueIfBusy: true });
+  void refreshOnlineBet(true, { queueIfBusy: true, reason: 'focus', logSuccess: true });
 }
 
 function syncOnlineBackground(): void {
@@ -3064,6 +3200,31 @@ function betParticipantName(participant: RoomBetParticipant): string {
   return `${participant.npub.slice(0, 8)}…${participant.npub.slice(-4)}`;
 }
 
+function renderOnlineBetLog(): string {
+  if (onlineBetLogs.length === 0) return '';
+  const rows = onlineBetLogs.map((entry) => `
+    <div class="online-bet-log-row online-bet-log-${entry.level}">
+      <span>${escapeHtml(formatBetLogTime(entry.createdAtMs))}</span>
+      <p>${escapeHtml(entry.message)}</p>
+    </div>
+  `).join('');
+  return `
+    <div class="online-bet-log" aria-label="Log pago Luna Negra">
+      <strong>Log pago Luna Negra</strong>
+      ${rows}
+    </div>
+  `;
+}
+
+function formatBetLogTime(createdAtMs: number): string {
+  const date = new Date(createdAtMs);
+  return [
+    String(date.getHours()).padStart(2, '0'),
+    String(date.getMinutes()).padStart(2, '0'),
+    String(date.getSeconds()).padStart(2, '0'),
+  ].join(':');
+}
+
 function renderOnlineBetPanel(host: boolean): string {
   if (!onlineRoom) return '';
   const bet = onlineRoom.bet;
@@ -3126,6 +3287,7 @@ function renderOnlineBetPanel(host: boolean): string {
           <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
           ${host && !terminal ? `<button class="dash-copy-btn" style="color: var(--dash-danger); border-color: rgba(235, 68, 90, 0.2);" type="button" data-ui-action="online-bet-cancel"${onlineBetBusy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
         </div>
+        ${renderOnlineBetLog()}
       </div>
     </div>
   `;

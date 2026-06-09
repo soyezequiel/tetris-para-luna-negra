@@ -441,6 +441,28 @@ test.describe('TETRA browser flows', () => {
 
     await expect.poll(() => requests.healthCount).toBeGreaterThanOrEqual(1);
     await expect.poll(() => requests.betRefreshCount).toBeGreaterThanOrEqual(1);
+    await expect(page.getByText(/Backend despierto: \/api\/health 200/)).toBeVisible();
+    await expect(page.getByText(/Verificacion OK: \/api\/bets\/refresh 200/).first()).toBeVisible();
+    await expect(page.getByText(/depositos 0\/2/).first()).toBeVisible();
+  });
+
+  test('explains bet refresh failures after opening payment', async ({ page }) => {
+    await mockOnlineApi(page, { lunaBetRoom: true, failBetRefresh: true });
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?inviteToken=fake-token&room=fail1234');
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+
+    const popupPromise = page.waitForEvent('popup');
+    await action(page, 'online-bet-pay').click();
+    const popup = await popupPromise;
+    await popup.close();
+
+    await expect(page.getByText(/Backend despierto: \/api\/health 200/)).toBeVisible();
+    await expect(page.getByText(/Fallo verificacion: \/api\/bets\/refresh HTTP 503/)).toBeVisible();
+    await expect(page.getByText(/Luna refresh timeout/)).toBeVisible();
   });
 
   test('enters a Luna Negra room from an accepted invite message in the open game', async ({ page }) => {
@@ -723,6 +745,14 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
     }
     if (path.endsWith('/refresh')) {
       requests.betRefreshCount += 1;
+      if (options.failBetRefresh) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Luna refresh timeout' }),
+        });
+        return;
+      }
       await fulfillRoom(route, room);
       return;
     }
@@ -945,6 +975,7 @@ type MockOnlineApiOptions = {
   createdPlayingGuestRoom?: boolean;
   createdLobbyGuestRoom?: boolean;
   lunaBetRoom?: boolean;
+  failBetRefresh?: boolean;
 };
 
 type MockOnlineApiRequests = {
