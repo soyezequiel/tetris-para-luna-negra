@@ -1,5 +1,6 @@
 import {
   loadRoom,
+  isTerminalRoomBetStatus,
   OnlineRoomError,
   setRoomBet,
   winnerNpubsFromRoom,
@@ -286,7 +287,7 @@ export async function createBetForRoom(
   const room = await loadRoom(store, input.roomId);
   if (room.hostPlayerId !== input.playerId) throw new OnlineRoomError('Solo el host puede crear la apuesta.', 403);
   if (room.status !== 'lobby') throw new OnlineRoomError('La sala ya empezó.', 409);
-  if (room.bet && !['cancelled', 'expired', 'refunded'].includes(room.bet.status)) {
+  if (room.bet && !isTerminalRoomBetStatus(room.bet.status)) {
     throw new OnlineRoomError('Ya hay una apuesta activa para esta sala.', 409);
   }
   if (room.players.length < 2) throw new OnlineRoomError('Se necesitan al menos 2 jugadores para apostar.', 409);

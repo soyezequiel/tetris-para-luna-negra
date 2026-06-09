@@ -241,6 +241,12 @@ export async function restartRoom(
   const room = await requireRoom(store, request.roomId);
   if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can restart.', 403);
   if (room.status !== 'finished') return room;
+  if (room.bet) {
+    if (!isTerminalRoomBetStatus(room.bet.status)) {
+      throw new OnlineRoomError('La apuesta todavía no terminó de liquidarse.', 409);
+    }
+    room.bet = null;
+  }
   room.matchResultId = null;
   prepareRoundCountdown(room, nowMs, true);
   room.updatedAtServerMs = nowMs;
@@ -256,7 +262,7 @@ export async function updateRoomSettings(
   const room = await requireRoom(store, request.roomId);
   if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can change room settings.', 403);
   if (room.status !== 'lobby') throw new OnlineRoomError('Room settings can only change in the lobby.', 409);
-  if (room.bet && room.bet.status !== 'cancelled' && room.bet.status !== 'expired' && room.bet.status !== 'refunded') {
+  if (room.bet && !isTerminalRoomBetStatus(room.bet.status)) {
     throw new OnlineRoomError('No se puede cambiar el modo con una apuesta activa.', 409);
   }
 
@@ -1160,6 +1166,10 @@ const ROOM_BET_STATUSES: RoomBetStatus[] = [
 
 function normalizeBetStatus(value: unknown): RoomBetStatus {
   return ROOM_BET_STATUSES.includes(value as RoomBetStatus) ? value as RoomBetStatus : 'pending_deposits';
+}
+
+export function isTerminalRoomBetStatus(status: RoomBetStatus): boolean {
+  return status === 'settled' || status === 'cancelled' || status === 'expired' || status === 'refunded';
 }
 
 function normalizeBetDepositStatus(value: unknown): RoomBetParticipant['depositStatus'] {

@@ -2046,6 +2046,82 @@ describe('core stacker engine', () => {
     }
   });
 
+  it('clears terminal bets on restart and blocks active bet restarts', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-host-bet-restart',
+      npub: 'npub-host-bet-restart',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, {
+      roomId: room.id,
+      playerId: 'player-guest-bet-restart',
+      npub: 'npub-guest-bet-restart',
+      name: 'Guest',
+    }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-host-bet-restart', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-guest-bet-restart', ready: true }, 1200);
+    const started = await startRoom(store, { roomId: room.id, playerId: 'player-host-bet-restart' }, 1300);
+    await getRoomState(store, room.id, 7000);
+    await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-host-bet-restart',
+      playerId: 'player-guest-bet-restart',
+      seed: started.seed,
+      frame: 300,
+      lines: 8,
+      pieces: 18,
+      elapsedFrames: 300,
+    }, 7100);
+
+    const activeBetRoom = await store.getRoom(room.id);
+    if (!activeBetRoom) throw new Error('Expected active bet test room');
+    activeBetRoom.bet = {
+      betId: 'bet-active-restart',
+      status: 'funded',
+      stakeSats: 50,
+      potSats: 100,
+      potTargetSats: 100,
+      feeSats: 1,
+      feePct: 1,
+      netPayoutSats: 99,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [],
+      winnerNpubs: null,
+      resultReported: false,
+      settlementError: null,
+      createdByPlayerId: 'player-host-bet-restart',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1000,
+    };
+    await store.saveRoom(activeBetRoom);
+
+    await expect(restartRoom(store, {
+      roomId: room.id,
+      playerId: 'player-host-bet-restart',
+    }, 7200)).rejects.toThrow('todavía no terminó de liquidarse');
+
+    activeBetRoom.bet = {
+      ...activeBetRoom.bet,
+      status: 'settled',
+      resultReported: true,
+      winnerNpubs: ['npub-host-bet-restart'],
+    };
+    await store.saveRoom(activeBetRoom);
+
+    const restarted = await restartRoom(store, {
+      roomId: room.id,
+      playerId: 'player-host-bet-restart',
+    }, 7300);
+
+    expect(restarted.status).toBe('countdown');
+    expect(restarted.bet).toBeNull();
+    expect(restarted.winnerPlayerId).toBeNull();
+  });
+
   it('ignores terminal updates from the previous online seed after a restart', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, {

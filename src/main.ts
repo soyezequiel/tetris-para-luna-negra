@@ -153,6 +153,7 @@ let onlineResultSubmitted = false;
 let onlineRunStarted = false;
 let onlinePeerBroadcaster: OnlinePeerBroadcaster | null = null;
 let onlinePeerStates = new Map<string, string>();
+let onlinePeerDisplaySnapshots = new Map<string, OnlineGameSnapshot>();
 let onlineAttackSequence = 0;
 let onlineAppliedAttackIds = new Set<string>();
 let onlineHostAuthority: HostAuthoritySimulator | null = null;
@@ -1414,6 +1415,7 @@ function resetOnlineRoomState(): void {
   onlinePeerBroadcaster?.close();
   onlinePeerBroadcaster = null;
   onlinePeerStates = new Map();
+  onlinePeerDisplaySnapshots = new Map();
   onlineRoom = null;
   onlineError = null;
   onlineStakeInput = '';
@@ -1429,6 +1431,7 @@ function resetOnlineRoomState(): void {
   onlineHostCommittedEliminations = new Set();
   onlineHostCommittedResults = new Set();
   onlineLastAuthoritativeFrame = 0;
+  onlinePeerDisplaySnapshots = new Map();
   onlineInputSequence = 0;
   onlineInputOutbox = [];
   onlineLastPollAt = 0;
@@ -1477,6 +1480,7 @@ function resetOnlineRuntimeForNextRound(): void {
   onlineHostCommittedEliminations = new Set();
   onlineHostCommittedResults = new Set();
   onlineLastAuthoritativeFrame = 0;
+  onlinePeerDisplaySnapshots = new Map();
   onlineInputSequence = 0;
   onlineInputOutbox = [];
   onlineLastProgressAt = 0;
@@ -2066,13 +2070,14 @@ function syncOnlinePeers(room: OnlineRoom): void {
     },
   });
   onlinePeerBroadcaster.syncRoom(room);
+  prunePeerDisplaySnapshots(room);
 }
 
 function broadcastOnlineSnapshot(state: GameState): void {
-  if (!isOnlineHost()) return;
   const snapshot = createOnlineGameSnapshot(state);
   onlineLastPeerBroadcastAt = performance.now();
   onlinePeerBroadcaster?.broadcastSnapshot(onlinePlayer.id, snapshot);
+  if (!isOnlineHost()) return;
   applyPeerSnapshot(onlinePlayer.id, onlinePlayer.id, snapshot);
   for (const player of onlineRoom?.players ?? []) {
     if (player.id === onlinePlayer.id) continue;
@@ -2090,6 +2095,7 @@ function broadcastOnlineSnapshot(state: GameState): void {
 
 function applyAuthoritativeSnapshot(remoteId: string, playerId: string, game: OnlineGameSnapshot): void {
   if (!onlineRoom) return;
+  if (playerId === remoteId) rememberPeerDisplaySnapshot(playerId, game);
   if (isOnlineHost()) return;
   if (remoteId !== onlineRoom.hostPlayerId) return;
   if (!isCurrentOnlineGame(game)) return;
@@ -2154,6 +2160,20 @@ function applyPeerSnapshot(_remoteId: string, playerId: string, game: OnlineGame
     ...onlineRoom,
     players: onlineRoom.players.map((player) => player.id === playerId ? { ...player, game } : player),
   };
+}
+
+function rememberPeerDisplaySnapshot(playerId: string, game: OnlineGameSnapshot): void {
+  if (!isCurrentOnlineGame(game)) return;
+  onlinePeerDisplaySnapshots = new Map(onlinePeerDisplaySnapshots).set(playerId, game);
+}
+
+function prunePeerDisplaySnapshots(room: OnlineRoom): void {
+  const playerIds = new Set(room.players.map((player) => player.id));
+  onlinePeerDisplaySnapshots = new Map(
+    [...onlinePeerDisplaySnapshots.entries()].filter(([playerId, game]) => (
+      playerIds.has(playerId) && game.seed === room.seed
+    )),
+  );
 }
 
 function postHostSimulatedProgress(playerId: string, state: GameState): void {
@@ -3162,7 +3182,8 @@ function onlinePeerGridColumns(playerCount: number, width: number): number {
 
 function renderOnlinePeerBoard(player: OnlinePlayer): string {
   const peerState = onlinePeerStates.get(player.id) ?? 'server';
-  const stateLabel = player.game ? `${formatFrames(player.game.elapsedFrames)} - ${peerState}` : peerState;
+  const displayGame = displaySnapshotForPlayer(player);
+  const stateLabel = displayGame ? `${formatFrames(displayGame.elapsedFrames)} - ${peerState}` : peerState;
   return `
     <section class="online-peer-board">
       <div class="online-peer-board-head">
@@ -3172,9 +3193,15 @@ function renderOnlinePeerBoard(player: OnlinePlayer): string {
         </div>
         <span>${escapeHtml(stateLabel)}</span>
       </div>
-      ${player.game ? renderOnlineMiniBoard(player.game) : '<div class="online-mini-board online-mini-board-empty">No board yet</div>'}
+      ${displayGame ? renderOnlineMiniBoard(displayGame) : '<div class="online-mini-board online-mini-board-empty">No board yet</div>'}
     </section>
   `;
+}
+
+function displaySnapshotForPlayer(player: OnlinePlayer): OnlineGameSnapshot | null {
+  const displayGame = onlinePeerDisplaySnapshots.get(player.id);
+  if (displayGame && isCurrentOnlineGame(displayGame)) return displayGame;
+  return player.game ?? null;
 }
 
 function renderOnlineMiniBoard(snapshot: OnlineGameSnapshot): string {
