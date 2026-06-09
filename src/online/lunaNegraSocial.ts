@@ -235,6 +235,7 @@ export async function sendLunaInvite(
       toNpub: request.friendNpub,
       roomId: request.roomId,
       inviteUrl,
+      gameId: request.gameId ?? null,
     });
     if (result !== null) return { delivered: result.delivered !== false, source: 'luna-negra' };
   }

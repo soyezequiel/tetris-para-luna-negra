@@ -397,6 +397,8 @@ export interface LunaInviteRequest {
   playerId: string;
   /** npub del amigo invitado. */
   friendNpub: string;
+  /** gameId de Luna Negra usado para mintear launch requests del invitado. */
+  gameId?: string | null;
 }
 
 export interface LunaInviteResponse {
