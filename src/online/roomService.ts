@@ -1212,6 +1212,7 @@ function normalizeBet(value: unknown): RoomBet | null {
     participants,
     winnerNpubs,
     resultReported: value.resultReported === true,
+    settlementError: normalizeNullableString(value.settlementError),
     createdByPlayerId: normalizeNullableString(value.createdByPlayerId) ?? '',
     createdAtServerMs: normalizeNonNegativeInteger(Number(value.createdAtServerMs ?? 0)),
     updatedAtServerMs: normalizeNonNegativeInteger(Number(value.updatedAtServerMs ?? 0)),

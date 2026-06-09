@@ -253,10 +253,17 @@ function buildRoomBet(
     participants,
     winnerNpubs: previous?.winnerNpubs ?? null,
     resultReported: previous?.resultReported ?? false,
+    settlementError: isTerminalBetStatus(status) ? null : (previous?.settlementError ?? null),
     createdByPlayerId,
     createdAtServerMs: previous?.createdAtServerMs ?? nowMs,
     updatedAtServerMs: nowMs,
   };
+}
+
+function settlementErrorMessage(error: unknown): string {
+  const code = error instanceof LunaApiError ? error.code : null;
+  const message = error instanceof Error ? error.message : 'No se pudo reportar el resultado a Luna Negra.';
+  return code ? `${code}: ${message}` : message;
 }
 
 async function fetchDetailAndDeposits(
@@ -311,7 +318,12 @@ export async function createBetForRoom(
   return setRoomBet(store, room.id, bet, nowMs);
 }
 
-export async function refreshRoomBet(store: RoomStore, roomId: string, nowMs = Date.now()): Promise<OnlineRoom> {
+export async function refreshRoomBet(
+  store: RoomStore,
+  roomId: string,
+  nowMs = Date.now(),
+  options: { reportResult?: boolean } = {},
+): Promise<OnlineRoom> {
   const config = readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) return room;
@@ -329,6 +341,7 @@ export async function refreshRoomBet(store: RoomStore, roomId: string, nowMs = D
     nowMs,
   );
   const updated = await setRoomBet(store, room.id, bet, nowMs);
+  if (options.reportResult === false) return updated;
   return (await maybeReportRoomBetResult(store, updated, nowMs)) ?? updated;
 }
 
@@ -365,7 +378,8 @@ export async function settleRoomBet(
   if (!room.bet) throw new OnlineRoomError('No hay apuesta para liquidar.', 404);
   if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede liquidar la apuesta.', 403);
   if (room.status !== 'finished') throw new OnlineRoomError('La partida todavía no terminó.', 409);
-  return refreshRoomBet(store, roomId, nowMs);
+  const refreshed = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
+  return (await maybeReportRoomBetResult(store, refreshed, nowMs, { throwOnFailure: true })) ?? refreshed;
 }
 
 /** Reporta el ganador a Luna Negra cuando la sala terminó y la apuesta está fondeada. */
@@ -373,6 +387,7 @@ export async function maybeReportRoomBetResult(
   store: RoomStore,
   room: OnlineRoom,
   nowMs = Date.now(),
+  options: { throwOnFailure?: boolean } = {},
 ): Promise<OnlineRoom | null> {
   const bet = room.bet;
   if (!bet || bet.resultReported) return null;
@@ -401,11 +416,30 @@ export async function maybeReportRoomBetResult(
     // aceptado/resuelto; otros rechazos quedan reintentables por polling o botón manual.
     const probe = await fetchDetailAndDeposits(config, bet.betId).catch(() => ({ detail: null, deposits: null }));
     const resolved = errorLooksResolved(error) || isResolvedFromLuna(probe.detail, probe.deposits);
-    if (!resolved) return null;
+    if (!resolved) {
+      const failedBet: RoomBet = {
+        ...(updatedRoom.bet ?? bet),
+        winnerNpubs: winners,
+        settlementError: settlementErrorMessage(error),
+        updatedAtServerMs: nowMs,
+      };
+      const failedRoom = await setRoomBet(store, updatedRoom.id, failedBet, nowMs);
+      if (options.throwOnFailure) {
+        if (error instanceof OnlineRoomError) throw error;
+        throw new OnlineRoomError(settlementErrorMessage(error), 502);
+      }
+      return failedRoom;
+    }
   }
 
   const currentBet = updatedRoom.bet ?? bet;
-  const reported: RoomBet = { ...currentBet, resultReported: true, winnerNpubs: winners, updatedAtServerMs: nowMs };
+  const reported: RoomBet = {
+    ...currentBet,
+    resultReported: true,
+    winnerNpubs: winners,
+    settlementError: null,
+    updatedAtServerMs: nowMs,
+  };
   let updated = await setRoomBet(store, updatedRoom.id, reported, nowMs);
   const { detail, deposits } = await fetchDetailAndDeposits(config, bet.betId);
   if (detail || deposits) {

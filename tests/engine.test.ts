@@ -54,7 +54,7 @@ import {
   updateProgress,
 } from '../src/online/roomService';
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
-import { maybeReportRoomBetResult } from '../src/online/lunaNegraBets';
+import { maybeReportRoomBetResult, settleRoomBet } from '../src/online/lunaNegraBets';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
 import { decidePeerKoAction } from '../src/online/peerKoAuthority';
 import { selectAttackTarget } from '../src/online/targeting';
@@ -1383,6 +1383,7 @@ describe('core stacker engine', () => {
       participants: [],
       winnerNpubs: null,
       resultReported: false,
+      settlementError: null,
       createdByPlayerId: 'host-player-p',
       createdAtServerMs: 1000,
       updatedAtServerMs: 1000,
@@ -1454,6 +1455,7 @@ describe('core stacker engine', () => {
       ],
       winnerNpubs: null,
       resultReported: false,
+      settlementError: null,
       createdByPlayerId: 'host-player-r',
       createdAtServerMs: 1000,
       updatedAtServerMs: 1000,
@@ -1485,9 +1487,88 @@ describe('core stacker engine', () => {
     const updated = await maybeReportRoomBetResult(store, room, 1050);
     const stored = await store.getRoom(room.id);
 
-    expect(updated).toBeNull();
+    expect(updated?.bet?.settlementError).toContain('NOT_READY');
     expect(stored?.bet?.winnerNpubs).toEqual(['npub-host-r']);
     expect(stored?.bet?.resultReported).toBe(false);
+    expect(stored?.bet?.settlementError).toContain('NOT_READY');
+
+    vi.unstubAllGlobals();
+    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_API_KEY;
+  });
+
+  it('surfaces Luna Negra settlement errors from the manual settle action', async () => {
+    const store = new MemoryRoomStore();
+    let room = await createRoom(store, { playerId: 'host-player-s', npub: 'npub-host-s', name: 'Host', visibility: 'public' }, 1000);
+    room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-s', npub: 'npub-guest-s', name: 'Guest' }, 1010);
+
+    room.bet = {
+      betId: 'bet-manual-settle-test',
+      status: 'funded',
+      stakeSats: 50,
+      potSats: 100,
+      potTargetSats: 100,
+      feeSats: 1,
+      feePct: 1,
+      netPayoutSats: 99,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [
+        {
+          npub: 'npub-host-s',
+          playerId: 'host-player-s',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          payoutSats: null,
+        },
+        {
+          npub: 'npub-guest-s',
+          playerId: 'guest-player-s',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          payoutSats: null,
+        },
+      ],
+      winnerNpubs: null,
+      resultReported: false,
+      settlementError: null,
+      createdByPlayerId: 'host-player-s',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1000,
+    };
+    room.status = 'finished';
+    room.winnerPlayerId = 'host-player-s';
+    await store.saveRoom(room);
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/result')) {
+        return Response.json(
+          { error: { code: 'NOT_READY', message: 'The bet is not ready to resolve.' } },
+          { status: 409 },
+        );
+      }
+      return Response.json({
+        betId: 'bet-manual-settle-test',
+        status: 'funded',
+        participants: [
+          { npub: 'npub-host-s', depositStatus: 'paid', payoutSats: null },
+          { npub: 'npub-guest-s', depositStatus: 'paid', payoutSats: null },
+        ],
+      });
+    }));
+
+    await expect(settleRoomBet(store, room.id, 'host-player-s', 1050)).rejects.toThrow('not ready');
+    const stored = await store.getRoom(room.id);
+    expect(stored?.bet?.resultReported).toBe(false);
+    expect(stored?.bet?.settlementError).toContain('NOT_READY');
 
     vi.unstubAllGlobals();
     delete process.env.LUNA_NEGRA_BASE_URL;
@@ -1778,6 +1859,7 @@ describe('core stacker engine', () => {
       participants: [],
       winnerNpubs: null,
       resultReported: false,
+      settlementError: null,
       createdByPlayerId: 'player-bet-mode-host',
       createdAtServerMs: 1000,
       updatedAtServerMs: 1000,

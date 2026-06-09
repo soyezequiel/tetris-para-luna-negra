@@ -130,6 +130,7 @@ export interface RoomBet {
   participants: RoomBetParticipant[];
   winnerNpubs: string[] | null;
   resultReported: boolean;
+  settlementError: string | null;
   createdByPlayerId: string;
   createdAtServerMs: number;
   updatedAtServerMs: number;

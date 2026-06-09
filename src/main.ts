@@ -1268,10 +1268,6 @@ async function startOnlineRoom(): Promise<void> {
 
 async function restartOnlineRoom(): Promise<void> {
   if (!onlineRoom || onlineBusy) return;
-  if (!onlineRoomHasOtherPlayers()) {
-    startNewRun();
-    return;
-  }
   onlineBusy = true;
   try {
     const response = await onlineClient.restartRoom({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
@@ -2784,6 +2780,7 @@ function renderOnlineResultsOverlay(state: GameState): string {
         <h1>${onlineRoom ? escapeHtml(onlineRoom.id) : 'Room'}</h1>
         <p>${winner ? `${escapeHtml(winner.name)} wins. ` : ''}Ranking is based on survival, then elapsed frames.</p>
         ${renderOnlineBetResult()}
+        ${renderOnlineError()}
         ${renderOnlineSeriesStatus()}
         ${ownReason}
         ${ownSummary}
@@ -3091,7 +3088,10 @@ function renderOnlineBetResult(): string {
     const settleAction = isHost
       ? `<div class="online-bet-deposit-actions"><button type="button" data-ui-action="online-bet-settle"${onlineBetBusy ? ' disabled' : ''}>Cobrar apuesta</button></div>`
       : '';
-    return `<div class="panel-note">Apuesta fondeada · pozo ${bet.potSats} sats. Liquidando el pago al ganador…</div>${settleAction}`;
+    const settlementError = bet.settlementError
+      ? `<div class="panel-note panel-error">No se pudo avisar a Luna Negra: ${escapeHtml(bet.settlementError)}</div>`
+      : '';
+    return `<div class="panel-note">Apuesta fondeada · pozo ${bet.potSats} sats. Liquidando el pago al ganador…</div>${settlementError}${settleAction}`;
   }
   return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.</div>`;
 }
