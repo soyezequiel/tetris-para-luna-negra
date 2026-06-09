@@ -452,7 +452,13 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-cancel') cancelOnlineBet();
   if (action === 'online-bet-settle') settleOnlineBet();
   if (action === 'online-bet-refresh') refreshOnlineBet(false);
-  if (action === 'online-bet-copy') copyToClipboard(control.dataset.copy ?? '');
+  if (action === 'online-bet-pay') {
+    wakeUpServer();
+  }
+  if (action === 'online-bet-copy') {
+    copyToClipboard(control.dataset.copy ?? '');
+    wakeUpServer();
+  }
   if (action === 'online-targeting') setOnlineTargeting(control.dataset.targetingMode);
   if (action === 'online-manual-target') setOnlineTargeting('manual', control.dataset.targetPlayerId ?? null);
   if (action === 'online-leave') leaveOnlineRoom();
@@ -863,6 +869,7 @@ function applyLunaIdentity(identity: LunaIdentity): void {
   lunaIdentity = identity;
   onlinePlayer = saveOnlinePlayer({
     ...onlinePlayer,
+    id: identity.pubkey || onlinePlayer.id,
     name: identity.name,
     avatarUrl: identity.avatarUrl ?? onlinePlayer.avatarUrl,
   });
@@ -1347,6 +1354,12 @@ async function copyToClipboard(text: string): Promise<void> {
   } catch {
     // Clipboard puede estar bloqueado; el usuario puede copiar manualmente.
   }
+}
+
+function wakeUpServer(): void {
+  // Realiza un fetch simple a un endpoint ligero (/api/health) para despertar al servidor
+  // si está en un entorno serverless o free hosting (como Render/Railway) que se va a dormir.
+  fetch('/api/health').catch(() => {});
 }
 
 async function setOnlineTargeting(mode: string | undefined, manualTargetPlayerId: string | null = null): Promise<void> {
@@ -3007,7 +3020,7 @@ function renderOnlineBetPanel(host: boolean): string {
       <div class="online-bet-deposit" style="margin-top: 8px; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.2); border: 1px solid var(--dash-border); display: flex; flex-direction: column; gap: 8px;">
         <strong style="font-size: 12px; color: var(--dash-text);">Depositá tus ${bet.stakeSats} sats:</strong>
         <div class="online-bet-deposit-actions" style="display: flex; flex-direction: column; gap: 6px;">
-          ${myEntry.payUrl ? `<a class="dash-action-btn accent" style="text-align: center; text-decoration: none; display: block; font-size: 12px; padding: 6px 12px;" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener">Pagar en Luna Negra</a>` : ''}
+          ${myEntry.payUrl ? `<a class="dash-action-btn accent" style="text-align: center; text-decoration: none; display: block; font-size: 12px; padding: 6px 12px;" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
           ${myEntry.bolt11 ? `<button class="dash-copy-btn" type="button" style="width: 100%;" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
           ${myEntry.lnurl ? `<button class="dash-copy-btn" type="button" style="width: 100%;" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.lnurl)}">Copiar LNURL</button>` : ''}
         </div>
