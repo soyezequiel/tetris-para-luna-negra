@@ -421,6 +421,28 @@ test.describe('TETRA browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.location.search.includes('inviteToken'))).toBe(false);
   });
 
+  test('wakes and refreshes the bet backend after opening payment', async ({ page }) => {
+    const requests = await mockOnlineApi(page, { lunaBetRoom: true });
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?inviteToken=fake-token&room=bet12345');
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect(action(page, 'online-bet-pay')).toBeVisible();
+    await expect(action(page, 'online-bet-copy').first()).toBeVisible();
+
+    requests.healthCount = 0;
+    requests.betRefreshCount = 0;
+    const popupPromise = page.waitForEvent('popup');
+    await action(page, 'online-bet-pay').click();
+    const popup = await popupPromise;
+    await popup.close();
+
+    await expect.poll(() => requests.healthCount).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => requests.betRefreshCount).toBeGreaterThanOrEqual(1);
+  });
+
   test('enters a Luna Negra room from an accepted invite message in the open game', async ({ page }) => {
     await mockOnlineApi(page);
     await page.addInitScript(() => {
@@ -675,9 +697,47 @@ function lunaLaunchResponse(id: string, roomId: string): unknown {
 
 async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Promise<MockOnlineApiRequests> {
   const now = Date.now();
-  const requests: MockOnlineApiRequests = { lastCreate: null, lastSettings: null, restartCount: 0, restartOnNextState: false };
+  const requests: MockOnlineApiRequests = {
+    lastCreate: null,
+    lastSettings: null,
+    restartCount: 0,
+    restartOnNextState: false,
+    healthCount: 0,
+    betRefreshCount: 0,
+  };
   let room = createMockRoom('ROOM', 'private', now);
   const publicRoom = createMockRoom('PUB1', 'public', now);
+
+  await page.route('**/api/health', async (route) => {
+    requests.healthCount += 1;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+
+  await page.route('**/api/bets/**', async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    if (path.endsWith('/create')) {
+      room = { ...room, bet: createMockBet(room, Date.now()) };
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/refresh')) {
+      requests.betRefreshCount += 1;
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/cancel')) {
+      room = { ...room, bet: null };
+      await fulfillRoom(route, room);
+      return;
+    }
+    if (path.endsWith('/settle')) {
+      room = room.bet ? { ...room, bet: { ...room.bet, status: 'settled' } } : room;
+      await fulfillRoom(route, room);
+      return;
+    }
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Not mocked.' }) });
+  });
 
   await page.route('**/api/rooms/**', async (route) => {
     const url = new URL(route.request().url());
@@ -696,9 +756,21 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
         hostPubkey: 'pubkey-host-luna',
         expiresAt: '2026-06-06T21:00:00.000Z',
       };
-      room = {
+      let lunaRoom = {
         ...createMockRoom(body.roomId.toUpperCase(), 'private', serverNowMs, player.id, player.name, undefined, undefined, undefined, player.avatarUrl),
         lunaGameId: 'tetra-game',
+      };
+      const host = { ...lunaRoom.players[0], npub: player.npub };
+      const players = options.lunaBetRoom
+        ? [host, { ...createMockPlayer('pubkey-guest-luna', 'Nostr Guest', serverNowMs), npub: 'npub-guest-luna' }]
+        : [host];
+      lunaRoom = {
+        ...lunaRoom,
+        players,
+      };
+      room = {
+        ...lunaRoom,
+        bet: options.lunaBetRoom ? createMockBet(lunaRoom, serverNowMs) : null,
       };
       await route.fulfill({
         contentType: 'application/json',
@@ -872,6 +944,7 @@ type MockOnlineApiOptions = {
   finishedCreatedRoom?: boolean;
   createdPlayingGuestRoom?: boolean;
   createdLobbyGuestRoom?: boolean;
+  lunaBetRoom?: boolean;
 };
 
 type MockOnlineApiRequests = {
@@ -879,6 +952,8 @@ type MockOnlineApiRequests = {
   lastSettings: UpdateRoomSettingsRequest | null;
   restartCount: number;
   restartOnNextState: boolean;
+  healthCount: number;
+  betRefreshCount: number;
 };
 
 function createMockRoom(
@@ -914,6 +989,43 @@ function createMockRoom(
     attacks: [],
     bet: null,
     lunaGameId: null,
+  };
+}
+
+function createMockBet(room: MockRoom, now: number): RoomBet {
+  const participants = room.players
+    .filter((player) => player.npub)
+    .map((player) => ({
+      npub: player.npub ?? '',
+      playerId: player.id,
+      depositStatus: 'pending' as const,
+      bolt11: `lnbc${player.id}`,
+      lnurl: null,
+      payUrl: `https://pay.example/${player.id}`,
+      payoutSats: null,
+    }));
+  const stakeSats = 10;
+  const potTargetSats = stakeSats * participants.length;
+  const feeSats = Math.floor(potTargetSats * 0.05);
+  return {
+    betId: 'bet-mock',
+    status: 'pending_deposits',
+    stakeSats,
+    potSats: 0,
+    potTargetSats,
+    feeSats,
+    feePct: 5,
+    netPayoutSats: potTargetSats - feeSats,
+    depositDeadline: null,
+    depositsReceived: 0,
+    depositsTotal: participants.length,
+    participants,
+    winnerNpubs: null,
+    resultReported: false,
+    settlementError: null,
+    createdByPlayerId: room.hostPlayerId,
+    createdAtServerMs: now,
+    updatedAtServerMs: now,
   };
 }
 
@@ -1075,6 +1187,7 @@ type MockRoom = {
 function createMockPlayer(id: string, name: string, now: number, avatarUrl: string | null = null): MockPlayer {
   return {
     id,
+    npub: null,
     name,
     avatarUrl,
     ready: false,
@@ -1103,6 +1216,7 @@ function createMockPlayer(id: string, name: string, now: number, avatarUrl: stri
 
 type MockPlayer = {
   id: string;
+  npub: string | null;
   name: string;
   avatarUrl: string | null;
   ready: boolean;

@@ -80,6 +80,8 @@ const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
 const ONLINE_BET_POLL_MS = 2000;
+const ONLINE_BET_FAST_POLL_MS = 750;
+const ONLINE_BET_FAST_POLL_WINDOW_MS = 45_000;
 const ONLINE_PEER_BROADCAST_MS = 100;
 const ONLINE_KO_BROADCAST_RETRY_MS = 1000;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
@@ -137,6 +139,8 @@ let onlineJoinCode = '';
 let onlineStakeInput = '';
 let onlineBetBusy = false;
 let onlineLastBetPollAt = 0;
+let onlineBetFastPollUntil = 0;
+let onlineBetRefreshQueued = false;
 let onlineRoom: OnlineRoom | null = null;
 let onlinePublicRooms: OnlineRoomSummary[] = [];
 let localRunError: string | null = null;
@@ -457,11 +461,11 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-settle') settleOnlineBet();
   if (action === 'online-bet-refresh') refreshOnlineBet(false);
   if (action === 'online-bet-pay') {
-    wakeUpServer();
+    wakeUpBetDetection();
   }
   if (action === 'online-bet-copy') {
     copyToClipboard(control.dataset.copy ?? '');
-    wakeUpServer();
+    wakeUpBetDetection();
   }
   if (action === 'online-targeting') setOnlineTargeting(control.dataset.targetingMode);
   if (action === 'online-manual-target') setOnlineTargeting('manual', control.dataset.targetPlayerId ?? null);
@@ -1293,6 +1297,7 @@ async function createOnlineBet(): Promise<void> {
     const response = await onlineClient.createBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id, stakeSats });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
+    armOnlineBetFastPolling();
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -1331,8 +1336,13 @@ async function settleOnlineBet(): Promise<void> {
   }
 }
 
-async function refreshOnlineBet(silent: boolean): Promise<void> {
-  if (!onlineRoom?.bet || onlineBetBusy) return;
+async function refreshOnlineBet(silent: boolean, options: { queueIfBusy?: boolean } = {}): Promise<void> {
+  if (!onlineRoom?.bet) return;
+  if (onlineBetBusy) {
+    if (options.queueIfBusy) onlineBetRefreshQueued = true;
+    return;
+  }
+  const requestedRoomId = onlineRoom.id;
   onlineBetBusy = true;
   onlineLastBetPollAt = performance.now();
   try {
@@ -1344,6 +1354,11 @@ async function refreshOnlineBet(silent: boolean): Promise<void> {
     if (!silent) onlineError = onlineErrorText(error);
   } finally {
     onlineBetBusy = false;
+    const shouldRefreshAgain = onlineBetRefreshQueued;
+    onlineBetRefreshQueued = false;
+    if (shouldRefreshAgain && onlineRoom?.id === requestedRoomId && isRefreshableRoomBet(onlineRoom.bet)) {
+      void refreshOnlineBet(true);
+    }
   }
 }
 
@@ -1360,6 +1375,12 @@ function wakeUpServer(): void {
   // Realiza un fetch simple a un endpoint ligero (/api/health) para despertar al servidor
   // si está en un entorno serverless o free hosting (como Render/Railway) que se va a dormir.
   fetch('/api/health').catch(() => {});
+}
+
+function wakeUpBetDetection(): void {
+  wakeUpServer();
+  armOnlineBetFastPolling();
+  void refreshOnlineBet(true, { queueIfBusy: true });
 }
 
 async function setOnlineTargeting(mode: string | undefined, manualTargetPlayerId: string | null = null): Promise<void> {
@@ -1421,6 +1442,8 @@ function resetOnlineRoomState(): void {
   onlineStakeInput = '';
   onlineBetBusy = false;
   onlineLastBetPollAt = 0;
+  onlineBetFastPollUntil = 0;
+  onlineBetRefreshQueued = false;
   onlineResultSubmitted = false;
   onlineRunStarted = false;
   onlineAttackSequence = 0;
@@ -1461,6 +1484,7 @@ function adoptOnlineRoom(room: OnlineRoom): void {
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && room.status === 'countdown';
   onlineRoom = room;
+  if (room.bet?.status !== 'pending_deposits') onlineBetFastPollUntil = 0;
   onlineActiveRoundId = nextRoundId;
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
 }
@@ -1827,9 +1851,27 @@ function maybeRefreshBet(): void {
   // que la apuesta quede en estado terminal.
   if (appMode !== 'roomLobby' && appMode !== 'onlineResults') return;
   const bet = onlineRoom?.bet;
-  if (!bet || (bet.status !== 'pending_deposits' && bet.status !== 'funded')) return;
-  if (onlineBetBusy || performance.now() - onlineLastBetPollAt < ONLINE_BET_POLL_MS) return;
-  void refreshOnlineBet(true);
+  if (!isRefreshableRoomBet(bet)) return;
+  const now = performance.now();
+  const pollMs = now < onlineBetFastPollUntil && bet.status === 'pending_deposits'
+    ? ONLINE_BET_FAST_POLL_MS
+    : ONLINE_BET_POLL_MS;
+  if (onlineBetBusy) {
+    onlineBetRefreshQueued = true;
+    return;
+  }
+  if (now - onlineLastBetPollAt < pollMs) return;
+  void refreshOnlineBet(true, { queueIfBusy: true });
+}
+
+function isRefreshableRoomBet(bet: RoomBet | null | undefined): bet is RoomBet {
+  return !!bet && (bet.status === 'pending_deposits' || bet.status === 'funded');
+}
+
+function armOnlineBetFastPolling(): void {
+  const bet = onlineRoom?.bet;
+  if (!bet || bet.status !== 'pending_deposits') return;
+  onlineBetFastPollUntil = Math.max(onlineBetFastPollUntil, performance.now() + ONLINE_BET_FAST_POLL_WINDOW_MS);
 }
 
 async function postOnlineProgress(state: GameState): Promise<void> {
@@ -2280,9 +2322,9 @@ function syncOnlineVisibilityChange(): void {
 function eagerRefreshBetIfPending(): void {
   if (appMode !== 'roomLobby') return;
   const bet = onlineRoom?.bet;
-  if (!bet || (bet.status !== 'pending_deposits' && bet.status !== 'funded')) return;
-  if (onlineBetBusy) return;
-  void refreshOnlineBet(true);
+  if (!isRefreshableRoomBet(bet)) return;
+  armOnlineBetFastPolling();
+  void refreshOnlineBet(true, { queueIfBusy: true });
 }
 
 function syncOnlineBackground(): void {
