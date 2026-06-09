@@ -168,7 +168,7 @@ export async function enterLunaNegraRoom(
     avatarUrl: player.avatarUrl,
     visibility: 'private',
     mode: 'custom',
-    matchType: 'custom',
+    matchType: 'battle',
     rules: BATTLE_RULES,
   }, nowMs);
   return { room, player };
@@ -488,6 +488,7 @@ export async function submitResult(
   } else if (room.players.every((candidate) => candidate.status === 'won' || candidate.status === 'lost')) {
     room.status = 'finished';
     room.winnerPlayerId = room.players.find((candidate) => candidate.status === 'won')?.id ?? null;
+    sealMatchResult(room, nowMs);
   }
   await persistRoom(store, room);
   return room;
@@ -842,11 +843,13 @@ function finishRoomIfOnlyOneAlive(room: OnlineRoom, nowMs: number): void {
   winner.updatedAtServerMs = nowMs;
   room.winnerPlayerId = winner.id;
   room.status = 'finished';
+  sealMatchResult(room, nowMs);
 }
 
 function finishSprintRace(room: OnlineRoom, winner: OnlinePlayer, nowMs: number): void {
   room.status = 'finished';
   room.winnerPlayerId = winner.id;
+  sealMatchResult(room, nowMs);
   winner.status = 'won';
   winner.alive = true;
   winner.ready = true;
@@ -860,6 +863,10 @@ function finishSprintRace(room: OnlineRoom, winner: OnlinePlayer, nowMs: number)
     player.finishedAtServerMs = nowMs;
     player.updatedAtServerMs = nowMs;
   }
+}
+
+function sealMatchResult(room: OnlineRoom, nowMs: number): void {
+  if (!room.matchResultId) room.matchResultId = `${room.id}:${room.seed}:${nowMs}`;
 }
 
 function prepareRoundCountdown(room: OnlineRoom, nowMs: number, reseed: boolean): void {
@@ -931,6 +938,7 @@ function normalizeRoomMode(value: unknown, strict = false): OnlineRoomMode {
 function normalizeMatchType(value: unknown, mode: OnlineRoomMode, strict = false): OnlineMatchType {
   void mode;
   if (value === undefined || value === null || value === 'custom') return 'custom';
+  if (value === 'battle') return 'battle';
   if (!strict) return 'custom';
   throw new OnlineRoomError('Only custom online rooms are supported.');
 }
@@ -951,9 +959,8 @@ function normalizeRuleset(value: unknown, matchType: OnlineMatchType, strict = f
 }
 
 function defaultRuleset(matchType: OnlineMatchType): OnlineRuleset {
-  void matchType;
   return {
-    rulesetId: 'custom-survival-simple',
+    rulesetId: matchType === 'battle' ? 'battle-last-standing-simple' : 'custom-survival-simple',
     rulesetVersion: ONLINE_RULESET_VERSION,
     objective: { type: 'lastStanding' },
     attackTable: 'simple',

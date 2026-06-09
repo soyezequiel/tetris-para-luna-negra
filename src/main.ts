@@ -2822,6 +2822,7 @@ function roomModeLabel(mode: OnlineRoomMode | undefined): string {
 }
 
 function matchTypeLabel(matchType: OnlineMatchType): string {
+  if (matchType === 'battle') return 'Battle';
   if (matchType === 'custom') return 'Custom';
   return 'Custom';
 }

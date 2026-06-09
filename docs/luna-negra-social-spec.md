@@ -128,17 +128,24 @@ amigo (push / deep‑link) con el link de unión.
   "fromNpub": "npub1host…",
   "toNpub": "npub1friend…",
   "roomId": "AB12",
-  "inviteUrl": "https://<deploy-tetris>/?join=AB12"
+  "inviteUrl": "https://<deploy-tetris>/?join=AB12",
+  "gameId": "luna-game-id"
 }
 ```
 
-- **200**: `{ "delivered": true }` si se notificó al amigo. Si `delivered` es
-  `false` o el endpoint no existe, el juego copia el `inviteUrl` al portapapeles
-  como fallback para compartir manualmente.
+- **200**: `{ "delivered": true, "launchQueued": true }` si Luna Negra conoce al
+  invitado y pudo encolar una entrada en `GameLaunchRequest` para TETRA abierto.
+  Si `delivered` es `false` o el endpoint no existe, el juego copia el
+  `inviteUrl` al portapapeles como fallback para compartir manualmente.
 
 > El `inviteUrl` abre el juego y se une directo a la sala (`?join=<roomId>`). Si
 > además querés que el invitado entre ya logueado, el link puede incluir el
 > `lnToken` del invitado: `…/?join=AB12&lnToken=<token>`.
+>
+> Flujo first-party de Luna Negra: cuando la ventana `/invite-friend` de Luna
+> Negra crea la invitacion con `POST /api/invites`, esa misma ruta tambien debe
+> encolar `GameLaunchRequest`. Ese es el puente que permite que TETRA detecte la
+> invitacion aunque la pestana de Luna Negra este cerrada.
 
 ---
 

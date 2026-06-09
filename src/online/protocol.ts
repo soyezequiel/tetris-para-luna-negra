@@ -2,7 +2,7 @@ import type { ActivePiece, AttackTableId, Cell, GameEngineSnapshot, GameRules } 
 
 export type RoomVisibility = 'public' | 'private';
 export type OnlineRoomMode = 'custom';
-export type OnlineMatchType = 'custom';
+export type OnlineMatchType = 'custom' | 'battle';
 export type OnlineRoomStatus = 'lobby' | 'countdown' | 'playing' | 'finished';
 export type OnlinePlayerStatus = 'joined' | 'ready' | 'playing' | 'eliminated' | 'winner' | 'won' | 'lost' | 'disconnected';
 export type OnlineAttackTable = AttackTableId;
