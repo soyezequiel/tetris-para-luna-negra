@@ -88,9 +88,20 @@ async function lunaFetch<T>(
   path: string,
   init: { method: 'GET' | 'POST'; body?: unknown } = { method: 'GET' },
 ): Promise<T> {
-  const headers: Record<string, string> = { authorization: `Bearer ${config.apiKey}` };
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${config.apiKey}`,
+    'cache-control': 'no-cache',
+    pragma: 'no-cache',
+  };
   if (init.body !== undefined) headers['content-type'] = 'application/json';
-  const response = await fetch(`${config.baseUrl}${path}`, {
+
+  let urlPath = path;
+  if (init.method === 'GET') {
+    const separator = path.includes('?') ? '&' : '?';
+    urlPath = `${path}${separator}_cb=${Date.now()}`;
+  }
+
+  const response = await fetch(`${config.baseUrl}${urlPath}`, {
     method: init.method,
     headers,
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,

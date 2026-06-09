@@ -37,9 +37,15 @@ function readConfig(): LunaConfig | null {
 
 async function lunaGet<T>(config: LunaConfig, path: string, bearer = config.apiKey): Promise<T | null> {
   try {
-    const response = await fetch(`${config.baseUrl}${path}`, {
+    const separator = path.includes('?') ? '&' : '?';
+    const urlPath = `${path}${separator}_cb=${Date.now()}`;
+    const response = await fetch(`${config.baseUrl}${urlPath}`, {
       method: 'GET',
-      headers: { authorization: `Bearer ${bearer}` },
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        'cache-control': 'no-cache',
+        pragma: 'no-cache',
+      },
     });
     if (!response.ok) return null;
     return unwrapEnvelope<T>(await response.json().catch(() => null));

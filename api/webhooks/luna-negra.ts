@@ -23,13 +23,19 @@ function verifySignature(rawBody: string, signature: string, secret: string): bo
 
 function roomIdFromPayload(payload: unknown): string | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const data = (payload as { data?: Record<string, unknown> }).data;
-  if (!data) return null;
-  const direct = typeof data.roomId === 'string' ? data.roomId : null;
-  const meta = typeof data.metadata === 'object' && data.metadata !== null
+  const p = payload as Record<string, unknown>;
+  const directRoot = typeof p.roomId === 'string' ? p.roomId : null;
+  const metaRoot = typeof p.metadata === 'object' && p.metadata !== null
+    ? (p.metadata as Record<string, unknown>).roomId
+    : null;
+
+  const data = typeof p.data === 'object' && p.data !== null ? p.data as Record<string, unknown> : null;
+  const directData = data && typeof data.roomId === 'string' ? data.roomId : null;
+  const metaData = data && typeof data.metadata === 'object' && data.metadata !== null
     ? (data.metadata as Record<string, unknown>).roomId
     : null;
-  const value = direct ?? (typeof meta === 'string' ? meta : null);
+
+  const value = directRoot ?? (typeof metaRoot === 'string' ? metaRoot : null) ?? directData ?? (typeof metaData === 'string' ? metaData : null);
   return value ? normalizeRoomId(value) : null;
 }
 
