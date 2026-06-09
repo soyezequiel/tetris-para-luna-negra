@@ -53,6 +53,33 @@ export async function POST(request: Request): Promise<Response> {
       const roomId = roomIdFromPayload(payload);
       if (roomId) {
         try {
+          const store = getRoomStore();
+          // Actualización optimista: Luna Negra puede cachear sus endpoints GET por ~3 minutos.
+          // Usamos el payload del webhook para destrabar la UI inmediatamente.
+          if (typeof (payload as any).data === 'object' && (payload as any).data !== null) {
+            const data = (payload as any).data as Record<string, any>;
+            const { loadRoom, setRoomBet } = await import('../../src/online/roomService.js');
+            const room = await loadRoom(store, roomId);
+            if (room.bet) {
+              const bet = { ...room.bet };
+              const npub = typeof data.npub === 'string' ? data.npub : null;
+              
+              if ((type === 'deposit.paid' || type === 'deposit.completed' || type === 'deposit.settled') && npub) {
+                bet.participants = bet.participants.map((p) => 
+                  p.npub === npub ? { ...p, depositStatus: 'paid' } : p
+                );
+                bet.depositsReceived = bet.participants.filter((p) => p.depositStatus === 'paid').length;
+                if (bet.depositsReceived >= bet.depositsTotal) bet.status = 'funded';
+              } else if (type === 'bet.funded') {
+                bet.status = 'funded';
+              } else if (type === 'bet.settled' || type === 'bet.resolved') {
+                bet.status = 'settled';
+              }
+              
+              await setRoomBet(store, roomId, bet, Date.now());
+            }
+          }
+          // Igual intentamos el refresh completo por si la API ya está fresca.
           await refreshRoomBet(getRoomStore(), roomId);
         } catch {
           // Best-effort: la sala puede haber expirado; igual respondemos 200.
