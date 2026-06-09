@@ -142,16 +142,58 @@ amigo (push / deep‑link) con el link de unión.
 
 ---
 
+### 5) `GET /api/v1/launch-requests?npub=<npub>`  — invitaciones pendientes para TETRA abierto
+
+Este endpoint permite que TETRA detecte una invitacion entregada por Luna Negra
+aunque la pestana de Luna Negra ya no este abierta. TETRA lo consulta cada ~2 s
+cuando tiene una identidad de Luna Negra guardada.
+
+- **Auth**: `Bearer <API_KEY>`.
+- **Query**: `npub` del usuario invitado.
+- **200** sin invitacion pendiente:
+
+```json
+{ "request": null }
+```
+
+- **200** con invitacion pendiente:
+
+```json
+{
+  "request": {
+    "id": "launch-req-123",
+    "roomId": "AB12",
+    "inviteToken": "jwt-de-sala",
+    "slug": "TETRA",
+    "title": "TETRA",
+    "gameUrl": "https://<deploy-tetris>/"
+  }
+}
+```
+
+`id` debe ser estable para esa invitacion: si el usuario elige quedarse en su
+sala actual, TETRA recuerda ese `id` en memoria de la pestana para que el mismo
+popup no reaparezca en loop. `inviteToken` se usa contra
+`POST /api/rooms/luna-negra/enter`, que a su vez valida el token con
+`GET /api/v1/rooms/verify`.
+
+> Alcance: este polling cubre "TETRA abierto, Luna Negra cerrada". Si TETRA
+> tambien esta cerrado, un sitio web no puede ejecutar codigo por si solo; para
+> abrirlo hace falta una notificacion/deep-link de Luna Negra o una PWA con
+> permisos del navegador.
+
+---
+
 ## Cómo lo consume el juego (referencia)
 
-- Backend proxy: `api/luna-negra/[action].ts` → `session`, `friends`, `presence`, `invite`.
+- Backend proxy: `api/luna-negra/[action].ts` → `session`, `friends`, `presence`, `invite`, `launch-request`.
 - Lógica + fallback mock: `src/online/lunaNegraSocial.ts`.
 - Cliente del browser: `src/online/lunaNegraFriendsClient.ts`.
 - UI (panel de amigos + lobby CS2): `src/main.ts` (`renderFriendsSidebar`, `renderOnlineLobbyOverlay`).
 
-Cuando los 4 endpoints estén disponibles bajo `LUNA_NEGRA_BASE_URL`, el juego los
-detecta y deja de usar el mock automáticamente (el campo `source` pasa de
-`"mock"` a `"luna-negra"`).
+Cuando los endpoints estén disponibles bajo `LUNA_NEGRA_BASE_URL`, el juego los
+detecta y deja de usar el mock automáticamente cuando corresponde (el campo
+`source` pasa de `"mock"` a `"luna-negra"`).
 
 ---
 

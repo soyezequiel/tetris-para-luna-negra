@@ -64,7 +64,7 @@ import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBr
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LunaIdentity, OnlineAttack, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode, UpdateRoomSettingsRequest } from './online/protocol';
+import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode, UpdateRoomSettingsRequest } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -86,6 +86,7 @@ const GAME_FRAME_MS = 1000 / 60;
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 type RunKind = 'standard' | 'custom' | 'online';
 type SequencedOnlineInput = GameInput & { sequence: number };
+type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: string };
 
 let inputSettings = loadInputSettings();
 let customSettings = loadCustomSettings();
@@ -165,6 +166,8 @@ let lunaInviteWindowBusy = false;
 let lunaInviteNotice: string | null = null;
 let trustedLunaOrigin: string | null = null;
 let lunaLaunchPollInFlight = false;
+let pendingLunaLaunchRequest: PendingLunaLaunchRequest | null = null;
+let ignoredLunaLaunchRequestIds = new Set<string>();
 
 const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
 const LUNA_ORIGIN_KEY = 'stack40.lunaOrigin.v1';
@@ -209,7 +212,7 @@ overlayElement.addEventListener('lostpointercapture', handleTouchControlPointerE
 
 function loop(): void {
   const beforeState = engine.getState();
-  const canAdvanceThisLoop = !pendingConfirmAction && canAdvanceGame(appMode, beforeState.status);
+  const canAdvanceThisLoop = !hasBlockingModal() && canAdvanceGame(appMode, beforeState.status);
   if (!canAdvanceThisLoop) syncGameplayClockToCurrentFrame();
   const candidateFrame = canAdvanceThisLoop ? targetGameplayFrame() : gameFrame;
   input.advanceFrame(candidateFrame);
@@ -315,8 +318,9 @@ function advanceGameToFrame(targetFrame: number, finalFrameInputs: GameInput[]):
 }
 
 function handleGlobalKeyDown(event: KeyboardEvent): void {
-  if (pendingConfirmAction && event.code === 'Escape') {
-    cancelPendingConfirmation();
+  if (hasBlockingModal() && event.code === 'Escape') {
+    if (pendingLunaLaunchRequest) cancelPendingLunaLaunchRequest();
+    else cancelPendingConfirmation();
     event.preventDefault();
     event.stopImmediatePropagation();
     return;
@@ -381,7 +385,15 @@ function handleOverlayClick(event: MouseEvent): void {
     cancelPendingConfirmation();
     return;
   }
-  if (pendingConfirmAction) return;
+  if (action === 'luna-launch-accept') {
+    void acceptPendingLunaLaunchRequest();
+    return;
+  }
+  if (action === 'luna-launch-cancel') {
+    cancelPendingLunaLaunchRequest();
+    return;
+  }
+  if (hasBlockingModal()) return;
   if (requiresRunConfirmation(action, appMode, engine.getState().status, settingsReturnMode)) {
     requestRunConfirmation(action);
     return;
@@ -517,7 +529,7 @@ function handleTouchControlPointerDown(event: PointerEvent): void {
   if (!(target instanceof Element)) return;
   const control = target.closest<HTMLElement>('[data-touch-action]');
   const action = parseControlAction(control?.dataset.touchAction);
-  if (!control || !action || (appMode !== 'playing' && appMode !== 'onlinePlaying') || touchControlsHidden || pendingConfirmAction) return;
+  if (!control || !action || (appMode !== 'playing' && appMode !== 'onlinePlaying') || touchControlsHidden || hasBlockingModal()) return;
 
   const sourceId = touchSourceId(event.pointerId);
   activeTouchInputs.set(event.pointerId, { sourceId, control });
@@ -541,7 +553,7 @@ function handleTouchControlPointerEnd(event: PointerEvent): void {
 }
 
 function handleControlInputs(inputs: ControlInput[]): boolean {
-  if (pendingConfirmAction) {
+  if (hasBlockingModal()) {
     input.releaseAll();
     return true;
   }
@@ -980,22 +992,50 @@ async function syncLunaPresence(): Promise<void> {
 }
 
 async function syncLunaLaunchRequest(): Promise<void> {
-  if (!lunaIdentity || onlineBusy || lunaLaunchPollInFlight) return;
+  if (!lunaIdentity || onlineBusy || lunaLaunchPollInFlight || pendingLunaLaunchRequest) return;
   lunaLaunchPollInFlight = true;
   try {
     const response = await lunaSocialClient.launchRequest(lunaIdentity.npub);
     syncOnlineClock(response.serverNowMs);
     const request = response.request;
     if (!request) return;
-    const targetRoomId = request.roomId.trim();
-    if (!targetRoomId) return;
-    if (onlineRoom && normalizeRoomId(onlineRoom.id) === normalizeRoomId(targetRoomId)) return;
-    await enterLunaNegraRoomFromInvite(request.inviteToken, targetRoomId);
+    if (ignoredLunaLaunchRequestIds.has(request.id)) return;
+    await handleLunaLaunchRequest(request);
   } catch {
     // La orden pendiente es best-effort; la UI de Luna conserva el fallback de abrir/navegar.
   } finally {
     lunaLaunchPollInFlight = false;
   }
+}
+
+async function handleLunaLaunchRequest(request: LunaLaunchRequest): Promise<void> {
+  const normalizedRoomId = normalizeRoomId(request.roomId);
+  if (!normalizedRoomId) return;
+  if (onlineRoom && normalizeRoomId(onlineRoom.id) === normalizedRoomId) return;
+  const pending = { ...request, normalizedRoomId };
+  if (!onlineRoom) {
+    await enterLunaNegraRoomFromInvite(request.inviteToken, normalizedRoomId);
+    return;
+  }
+  pendingLunaLaunchRequest = pending;
+  bindingCapture = null;
+  input.releaseAll();
+}
+
+async function acceptPendingLunaLaunchRequest(): Promise<void> {
+  const request = pendingLunaLaunchRequest;
+  if (!request) return;
+  pendingLunaLaunchRequest = null;
+  await enterLunaNegraRoomFromInvite(request.inviteToken, request.normalizedRoomId);
+}
+
+function cancelPendingLunaLaunchRequest(): void {
+  const request = pendingLunaLaunchRequest;
+  if (request) ignoredLunaLaunchRequestIds.add(request.id);
+  pendingLunaLaunchRequest = null;
+  bindingCapture = null;
+  if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
+  input.releaseAll();
 }
 
 async function openLunaInviteWindow(): Promise<void> {
@@ -1371,6 +1411,7 @@ function resetOnlineRoomState(): void {
   onlineLastProgressAt = 0;
   onlineLastPeerBroadcastAt = 0;
   onlineActiveRoundId = null;
+  pendingLunaLaunchRequest = null;
 }
 
 function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
@@ -2188,7 +2229,7 @@ function syncOnlineBackground(): void {
 
   let state = engine.getState();
   if (appMode === 'onlinePlaying') {
-    if (!pendingConfirmAction && canAdvanceGame(appMode, state.status)) {
+    if (!hasBlockingModal() && canAdvanceGame(appMode, state.status)) {
       state = advanceGameToFrame(targetGameplayFrame(), []);
     } else {
       syncGameplayClockToCurrentFrame();
@@ -2295,6 +2336,7 @@ function restoreOverlayFieldFocus(snapshot: OverlayFieldFocusSnapshot | null): v
 }
 
 function renderScreenOverlay(state: GameState): string {
+  if (pendingLunaLaunchRequest) return renderLunaLaunchRequestOverlay(pendingLunaLaunchRequest);
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
   if (
@@ -2356,7 +2398,7 @@ function canRetryCurrentRun(): boolean {
 }
 
 function renderTouchControls(): string {
-  if ((appMode !== 'playing' && appMode !== 'onlinePlaying') || pendingConfirmAction) return '';
+  if ((appMode !== 'playing' && appMode !== 'onlinePlaying') || hasBlockingModal()) return '';
   if (touchControlsHidden) {
     return `
       <button class="touch-controls-toggle touch-controls-restore" type="button" data-ui-action="toggle-touch-controls">
@@ -2397,6 +2439,7 @@ function renderTouchButton(action: ControlAction, label: string): string {
 
 function requestRunConfirmation(action: DestructiveRunAction): void {
   pendingConfirmAction = action;
+  pendingLunaLaunchRequest = null;
   bindingCapture = null;
   input.releaseAll();
 }
@@ -2432,6 +2475,27 @@ function renderConfirmOverlay(action: DestructiveRunAction): string {
       </section>
     </div>
   `;
+}
+
+function renderLunaLaunchRequestOverlay(request: PendingLunaLaunchRequest): string {
+  const currentRoomId = onlineRoom?.id ?? 'tu sala actual';
+  return `
+    <div class="menu-scrim confirm-scrim">
+      <section class="menu-panel confirm-panel" aria-label="Invitacion de Luna Negra">
+        <div class="panel-eyebrow">LUNA NEGRA</div>
+        <h1>Te invitaron a ${escapeHtml(request.normalizedRoomId)}</h1>
+        <p>Para unirte vas a salir de ${escapeHtml(currentRoomId)} en este dispositivo. La invitacion queda pendiente mientras TETRA esta abierto.</p>
+        <div class="panel-actions confirm-actions">
+          <button class="dash-action-btn" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="luna-launch-cancel">Quedarme</button>
+          <button class="dash-action-btn danger" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="luna-launch-accept">Unirme</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function hasBlockingModal(): boolean {
+  return pendingConfirmAction !== null || pendingLunaLaunchRequest !== null;
 }
 
 // Envoltorio estilo CS2: contenido principal a la izquierda, panel de amigos de

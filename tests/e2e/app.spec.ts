@@ -403,15 +403,14 @@ test.describe('TETRA browser flows', () => {
     await page.goto('/?inviteToken=fake-token&room=abc12345');
 
     await expect.poll(() => appMode(page)).toBe('roomLobby');
-    await expect(page.getByRole('heading', { name: 'ABC12345' })).toBeVisible();
-    const lunaPlayer = page.locator('.cs2-player-card').filter({ hasText: 'Nostr Host' }).first();
-    await expect(lunaPlayer.locator('strong')).toContainText('Nostr Host');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ABC12345');
+    await expect(page.getByText('SALA PRIVADA ABC12345')).toBeVisible();
+    await expect(page.getByText('Nostr Host', { exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer())).toEqual({
       id: 'pubkey-host-luna',
       name: 'Nostr Host',
       avatarUrl: 'https://example.com/nostr-host.png',
     });
-    await expect(lunaPlayer.locator('img')).toHaveAttribute('src', 'https://example.com/nostr-host.png');
     await expect.poll(() => page.evaluate(() => window.location.search.includes('inviteToken'))).toBe(false);
   });
 
@@ -437,7 +436,8 @@ test.describe('TETRA browser flows', () => {
     });
 
     await expect.poll(() => appMode(page)).toBe('roomLobby');
-    await expect(page.getByRole('heading', { name: 'ABC12345' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ABC12345');
+    await expect(page.getByText('SALA PRIVADA ABC12345')).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
   });
 
@@ -469,8 +469,85 @@ test.describe('TETRA browser flows', () => {
     await page.goto('/?lnDemo=AlreadyOpen');
 
     await expect.poll(() => appMode(page), { timeout: 7000 }).toBe('roomLobby');
-    await expect(page.getByRole('heading', { name: 'ABC12345' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ABC12345');
+    await expect(page.getByText('SALA PRIVADA ABC12345')).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
+  });
+
+  test('enters a Luna Negra room from a pending launch request with stored identity', async ({ page }) => {
+    await mockOnlineApi(page);
+    let deliveredLaunch = false;
+    await page.route('**/api/luna-negra/launch-request**', async (route) => {
+      const body = deliveredLaunch
+        ? { request: null, source: 'luna-negra', serverNowMs: Date.now() }
+        : lunaLaunchResponse('launch-stored', 'abc12345');
+      deliveredLaunch = true;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    await addStoredLunaIdentity(page);
+
+    await page.goto('/');
+
+    await expect.poll(() => appMode(page), { timeout: 7000 }).toBe('roomLobby');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ABC12345');
+    await expect(page.getByText('SALA PRIVADA ABC12345')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
+  });
+
+  test('asks before leaving the current room for a Luna Negra launch request', async ({ page }) => {
+    await mockOnlineApi(page);
+    let launchEnabled = false;
+    await page.route('**/api/luna-negra/launch-request**', async (route) => {
+      const body = launchEnabled
+        ? lunaLaunchResponse('launch-switch', 'abc12345')
+        : { request: null, source: 'luna-negra', serverNowMs: Date.now() };
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    await addStoredLunaIdentity(page);
+
+    await page.goto('/');
+    await expect.poll(() => appMode(page)).toBe('menu');
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ROOM');
+
+    launchEnabled = true;
+
+    await expect(page.getByRole('heading', { name: 'Te invitaron a ABC12345' })).toBeVisible({ timeout: 7000 });
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ROOM');
+
+    await page.getByRole('button', { name: 'Unirme' }).click();
+
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ABC12345');
+    await expect(page.getByText('SALA PRIVADA ABC12345')).toBeVisible();
+  });
+
+  test('keeps the current room after declining a Luna Negra launch request', async ({ page }) => {
+    await mockOnlineApi(page);
+    let launchEnabled = false;
+    await page.route('**/api/luna-negra/launch-request**', async (route) => {
+      const body = launchEnabled
+        ? lunaLaunchResponse('launch-decline', 'abc12345')
+        : { request: null, source: 'luna-negra', serverNowMs: Date.now() };
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    await addStoredLunaIdentity(page);
+
+    await page.goto('/');
+    await expect.poll(() => appMode(page)).toBe('menu');
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+
+    launchEnabled = true;
+    await expect(page.getByRole('heading', { name: 'Te invitaron a ABC12345' })).toBeVisible({ timeout: 7000 });
+    await page.getByRole('button', { name: 'Quedarme' }).click();
+
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ROOM');
+    await expect(page.getByRole('heading', { name: 'Te invitaron a ABC12345' })).toBeHidden();
+    await page.waitForTimeout(2500);
+    await expect(page.getByRole('heading', { name: 'Te invitaron a ABC12345' })).toBeHidden();
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ROOM');
   });
 
   test('changes custom room visibility from the lobby', async ({ page }) => {
@@ -527,6 +604,34 @@ test.describe('TETRA browser flows', () => {
     await expect.poll(() => appMode(page)).toBe('playing');
   });
 });
+
+async function addStoredLunaIdentity(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem('stack40.lunaIdentity.v1', JSON.stringify({
+      npub: 'npub-already-open',
+      pubkey: 'pubkey-already-open',
+      name: 'Already Open',
+      avatarUrl: null,
+      gameId: 'tetra-game',
+    }));
+  });
+}
+
+function lunaLaunchResponse(id: string, roomId: string): unknown {
+  return {
+    request: {
+      id,
+      roomId,
+      inviteToken: 'fake-invite-token',
+      slug: 'TETRA',
+      title: 'TETRA',
+      gameUrl: 'http://127.0.0.1:5173/',
+    },
+    source: 'luna-negra',
+    serverNowMs: Date.now(),
+  };
+}
 
 async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Promise<MockOnlineApiRequests> {
   const now = Date.now();
