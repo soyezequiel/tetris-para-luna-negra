@@ -58,8 +58,10 @@ export const DEFAULT_INPUT_SETTINGS: InputSettings = {
 };
 
 const STORAGE_KEY = 'stack40.inputSettings';
-const LEGACY_DEFAULT_DAS_FRAMES = 9;
-const LEGACY_DEFAULT_ARR_FRAMES = 1;
+const LEGACY_DEFAULT_TIMINGS = [
+  { dasFrames: 9, arrFrames: 1 },
+  { dasFrames: 12, arrFrames: 2 },
+];
 const MIN_DAS_FRAMES = 0;
 const MAX_DAS_FRAMES = 30;
 const MIN_ARR_FRAMES = 1;
@@ -187,7 +189,9 @@ function normalizeInteger(value: unknown, fallback: number, min: number, max: nu
 
 function migrateStoredInputSettings(value: unknown): unknown {
   if (!isObject(value)) return value;
-  if (value.dasFrames === LEGACY_DEFAULT_DAS_FRAMES && value.arrFrames === LEGACY_DEFAULT_ARR_FRAMES) {
+  if (LEGACY_DEFAULT_TIMINGS.some((timing) => (
+    value.dasFrames === timing.dasFrames && value.arrFrames === timing.arrFrames
+  ))) {
     return {
       ...value,
       dasFrames: DEFAULT_INPUT_SETTINGS.dasFrames,

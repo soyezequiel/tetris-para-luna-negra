@@ -753,30 +753,33 @@ describe('core stacker engine', () => {
     expect(slower.dasFrames).toBe(DEFAULT_INPUT_SETTINGS.dasFrames + 2);
   });
 
-  it('defaults to TETR.IO-like horizontal handling', () => {
-    expect(DEFAULT_INPUT_SETTINGS.dasFrames).toBe(12);
+  it('defaults to responsive horizontal handling', () => {
+    expect(DEFAULT_INPUT_SETTINGS.dasFrames).toBe(8);
     expect(DEFAULT_INPUT_SETTINGS.arrFrames).toBe(2);
   });
 
-  it('defaults to a responsive soft drop speed', () => {
-    expect(DEFAULT_RULES.softDropCellsPerFrame + DEFAULT_RULES.gravityCellsPerFrame).toBeCloseTo(20 / 60);
-  });
-
-  it('migrates legacy saved default input timing to the current baseline', () => {
+  it.each([
+    { dasFrames: 9, arrFrames: 1 },
+    { dasFrames: 12, arrFrames: 2 },
+  ])('migrates saved default input timing $dasFrames/$arrFrames to the current baseline', (stored) => {
     const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       value: {
-        getItem: () => JSON.stringify({ dasFrames: 9, arrFrames: 1 }),
+        getItem: () => JSON.stringify(stored),
       },
     });
 
     try {
-      expect(loadInputSettings()).toMatchObject({ dasFrames: 12, arrFrames: 2 });
+      expect(loadInputSettings()).toMatchObject({ dasFrames: 8, arrFrames: 2 });
     } finally {
       if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
       else delete (globalThis as { localStorage?: Storage }).localStorage;
     }
+  });
+
+  it('defaults to a responsive soft drop speed', () => {
+    expect(DEFAULT_RULES.softDropCellsPerFrame + DEFAULT_RULES.gravityCellsPerFrame).toBeCloseTo(20 / 60);
   });
 
   it('reuses DAS and ARR timing for held touch controls', () => {

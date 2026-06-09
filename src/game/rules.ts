@@ -17,7 +17,7 @@ export const DEFAULT_RULES: GameRules = {
   gravityStartingLevel: 1,
   softDropCellsPerFrame: DEFAULT_GRAVITY_CELLS_PER_FRAME * (DEFAULT_SOFT_DROP_FACTOR - 1),
   lockDelayFrames: 30,
-  dasFrames: 12,
+  dasFrames: 8,
   arrFrames: 2,
   garbageDelayFrames: 90,
   garbageTravelFrames: 0,
