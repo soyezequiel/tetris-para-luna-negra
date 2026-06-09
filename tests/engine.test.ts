@@ -1358,6 +1358,85 @@ describe('core stacker engine', () => {
     delete process.env.LUNA_NEGRA_API_KEY;
   });
 
+  it('keeps result reporting retryable when Luna Negra has not accepted the winner yet', async () => {
+    const store = new MemoryRoomStore();
+    let room = await createRoom(store, { playerId: 'host-player-r', npub: 'npub-host-r', name: 'Host', visibility: 'public' }, 1000);
+    room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-r', npub: 'npub-guest-r', name: 'Guest' }, 1010);
+
+    room.bet = {
+      betId: 'bet-retry-test',
+      status: 'funded',
+      stakeSats: 50,
+      potSats: 100,
+      potTargetSats: 100,
+      feeSats: 1,
+      feePct: 1,
+      netPayoutSats: 99,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [
+        {
+          npub: 'npub-host-r',
+          playerId: 'host-player-r',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          payoutSats: null,
+        },
+        {
+          npub: 'npub-guest-r',
+          playerId: 'guest-player-r',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          payoutSats: null,
+        },
+      ],
+      winnerNpubs: null,
+      resultReported: false,
+      createdByPlayerId: 'host-player-r',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1000,
+    };
+    room.status = 'finished';
+    room.winnerPlayerId = 'host-player-r';
+    await store.saveRoom(room);
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/result')) {
+        return Response.json(
+          { error: { code: 'NOT_READY', message: 'The bet is not ready to resolve.' } },
+          { status: 409 },
+        );
+      }
+      return Response.json({
+        betId: 'bet-retry-test',
+        status: 'funded',
+        participants: [
+          { npub: 'npub-host-r', depositStatus: 'paid', payoutSats: null },
+          { npub: 'npub-guest-r', depositStatus: 'paid', payoutSats: null },
+        ],
+      });
+    }));
+
+    const updated = await maybeReportRoomBetResult(store, room, 1050);
+    const stored = await store.getRoom(room.id);
+
+    expect(updated).toBeNull();
+    expect(stored?.bet?.winnerNpubs).toEqual(['npub-host-r']);
+    expect(stored?.bet?.resultReported).toBe(false);
+
+    vi.unstubAllGlobals();
+    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_API_KEY;
+  });
+
   it('sorts Luna friends by presence (in-game first) and excludes self', async () => {
     const store = new MemoryRoomStore();
     await recordLunaPresence(store, { npub: 'npub-self', name: 'Me', status: 'online' }, 1000);

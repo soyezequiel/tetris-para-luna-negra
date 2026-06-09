@@ -122,7 +122,19 @@ async function lunaFetch<T>(
 function errorLooksResolved(error: unknown): boolean {
   const code = error instanceof LunaApiError ? (error.code ?? '') : '';
   const message = error instanceof Error ? error.message : '';
-  return /resolv|settl|already|duplicate|paid|finaliz|complet/i.test(`${code} ${message}`);
+  const normalizedCode = code.trim().toUpperCase();
+  if ([
+    'NOT_READY',
+    'TOO_LATE',
+    'CONTRACT_MISMATCH',
+    'ORACLE_NOT_PROVISIONED',
+    'BAD_WINNERS',
+    'FORBIDDEN',
+    'INVALID_API_KEY',
+    'RATE_LIMITED',
+  ].includes(normalizedCode)) return false;
+  if (/ALREADY|DUPLICATE/.test(normalizedCode) && /RESOL|SETTL|PAID|COMPLET|FINALIZ/.test(normalizedCode)) return true;
+  return /ya .*(resuelt|pagad|finaliz|complet)|already .*(resolved|settled|paid|finali[sz]ed|completed)|duplicate|duplicad/i.test(message);
 }
 
 function nonNegInt(value: unknown, fallback = 0): number {
@@ -385,19 +397,11 @@ export async function maybeReportRoomBetResult(
       body: { winners },
     });
   } catch (error) {
-    // El reporte falló. Decidimos si reintentar o darlo por hecho:
-    //  1) Si el error indica "ya resuelta/duplicada" → hecho (corta el loop).
-    //  2) Si el estado real en Luna ya está resuelto/pagado → hecho.
-    //  3) Si no, solo reintentamos en errores transitorios (red o 5xx); un 4xx es
-    //     definitivo (p. ej. winners inválido) y lo damos por reportado para no
-    //     reintentar para siempre algo que nunca va a tener éxito.
+    // El reporte falló. Solo lo damos por hecho si Luna Negra ya lo había
+    // aceptado/resuelto; otros rechazos quedan reintentables por polling o botón manual.
     const probe = await fetchDetailAndDeposits(config, bet.betId).catch(() => ({ detail: null, deposits: null }));
     const resolved = errorLooksResolved(error) || isResolvedFromLuna(probe.detail, probe.deposits);
-    if (!resolved) {
-      const httpStatus = error instanceof LunaApiError ? error.httpStatus : 0;
-      const transient = httpStatus === 0 || httpStatus >= 500;
-      if (transient) return null;
-    }
+    if (!resolved) return null;
   }
 
   const currentBet = updatedRoom.bet ?? bet;
