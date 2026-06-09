@@ -60,6 +60,7 @@ import { OnlineClient } from './online/client';
 import { LunaSocialClient } from './online/lunaNegraFriendsClient';
 import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostAuthority';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
+import { decidePeerKoAction } from './online/peerKoAuthority';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBroadcast';
 import { frameForPendingInputReplay, shouldReconcileLocalEngineSnapshot } from './online/reconciliation';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
@@ -80,6 +81,7 @@ const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
 const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_PEER_BROADCAST_MS = 100;
+const ONLINE_KO_BROADCAST_RETRY_MS = 1000;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
 const GAME_FRAME_MS = 1000 / 60;
 
@@ -145,6 +147,7 @@ let onlineProgressInFlight = false;
 let onlineLastPollAt = 0;
 let onlineLastProgressAt = 0;
 let onlineLastPeerBroadcastAt = 0;
+let onlineLastKoBroadcastAt = 0;
 let onlineServerOffsetMs = 0;
 let onlineResultSubmitted = false;
 let onlineRunStarted = false;
@@ -1435,6 +1438,7 @@ function resetOnlineRoomState(): void {
   onlineLastPollAt = 0;
   onlineLastProgressAt = 0;
   onlineLastPeerBroadcastAt = 0;
+  onlineLastKoBroadcastAt = 0;
   onlineActiveRoundId = null;
   pendingLunaLaunchRequest = null;
 }
@@ -1481,6 +1485,7 @@ function resetOnlineRuntimeForNextRound(): void {
   onlineInputOutbox = [];
   onlineLastProgressAt = 0;
   onlineLastPeerBroadcastAt = 0;
+  onlineLastKoBroadcastAt = 0;
   input.releaseAll();
   if (onlineRoom?.status === 'countdown' || onlineRoom?.status === 'playing') appMode = 'onlineCountdown';
 }
@@ -1762,7 +1767,7 @@ function syncOnline(state: GameState): void {
     if (state.status === 'playing' && shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(state);
     if (isOnlineHost() && state.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(state);
     if (state.status === 'finished' && !onlineResultSubmitted) postOnlineResult(state);
-    if (state.status === 'gameover' && !onlineResultSubmitted) postOnlineElimination(state);
+    if (state.status === 'gameover') postOnlineElimination(state);
   }
 }
 
@@ -1909,15 +1914,23 @@ async function commitOnlineResult(
 
 async function postOnlineElimination(state: GameState): Promise<void> {
   if (!onlineRoom) return;
-  onlineResultSubmitted = true;
-  const report = createOnlineKoReport(onlinePlayer.id, state);
-
-  if (!canCommitLocalOnlineTerminal(isOnlineHost())) {
+  const canCommit = canCommitLocalOnlineTerminal(isOnlineHost());
+  if (!canCommit) {
+    const now = performance.now();
+    if (onlineResultSubmitted && now - onlineLastKoBroadcastAt < ONLINE_KO_BROADCAST_RETRY_MS) return;
+    onlineResultSubmitted = true;
+    onlineLastKoBroadcastAt = now;
+    onlinePeerBroadcaster?.broadcastKo(createOnlineKoReport(onlinePlayer.id, state));
     onlineError = null;
     return;
   }
 
+  if (onlineResultSubmitted) return;
+  onlineResultSubmitted = true;
+  const report = createOnlineKoReport(onlinePlayer.id, state);
+  onlineLastKoBroadcastAt = performance.now();
   onlinePeerBroadcaster?.broadcastKo(report);
+
   await commitOnlineElimination(report, () => {
     onlineResultSubmitted = false;
   });
@@ -1974,6 +1987,7 @@ function maybeStartOnlineRun(): void {
   onlineInputOutbox = [];
   onlineLastProgressAt = 0;
   onlineLastPeerBroadcastAt = 0;
+  onlineLastKoBroadcastAt = 0;
   syncHostAuthorityPlayers();
   startNewRun(onlineRoom.seed, 'onlinePlaying');
 }
@@ -2037,11 +2051,19 @@ function syncOnlinePeers(room: OnlineRoom): void {
       onlineHostAuthority?.pushInputs(message.playerId, message.inputs);
     },
     onKo: (remoteId, message) => {
-      if (remoteId !== message.playerId) return;
-      if (isOnlineHost()) return;
-      if (!onlineRoom || remoteId !== onlineRoom.hostPlayerId) return;
-      if (!isCurrentOnlineSeed(message.seed)) return;
+      if (!onlineRoom) return;
+      const action = decidePeerKoAction({
+        isHostAuthority: isOnlineHost(),
+        localPlayerId: onlinePlayer.id,
+        hostPlayerId: onlineRoom.hostPlayerId,
+        remotePlayerId: remoteId,
+        messagePlayerId: message.playerId,
+        playerIsInRoom: onlineRoom.players.some((player) => player.id === remoteId),
+        seedMatches: isCurrentOnlineSeed(message.seed),
+      });
+      if (action === 'ignore') return;
       applyPeerKo(message);
+      if (action === 'commit') void commitOnlineElimination(message);
     },
     onPeerState: (playerId, state) => {
       onlinePeerStates = new Map(onlinePeerStates).set(playerId, state);

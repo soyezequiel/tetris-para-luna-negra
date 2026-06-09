@@ -56,6 +56,7 @@ import {
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
 import { maybeReportRoomBetResult } from '../src/online/lunaNegraBets';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
+import { decidePeerKoAction } from '../src/online/peerKoAuthority';
 import { selectAttackTarget } from '../src/online/targeting';
 import { InputController } from '../src/input';
 import { HostAuthoritySimulator } from '../src/online/hostAuthority';
@@ -925,6 +926,62 @@ describe('core stacker engine', () => {
   it('only lets the host commit local terminal states in online play', () => {
     expect(canCommitLocalOnlineTerminal(true)).toBe(true);
     expect(canCommitLocalOnlineTerminal(false)).toBe(false);
+  });
+
+  it('lets the host commit a remote player self-KO', () => {
+    expect(decidePeerKoAction({
+      isHostAuthority: true,
+      localPlayerId: 'host',
+      hostPlayerId: 'host',
+      remotePlayerId: 'guest',
+      messagePlayerId: 'guest',
+      playerIsInRoom: true,
+      seedMatches: true,
+    })).toBe('commit');
+  });
+
+  it('ignores forged or stale peer KO messages', () => {
+    expect(decidePeerKoAction({
+      isHostAuthority: true,
+      localPlayerId: 'host',
+      hostPlayerId: 'host',
+      remotePlayerId: 'guest',
+      messagePlayerId: 'other-player',
+      playerIsInRoom: true,
+      seedMatches: true,
+    })).toBe('ignore');
+
+    expect(decidePeerKoAction({
+      isHostAuthority: true,
+      localPlayerId: 'host',
+      hostPlayerId: 'host',
+      remotePlayerId: 'guest',
+      messagePlayerId: 'guest',
+      playerIsInRoom: true,
+      seedMatches: false,
+    })).toBe('ignore');
+  });
+
+  it('only applies host KO messages on non-host clients', () => {
+    expect(decidePeerKoAction({
+      isHostAuthority: false,
+      localPlayerId: 'guest-a',
+      hostPlayerId: 'host',
+      remotePlayerId: 'host',
+      messagePlayerId: 'host',
+      playerIsInRoom: true,
+      seedMatches: true,
+    })).toBe('apply');
+
+    expect(decidePeerKoAction({
+      isHostAuthority: false,
+      localPlayerId: 'guest-a',
+      hostPlayerId: 'host',
+      remotePlayerId: 'guest-b',
+      messagePlayerId: 'guest-b',
+      playerIsInRoom: true,
+      seedMatches: true,
+    })).toBe('ignore');
   });
 
   it('requires confirmation only for destructive actions during active runs', () => {
