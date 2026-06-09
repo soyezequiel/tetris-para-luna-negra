@@ -235,7 +235,7 @@ export class PixiGameRenderer {
   }
 
   private isVisibleCell(boardX: number, boardY: number): boolean {
-    return boardX >= 0 && boardX < this.boardColumns && boardY >= 0 && boardY < this.visibleRows;
+    return boardX >= 0 && boardX < this.boardColumns && boardY >= -this.hiddenRows && boardY < this.visibleRows;
   }
 
   private drawAngledPanel(g: Graphics, x: number, y: number, w: number, h: number, labelHeight: number): void {
@@ -270,14 +270,14 @@ export class PixiGameRenderer {
   }
 
   private drawBlock(g: Graphics, boardX: number, boardY: number, piece: PieceType, alpha: number): void {
-    if (boardY < 0) return;
+    if (boardY < -this.hiddenRows) return;
     const x = this.boardX + boardX * this.cell;
     const y = this.boardY + boardY * this.cell;
     this.drawBlockAt(g, x, y, this.cell, piece, alpha);
   }
 
   private drawGhostBlock(g: Graphics, boardX: number, boardY: number): void {
-    if (boardY < 0) return;
+    if (boardY < -this.hiddenRows) return;
     const x = this.boardX + boardX * this.cell;
     const y = this.boardY + boardY * this.cell;
     const pad = Math.max(1, this.cell * 0.1);

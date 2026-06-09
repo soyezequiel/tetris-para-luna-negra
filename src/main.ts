@@ -937,7 +937,14 @@ function handleLunaNegraWindowMessage(event: MessageEvent): void {
   const message = parseLunaEnterRoomMessage(event.data);
   if (!message) return;
   if (!trustedLunaOrigin || event.origin !== trustedLunaOrigin) return;
-  void enterLunaNegraRoomFromInvite(message.inviteToken, message.roomId);
+  void handleLunaLaunchRequest({
+    id: `msg-${Date.now()}`,
+    roomId: message.roomId,
+    inviteToken: message.inviteToken,
+    slug: 'TETRA',
+    title: 'TETRA',
+    gameUrl: window.location.href,
+  });
 }
 
 function parseLunaEnterRoomMessage(
@@ -1022,10 +1029,6 @@ async function handleLunaLaunchRequest(request: LunaLaunchRequest): Promise<void
   if (!normalizedRoomId) return;
   if (onlineRoom && normalizeRoomId(onlineRoom.id) === normalizedRoomId) return;
   const pending = { ...request, normalizedRoomId };
-  if (!onlineRoom) {
-    await enterLunaNegraRoomFromInvite(request.inviteToken, normalizedRoomId);
-    return;
-  }
   pendingLunaLaunchRequest = pending;
   bindingCapture = null;
   input.releaseAll();
@@ -2487,13 +2490,20 @@ function renderConfirmOverlay(action: DestructiveRunAction): string {
 }
 
 function renderLunaLaunchRequestOverlay(request: PendingLunaLaunchRequest): string {
-  const currentRoomId = onlineRoom?.id ?? 'tu sala actual';
+  let description = '';
+  if (onlineRoom) {
+    description = `Para unirte vas a salir de la sala ${escapeHtml(onlineRoom.id)} en este dispositivo.`;
+  } else if (appMode === 'playing' || appMode === 'soloCountdown' || appMode === 'paused') {
+    description = 'Para unirte vas a abandonar tu partida actual.';
+  } else {
+    description = '¿Querés unirte a la sala?';
+  }
   return `
     <div class="menu-scrim confirm-scrim">
       <section class="menu-panel confirm-panel" aria-label="Invitacion de Luna Negra">
         <div class="panel-eyebrow">LUNA NEGRA</div>
         <h1>Te invitaron a ${escapeHtml(request.normalizedRoomId)}</h1>
-        <p>Para unirte vas a salir de ${escapeHtml(currentRoomId)} en este dispositivo. La invitacion queda pendiente mientras TETRA esta abierto.</p>
+        <p>${description} La invitacion queda pendiente mientras TETRA esta abierto.</p>
         <div class="panel-actions confirm-actions">
           <button class="dash-action-btn" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="luna-launch-cancel">Quedarme</button>
           <button class="dash-action-btn danger" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="luna-launch-accept">Unirme</button>
