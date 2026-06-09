@@ -411,6 +411,13 @@ test.describe('TETRA browser flows', () => {
       name: 'Nostr Host',
       avatarUrl: 'https://example.com/nostr-host.png',
     });
+    await expect.poll(() => page.evaluate(() => window.stack40.getLunaIdentity())).toEqual({
+      npub: 'npub-host-luna',
+      pubkey: 'pubkey-host-luna',
+      name: 'Nostr Host',
+      avatarUrl: 'https://example.com/nostr-host.png',
+      gameId: 'tetra-game',
+    });
     await expect.poll(() => page.evaluate(() => window.location.search.includes('inviteToken'))).toBe(false);
   });
 
@@ -656,7 +663,10 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
         hostPubkey: 'pubkey-host-luna',
         expiresAt: '2026-06-06T21:00:00.000Z',
       };
-      room = createMockRoom(body.roomId.toUpperCase(), 'private', serverNowMs, player.id, player.name, undefined, undefined, undefined, player.avatarUrl);
+      room = {
+        ...createMockRoom(body.roomId.toUpperCase(), 'private', serverNowMs, player.id, player.name, undefined, undefined, undefined, player.avatarUrl),
+        lunaGameId: 'tetra-game',
+      };
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({ room, player, serverNowMs }),

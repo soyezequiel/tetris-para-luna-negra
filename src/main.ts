@@ -776,6 +776,15 @@ async function enterLunaNegraRoomFromInvite(
       avatarUrl: response.player.avatarUrl,
     });
     onlineName = response.player.name;
+    const identityFromInvite: LunaIdentity = {
+      npub: response.player.npub,
+      pubkey: response.player.pubkey,
+      name: response.player.name,
+      avatarUrl: response.player.avatarUrl,
+      gameId: response.room.lunaGameId,
+    };
+    applyLunaIdentity(identityFromInvite);
+    saveStoredLunaIdentity(identityFromInvite);
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
     if (options.cleanUrl) removeLunaNegraTokenFromUrl();

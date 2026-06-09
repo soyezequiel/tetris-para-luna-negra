@@ -8,7 +8,7 @@ import { createReplayLog, recordInput } from '../../src/game/replay';
 import { DEFAULT_RULES } from '../../src/game/rules';
 import type { GameInput, GameState } from '../../src/game/types';
 import { DEFAULT_INPUT_SETTINGS, type InputSettings } from '../../src/input/settings';
-import type { OnlineRoom } from '../../src/online/protocol';
+import type { LunaIdentity, OnlineRoom } from '../../src/online/protocol';
 
 export type AppMode =
   | 'menu'
@@ -47,6 +47,7 @@ export type Stack40Api = {
   getPlayback: () => PlaybackSnapshot | null;
   getOnlineRoom: () => OnlineRoom | null;
   getOnlinePlayer: () => { id: string; name: string; avatarUrl: string | null };
+  getLunaIdentity: () => LunaIdentity | null;
 };
 
 declare global {
