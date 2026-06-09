@@ -83,7 +83,8 @@ export async function POST(request: Request): Promise<Response> {
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'leave') {
-      const { room, hostMigratedTo } = await leaveRoom(getRoomStore(), await readJsonBody<LeaveRoomRequest>(request));
+      const { room: rawRoom, hostMigratedTo } = await leaveRoom(getRoomStore(), await readJsonBody<LeaveRoomRequest>(request));
+      const room = rawRoom ? await settleBetIfFinished(rawRoom) : null;
       return sendJson(200, { room, hostMigratedTo, serverNowMs: Date.now() });
     }
     if (action === 'kick') {

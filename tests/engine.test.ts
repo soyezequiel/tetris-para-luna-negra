@@ -54,6 +54,7 @@ import {
   updateProgress,
 } from '../src/online/roomService';
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
+import { maybeReportRoomBetResult } from '../src/online/lunaNegraBets';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
 import { selectAttackTarget } from '../src/online/targeting';
 import { InputController } from '../src/input';
@@ -1273,6 +1274,24 @@ describe('core stacker engine', () => {
     expect(await store.listPublicRoomIds()).not.toContain(room.id);
   });
 
+  it('finishes the game and declares the remaining player as winner when a player leaves during an active game', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, { playerId: 'host-player-w', name: 'Host', visibility: 'public' }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'guest-player-l', name: 'Guest' }, 1010);
+
+    await setPlayerReady(store, { roomId: room.id, playerId: 'host-player-w', ready: true }, 1020);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'guest-player-l', ready: true }, 1030);
+    await startRoom(store, { roomId: room.id, playerId: 'host-player-w' }, 1040);
+
+    const result = await leaveRoom(store, { roomId: room.id, playerId: 'guest-player-l' }, 1050);
+
+    expect(result.room).not.toBeNull();
+    expect(result.room?.status).toBe('finished');
+    expect(result.room?.winnerPlayerId).toBe('host-player-w');
+    const winner = result.room?.players.find((p) => p.id === 'host-player-w');
+    expect(winner?.status).toBe('winner');
+  });
+
   it('lets the host kick a player but rejects non-hosts and self-kicks', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, { playerId: 'host-player-k', name: 'Host', visibility: 'public' }, 1000);
@@ -1285,6 +1304,58 @@ describe('core stacker engine', () => {
 
     const kicked = await kickPlayer(store, { roomId: room.id, playerId: 'host-player-k', targetPlayerId: 'guest-player-k' }, 1030);
     expect(kicked.players.map((player) => player.id)).toEqual(['host-player-k']);
+  });
+
+  it('persists winnerNpubs on the bet when the game finishes so they are preserved even if players leave', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, { playerId: 'host-player-p', npub: 'npub-host', name: 'Host', visibility: 'public' }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'guest-player-p', npub: 'npub-guest', name: 'Guest' }, 1010);
+    
+    room.bet = {
+      betId: 'bet-persistence-test',
+      status: 'funded',
+      stakeSats: 50,
+      potSats: 100,
+      potTargetSats: 100,
+      feeSats: 1,
+      feePct: 1,
+      netPayoutSats: 99,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [],
+      winnerNpubs: null,
+      resultReported: false,
+      createdByPlayerId: 'host-player-p',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1000,
+    };
+    room.status = 'finished';
+    room.winnerPlayerId = 'host-player-p';
+    await store.saveRoom(room);
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: 'settled', payoutSats: 99 })));
+
+    const updated = await maybeReportRoomBetResult(store, room, 1050);
+
+    expect(updated).not.toBeNull();
+    expect(updated?.bet?.winnerNpubs).toEqual(['npub-host']);
+
+    await leaveRoom(store, { roomId: room.id, playerId: 'host-player-p' }, 1060);
+    const roomAfterLeave = await store.getRoom(room.id);
+    expect(roomAfterLeave?.players.find((p) => p.id === 'host-player-p')).toBeUndefined();
+
+    if (roomAfterLeave) {
+      roomAfterLeave.bet!.resultReported = false;
+      const updatedAgain = await maybeReportRoomBetResult(store, roomAfterLeave, 1070);
+      expect(updatedAgain?.bet?.winnerNpubs).toEqual(['npub-host']);
+    }
+
+    vi.unstubAllGlobals();
+    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_API_KEY;
   });
 
   it('sorts Luna friends by presence (in-game first) and excludes self', async () => {

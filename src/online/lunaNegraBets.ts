@@ -357,7 +357,14 @@ export async function maybeReportRoomBetResult(
   if (bet.status !== 'funded') return null;
   if (!isLunaNegraApiConfigured()) return null;
   const config = readApiConfig();
-  const winners = winnerNpubsFromRoom(room);
+  // Usamos los ganadores ya registrados en la apuesta si existen, o los calculamos y persistimos de inmediato
+  let winners = bet.winnerNpubs;
+  let updatedRoom = room;
+  if (!winners) {
+    winners = winnerNpubsFromRoom(room);
+    const reportedBet: RoomBet = { ...bet, winnerNpubs: winners, updatedAtServerMs: nowMs };
+    updatedRoom = await setRoomBet(store, room.id, reportedBet, nowMs);
+  }
 
   // Camino por API key: Luna Negra firma el resultado con el oráculo gestionado
   // del proveedor. El game server no toca Nostr. winners vacío = empate/anulación.
@@ -381,8 +388,10 @@ export async function maybeReportRoomBetResult(
       if (transient) return null;
     }
   }
-  const reported: RoomBet = { ...bet, resultReported: true, winnerNpubs: winners, updatedAtServerMs: nowMs };
-  let updated = await setRoomBet(store, room.id, reported, nowMs);
+
+  const currentBet = updatedRoom.bet ?? bet;
+  const reported: RoomBet = { ...currentBet, resultReported: true, winnerNpubs: winners, updatedAtServerMs: nowMs };
+  let updated = await setRoomBet(store, updatedRoom.id, reported, nowMs);
   const { detail, deposits } = await fetchDetailAndDeposits(config, bet.betId);
   if (detail || deposits) {
     const npubs = reported.participants.map((p) => p.npub);
@@ -396,7 +405,7 @@ export async function maybeReportRoomBetResult(
       reported.createdByPlayerId,
       nowMs,
     );
-    updated = await setRoomBet(store, room.id, synced, nowMs);
+    updated = await setRoomBet(store, updated.id, synced, nowMs);
   }
   return updated;
 }

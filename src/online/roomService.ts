@@ -308,6 +308,22 @@ export async function leaveRoom(
   }
 
   const hostMigratedTo = migrateHostIfNeeded(room);
+
+  if (room.status === 'playing' || room.status === 'countdown') {
+    if (room.players.length === 1) {
+      const winner = room.players[0];
+      winner.status = 'winner';
+      winner.alive = true;
+      winner.finishedAtServerMs = nowMs;
+      winner.updatedAtServerMs = nowMs;
+      room.winnerPlayerId = winner.id;
+      room.status = 'finished';
+      sealMatchResult(room, nowMs);
+    } else {
+      finishRoomIfOnlyOneAlive(room, nowMs);
+    }
+  }
+
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
   return { room, hostMigratedTo };
