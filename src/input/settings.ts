@@ -18,16 +18,16 @@ export const GAME_ACTIONS: InputAction[] = [
 export const CONTROL_ACTIONS: ControlAction[] = [...GAME_ACTIONS, 'pause'];
 
 export const CONTROL_ACTION_LABELS: Record<ControlAction, string> = {
-  moveLeft: 'Move left',
-  moveRight: 'Move right',
-  softDrop: 'Soft drop',
-  hardDrop: 'Hard drop',
-  rotateCW: 'Rotate CW',
-  rotateCCW: 'Rotate CCW',
-  rotate180: 'Rotate 180',
-  hold: 'Hold',
-  retry: 'Retry',
-  pause: 'Pause',
+  moveLeft: 'Mover izquierda',
+  moveRight: 'Mover derecha',
+  softDrop: 'Bajar suave',
+  hardDrop: 'Caída rápida',
+  rotateCW: 'Girar a la derecha',
+  rotateCCW: 'Girar a la izquierda',
+  rotate180: 'Media vuelta (180°)',
+  hold: 'Guardar pieza',
+  retry: 'Reiniciar',
+  pause: 'Pausar',
 };
 
 export type InputBindings = Record<ControlAction, string[]>;
