@@ -1860,7 +1860,7 @@ function applyAttackToHostTruth(attack: AttackRequest): void {
     });
     return;
   }
-  onlineHostAuthority?.queueGarbage(attack.toPlayerId, attack.lines, attack.holeSeed, attack.attackId);
+  onlineHostAuthority?.queueGarbage(attack.toPlayerId, attack.lines, attack.holeSeed, attack.attackId, attack.frame);
 }
 
 function selectAttackTarget(sourcePlayerId: string, attackId: string): OnlinePlayer | null {
@@ -2549,7 +2549,10 @@ function applyOnlineAttack(attack: OnlineAttack): void {
     board: boardMetrics(beforeGarbage.board),
     pendingBefore: beforeGarbage.stats.pendingGarbage,
   });
-  engine.queueGarbage(attack.lines, attack.holeSeed, gameFrame, attack.id);
+  // Anclamos al frame del ataque (no gameFrame): debe coincidir con el frame usado por
+  // la simulación del host para que el garbage se aplique en el mismo frame en ambos
+  // lados y las simulaciones no diverjan. Ver HostAuthoritySimulator.queueGarbage.
+  engine.queueGarbage(attack.lines, attack.holeSeed, attack.frame, attack.id);
 }
 
 function rememberOnlineAttack(fromPlayerId: string, toPlayerId: string, lines: number): void {

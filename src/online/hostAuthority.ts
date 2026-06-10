@@ -96,11 +96,16 @@ export class HostAuthoritySimulator {
     }
   }
 
-  queueGarbage(playerId: string, lines: number, holeSeed: number, attackId: string): void {
+  queueGarbage(playerId: string, lines: number, holeSeed: number, attackId: string, frame: number): void {
     const simulation = this.simulations.get(playerId);
     if (!simulation || simulation.appliedAttackIds.has(attackId)) return;
     simulation.appliedAttackIds.add(attackId);
-    simulation.engine.queueGarbage(lines, holeSeed, simulation.frame, attackId);
+    // Encolamos el garbage en el frame del ATAQUE (compartido por todos los peers), no
+    // en simulation.frame: así applyFrame = frame + delay es idéntico en la sim del host
+    // y en el motor del propio jugador, aunque cada lado procese el mensaje en momentos
+    // distintos por la latencia. Si usáramos el frame local, el garbage caería en frames
+    // diferentes y las dos simulaciones deterministas divergirían (top-out falso).
+    simulation.engine.queueGarbage(lines, holeSeed, frame, attackId);
   }
 
   advanceAll(targetFrame: number): HostSimulatedPlayer[] {
