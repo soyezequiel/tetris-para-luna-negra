@@ -830,7 +830,7 @@ canvas {
 .online-field {
   display: grid;
   gap: 6px;
-  margin-top: 18px;
+  margin-top: 10px;
 }
 
 .online-field span,
@@ -861,7 +861,7 @@ canvas {
   flex-wrap: wrap;
   gap: 10px;
   align-items: end;
-  margin-top: 14px;
+  margin-top: 10px;
 }
 
 .online-create-actions button,
@@ -1043,55 +1043,6 @@ canvas {
 .online-bet-actions .danger-action {
   border-color: #eb445a;
   background: rgba(235, 68, 90, 0.16);
-}
-
-.online-bet-log {
-  display: grid;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 8px;
-  border: 1px solid rgba(247, 247, 242, 0.12);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.22);
-}
-
-.online-bet-log > strong {
-  color: rgba(247, 247, 242, 0.72);
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.online-bet-log-row {
-  display: grid;
-  grid-template-columns: 54px 1fr;
-  gap: 8px;
-  align-items: start;
-  color: rgba(247, 247, 242, 0.74);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.online-bet-log-row span {
-  color: rgba(247, 247, 242, 0.42);
-  font-family: Consolas, "Courier New", monospace;
-}
-
-.online-bet-log-row p {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.online-bet-log-ok p {
-  color: #0de3a8;
-}
-
-.online-bet-log-warn p {
-  color: #f7c850;
-}
-
-.online-bet-log-error p {
-  color: #eb445a;
 }
 
 .online-room-row span,
@@ -1964,10 +1915,10 @@ canvas {
 .cs2-main {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   min-height: 0;
   overflow: auto;
-  padding: clamp(16px, 2vw, 26px);
+  padding: clamp(12px, 1.4vw, 18px);
   border: 1px solid var(--cs2-line);
   border-radius: 12px;
   background: var(--cs2-panel);
@@ -1982,7 +1933,7 @@ canvas {
 }
 
 .cs2-header h1 {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   font-family: "Arial Black", Arial, sans-serif;
   font-size: clamp(24px, 3vw, 36px);
   line-height: 1;
@@ -2003,7 +1954,7 @@ canvas {
 }
 
 .cs2-ready-pill {
-  padding: 6px 12px;
+  padding: 5px 10px;
   border: 1px solid var(--cs2-line);
   border-radius: 999px;
   background: var(--cs2-card);
@@ -2016,8 +1967,8 @@ canvas {
 .cs2-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  gap: 8px;
+  padding: 12px;
   border: 1px solid var(--cs2-line);
   border-radius: 10px;
   background: var(--cs2-card);
@@ -2038,7 +1989,7 @@ canvas {
 /* Botones */
 .cs2-btn {
   appearance: none;
-  padding: 11px 16px;
+  padding: 9px 14px;
   border: 1px solid var(--cs2-line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
@@ -2112,8 +2063,8 @@ canvas {
 .cs2-identity {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 9px 12px;
   border: 1px solid var(--cs2-line);
   border-radius: 10px;
   background: linear-gradient(90deg, rgba(78, 161, 255, 0.12), transparent);
@@ -2139,7 +2090,7 @@ canvas {
 .cs2-room-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .cs2-room-row {
@@ -2147,7 +2098,7 @@ canvas {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--cs2-line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
@@ -2182,15 +2133,15 @@ canvas {
 .cs2-team-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .cs2-player-card {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--cs2-line);
   border-left: 3px solid rgba(255, 255, 255, 0.15);
   border-radius: 8px;
@@ -2306,9 +2257,9 @@ canvas {
 .cs2-lobby-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   margin-top: auto;
-  padding-top: 6px;
+  padding-top: 4px;
 }
 
 .cs2-lobby-actions .cs2-btn {
@@ -2320,8 +2271,8 @@ canvas {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 9px 12px;
   border: 1px solid rgba(78, 161, 255, 0.24);
   border-radius: 10px;
   background: rgba(78, 161, 255, 0.08);
