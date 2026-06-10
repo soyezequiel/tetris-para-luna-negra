@@ -11,6 +11,7 @@ import {
   type RunHistoryEntry,
 } from './app/runHistory';
 import { soundCueForRunProgress } from './app/runEffects';
+import { nextAutoPlayInput } from './app/autoPlay'; // TRUCO AUTOPLAY
 import { createRunSummary, RunSplitTracker, type LineSplit, type RunSummary } from './app/runStats';
 import { canAdvanceGame, canCommitLocalOnlineTerminal, gameOverReasonMessage, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import {
@@ -137,6 +138,7 @@ let selectedHistoryEntryId: string | null = null;
 let libraryError: string | null = null;
 let pendingConfirmAction: DestructiveRunAction | null = null;
 let touchControlsHidden = best.touchControlsHidden;
+let autoPlayEnabled = false; // TRUCO AUTOPLAY: el bot juega solo al activarse
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
@@ -251,6 +253,11 @@ function loop(): void {
   if (!consumedByApp && canAdvanceGame(appMode, state.status)) {
     const beforeTickState = engine.getState();
     const gameInputs = toGameInputs(controlInputs, candidateFrame);
+    // TRUCO AUTOPLAY: inyecta la acción del bot como si fuera una tecla más.
+    if (autoPlayEnabled) {
+      const botAction = nextAutoPlayInput(state);
+      if (botAction) gameInputs.push({ frame: candidateFrame, action: botAction });
+    }
     sendOnlineInputsToHost(gameInputs);
     playImmediateInputSounds(gameInputs.map((event) => event.action));
     for (const event of gameInputs) recordInput(replay, event);
@@ -391,6 +398,11 @@ function handleOverlayClick(event: MouseEvent): void {
   const action = control.dataset.uiAction;
   if (action === 'toggle-touch-controls') {
     toggleTouchControls();
+    return;
+  }
+  if (action === 'toggle-autoplay') { // TRUCO AUTOPLAY
+    autoPlayEnabled = !autoPlayEnabled;
+    input.releaseAll();
     return;
   }
   if (action === 'confirm-destructive') {
@@ -2489,6 +2501,7 @@ function renderOverlay(state: GameState): void {
   const activeVolumeChannel = getActiveVolumeChannel();
   const html = `
     <div class="brand">TETRA</div>
+    <button type="button" data-ui-action="toggle-autoplay" title="test" style="position:fixed;left:4px;bottom:4px;z-index:50;font:10px system-ui;padding:1px 5px;border:none;border-radius:3px;background:${autoPlayEnabled ? 'rgba(80,200,120,0.55)' : 'rgba(255,255,255,0.06)'};color:rgba(255,255,255,${autoPlayEnabled ? '0.85' : '0.28'});cursor:pointer;">test</button><!-- TRUCO AUTOPLAY -->
     <div class="help">${escapeHtml(helpText())}</div>
     <div class="best">Best ${best.best40LineFrames === null ? '--:--.---' : formatFrames(best.best40LineFrames)}</div>
     <div class="audio-panel">
