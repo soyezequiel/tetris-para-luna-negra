@@ -267,7 +267,7 @@ function loop(): void {
     playAcceptedMoveSound(beforeTickState.active, state.active, gameInputs.map((event) => event.action));
   }
 
-  syncOnline(state);
+  syncOnline();
   renderer.render(state);
   renderOverlay(state);
   requestAnimationFrame(loop);
@@ -1880,12 +1880,19 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
   }
 }
 
-function syncOnline(state: GameState): void {
+function syncOnline(): void {
   if (!onlineRoom) return;
   const now = performance.now();
   if (shouldPollOnline(now)) pollOnlineRoom();
   if (appMode === 'onlineCountdown') maybeStartOnlineRun();
   ensureMigratedHostAuthority();
+  // maybeStartOnlineRun() pudo haber arrancado la ronda nueva (motor fresco vía
+  // startNewRun) en esta misma vuelta. El `state` recibido se capturó en loop()
+  // ANTES de ese reset, así que todavía refleja el estado terminal de la ronda
+  // anterior. Si lo usáramos para reportar resultado/eliminación, cada perdedor
+  // se autoeliminaría y el ganador re-enviaría su 'won' en la ronda nueva, que
+  // terminaría al instante repitiendo al ganador. Releemos el estado vivo.
+  const liveState = engine.getState();
   // El host sigue siendo la autoridad de la ronda aunque su propia partida haya
   // terminado y esté mirando los resultados: si dejara de simular, el resto de
   // los jugadores se quedaría sin garbage, sin snapshots y sin eliminaciones, y
@@ -1893,13 +1900,13 @@ function syncOnline(state: GameState): void {
   const roomStillRunning = onlineRoom.status === 'playing' || onlineRoom.status === 'countdown';
   const hostStillAuthority = isOnlineHost() && onlineRunStarted && appMode === 'onlineResults' && roomStillRunning;
   if (appMode === 'onlinePlaying' || hostStillAuthority) {
-    if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(state));
+    if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(liveState));
     else flushOnlineInputOutbox();
     applyRoomAttacks(onlineRoom);
-    if (shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(state);
-    if (isOnlineHost() && state.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(state);
-    if (state.status === 'finished' && !onlineResultSubmitted) postOnlineResult(state);
-    if (state.status === 'gameover') postOnlineElimination(state);
+    if (shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(liveState);
+    if (isOnlineHost() && liveState.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(liveState);
+    if (liveState.status === 'finished' && !onlineResultSubmitted) postOnlineResult(liveState);
+    if (liveState.status === 'gameover') postOnlineElimination(liveState);
   }
 }
 
@@ -2464,7 +2471,7 @@ function syncOnlineVisibilityChange(): void {
   if (lunaIdentity) void syncLunaPresence();
   if (!onlineRoom) return;
   eagerRefreshBetIfPending();
-  syncOnline(engine.getState());
+  syncOnline();
 }
 
 // Al volver de pagar en Luna Negra (otra pestaña/app) refrescamos la apuesta de
@@ -2482,15 +2489,14 @@ function syncOnlineBackground(): void {
   if (!onlineRoom) return;
   if (!['roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return;
 
-  let state = engine.getState();
   if (appMode === 'onlinePlaying') {
-    if (!hasBlockingModal() && canAdvanceGame(appMode, state.status)) {
-      state = advanceGameToFrame(targetGameplayFrame(), []);
+    if (!hasBlockingModal() && canAdvanceGame(appMode, engine.getState().status)) {
+      advanceGameToFrame(targetGameplayFrame(), []);
     } else {
       syncGameplayClockToCurrentFrame();
     }
   }
-  syncOnline(state);
+  syncOnline();
 }
 
 function createOnlineGameSnapshot(state: GameState): OnlineGameSnapshot {
