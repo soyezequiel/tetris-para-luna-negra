@@ -2501,7 +2501,7 @@ function renderOverlay(state: GameState): void {
   const activeVolumeChannel = getActiveVolumeChannel();
   const html = `
     <div class="brand">TETRA</div>
-    <button type="button" data-ui-action="toggle-autoplay" title="test" style="position:fixed;left:4px;bottom:4px;z-index:50;font:10px system-ui;padding:1px 5px;border:none;border-radius:3px;background:${autoPlayEnabled ? 'rgba(80,200,120,0.55)' : 'rgba(255,255,255,0.06)'};color:rgba(255,255,255,${autoPlayEnabled ? '0.85' : '0.28'});cursor:pointer;">test</button><!-- TRUCO AUTOPLAY -->
+    <button type="button" data-ui-action="toggle-autoplay" title="test" style="position:fixed;left:4px;bottom:4px;z-index:50;pointer-events:auto;font:10px system-ui;padding:1px 5px;border:none;border-radius:3px;background:${autoPlayEnabled ? 'rgba(80,200,120,0.55)' : 'rgba(255,255,255,0.06)'};color:rgba(255,255,255,${autoPlayEnabled ? '0.85' : '0.28'});cursor:pointer;">test</button><!-- TRUCO AUTOPLAY -->
     <div class="help">${escapeHtml(helpText())}</div>
     <div class="best">Best ${best.best40LineFrames === null ? '--:--.---' : formatFrames(best.best40LineFrames)}</div>
     <div class="audio-panel">
