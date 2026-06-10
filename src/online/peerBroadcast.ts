@@ -17,6 +17,18 @@ export interface OnlinePeerSnapshotMessage {
 }
 
 export type OnlinePeerAttackMessage = Omit<AttackRequest, 'roomId'> & { type: 'attack' };
+// Intención de ataque que un invitado manda al host: el host elige objetivo y la rutea.
+// A diferencia de OnlinePeerAttackMessage (host -> víctima, ya resuelto), esto va
+// invitado -> host y todavía no tiene toPlayerId.
+export interface OnlinePeerAttackIntentMessage {
+  type: 'attackIntent';
+  fromPlayerId: string;
+  attackId: string;
+  lines: number;
+  holeSeed: number;
+  frame: number;
+  seed?: number;
+}
 export interface OnlinePeerInputMessage {
   type: 'input';
   playerId: string;
@@ -40,6 +52,7 @@ export interface OnlinePeerKoMessage {
 type OnlinePeerMessage =
   | OnlinePeerSnapshotMessage
   | OnlinePeerAttackMessage
+  | OnlinePeerAttackIntentMessage
   | OnlinePeerInputMessage
   | OnlinePeerKoMessage;
 
@@ -48,6 +61,7 @@ interface OnlinePeerBroadcasterOptions {
   sendSignal: SendSignal;
   onSnapshot: (remoteId: string, playerId: string, game: OnlineGameSnapshot) => void;
   onAttack?: (remoteId: string, attack: OnlinePeerAttackMessage) => void;
+  onAttackIntent?: (remoteId: string, intent: OnlinePeerAttackIntentMessage) => void;
   onInput?: (remoteId: string, message: OnlinePeerInputMessage) => void;
   onKo?: (remoteId: string, message: OnlinePeerKoMessage) => void;
   onPeerState?: (playerId: string, state: PeerConnectionState) => void;
@@ -93,6 +107,13 @@ export class OnlinePeerBroadcaster {
     const peer = this.peers.get(toPlayerId);
     if (peer?.channel?.readyState !== 'open') return false;
     peer.channel.send(JSON.stringify({ ...attack, type: 'attack', toPlayerId } satisfies OnlinePeerAttackMessage));
+    return true;
+  }
+
+  sendAttackIntent(toPlayerId: string, intent: Omit<OnlinePeerAttackIntentMessage, 'type'>): boolean {
+    const peer = this.peers.get(toPlayerId);
+    if (peer?.channel?.readyState !== 'open') return false;
+    peer.channel.send(JSON.stringify({ ...intent, type: 'attackIntent' } satisfies OnlinePeerAttackIntentMessage));
     return true;
   }
 
@@ -253,6 +274,17 @@ export class OnlinePeerBroadcaster {
           || !Number.isFinite(message.frame)
         ) return;
         this.options.onAttack?.(remoteId, message);
+      }
+      if (message.type === 'attackIntent') {
+        if (
+          !message.fromPlayerId
+          || message.fromPlayerId !== remoteId
+          || !message.attackId
+          || !Number.isFinite(message.lines)
+          || !Number.isFinite(message.holeSeed)
+          || !Number.isFinite(message.frame)
+        ) return;
+        this.options.onAttackIntent?.(remoteId, message);
       }
       if (message.type === 'input') {
         if (
