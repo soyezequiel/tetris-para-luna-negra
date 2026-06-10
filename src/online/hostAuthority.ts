@@ -7,6 +7,8 @@ export interface HostSimulatedPlayer {
   snapshot: GameEngineSnapshot;
   lastProcessedInputSequence: number;
   events: GameEvent[];
+  pendingInputCount: number;
+  consumedInputCount: number;
 }
 
 interface PlayerSimulation {
@@ -16,6 +18,8 @@ interface PlayerSimulation {
   seenInputKeys: Set<string>;
   appliedAttackIds: Set<string>;
   lastProcessedInputSequence: number;
+  consumedInputCount: number;
+  firstInputSeen: boolean;
 }
 
 export class HostAuthoritySimulator {
@@ -37,6 +41,8 @@ export class HostAuthoritySimulator {
           seenInputKeys: new Set(),
           appliedAttackIds: new Set(),
           lastProcessedInputSequence: 0,
+          consumedInputCount: 0,
+          firstInputSeen: false,
         });
       }
     }
@@ -50,6 +56,7 @@ export class HostAuthoritySimulator {
     if (!simulation) return;
     let accepted = 0;
     let maxClamp = 0;
+    let minInputFrame = Number.POSITIVE_INFINITY;
     for (const input of inputs) {
       if (!isAuthoritativeInput(input)) continue;
       const key = input.sequence ? `seq:${input.sequence}` : `${input.frame}:${input.action}`;
@@ -58,16 +65,28 @@ export class HostAuthoritySimulator {
       const appliedFrame = Math.max(input.frame, simulation.frame + 1);
       accepted += 1;
       maxClamp = Math.max(maxClamp, appliedFrame - input.frame);
+      minInputFrame = Math.min(minInputFrame, input.frame);
       simulation.pendingInputs.push({
         ...input,
         frame: appliedFrame,
       });
     }
     simulation.pendingInputs.sort((a, b) => a.frame - b.frame);
-    // Cuánto se re-acomodaron los inputs: si maxClamp es grande, el cliente jugó esos
-    // inputs en frames muy anteriores al de la simulación del host -> divergencia y
-    // posible top-out falso. Solo logueamos cuando hubo desplazamiento relevante.
-    if (accepted > 0 && maxClamp >= 3) {
+    // El primer input revela el "hueco de arranque": si la simulación del host ya
+    // avanzó muchos frames (simFrame alto) antes de recibir cualquier input, todas las
+    // piezas de ese intervalo cayeron solas (torre central) -> blockOut falso.
+    if (accepted > 0 && !simulation.firstInputSeen) {
+      simulation.firstInputSeen = true;
+      console.log('[MP host-firstinput]', {
+        target: playerId.slice(0, 6),
+        simFrameOnArrival: simulation.frame,
+        firstInputFrame: Number.isFinite(minInputFrame) ? minInputFrame : null,
+        startupGapFrames: simulation.frame - (Number.isFinite(minInputFrame) ? minInputFrame : simulation.frame),
+      });
+    }
+    // Cuánto se re-acomodaron los inputs hacia adelante: si maxClamp es grande, el
+    // cliente jugó esos inputs en frames muy anteriores al de la simulación del host.
+    if (accepted > 0 && maxClamp >= 2) {
       console.log('[MP host-input]', {
         target: playerId.slice(0, 6),
         accepted,
@@ -124,12 +143,15 @@ export class HostAuthoritySimulator {
       snapshot: simulation.engine.createSnapshot(),
       lastProcessedInputSequence: simulation.lastProcessedInputSequence,
       events,
+      pendingInputCount: simulation.pendingInputs.length,
+      consumedInputCount: simulation.consumedInputCount,
     };
   }
 
   private consumeInputs(simulation: PlayerSimulation, frame: number): GameInput[] {
     const inputs = simulation.pendingInputs.filter((input) => input.frame <= frame);
     simulation.pendingInputs = simulation.pendingInputs.filter((input) => input.frame > frame);
+    simulation.consumedInputCount += inputs.length;
     for (const input of inputs) {
       simulation.lastProcessedInputSequence = Math.max(
         simulation.lastProcessedInputSequence,

@@ -178,6 +178,7 @@ let onlineHostCommittedEliminations = new Set<string>();
 let onlineHostCommittedResults = new Set<string>();
 let onlineLastAuthoritativeFrame = 0;
 let onlineLastDiagLogAt = 0;
+let onlineLastHostSimLogAt = new Map<string, number>();
 let onlineInputSequence = 0;
 let onlineInputOutbox: SequencedOnlineInput[] = [];
 let onlineActiveRoundId: string | null = null;
@@ -1898,6 +1899,19 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
   );
   applyPeerSnapshot(onlinePlayer.id, update.playerId, snapshot);
   postHostSimulatedProgress(update.playerId, update.state);
+  const nowMs = performance.now();
+  if (update.state.status === 'playing' && nowMs - (onlineLastHostSimLogAt.get(update.playerId) ?? 0) >= 2000) {
+    onlineLastHostSimLogAt.set(update.playerId, nowMs);
+    logMp('host-sim', {
+      target: update.playerId.slice(0, 6),
+      simFrame: update.state.stats.frame,
+      pieces: update.state.stats.pieces,
+      lines: update.state.stats.lines,
+      consumedInputs: update.consumedInputCount,
+      pendingInputs: update.pendingInputCount,
+      board: boardMetrics(update.state.board),
+    });
+  }
   for (const event of update.events) {
     if (event.type === 'lineClear' && event.outgoingLines > 0) {
       onlineAttackSequence += 1;
@@ -1918,6 +1932,10 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
       simFrame: update.state.stats.frame,
       hostFrame: gameFrame,
       lastInputSeq: update.lastProcessedInputSequence,
+      consumedInputs: update.consumedInputCount,
+      pendingInputs: update.pendingInputCount,
+      pieces: update.state.stats.pieces,
+      lines: update.state.stats.lines,
       board: boardMetrics(update.state.board),
       pendingGarbage: update.state.stats.pendingGarbage,
       receivedGarbage: update.state.stats.receivedGarbage,
@@ -1959,6 +1977,8 @@ function syncOnline(): void {
         localFrame: gameFrame,
         serverFrame,
         frameSkew: serverFrame === null ? null : serverFrame - gameFrame,
+        pieces: liveState.stats.pieces,
+        lines: liveState.stats.lines,
         board: boardMetrics(liveState.board),
         pendingGarbage: liveState.stats.pendingGarbage,
         outbox: onlineInputOutbox.length,
