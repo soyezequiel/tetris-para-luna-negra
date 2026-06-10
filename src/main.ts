@@ -139,6 +139,7 @@ let libraryError: string | null = null;
 let pendingConfirmAction: DestructiveRunAction | null = null;
 let touchControlsHidden = best.touchControlsHidden;
 let autoPlayEnabled = false; // TRUCO AUTOPLAY: el bot juega solo al activarse
+let ignoreNextAutoPlayClick = false; // TRUCO AUTOPLAY: pointerdown ya hizo el toggle
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
@@ -223,6 +224,7 @@ replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
 overlayElement.addEventListener('input', handleOverlayInput);
 overlayElement.addEventListener('change', handleOverlayInput);
+overlayElement.addEventListener('pointerdown', handleOverlayPointerDown);
 overlayElement.addEventListener('pointerdown', handleTouchControlPointerDown);
 overlayElement.addEventListener('pointerup', handleTouchControlPointerEnd);
 overlayElement.addEventListener('pointercancel', handleTouchControlPointerEnd);
@@ -389,6 +391,25 @@ function handleOverlayInput(event: Event): void {
   }
 }
 
+function toggleAutoPlay(): void { // TRUCO AUTOPLAY
+  autoPlayEnabled = !autoPlayEnabled;
+  input.releaseAll();
+}
+
+function handleOverlayPointerDown(event: PointerEvent): void {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const control = target.closest<HTMLElement>('[data-ui-action="toggle-autoplay"]');
+  if (!control) return;
+  toggleAutoPlay();
+  ignoreNextAutoPlayClick = true;
+  window.setTimeout(() => {
+    ignoreNextAutoPlayClick = false;
+  }, 500);
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 function handleOverlayClick(event: MouseEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
@@ -401,8 +422,11 @@ function handleOverlayClick(event: MouseEvent): void {
     return;
   }
   if (action === 'toggle-autoplay') { // TRUCO AUTOPLAY
-    autoPlayEnabled = !autoPlayEnabled;
-    input.releaseAll();
+    if (ignoreNextAutoPlayClick) {
+      ignoreNextAutoPlayClick = false;
+      return;
+    }
+    toggleAutoPlay();
     return;
   }
   if (action === 'confirm-destructive') {
@@ -2501,7 +2525,7 @@ function renderOverlay(state: GameState): void {
   const activeVolumeChannel = getActiveVolumeChannel();
   const html = `
     <div class="brand">TETRA</div>
-    <button type="button" data-ui-action="toggle-autoplay" title="test" style="position:fixed;left:4px;bottom:4px;z-index:50;pointer-events:auto;font:10px system-ui;padding:1px 5px;border:none;border-radius:3px;background:${autoPlayEnabled ? 'rgba(80,200,120,0.55)' : 'rgba(255,255,255,0.06)'};color:rgba(255,255,255,${autoPlayEnabled ? '0.85' : '0.28'});cursor:pointer;">test</button><!-- TRUCO AUTOPLAY -->
+    ${renderAutoPlayToggle()}
     <div class="help">${escapeHtml(helpText())}</div>
     <div class="best">Best ${best.best40LineFrames === null ? '--:--.---' : formatFrames(best.best40LineFrames)}</div>
     <div class="audio-panel">
@@ -2529,6 +2553,20 @@ function renderOverlay(state: GameState): void {
     restoreOverlayScroll(scrollSnapshot);
   }
   if (appMode === 'replayPlayback' && playback) updateReplayOverlay(playback.snapshot());
+}
+
+function renderAutoPlayToggle(): string { // TRUCO AUTOPLAY
+  const textColor = autoPlayEnabled ? 'rgba(255,255,255,0.84)' : 'rgba(255,255,255,0.24)';
+  const background = autoPlayEnabled ? 'rgba(80,200,120,0.26)' : 'rgba(255,255,255,0.01)';
+  return `
+    <button
+      type="button"
+      data-ui-action="toggle-autoplay"
+      title="test"
+      aria-label="test"
+      style="position:fixed;left:0;bottom:0;z-index:50;width:54px;height:40px;display:grid;place-items:end start;padding:0 0 5px 5px;border:none;background:${background};color:${textColor};font:10px system-ui;line-height:1;border-radius:0 6px 0 0;cursor:pointer;pointer-events:auto;touch-action:manipulation;user-select:none;"
+    >test</button>
+  `;
 }
 
 type OverlayFieldFocusSnapshot = {
