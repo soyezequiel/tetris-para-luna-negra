@@ -48,17 +48,33 @@ export class HostAuthoritySimulator {
   pushInputs(playerId: string, inputs: GameInput[]): void {
     const simulation = this.simulations.get(playerId);
     if (!simulation) return;
+    let accepted = 0;
+    let maxClamp = 0;
     for (const input of inputs) {
       if (!isAuthoritativeInput(input)) continue;
       const key = input.sequence ? `seq:${input.sequence}` : `${input.frame}:${input.action}`;
       if (simulation.seenInputKeys.has(key)) continue;
       simulation.seenInputKeys.add(key);
+      const appliedFrame = Math.max(input.frame, simulation.frame + 1);
+      accepted += 1;
+      maxClamp = Math.max(maxClamp, appliedFrame - input.frame);
       simulation.pendingInputs.push({
         ...input,
-        frame: Math.max(input.frame, simulation.frame + 1),
+        frame: appliedFrame,
       });
     }
     simulation.pendingInputs.sort((a, b) => a.frame - b.frame);
+    // Cuánto se re-acomodaron los inputs: si maxClamp es grande, el cliente jugó esos
+    // inputs en frames muy anteriores al de la simulación del host -> divergencia y
+    // posible top-out falso. Solo logueamos cuando hubo desplazamiento relevante.
+    if (accepted > 0 && maxClamp >= 3) {
+      console.log('[MP host-input]', {
+        target: playerId.slice(0, 6),
+        accepted,
+        maxClampFrames: maxClamp,
+        simFrame: simulation.frame,
+      });
+    }
   }
 
   queueGarbage(playerId: string, lines: number, holeSeed: number, attackId: string): void {

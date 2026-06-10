@@ -177,6 +177,7 @@ let onlineHostLastProgressAt = new Map<string, number>();
 let onlineHostCommittedEliminations = new Set<string>();
 let onlineHostCommittedResults = new Set<string>();
 let onlineLastAuthoritativeFrame = 0;
+let onlineLastDiagLogAt = 0;
 let onlineInputSequence = 0;
 let onlineInputOutbox: SequencedOnlineInput[] = [];
 let onlineActiveRoundId: string | null = null;
@@ -339,6 +340,31 @@ function targetGameplayFrame(now = performance.now()): number {
 
 function syncGameplayClockToCurrentFrame(): void {
   gameClockOriginMs = performance.now() - gameFrame * GAME_FRAME_MS;
+}
+
+// Diagnóstico de partidas multijugador. Imprime en consola con prefijo [MP] para
+// poder filtrar. Pensado para entender por qué un jugador "muere con espacio": al
+// comparar el tablero local del cliente contra el autoritativo del host y el desfase
+// de frames, se ve si el host está topando falsamente por divergencia de simulación.
+function logMp(event: string, data: Record<string, unknown>): void {
+  console.log(`[MP ${event}]`, { role: isOnlineHost() ? 'host' : 'guest', player: onlinePlayer.id.slice(0, 6), seed: onlineRoom?.seed, ...data });
+}
+
+// Métricas baratas de un tablero para los logs: cuántas celdas ocupadas hay y a qué
+// altura llega la pila (filas desde la primera fila ocupada hasta el fondo).
+function boardMetrics(board: ReadonlyArray<ReadonlyArray<unknown>>): { filled: number; height: number; rows: number } {
+  let filled = 0;
+  let topRow = -1;
+  for (let y = 0; y < board.length; y += 1) {
+    const row = board[y];
+    for (let x = 0; x < row.length; x += 1) {
+      if (row[x] !== null) {
+        filled += 1;
+        if (topRow === -1) topRow = y;
+      }
+    }
+  }
+  return { filled, height: topRow === -1 ? 0 : board.length - topRow, rows: board.length };
 }
 
 function advanceGameToFrame(targetFrame: number, finalFrameInputs: GameInput[]): GameState {
@@ -1885,6 +1911,17 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
     }
   }
   if (update.state.status === 'gameover' && !onlineHostCommittedEliminations.has(update.playerId)) {
+    logMp('host-eliminate', {
+      target: update.playerId.slice(0, 6),
+      reason: update.state.stats.gameOverReason,
+      gameOverFrame: update.state.stats.gameOverFrame,
+      simFrame: update.state.stats.frame,
+      hostFrame: gameFrame,
+      lastInputSeq: update.lastProcessedInputSequence,
+      board: boardMetrics(update.state.board),
+      pendingGarbage: update.state.stats.pendingGarbage,
+      receivedGarbage: update.state.stats.receivedGarbage,
+    });
     void commitOnlineElimination(createOnlineKoReportFromState(update.playerId, update.state));
   }
   if (update.state.status === 'finished' && !onlineHostCommittedResults.has(update.playerId)) {
@@ -1912,6 +1949,22 @@ function syncOnline(): void {
   const roomStillRunning = onlineRoom.status === 'playing' || onlineRoom.status === 'countdown';
   const hostStillAuthority = isOnlineHost() && onlineRunStarted && appMode === 'onlineResults' && roomStillRunning;
   if (appMode === 'onlinePlaying' || hostStillAuthority) {
+    if (appMode === 'onlinePlaying' && now - onlineLastDiagLogAt >= 2000) {
+      onlineLastDiagLogAt = now;
+      const serverFrame = onlineRoom.startsAtServerMs
+        ? Math.floor((onlineNowMs() - onlineRoom.startsAtServerMs) / GAME_FRAME_MS)
+        : null;
+      logMp('heartbeat', {
+        status: liveState.status,
+        localFrame: gameFrame,
+        serverFrame,
+        frameSkew: serverFrame === null ? null : serverFrame - gameFrame,
+        board: boardMetrics(liveState.board),
+        pendingGarbage: liveState.stats.pendingGarbage,
+        outbox: onlineInputOutbox.length,
+        lastAuthFrame: onlineLastAuthoritativeFrame,
+      });
+    }
     if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(liveState));
     else flushOnlineInputOutbox();
     applyRoomAttacks(onlineRoom);
@@ -2333,6 +2386,23 @@ function reconcileLocalEngine(game: OnlineGameSnapshot): void {
   onlineInputOutbox = onlineInputOutbox.filter((input) => input.sequence > acknowledgedSequence);
   if (!shouldReconcileLocalEngineSnapshot(engine.getState(), game, onlineInputOutbox.length)) return;
 
+  const localBefore = engine.getState();
+  if ((game.status === 'gameover' || game.status === 'finished') && localBefore.status === 'playing') {
+    logMp('reconcile-kill', {
+      authStatus: game.status,
+      authReason: snapshot.gameOverReason,
+      authFrame: snapshot.frame,
+      localFrame: gameFrame,
+      frameSkew: gameFrame - snapshot.frame,
+      pendingInputs: onlineInputOutbox.length,
+      ackSeq: acknowledgedSequence,
+      lastSentSeq: onlineInputSequence,
+      localBoard: boardMetrics(localBefore.board),
+      authBoard: boardMetrics(snapshot.board),
+      localPendingGarbage: localBefore.stats.pendingGarbage,
+    });
+  }
+
   try {
     engine.restoreSnapshot(snapshot);
   } catch (error) {
@@ -2447,6 +2517,16 @@ function applyOnlineAttack(attack: OnlineAttack): void {
   if (attack.toPlayerId !== onlinePlayer.id || onlineAppliedAttackIds.has(attack.id)) return;
   onlineAppliedAttackIds.add(attack.id);
   rememberOnlineAttack(attack.fromPlayerId, attack.toPlayerId, attack.lines);
+  const beforeGarbage = engine.getState();
+  logMp('garbage-in', {
+    from: attack.fromPlayerId.slice(0, 6),
+    lines: attack.lines,
+    attackFrame: attack.frame,
+    gameFrame,
+    holeSeed: attack.holeSeed,
+    board: boardMetrics(beforeGarbage.board),
+    pendingBefore: beforeGarbage.stats.pendingGarbage,
+  });
   engine.queueGarbage(attack.lines, attack.holeSeed, gameFrame, attack.id);
 }
 
