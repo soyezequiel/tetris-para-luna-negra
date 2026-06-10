@@ -454,7 +454,9 @@ test.describe('TETRA browser flows', () => {
   });
 
   test('enters a Luna Negra room from invite query and cleans the token', async ({ page }) => {
+    const avatarUrl = 'https://example.com/nostr-host.png';
     await mockOnlineApi(page);
+    await mockAvatarImage(page, avatarUrl);
     await page.addInitScript(() => {
       window.localStorage.clear();
     });
@@ -477,6 +479,12 @@ test.describe('TETRA browser flows', () => {
       avatarUrl: 'https://example.com/nostr-host.png',
       gameId: 'tetra-game',
     });
+    const topbarAvatar = page.locator('.dash-user .online-avatar img');
+    await expect(topbarAvatar).toHaveAttribute('src', avatarUrl);
+    await expect(topbarAvatar).toBeVisible();
+    const playerAvatar = page.locator('.dash-player-card').filter({ hasText: 'Nostr Host' }).locator('.online-avatar img');
+    await expect(playerAvatar).toHaveAttribute('src', avatarUrl);
+    await expect(playerAvatar).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.location.search.includes('inviteToken'))).toBe(false);
   });
 
@@ -758,6 +766,15 @@ async function addStoredLunaIdentity(page: Page): Promise<void> {
       avatarUrl: null,
       gameId: 'tetra-game',
     }));
+  });
+}
+
+async function mockAvatarImage(page: Page, url: string): Promise<void> {
+  await page.route(url, async (route) => {
+    await route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#39d49a"/></svg>',
+    });
   });
 }
 

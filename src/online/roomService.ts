@@ -216,23 +216,62 @@ async function enterLunaNegraRoomOnce(
     return { room, player };
   }
 
-  if (!invite.host) {
-    throw new OnlineRoomError('La sala todavia no fue abierta por el host.', 404);
-  }
-
-  const room = await createRoom(store, {
-    roomId,
-    playerId: player.id,
-    npub: player.npub,
-    lunaGameId: invite.gameId,
-    name: player.name,
-    avatarUrl: player.avatarUrl,
-    visibility: 'private',
-    mode: 'custom',
-    matchType: 'battle',
-    rules: BATTLE_RULES,
-  }, nowMs);
+  const room = await createLunaNegraRoomFromInvite(store, roomId, invite, player, nowMs);
   return { room, player };
+}
+
+async function createLunaNegraRoomFromInvite(
+  store: RoomStore,
+  roomId: string,
+  invite: VerifiedLunaNegraInvite,
+  player: LunaNegraPlayer,
+  nowMs: number,
+): Promise<OnlineRoom> {
+  const mode: OnlineRoomMode = 'custom';
+  const matchType: OnlineMatchType = 'battle';
+  const ruleset = normalizeRuleset(undefined, matchType);
+  const hostPlayerId = invite.host ? player.id : normalizeLunaNegraHostPlayerId(invite.hostPubkey);
+  const hostPlayer = invite.host
+    ? createPlayer(player.id, player.name, nowMs, player.avatarUrl, player.npub)
+    : createPendingLunaNegraHost(hostPlayerId, nowMs);
+  const players = hostPlayer.id === player.id
+    ? [hostPlayer]
+    : [hostPlayer, createPlayer(player.id, player.name, nowMs, player.avatarUrl, player.npub)];
+  const room: OnlineRoom = {
+    id: roomId,
+    visibility: 'private',
+    mode,
+    matchType,
+    region: DEFAULT_ONLINE_REGION,
+    ruleset,
+    rules: normalizeRoomRules(BATTLE_RULES, mode, ruleset),
+    status: 'lobby',
+    hostPlayerId,
+    createdAtServerMs: nowMs,
+    updatedAtServerMs: nowMs,
+    startsAtServerMs: null,
+    seed: randomSeed(),
+    winnerPlayerId: null,
+    matchResultId: null,
+    players,
+    peerSignals: [],
+    attacks: [],
+    bet: null,
+    lunaGameId: normalizeNullableString(invite.gameId),
+  };
+  await persistRoom(store, room);
+  return room;
+}
+
+function normalizeLunaNegraHostPlayerId(hostPubkey: string | null): string {
+  if (!hostPubkey) throw new OnlineRoomError('Luna Negra invite is missing host pubkey.', 400);
+  return normalizePlayerId(hostPubkey);
+}
+
+function createPendingLunaNegraHost(hostPlayerId: string, nowMs: number): OnlinePlayer {
+  const player = createPlayer(hostPlayerId, 'Host', nowMs);
+  player.status = 'disconnected';
+  return player;
 }
 
 async function joinRoomOnce(

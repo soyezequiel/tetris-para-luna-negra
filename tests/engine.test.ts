@@ -1279,6 +1279,49 @@ describe('core stacker engine', () => {
     ]);
   });
 
+  it('lets a Luna Negra guest materialize the room before the host opens the game', async () => {
+    const store = new MemoryRoomStore();
+
+    const guest = await enterLunaNegraRoom(store, {
+      npub: 'npub-guest-player',
+      pubkey: 'pubkey-guest-player',
+      gameId: 'tetra-game',
+      displayName: 'Guest Name',
+      avatarUrl: 'https://example.com/guest.png',
+      roomId: 'lnroom-prehost',
+      host: false,
+      hostPubkey: 'pubkey-host-player',
+      expiresAt: null,
+    }, 1000);
+
+    expect(guest.player.id).toBe('pubkey-guest-player');
+    expect(guest.room.id).toBe('LNROOM-PREHOST');
+    expect(guest.room.hostPlayerId).toBe('pubkey-host-player');
+    expect(guest.room.lunaGameId).toBe('tetra-game');
+    expect(guest.room.players.map((player) => [player.id, player.name, player.status, player.npub])).toEqual([
+      ['pubkey-host-player', 'Host', 'disconnected', null],
+      ['pubkey-guest-player', 'Guest Name', 'joined', 'npub-guest-player'],
+    ]);
+
+    const host = await enterLunaNegraRoom(store, {
+      npub: 'npub-host-player',
+      pubkey: 'pubkey-host-player',
+      gameId: 'tetra-game',
+      displayName: 'Nostr Host',
+      avatarUrl: 'https://example.com/host.png',
+      roomId: 'lnroom-prehost',
+      host: true,
+      hostPubkey: 'pubkey-host-player',
+      expiresAt: null,
+    }, 1100);
+
+    expect(host.room.hostPlayerId).toBe('pubkey-host-player');
+    expect(host.room.players.map((player) => [player.id, player.name, player.status, player.npub, player.avatarUrl])).toEqual([
+      ['pubkey-host-player', 'Nostr Host', 'joined', 'npub-host-player', 'https://example.com/host.png'],
+      ['pubkey-guest-player', 'Guest Name', 'joined', 'npub-guest-player', 'https://example.com/guest.png'],
+    ]);
+  });
+
   it('rejects Luna Negra guests when the verified host does not match the room host', async () => {
     const store = new MemoryRoomStore();
     await enterLunaNegraRoom(store, {

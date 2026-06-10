@@ -3320,12 +3320,14 @@ function onlineAliveText(): string {
 function renderOnlineAvatar(
   player: { name: string; avatarUrl?: string | null },
   size: 'small' | 'medium' = 'medium',
+  extraClass = '',
 ): string {
   const image = player.avatarUrl
     ? `<img src="${escapeHtml(player.avatarUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'" />`
     : '';
+  const classes = ['online-avatar', `online-avatar-${size}`, extraClass].filter(Boolean).join(' ');
   return `
-    <span class="online-avatar online-avatar-${size}" aria-hidden="true">
+    <span class="${classes}" aria-hidden="true">
       <span class="online-avatar-initials">${escapeHtml(onlineAvatarInitials(player.name))}</span>
       ${image}
     </span>
@@ -3495,24 +3497,25 @@ function renderOnlineBetPanel(host: boolean): string {
     const blocked = lunaNegraBettingBlockedReason();
     const canCreate = !blocked && !onlineBetBusy;
     return `
-      <div class="online-bet-panel">
-        <div class="dash-field-group">
-          <label style="color: #f7c850; font-weight: 800; font-size: 11px;">APUESTA (OPCIONAL)</label>
-          <p class="online-bet-note" style="margin: 4px 0 8px; font-size: 12px; line-height: 1.4; color: var(--dash-text-dim);">Creá un pozo: cada jugador deposita el mismo monto y el ganador se lleva todo (menos la comisión de Luna Negra).</p>
-          <div class="dash-join-row">
-            <input type="text" inputmode="numeric" class="dash-input" style="width: 100%;" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50" />
-            <button class="dash-action-btn accent" type="button" style="width: auto; padding: 8px 16px;" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>Crear</button>
-          </div>
-          ${blocked ? `<p class="online-bet-note" style="color: var(--dash-danger); margin-top: 6px;">⚠️ ${escapeHtml(blocked)}</p>` : ''}
+      <section class="online-bet-panel">
+        <div class="online-bet-head">
+          <span>Apuesta opcional</span>
+          <small>Luna Negra</small>
         </div>
-      </div>
+        <p class="online-bet-note">Pozo compartido: todos depositan lo mismo y el ganador cobra el saldo final.</p>
+        <div class="online-bet-create-row">
+          <input type="text" inputmode="numeric" class="dash-input online-bet-input" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50" />
+          <button class="dash-action-btn accent online-bet-create-button" type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>Crear</button>
+        </div>
+        ${blocked ? `<p class="online-bet-note online-bet-warning">Atención: ${escapeHtml(blocked)}</p>` : ''}
+      </section>
     `;
   }
 
   const mine = currentOnlinePlayer();
   const myEntry = mine?.npub ? bet.participants.find((entry) => entry.npub === mine.npub) : undefined;
   const rows = bet.participants.map((entry) => `
-    <div class="online-bet-row" style="display: flex; justify-content: space-between; font-size: 12px; color: var(--dash-text-dim);">
+    <div class="online-bet-row">
       <span>${escapeHtml(betParticipantName(entry))}</span>
       <span>${depositStatusLabel(entry.depositStatus)}</span>
     </div>
@@ -3520,12 +3523,12 @@ function renderOnlineBetPanel(host: boolean): string {
 
   const myDeposit = myEntry && myEntry.depositStatus === 'pending' && (myEntry.bolt11 || myEntry.payUrl)
     ? `
-      <div class="online-bet-deposit" style="margin-top: 8px; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.2); border: 1px solid var(--dash-border); display: flex; flex-direction: column; gap: 8px;">
-        <strong style="font-size: 12px; color: var(--dash-text);">Depositá tus ${bet.stakeSats} sats:</strong>
-        <div class="online-bet-deposit-actions" style="display: flex; flex-direction: column; gap: 6px;">
-          ${myEntry.payUrl ? `<a class="dash-action-btn accent" style="text-align: center; text-decoration: none; display: block; font-size: 12px; padding: 6px 12px;" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
-          ${myEntry.bolt11 ? `<button class="dash-copy-btn" type="button" style="width: 100%;" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
-          ${myEntry.lnurl ? `<button class="dash-copy-btn" type="button" style="width: 100%;" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.lnurl)}">Copiar LNURL</button>` : ''}
+      <div class="online-bet-deposit">
+        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        <div class="online-bet-deposit-actions">
+          ${myEntry.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
+          ${myEntry.bolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
+          ${myEntry.lnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.lnurl)}">Copiar LNURL</button>` : ''}
         </div>
       </div>
     `
@@ -3533,23 +3536,21 @@ function renderOnlineBetPanel(host: boolean): string {
 
   const terminal = ['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status);
   return `
-    <div class="online-bet-panel">
-      <div class="dash-field-group">
-        <label style="color: #f7c850; font-weight: 800; font-size: 11px;">APUESTA · ${escapeHtml(betStatusLabel(bet.status))}</label>
-        <p class="online-bet-note" style="margin: 4px 0 8px; font-size: 11px; line-height: 1.4; color: var(--dash-text-dim);">Pozo ${bet.potSats}/${bet.potTargetSats} sats · stake ${bet.stakeSats} · el ganador cobra ${bet.netPayoutSats} sats (comisión ${bet.feeSats}).</p>
-        
-        <div class="online-bet-rows" style="display: flex; flex-direction: column; gap: 6px; margin: 4px 0;">
-          ${rows}
-        </div>
-        
-        ${myDeposit}
-        
-        <div class="online-bet-actions" style="display: flex; gap: 8px; margin-top: 6px;">
-          <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
-          ${host && !terminal ? `<button class="dash-copy-btn" style="color: var(--dash-danger); border-color: rgba(235, 68, 90, 0.2);" type="button" data-ui-action="online-bet-cancel"${onlineBetBusy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
-        </div>
+    <section class="online-bet-panel">
+      <div class="online-bet-head">
+        <span>Apuesta · ${escapeHtml(betStatusLabel(bet.status))}</span>
+        <small>${bet.potSats}/${bet.potTargetSats} sats</small>
       </div>
-    </div>
+      <p class="online-bet-note">Stake ${bet.stakeSats} · ganador ${bet.netPayoutSats} sats · comisión ${bet.feeSats}.</p>
+      <div class="online-bet-rows">
+        ${rows}
+      </div>
+      ${myDeposit}
+      <div class="online-bet-actions">
+        <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
+        ${host && !terminal ? `<button class="dash-copy-btn dash-kick-btn" type="button" data-ui-action="online-bet-cancel"${onlineBetBusy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
+      </div>
+    </section>
   `;
 }
 
@@ -4185,7 +4186,6 @@ function renderFloatingParticles(): string {
 
 function renderDashboardMenu(state: GameState): string {
   const userDisplayName = onlineName.trim() || 'Jugador';
-  const avatarLetter = userDisplayName.charAt(0).toUpperCase();
 
   const isHomeActive = appMode === 'menu';
   const isPlayActive = appMode === 'soloMenu' || appMode === 'multiplayerMenu' || appMode === 'custom' || appMode === 'onlineMenu' || appMode === 'roomLobby';
@@ -4213,9 +4213,7 @@ function renderDashboardMenu(state: GameState): string {
         </button>
 
         <div class="dash-user">
-          <div class="dash-user-avatar" style="display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700;">
-            ${avatarLetter}
-          </div>
+          ${renderOnlineAvatar({ name: userDisplayName, avatarUrl: onlinePlayer.avatarUrl }, 'small', 'dash-user-avatar')}
           <span class="dash-user-name">${escapeHtml(userDisplayName)}</span>
         </div>
       </header>
@@ -4342,10 +4340,13 @@ function renderDashboardRoomPanel(): string {
 
   const inviteSectionHtml = `
     <div class="dash-invite-section ${!room ? 'glow' : ''}">
+      <div class="dash-invite-copy">
+        <strong>Invitaciones</strong>
+        <span class="dash-invite-text">${escapeHtml(inviteStatusText)}</span>
+      </div>
       <button class="dash-invite-btn" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy || inviteUnavailable ? ' disabled' : ''}>
         ${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}
       </button>
-      <span class="dash-invite-text">${escapeHtml(inviteStatusText)}</span>
     </div>
   `;
 
@@ -4355,9 +4356,12 @@ function renderDashboardRoomPanel(): string {
       ? '<div class="online-empty" style="font-size: 12px; color: var(--dash-text-muted); text-align: center; padding: 12px 0;">No hay salas públicas activas.</div>'
       : onlinePublicRooms.slice(0, 3).map((candidateRoom) => `
         <div class="dash-player-card" style="margin-bottom: 6px;">
-          <div style="display: flex; flex-direction: column; gap: 2px;">
-            <span style="font-size: 13px; font-weight: 700; color: var(--dash-text);">${escapeHtml(candidateRoom.id)}</span>
-            <span style="font-size: 11px; color: var(--dash-text-muted);">${escapeHtml(candidateRoom.hostName)} · ${escapeHtml(matchTypeLabel(candidateRoom.matchType))} · ${candidateRoom.playerCount} jug.</span>
+          <div class="dash-public-room-info">
+            ${renderOnlineAvatar({ name: candidateRoom.hostName, avatarUrl: candidateRoom.hostAvatarUrl }, 'small', 'dash-player-avatar-circle')}
+            <div class="dash-public-room-copy">
+              <span>${escapeHtml(candidateRoom.id)}</span>
+              <small>${escapeHtml(candidateRoom.hostName)} · ${escapeHtml(matchTypeLabel(candidateRoom.matchType))} · ${candidateRoom.playerCount} jug.</small>
+            </div>
           </div>
           <button class="dash-copy-btn" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(candidateRoom.id)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>
         </div>
@@ -4414,88 +4418,100 @@ function renderDashboardRoomPanel(): string {
   const allReady = room.players.length > 0 && room.players.every((candidate) => candidate.ready);
   const betReady = !room.bet || room.bet.status === 'funded';
   const readyCount = room.players.filter((candidate) => candidate.ready).length;
+  const matchText = matchTypeLabel(room.matchType);
+  const statusText = roomStatusLabel(room.status);
+  const visibilityText = room.visibility === 'private' ? 'Privada' : 'Pública';
+  const speedLevelText = `Nivel ${room.rules?.gravityStartingLevel ?? 1}`;
   
   const playersHtml = room.players.map((candidate) => {
     const isHost = candidate.id === room.hostPlayerId;
     const isSelf = candidate.id === onlinePlayer.id;
     const isReady = candidate.ready;
-    const avatarLetter = (candidate.name || 'J').charAt(0).toUpperCase();
     return `
-      <div class="dash-player-card">
+      <div class="dash-player-card ${isSelf ? 'is-self' : ''} ${isReady ? 'is-ready' : ''}">
         <div class="dash-player-info">
-          <div class="dash-player-avatar-circle">
-            ${avatarLetter}
-            ${isHost ? '<span class="dash-player-host-crown">👑</span>' : ''}
+          <div class="dash-player-avatar-wrap">
+            ${renderOnlineAvatar(candidate, 'medium', 'dash-player-avatar-circle')}
           </div>
-          <span class="dash-player-name">${escapeHtml(candidate.name)}${isSelf ? ' (Tú)' : ''}</span>
+          <div class="dash-player-copy">
+            <span class="dash-player-name">${escapeHtml(candidate.name)}${isSelf ? ' (Tú)' : ''}</span>
+            <span class="dash-player-role">${isHost ? 'Anfitrión' : isSelf ? 'Tu jugador' : 'Invitado'}</span>
+          </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
+        <div class="dash-player-actions">
           ${isReady 
             ? '<span class="dash-player-ready-indicator ready">Listo</span>' 
-            : '<span class="dash-player-ready-indicator waiting">Esperando</span>'}
+            : '<span class="dash-player-ready-indicator waiting">Sin listo</span>'}
           ${host && !isSelf 
-            ? `<button class="dash-copy-btn" style="color: var(--dash-danger); border-color: rgba(235, 68, 90, 0.2);" type="button" data-ui-action="online-kick" data-target-player-id="${escapeHtml(candidate.id)}">Kick</button>`
+            ? `<button class="dash-copy-btn dash-kick-btn" type="button" data-ui-action="online-kick" data-target-player-id="${escapeHtml(candidate.id)}">Sacar</button>`
             : ''}
         </div>
       </div>
     `;
   }).join('');
 
-  const visibilityText = room.visibility === 'private' ? 'Privada' : 'Pública';
-  const speedLevelText = `Nivel ${room.rules?.gravityStartingLevel ?? 1}`;
-
   return `
-    <div class="dash-room-header">
+    <div class="dash-room-header dash-room-header-active">
       <div class="dash-room-title-area">
-        <span class="dash-room-eyebrow">${escapeHtml(room.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')}</span>
         <div class="dash-room-code-wrapper">
-          <span class="dash-room-code">${escapeHtml(room.id)}</span>
+          <div class="dash-room-identity-line">
+            <span class="dash-room-eyebrow">${escapeHtml(room.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')}</span>
+            <h2 class="dash-room-code">${escapeHtml(room.id)}</h2>
+          </div>
           <button class="dash-copy-btn" type="button" data-ui-action="online-copy-code" data-code="${escapeHtml(room.id)}">Copiar</button>
         </div>
       </div>
-      <span class="dash-player-ready-indicator ready">${readyCount}/${room.players.length}</span>
+      <div class="dash-ready-stack">
+        <span class="dash-player-ready-indicator ready">${readyCount}/${room.players.length}</span>
+        <span>listos</span>
+      </div>
     </div>
 
-    <p style="margin: 0; font-size: 13px; color: var(--dash-text-dim);">${escapeHtml(matchTypeLabel(room.matchType))} · ${escapeHtml(roomStatusLabel(room.status))}</p>
+    <div class="dash-room-status-line">
+      <span>${escapeHtml(matchText)}</span>
+      <span>${escapeHtml(statusText)}</span>
+    </div>
+
+    <div class="dash-room-summary" aria-label="Configuración de sala">
+      <div class="dash-room-summary-item">
+        <span>Tipo</span>
+        <strong>${escapeHtml(matchText)}</strong>
+      </div>
+      <div class="dash-room-summary-item">
+        <span>Visibilidad</span>
+        <strong>${escapeHtml(visibilityText)}</strong>
+      </div>
+      <div class="dash-room-summary-item">
+        <span>Velocidad</span>
+        <strong>${escapeHtml(speedLevelText)}</strong>
+      </div>
+    </div>
     
     ${renderOnlineError()}
 
     ${host && room.status === 'lobby' ? `
-      <div class="dash-field-group">
-        <label>Visibilidad</label>
-        <div class="dash-buttons-row" style="margin-top: 4px;">
+      <section class="dash-room-section dash-room-visibility">
+        <div class="dash-section-header">
+          <span>Visibilidad</span>
+        </div>
+        <div class="dash-buttons-row">
           <button class="dash-action-btn ${room.visibility === 'private' ? 'accent' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="private"${onlineBusy ? ' disabled' : ''}>Privada</button>
           <button class="dash-action-btn ${room.visibility === 'public' ? 'accent' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="public"${onlineBusy ? ' disabled' : ''}>Pública</button>
         </div>
-      </div>
+      </section>
     ` : ''}
 
-    <div class="dash-field-group">
-      <label>Jugadores</label>
-      <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
+    <section class="dash-room-section">
+      <div class="dash-section-header">
+        <span>Jugadores</span>
+        <small>${readyCount}/${room.players.length} listos</small>
+      </div>
+      <div class="dash-player-list">
         ${playersHtml}
       </div>
-    </div>
+    </section>
 
     ${inviteSectionHtml}
-
-    <div class="dash-field-group">
-      <label>Configuración de Sala</label>
-      <div class="dash-room-settings-list" style="margin-top: 6px;">
-        <div class="dash-room-setting-row">
-          <span class="dash-room-setting-label">Tipo</span>
-          <span class="dash-room-setting-value">${escapeHtml(matchTypeLabel(room.matchType))}</span>
-        </div>
-        <div class="dash-room-setting-row">
-          <span class="dash-room-setting-label">Visibilidad</span>
-          <span class="dash-room-setting-value">${escapeHtml(visibilityText)}</span>
-        </div>
-        <div class="dash-room-setting-row">
-          <span class="dash-room-setting-label">Velocidad</span>
-          <span class="dash-room-setting-value">${escapeHtml(speedLevelText)}</span>
-        </div>
-      </div>
-    </div>
 
     ${renderOnlineBetPanel(host)}
 
