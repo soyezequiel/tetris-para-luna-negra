@@ -83,6 +83,10 @@ const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_BET_FAST_POLL_MS = 750;
 const ONLINE_BET_FAST_POLL_WINDOW_MS = 45_000;
 const ONLINE_PEER_BROADCAST_MS = 100;
+// Contenedores con scroll propio que se reconstruyen al regenerar el overlay.
+// Sin esto, cada re-render (p. ej. polling de salas/apuestas) reinicia el scroll al tope.
+// Debe declararse antes del primer render (loop() al final del módulo) para evitar TDZ.
+const SCROLLABLE_OVERLAY_SELECTORS = ['.dash-room', '.dash-layout', '.menu-panel', '.persistent-room-panel'];
 const ONLINE_KO_BROADCAST_RETRY_MS = 1000;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
 const GAME_FRAME_MS = 1000 / 60;
@@ -2496,10 +2500,6 @@ function restoreOverlayFieldFocus(snapshot: OverlayFieldFocusSnapshot | null): v
     field.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
   }
 }
-
-// Contenedores con scroll propio que se reconstruyen al regenerar el overlay.
-// Sin esto, cada re-render (p. ej. polling de salas/apuestas) reinicia el scroll al tope.
-const SCROLLABLE_OVERLAY_SELECTORS = ['.dash-room', '.dash-layout', '.menu-panel', '.persistent-room-panel'];
 
 function captureOverlayScroll(): Map<string, number> {
   const snapshot = new Map<string, number>();
