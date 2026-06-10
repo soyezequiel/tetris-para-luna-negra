@@ -312,6 +312,66 @@ test.describe('TETRA browser flows', () => {
     expect(requests.restartCount).toBe(1);
   });
 
+  test('keeps the online room when returning from results to the main menu', async ({ page }) => {
+    await mockOnlineApi(page, { finishedCreatedRoom: true });
+    await openFreshApp(page);
+
+    await page.locator('[data-online-field="name"]').fill('Host');
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('onlineResults');
+
+    await action(page, 'main-menu').click();
+
+    await expect.poll(() => appMode(page)).toBe('menu');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id ?? null)).toBe('ROOM');
+    await expect(action(page, 'online-leave')).toHaveText('Salir');
+  });
+
+  test('restores the current online room after a page reload', async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as any).__E2E__ = true;
+    });
+    await mockOnlineApi(page);
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'TETRA' })).toBeVisible();
+    await expect.poll(() => appMode(page)).toBe('menu');
+
+    await page.locator('[data-online-field="name"]').fill('Host');
+    await action(page, 'online-create-private').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id ?? null)).toBe('ROOM');
+
+    await page.reload();
+
+    await expect(page.getByRole('heading', { name: 'ROOM' })).toBeVisible();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id ?? null)).toBe('ROOM');
+  });
+
+  test('blocks page unload confirmation during an active online game', async ({ page }) => {
+    await mockOnlineApi(page, { largePlayingRoom: true });
+    await openFreshApp(page);
+
+    await page.locator('[data-online-field="name"]').fill('Host');
+    await action(page, 'online-create-private').click();
+    await action(page, 'online-ready').click();
+    await action(page, 'online-start').click();
+    await expect.poll(() => appMode(page)).toBe('onlinePlaying');
+
+    const result = await page.evaluate(() => {
+      const event = new BeforeUnloadEvent('beforeunload', { cancelable: true });
+      const dispatched = window.dispatchEvent(event);
+      return {
+        defaultPrevented: event.defaultPrevented,
+        dispatched,
+        returnValue: event.returnValue,
+      };
+    });
+
+    expect(result.defaultPrevented).toBe(true);
+    expect(result.dispatched).toBe(false);
+  });
+
   test('adopts a restarted online round even if the local room is still playing', async ({ page }) => {
     const requests = await mockOnlineApi(page, { largePlayingRoom: true });
     await openFreshApp(page);

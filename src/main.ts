@@ -97,6 +97,10 @@ type LibraryFilter = typeof LIBRARY_FILTERS[number];
 type RunKind = 'standard' | 'custom' | 'online';
 type SequencedOnlineInput = GameInput & { sequence: number };
 type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: string };
+type StoredOnlineRoomSession = {
+  roomId: string;
+  playerId: string;
+};
 
 let inputSettings = loadInputSettings();
 let customSettings = loadCustomSettings();
@@ -194,6 +198,7 @@ let ignoredLunaLaunchRequestIds = new Set<string>();
 const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
 const LUNA_ORIGIN_KEY = 'stack40.lunaOrigin.v1';
 const LUNA_ENTER_ROOM_MESSAGE_TYPE = 'luna-negra:enter-room';
+const ONLINE_ROOM_SESSION_KEY = 'stack40.onlineRoomSession.v1';
 trustedLunaOrigin = loadTrustedLunaOrigin();
 // La presencia caduca a los 20s sin heartbeat (ver docs/luna-negra-social-spec.md).
 // Latimos cada 10s (la mitad del TTL) para que un jugador activo nunca expire,
@@ -214,6 +219,7 @@ document.body.appendChild(replayFileInput);
 window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
 window.addEventListener('wheel', handleVolumeWheel, { passive: false });
 window.addEventListener('message', handleLunaNegraWindowMessage);
+window.addEventListener('beforeunload', handleBeforeUnload);
 window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
   if (lunaIdentity && isPlayerActivelyPresent()) void syncLunaPresence();
@@ -947,6 +953,7 @@ async function bootstrapOnlineStartup(): Promise<void> {
     await bootstrapJoinLink(nextParams.get('join')!.trim());
     return;
   }
+  if (await restoreOnlineRoomSession()) return;
   void refreshPublicRooms();
 }
 
@@ -1003,6 +1010,66 @@ async function bootstrapJoinLink(roomId: string): Promise<void> {
   const url = new URL(window.location.href);
   url.searchParams.delete('join');
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+async function restoreOnlineRoomSession(): Promise<boolean> {
+  const stored = loadOnlineRoomSession();
+  if (!stored) return false;
+  if (stored.playerId !== onlinePlayer.id) {
+    clearOnlineRoomSession();
+    return false;
+  }
+
+  try {
+    const response = await onlineClient.getRoomState(stored.roomId);
+    syncOnlineClock(response.serverNowMs);
+    if (!response.room.players.some((player) => player.id === onlinePlayer.id)) {
+      clearOnlineRoomSession();
+      return false;
+    }
+    enterOnlineRoom(response.room, 'roomLobby');
+    void syncLunaPresence();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadOnlineRoomSession(): StoredOnlineRoomSession | null {
+  try {
+    const raw = sessionStorage.getItem(ONLINE_ROOM_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredOnlineRoomSession>;
+    const roomId = typeof parsed.roomId === 'string' ? normalizeRoomId(parsed.roomId) : '';
+    const playerId = typeof parsed.playerId === 'string' ? parsed.playerId.trim() : '';
+    if (!roomId || !playerId) return null;
+    return { roomId, playerId };
+  } catch {
+    return null;
+  }
+}
+
+function saveOnlineRoomSession(room: OnlineRoom): void {
+  if (!room.players.some((player) => player.id === onlinePlayer.id)) {
+    clearOnlineRoomSession();
+    return;
+  }
+  try {
+    sessionStorage.setItem(ONLINE_ROOM_SESSION_KEY, JSON.stringify({
+      roomId: room.id,
+      playerId: onlinePlayer.id,
+    }));
+  } catch {
+    // sessionStorage puede estar bloqueado; la sala sigue viva en memoria.
+  }
+}
+
+function clearOnlineRoomSession(): void {
+  try {
+    sessionStorage.removeItem(ONLINE_ROOM_SESSION_KEY);
+  } catch {
+    // Sin sessionStorage no hay nada persistente que limpiar.
+  }
 }
 
 function loadStoredLunaIdentity(): LunaIdentity | null {
@@ -1600,6 +1667,7 @@ async function leaveCurrentRoomBeforeNew(targetRoomId?: string): Promise<void> {
 }
 
 function resetOnlineRoomState(): void {
+  clearOnlineRoomSession();
   onlinePeerBroadcaster?.close();
   onlinePeerBroadcaster = null;
   onlinePeerStates = new Map();
@@ -1651,6 +1719,7 @@ function adoptOnlineRoom(room: OnlineRoom): void {
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && room.status === 'countdown';
   onlineRoom = room;
+  saveOnlineRoomSession(room);
   if (room.bet?.status !== 'pending_deposits') onlineBetFastPollUntil = 0;
   onlineActiveRoundId = nextRoundId;
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
@@ -2620,6 +2689,18 @@ function syncOnlineVisibilityChange(): void {
 
 // Al volver de pagar en Luna Negra (otra pestaña/app) refrescamos la apuesta de
 // inmediato, sin esperar el throttle del poll, que es cuando importa la latencia.
+function handleBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!shouldConfirmPageUnload()) return;
+  event.preventDefault();
+  event.returnValue = '';
+}
+
+function shouldConfirmPageUnload(): boolean {
+  return !!onlineRoom
+    && (appMode === 'onlineCountdown' || appMode === 'onlinePlaying')
+    && (onlineRoom.status === 'countdown' || onlineRoom.status === 'playing');
+}
+
 function eagerRefreshBetIfPending(): void {
   if (appMode !== 'roomLobby') return;
   const bet = onlineRoom?.bet;
@@ -3186,7 +3267,8 @@ function renderOnlineResultsOverlay(state: GameState): string {
         ${renderOnlineStandings()}
         <div class="panel-actions">
           ${restartAction}
-          <button type="button" data-ui-action="online-leave">Main menu</button>
+          <button type="button" data-ui-action="main-menu">Menu</button>
+          <button type="button" data-ui-action="online-leave">Salir de la sala</button>
         </div>
       </section>
     </div>
