@@ -321,6 +321,18 @@ Object.assign(window, {
 void bootstrapOnlineStartup();
 
 function targetGameplayFrame(now = performance.now()): number {
+  // En online, host y cliente DEBEN compartir la misma línea de tiempo de frames:
+  // el host resimula al cliente reproduciendo sus inputs (sellados con el frame del
+  // cliente) y aplica garbage por frame. Si cada peer contara frames desde su propio
+  // performance.now() local (gameClockOriginMs), el desfase entre relojes —que crece
+  // durante la partida por drift entre performance.now() y Date.now()— haría que el
+  // host aplicara los inputs en frames distintos a los que el cliente jugó, divergiendo
+  // hasta toparlo falsamente y reemplazarle el tablero por reconciliación. Anclamos el
+  // frame al reloj del servidor (startsAtServerMs) para que ambos avancen alineados.
+  if (appMode === 'onlinePlaying' && onlineRoom?.startsAtServerMs) {
+    const serverFrames = Math.floor((onlineNowMs() - onlineRoom.startsAtServerMs) / GAME_FRAME_MS);
+    return Math.max(gameFrame + 1, serverFrames);
+  }
   const elapsedFrames = Math.floor((now - gameClockOriginMs) / GAME_FRAME_MS);
   return Math.max(gameFrame + 1, elapsedFrames);
 }
