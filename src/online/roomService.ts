@@ -83,7 +83,60 @@ export class OnlineRoomError extends Error {
   }
 }
 
-export async function createRoom(
+/**
+ * Falla de compare-and-set al guardar la sala: otro request la modificó entre
+ * nuestra lectura y nuestra escritura. Las mutaciones se reintentan completas
+ * (releen la sala) para no perder actualizaciones concurrentes — sin esto, un
+ * `progress` en vuelo podía pisar una eliminación o el final de la partida.
+ */
+export class RoomVersionConflictError extends OnlineRoomError {
+  constructor() {
+    super('Room was modified concurrently.', 409);
+  }
+}
+
+const ROOM_MUTATION_ATTEMPTS = 6;
+
+/**
+ * Reintenta una mutación de sala cuando el save falla por conflicto de versión.
+ * Cada intento relee la sala desde el store, así la mutación se aplica sobre el
+ * estado más reciente.
+ */
+async function withRoomConflictRetry<T>(mutation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await mutation();
+    } catch (error) {
+      if (!(error instanceof RoomVersionConflictError) || attempt >= ROOM_MUTATION_ATTEMPTS) throw error;
+    }
+  }
+}
+
+function retryRoomConflicts<A extends unknown[], R>(mutation: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  return (...args: A) => withRoomConflictRetry(() => mutation(...args));
+}
+
+// Toda mutación que persiste una sala pasa por el retry de conflictos de
+// versión. Las funciones `*Once` releen la sala en cada intento.
+export const createRoom = retryRoomConflicts(createRoomOnce);
+export const enterLunaNegraRoom = retryRoomConflicts(enterLunaNegraRoomOnce);
+export const joinRoom = retryRoomConflicts(joinRoomOnce);
+export const setPlayerReady = retryRoomConflicts(setPlayerReadyOnce);
+export const startRoom = retryRoomConflicts(startRoomOnce);
+export const restartRoom = retryRoomConflicts(restartRoomOnce);
+export const updateRoomSettings = retryRoomConflicts(updateRoomSettingsOnce);
+export const leaveRoom = retryRoomConflicts(leaveRoomOnce);
+export const kickPlayer = retryRoomConflicts(kickPlayerOnce);
+export const setPlayerTargeting = retryRoomConflicts(setPlayerTargetingOnce);
+export const updateProgress = retryRoomConflicts(updateProgressOnce);
+export const submitResult = retryRoomConflicts(submitResultOnce);
+export const addAttack = retryRoomConflicts(addAttackOnce);
+export const eliminatePlayer = retryRoomConflicts(eliminatePlayerOnce);
+export const getRoomState = retryRoomConflicts(getRoomStateOnce);
+export const addPeerSignal = retryRoomConflicts(addPeerSignalOnce);
+export const setRoomBet = retryRoomConflicts(setRoomBetOnce);
+
+async function createRoomOnce(
   store: RoomStore,
   request: CreateRoomRequest,
   nowMs = Date.now(),
@@ -134,7 +187,7 @@ export interface VerifiedLunaNegraInvite {
   expiresAt: string | null;
 }
 
-export async function enterLunaNegraRoom(
+async function enterLunaNegraRoomOnce(
   store: RoomStore,
   invite: VerifiedLunaNegraInvite,
   nowMs = Date.now(),
@@ -174,7 +227,7 @@ export async function enterLunaNegraRoom(
   return { room, player };
 }
 
-export async function joinRoom(
+async function joinRoomOnce(
   store: RoomStore,
   request: JoinRoomRequest,
   nowMs = Date.now(),
@@ -197,7 +250,7 @@ export async function joinRoom(
   return room;
 }
 
-export async function setPlayerReady(
+async function setPlayerReadyOnce(
   store: RoomStore,
   request: ReadyRequest,
   nowMs = Date.now(),
@@ -213,7 +266,7 @@ export async function setPlayerReady(
   return room;
 }
 
-export async function startRoom(
+async function startRoomOnce(
   store: RoomStore,
   request: StartRoomRequest,
   nowMs = Date.now(),
@@ -233,7 +286,7 @@ export async function startRoom(
   return room;
 }
 
-export async function restartRoom(
+async function restartRoomOnce(
   store: RoomStore,
   request: RestartRoomRequest,
   nowMs = Date.now(),
@@ -254,7 +307,7 @@ export async function restartRoom(
   return room;
 }
 
-export async function updateRoomSettings(
+async function updateRoomSettingsOnce(
   store: RoomStore,
   request: UpdateRoomSettingsRequest,
   nowMs = Date.now(),
@@ -294,7 +347,7 @@ export async function updateRoomSettings(
  * jugador que queda. Si la sala queda vacía, la elimina. Devuelve la sala
  * resultante (o null si se eliminó) y a quién se le pasó el host.
  */
-export async function leaveRoom(
+async function leaveRoomOnce(
   store: RoomStore,
   request: LeaveRoomRequest,
   nowMs = Date.now(),
@@ -336,7 +389,7 @@ export async function leaveRoom(
 }
 
 /** El host expulsa a otro jugador de la sala. Solo el host puede hacerlo. */
-export async function kickPlayer(
+async function kickPlayerOnce(
   store: RoomStore,
   request: KickPlayerRequest,
   nowMs = Date.now(),
@@ -435,7 +488,7 @@ function prunePresence(records: LunaPresenceRecord[], nowMs: number): LunaPresen
   return records.filter((record) => nowMs - record.updatedAtServerMs <= LUNA_PRESENCE_TTL_MS);
 }
 
-export async function setPlayerTargeting(
+async function setPlayerTargetingOnce(
   store: RoomStore,
   request: SetTargetingRequest,
   nowMs = Date.now(),
@@ -453,7 +506,7 @@ export async function setPlayerTargeting(
   return room;
 }
 
-export async function updateProgress(
+async function updateProgressOnce(
   store: RoomStore,
   request: ProgressRequest,
   nowMs = Date.now(),
@@ -481,7 +534,7 @@ export async function updateProgress(
   return room;
 }
 
-export async function submitResult(
+async function submitResultOnce(
   store: RoomStore,
   request: ResultRequest,
   nowMs = Date.now(),
@@ -516,7 +569,7 @@ export async function submitResult(
   return room;
 }
 
-export async function addAttack(
+async function addAttackOnce(
   store: RoomStore,
   request: AttackRequest,
   nowMs = Date.now(),
@@ -551,7 +604,7 @@ export async function addAttack(
   return room;
 }
 
-export async function eliminatePlayer(
+async function eliminatePlayerOnce(
   store: RoomStore,
   request: EliminateRequest,
   nowMs = Date.now(),
@@ -568,6 +621,13 @@ export async function eliminatePlayer(
     player.eliminatedAtFrame = normalizeNonNegativeInteger(request.frame);
     player.eliminatedAtServerMs = nowMs;
     player.finishedAtServerMs = nowMs;
+    // El KO se acredita solo la primera vez: los reintentos del reporte de
+    // eliminación no deben inflar el contador del atacante.
+    const lastAttackerId = player.recentAttackers[0];
+    const lastAttacker = lastAttackerId ? room.players.find((candidate) => candidate.id === lastAttackerId) : null;
+    if (lastAttacker && lastAttacker.id !== player.id) {
+      lastAttacker.koCount = normalizeNonNegativeInteger((lastAttacker.koCount ?? 0) + 1);
+    }
   }
   player.lines = normalizeNonNegativeInteger(request.lines);
   player.pieces = normalizeNonNegativeInteger(request.pieces);
@@ -578,11 +638,6 @@ export async function eliminatePlayer(
   player.game = request.game ?? null;
   player.dangerLevel = calculateDangerLevel(player.game, player.pendingGarbage);
   player.updatedAtServerMs = nowMs;
-  const lastAttackerId = player.recentAttackers[0];
-  const lastAttacker = lastAttackerId ? room.players.find((candidate) => candidate.id === lastAttackerId) : null;
-  if (lastAttacker && lastAttacker.id !== player.id) {
-    lastAttacker.koCount = normalizeNonNegativeInteger((lastAttacker.koCount ?? 0) + 1);
-  }
   finishRoomIfOnlyOneAlive(room, nowMs);
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
@@ -609,7 +664,7 @@ export async function listPublicRooms(
     .sort((a, b) => b.createdAtServerMs - a.createdAtServerMs);
 }
 
-export async function getRoomState(store: RoomStore, roomId: string, nowMs = Date.now()): Promise<OnlineRoom> {
+async function getRoomStateOnce(store: RoomStore, roomId: string, nowMs = Date.now()): Promise<OnlineRoom> {
   const room = await requireRoom(store, roomId);
   if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
     room.status = 'playing';
@@ -619,7 +674,7 @@ export async function getRoomState(store: RoomStore, roomId: string, nowMs = Dat
   return applyStalePlayers(room, nowMs);
 }
 
-export async function addPeerSignal(
+async function addPeerSignalOnce(
   store: RoomStore,
   request: PeerSignalRequest,
   nowMs = Date.now(),
@@ -722,6 +777,13 @@ export class MemoryRoomStore implements RoomStore {
   async saveRoom(room: OnlineRoom): Promise<void> {
     const normalized = cloneRoom(room);
     if (!normalized) return;
+    const expectedVersion = normalized.version ?? 0;
+    const currentVersion = this.rooms.get(normalized.id)?.version ?? 0;
+    if (currentVersion !== expectedVersion) throw new RoomVersionConflictError();
+    normalized.version = expectedVersion + 1;
+    // El objeto del llamador queda apuntando a la revisión recién guardada,
+    // así un save posterior sobre el mismo objeto no falla por versión vieja.
+    room.version = expectedVersion + 1;
     this.rooms.set(normalized.id, normalized);
     if (normalized.visibility === 'public' && !this.publicIds.includes(normalized.id)) {
       this.publicIds = [normalized.id, ...this.publicIds];
@@ -1235,7 +1297,7 @@ export async function loadRoom(store: RoomStore, roomId: string): Promise<Online
 }
 
 /** Persiste el estado de la apuesta sobre la sala. */
-export async function setRoomBet(
+async function setRoomBetOnce(
   store: RoomStore,
   roomId: string,
   bet: RoomBet | null,

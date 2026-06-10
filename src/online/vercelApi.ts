@@ -1,4 +1,5 @@
-import { MemoryRoomStore, OnlineRoomError, type LunaPresenceRecord, type RoomStore } from './roomService.js';
+import { MemoryRoomStore, OnlineRoomError, RoomVersionConflictError, type LunaPresenceRecord, type RoomStore } from './roomService.js';
+import type { OnlineRoom } from './protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export const config = {
@@ -21,15 +22,30 @@ class UpstashRoomStore implements RoomStore {
     return raw ? JSON.parse(raw) : null;
   }
 
-  async saveRoom(room: unknown, ttlSeconds?: number): Promise<void> {
-    const key = roomKey((room as { id: string }).id);
-    const value = JSON.stringify(room);
-    if (ttlSeconds) await this.command(['SET', key, value, 'EX', ttlSeconds]);
-    else await this.command(['SET', key, value]);
+  async saveRoom(room: OnlineRoom, ttlSeconds?: number): Promise<void> {
+    // Compare-and-set: solo escribe si nadie guardó la sala desde que la leímos.
+    // Sin esto, requests concurrentes (progress/attack/eliminate) se pisaban el
+    // estado entre sí y se perdían eliminaciones o el final de la partida.
+    const expectedVersion = room.version ?? 0;
+    const nextRoom = { ...room, version: expectedVersion + 1 };
+    const result = await this.command<number>([
+      'EVAL',
+      CAS_SAVE_ROOM_SCRIPT,
+      2,
+      roomKey(room.id),
+      roomVersionKey(room.id),
+      JSON.stringify(nextRoom),
+      String(expectedVersion),
+      String(expectedVersion + 1),
+      String(ttlSeconds ?? 0),
+    ]);
+    if (result !== 1) throw new RoomVersionConflictError();
+    // El objeto del llamador queda apuntando a la revisión recién guardada.
+    room.version = expectedVersion + 1;
   }
 
   async deleteRoom(id: string): Promise<void> {
-    await this.command(['DEL', roomKey(id)]);
+    await this.command(['DEL', roomKey(id), roomVersionKey(id)]);
   }
 
   async listPublicRoomIds(): Promise<string[]> {
@@ -176,8 +192,30 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return value;
 }
 
+// La versión vive en una key aparte (no dentro del JSON) para que el script
+// compare sin parsear la sala. Solo este script escribe ambas keys, así nunca
+// divergen. Una sala vieja sin key de versión cuenta como versión 0.
+const CAS_SAVE_ROOM_SCRIPT = `
+local current = redis.call('GET', KEYS[2])
+if current == false then current = '0' end
+if current ~= ARGV[2] then return 0 end
+local ttl = tonumber(ARGV[4])
+if ttl > 0 then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ttl)
+  redis.call('SET', KEYS[2], ARGV[3], 'EX', ttl)
+else
+  redis.call('SET', KEYS[1], ARGV[1])
+  redis.call('SET', KEYS[2], ARGV[3])
+end
+return 1
+`;
+
 function roomKey(id: string): string {
   return `stack40:room:${id}`;
+}
+
+function roomVersionKey(id: string): string {
+  return `stack40:room:${id}:version`;
 }
 
 function publicRoomsKey(): string {

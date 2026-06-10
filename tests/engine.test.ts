@@ -1365,8 +1365,8 @@ describe('core stacker engine', () => {
 
   it('persists winnerNpubs on the bet when the game finishes so they are preserved even if players leave', async () => {
     const store = new MemoryRoomStore();
-    const room = await createRoom(store, { playerId: 'host-player-p', npub: 'npub-host', name: 'Host', visibility: 'public' }, 1000);
-    await joinRoom(store, { roomId: room.id, playerId: 'guest-player-p', npub: 'npub-guest', name: 'Guest' }, 1010);
+    let room = await createRoom(store, { playerId: 'host-player-p', npub: 'npub-host', name: 'Host', visibility: 'public' }, 1000);
+    room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-p', npub: 'npub-guest', name: 'Guest' }, 1010);
     
     room.bet = {
       betId: 'bet-persistence-test',
@@ -1404,12 +1404,9 @@ describe('core stacker engine', () => {
     await leaveRoom(store, { roomId: room.id, playerId: 'host-player-p' }, 1060);
     const roomAfterLeave = await store.getRoom(room.id);
     expect(roomAfterLeave?.players.find((p) => p.id === 'host-player-p')).toBeUndefined();
-
-    if (roomAfterLeave) {
-      roomAfterLeave.bet!.resultReported = false;
-      const updatedAgain = await maybeReportRoomBetResult(store, roomAfterLeave, 1070);
-      expect(updatedAgain?.bet?.winnerNpubs).toEqual(['npub-host']);
-    }
+    // Los ganadores quedan registrados en la apuesta aunque el ganador ya no
+    // esté en la sala.
+    expect(roomAfterLeave?.bet?.winnerNpubs).toEqual(['npub-host']);
 
     vi.unstubAllGlobals();
     delete process.env.LUNA_NEGRA_BASE_URL;

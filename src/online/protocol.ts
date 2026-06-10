@@ -158,6 +158,12 @@ export interface OnlineRoom {
   bet: RoomBet | null;
   /** gameId de Luna Negra capturado del invite (para crear apuestas). */
   lunaGameId: string | null;
+  /**
+   * Versión del registro para escritura optimista (compare-and-set). La maneja
+   * el RoomStore: cada save exitoso la incrementa y un save con versión vieja
+   * falla, así dos requests concurrentes no se pisan el estado de la sala.
+   */
+  version?: number;
 }
 
 export interface OnlineRoomSummary {

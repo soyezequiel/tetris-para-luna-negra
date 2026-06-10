@@ -1843,15 +1843,31 @@ function syncOnline(state: GameState): void {
   const now = performance.now();
   if (shouldPollOnline(now)) pollOnlineRoom();
   if (appMode === 'onlineCountdown') maybeStartOnlineRun();
-  if (appMode === 'onlinePlaying') {
-    if (isOnlineHost()) advanceHostAuthority(gameFrame);
+  // El host sigue siendo la autoridad de la ronda aunque su propia partida haya
+  // terminado y esté mirando los resultados: si dejara de simular, el resto de
+  // los jugadores se quedaría sin garbage, sin snapshots y sin eliminaciones, y
+  // la sala terminaría mal (o nunca).
+  const roomStillRunning = onlineRoom.status === 'playing' || onlineRoom.status === 'countdown';
+  const hostStillAuthority = isOnlineHost() && onlineRunStarted && appMode === 'onlineResults' && roomStillRunning;
+  if (appMode === 'onlinePlaying' || hostStillAuthority) {
+    if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(state));
     else flushOnlineInputOutbox();
     applyRoomAttacks(onlineRoom);
-    if (state.status === 'playing' && shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(state);
+    if (shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(state);
     if (isOnlineHost() && state.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(state);
     if (state.status === 'finished' && !onlineResultSubmitted) postOnlineResult(state);
     if (state.status === 'gameover') postOnlineElimination(state);
   }
+}
+
+// Mientras el host juega, la simulación autoritativa avanza con su gameFrame.
+// Cuando su partida termina, gameFrame se congela (canAdvanceGame es false),
+// así que derivamos el frame objetivo del reloj sincronizado con el servidor
+// para que las partidas remotas sigan corriendo hasta que la sala termine.
+function onlineAuthorityTargetFrame(state: GameState): number {
+  if (state.status === 'playing' || !onlineRoom?.startsAtServerMs) return gameFrame;
+  const elapsedFrames = Math.floor((onlineNowMs() - onlineRoom.startsAtServerMs) / GAME_FRAME_MS);
+  return Math.max(gameFrame, elapsedFrames);
 }
 
 function shouldPollOnline(now: number): boolean {
@@ -2039,6 +2055,9 @@ async function postOnlineElimination(state: GameState): Promise<void> {
 
 async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>, onFailure?: () => void): Promise<void> {
   if (!onlineRoom || !isOnlineHost()) return;
+  // Los KOs llegan repetidos (broadcast por peer con retry + simulación local):
+  // un solo commit por jugador y por ronda.
+  if (onlineHostCommittedEliminations.has(report.playerId)) return;
   const requestSeed = report.seed;
   onlineHostCommittedEliminations.add(report.playerId);
   try {
@@ -2175,11 +2194,16 @@ function syncOnlinePeers(room: OnlineRoom): void {
 }
 
 function broadcastOnlineSnapshot(state: GameState): void {
-  const snapshot = createOnlineGameSnapshot(state);
   onlineLastPeerBroadcastAt = performance.now();
-  onlinePeerBroadcaster?.broadcastSnapshot(onlinePlayer.id, snapshot);
+  // El snapshot propio solo tiene sentido mientras se juega, pero el host debe
+  // seguir retransmitiendo los tableros simulados de los demás aunque su propia
+  // partida haya terminado.
+  if (state.status === 'playing') {
+    const snapshot = createOnlineGameSnapshot(state);
+    onlinePeerBroadcaster?.broadcastSnapshot(onlinePlayer.id, snapshot);
+    if (isOnlineHost()) applyPeerSnapshot(onlinePlayer.id, onlinePlayer.id, snapshot);
+  }
   if (!isOnlineHost()) return;
-  applyPeerSnapshot(onlinePlayer.id, onlinePlayer.id, snapshot);
   for (const player of onlineRoom?.players ?? []) {
     if (player.id === onlinePlayer.id) continue;
     const remoteState = onlineHostAuthority?.getState(player.id);
