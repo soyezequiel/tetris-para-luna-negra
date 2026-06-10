@@ -77,22 +77,22 @@ export class HostAuthoritySimulator {
     // piezas de ese intervalo cayeron solas (torre central) -> blockOut falso.
     if (accepted > 0 && !simulation.firstInputSeen) {
       simulation.firstInputSeen = true;
-      console.log('[MP host-firstinput]', {
+      console.log(`[MP host-firstinput] ${JSON.stringify({
         target: playerId.slice(0, 6),
         simFrameOnArrival: simulation.frame,
         firstInputFrame: Number.isFinite(minInputFrame) ? minInputFrame : null,
         startupGapFrames: simulation.frame - (Number.isFinite(minInputFrame) ? minInputFrame : simulation.frame),
-      });
+      })}`);
     }
     // Cuánto se re-acomodaron los inputs hacia adelante: si maxClamp es grande, el
     // cliente jugó esos inputs en frames muy anteriores al de la simulación del host.
     if (accepted > 0 && maxClamp >= 2) {
-      console.log('[MP host-input]', {
+      console.log(`[MP host-input] ${JSON.stringify({
         target: playerId.slice(0, 6),
         accepted,
         maxClampFrames: maxClamp,
         simFrame: simulation.frame,
-      });
+      })}`);
     }
   }
 

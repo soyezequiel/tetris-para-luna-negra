@@ -348,7 +348,9 @@ function syncGameplayClockToCurrentFrame(): void {
 // comparar el tablero local del cliente contra el autoritativo del host y el desfase
 // de frames, se ve si el host está topando falsamente por divergencia de simulación.
 function logMp(event: string, data: Record<string, unknown>): void {
-  console.log(`[MP ${event}]`, { role: isOnlineHost() ? 'host' : 'guest', player: onlinePlayer.id.slice(0, 6), seed: onlineRoom?.seed, ...data });
+  // Serializamos a string para que la consola imprima TODOS los campos en línea (los
+  // objetos anidados se colapsan a "…" y se pierden al copiar/pegar).
+  console.log(`[MP ${event}] ${JSON.stringify({ role: isOnlineHost() ? 'host' : 'guest', player: onlinePlayer.id.slice(0, 6), seed: onlineRoom?.seed, ...data })}`);
 }
 
 // Métricas baratas de un tablero para los logs: cuántas celdas ocupadas hay y a qué
