@@ -3,15 +3,18 @@ import {
   addAttack,
   createRoom,
   eliminatePlayer,
+  getRoomState,
+  HOST_STALE_MS,
   joinRoom,
   MemoryRoomStore,
+  ROOM_START_DELAY_MS,
   RoomVersionConflictError,
   setPlayerReady,
   startRoom,
   updateProgress,
   type RoomStore,
 } from '../src/online/roomService';
-import type { EliminateRequest, OnlineRoom } from '../src/online/protocol';
+import type { EliminateRequest, OnlineRoom, ProgressRequest } from '../src/online/protocol';
 
 const HOST_ID = 'host-player-1';
 const GUEST_ID = 'guest-player-1';
@@ -103,6 +106,120 @@ describe('room store optimistic locking', () => {
     const persisted = await store.getRoom(room.id);
     expect(persisted?.status).toBe('finished');
     expect(persisted?.winnerPlayerId).toBe(HOST_ID);
+  });
+});
+
+/**
+ * Lleva una sala recién creada a estado 'playing' en un instante controlado y
+ * deja `updatedAtServerMs` en `startedAtMs` (último latido del host), para poder
+ * medir la inactividad del host de forma determinística.
+ */
+async function buildPlayingRoom(
+  store: RoomStore,
+  playerIds: string[],
+  startedAtMs: number,
+): Promise<OnlineRoom> {
+  const [hostId, ...guestIds] = playerIds;
+  const createdAt = startedAtMs - ROOM_START_DELAY_MS - 1;
+  const created = await createRoom(store, { playerId: hostId, name: 'Host', visibility: 'private' }, createdAt);
+  for (const guestId of guestIds) {
+    await joinRoom(store, { roomId: created.id, playerId: guestId, name: guestId }, createdAt);
+  }
+  for (const playerId of playerIds) {
+    await setPlayerReady(store, { roomId: created.id, playerId, ready: true }, createdAt);
+  }
+  const countdown = await startRoom(store, { roomId: created.id, playerId: hostId }, createdAt);
+  // El primer progreso del host pasa la sala de countdown a playing y fija el
+  // último latido del host en `startedAtMs`.
+  const progress: ProgressRequest = {
+    roomId: countdown.id,
+    authorityPlayerId: hostId,
+    playerId: hostId,
+    seed: countdown.seed,
+    lines: 0,
+    pieces: 1,
+    elapsedFrames: 1,
+  };
+  const room = await updateProgress(store, progress, startedAtMs);
+  expect(room.status).toBe('playing');
+  return room;
+}
+
+describe('host failover on disconnect', () => {
+  it('migrates authority to a surviving player when the host goes stale', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 1_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID, THIRD_ID], startedAtMs);
+
+    const recovered = await getRoomState(store, room.id, startedAtMs + HOST_STALE_MS + 1);
+
+    // El host original sale de la ronda y la autoridad pasa al siguiente vivo.
+    expect(recovered.hostPlayerId).not.toBe(HOST_ID);
+    expect([GUEST_ID, THIRD_ID]).toContain(recovered.hostPlayerId);
+    const oldHost = recovered.players.find((player) => player.id === HOST_ID);
+    expect(oldHost?.status).toBe('eliminated');
+    expect(oldHost?.alive).toBe(false);
+    // Con dos jugadores vivos restantes, la ronda sigue.
+    expect(recovered.status).toBe('playing');
+
+    const persisted = await store.getRoom(room.id);
+    expect(persisted?.hostPlayerId).toBe(recovered.hostPlayerId);
+  });
+
+  it('finishes the round when only one player survives the host disconnect', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 2_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID], startedAtMs);
+
+    const recovered = await getRoomState(store, room.id, startedAtMs + HOST_STALE_MS + 1);
+
+    expect(recovered.status).toBe('finished');
+    expect(recovered.winnerPlayerId).toBe(GUEST_ID);
+    expect(recovered.players.find((player) => player.id === HOST_ID)?.status).toBe('eliminated');
+  });
+
+  it('does not migrate while the host keeps the room fresh', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 3_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID, THIRD_ID], startedAtMs);
+
+    const fresh = await getRoomState(store, room.id, startedAtMs + HOST_STALE_MS - 1);
+
+    expect(fresh.hostPlayerId).toBe(HOST_ID);
+    expect(fresh.status).toBe('playing');
+    expect(fresh.players.find((player) => player.id === HOST_ID)?.alive).toBe(true);
+  });
+
+  it('migrates again in cascade when the new host is also gone', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 4_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID, THIRD_ID], startedAtMs);
+
+    // El host original se cae: la autoridad migra al primer sucesor vivo y la
+    // ronda sigue porque todavía quedan dos jugadores.
+    const afterFirst = await getRoomState(store, room.id, startedAtMs + HOST_STALE_MS + 1);
+    expect(afterFirst.status).toBe('playing');
+    expect(afterFirst.hostPlayerId).toBe(GUEST_ID);
+
+    // El sucesor tampoco actualiza la sala: la autoridad migra al último vivo y,
+    // al quedar uno solo, la ronda termina con él como ganador.
+    const afterSecond = await getRoomState(store, room.id, startedAtMs + HOST_STALE_MS * 2 + 2);
+    expect(afterSecond.status).toBe('finished');
+    expect(afterSecond.winnerPlayerId).toBe(THIRD_ID);
+    expect(afterSecond.players.find((player) => player.id === GUEST_ID)?.status).toBe('eliminated');
+  });
+
+  it('voids the round when the stale host has no surviving successor', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 5_000_000;
+    // Sala de un solo jugador (host): si se desconecta no hay sucesor vivo.
+    const room = await buildPlayingRoom(store, [HOST_ID], startedAtMs);
+
+    const recovered = await getRoomState(store, room.id, startedAtMs + HOST_STALE_MS + 1);
+
+    expect(recovered.status).toBe('finished');
+    expect(recovered.winnerPlayerId).toBeNull();
+    expect(recovered.players.find((player) => player.id === HOST_ID)?.status).toBe('eliminated');
   });
 });
 

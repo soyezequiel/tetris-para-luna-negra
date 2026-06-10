@@ -15,6 +15,7 @@ import type {
   OnlinePeerSignal,
   OnlineRoom,
   OnlineRoomMode,
+  OnlineRoomStatus,
   OnlineRuleset,
   OnlineRoomSummary,
   PeerSignalRequest,
@@ -41,6 +42,13 @@ export const ROOM_ID_MIN_LENGTH = 4;
 export const ROOM_ID_MAX_LENGTH = 64;
 export const ROOM_START_DELAY_MS = 5_000;
 export const PLAYER_STALE_MS = 10_000;
+/**
+ * Margen sin actividad del host autoritativo durante una ronda activa antes de
+ * dar por perdida su conexión y migrar la autoridad. Mayor que PLAYER_STALE_MS
+ * (que solo marca 'disconnected' visualmente) y holgado respecto al ritmo de
+ * poll/progreso del host, así un host vivo nunca migra por una pausa pasajera.
+ */
+export const HOST_STALE_MS = 15_000;
 export const ROOM_TTL_SECONDS = 2 * 60 * 60;
 export const MAX_PEER_SIGNALS_PER_ROOM = 200;
 export const MAX_ATTACKS_PER_ROOM = 300;
@@ -666,8 +674,15 @@ export async function listPublicRooms(
 
 async function getRoomStateOnce(store: RoomStore, roomId: string, nowMs = Date.now()): Promise<OnlineRoom> {
   const room = await requireRoom(store, roomId);
+  let changed = false;
   if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
     room.status = 'playing';
+    changed = true;
+  }
+  // El failover corre antes de marcar updatedAtServerMs: mide la inactividad del
+  // host contra la última escritura real, no contra la transición de countdown.
+  if (applyHostFailover(room, nowMs)) changed = true;
+  if (changed) {
     room.updatedAtServerMs = nowMs;
     await persistRoom(store, room);
   }
@@ -928,6 +943,65 @@ function finishRoomIfOnlyOneAlive(room: OnlineRoom, nowMs: number): void {
   room.winnerPlayerId = winner.id;
   room.status = 'finished';
   sealMatchResult(room, nowMs);
+}
+
+/**
+ * Recupera una ronda cuyo host autoritativo dejó de actualizar la sala. Como
+ * solo el host puede emitir progress/attack/eliminate/result, si cierra la
+ * pestaña o pierde conexión sin llamar a /leave la sala quedaría atascada en
+ * 'playing' para siempre. Lo detectamos al leer la sala (getRoomState, que
+ * pollean todos los clientes): si `updatedAtServerMs` no se movió en
+ * HOST_STALE_MS durante una ronda activa, sacamos al host de la ronda y migramos
+ * la autoridad al siguiente jugador vivo. Los clientes releen `hostPlayerId` en
+ * cada poll, así el sucesor asume el rol. Si no queda nadie vivo, anula la ronda
+ * (finished sin ganador). Cada migración refresca `updatedAtServerMs`, dándole
+ * al sucesor su propia ventana antes de que la falta de actividad lo migre de
+ * nuevo en cascada. Devuelve true si mutó la sala.
+ */
+function applyHostFailover(room: OnlineRoom, nowMs: number): boolean {
+  if (room.status !== 'playing' && room.status !== 'countdown') return false;
+  if (nowMs - room.updatedAtServerMs <= HOST_STALE_MS) return false;
+
+  let changed = false;
+  const host = room.players.find((player) => player.id === room.hostPlayerId);
+  if (host && !isTerminalPlayer(host)) {
+    host.status = 'eliminated';
+    host.alive = false;
+    host.ready = true;
+    host.finishedAtServerMs = nowMs;
+    host.eliminatedAtServerMs = nowMs;
+    host.eliminatedAtFrame = host.eliminatedAtFrame ?? normalizeNonNegativeInteger(host.elapsedFrames);
+    host.updatedAtServerMs = nowMs;
+    changed = true;
+  }
+
+  const successor = room.players.find(
+    (player) => player.id !== room.hostPlayerId && player.alive && !isTerminalPlayer(player),
+  );
+  if (successor) {
+    room.hostPlayerId = successor.id;
+    changed = true;
+  }
+
+  finishRoomIfOnlyOneAlive(room, nowMs);
+  // finishRoomIfOnlyOneAlive puede haber mutado el status a 'finished' (TS no lo
+  // ve por el narrowing del guard inicial), así que lo releemos sin estrecharlo.
+  const finishedByOneAlive = (room.status as OnlineRoomStatus) === 'finished';
+  if (finishedByOneAlive) {
+    changed = true;
+  } else {
+    const aliveCount = room.players.filter((player) => player.alive && !isTerminalPlayer(player)).length;
+    if (aliveCount === 0) {
+      // Nadie vivo a quien pasarle la autoridad: la ronda se anula (sin ganador).
+      room.status = 'finished';
+      room.winnerPlayerId = null;
+      sealMatchResult(room, nowMs);
+      changed = true;
+    }
+  }
+
+  if (changed) room.updatedAtServerMs = nowMs;
+  return changed;
 }
 
 function finishSprintRace(room: OnlineRoom, winner: OnlinePlayer, nowMs: number): void {

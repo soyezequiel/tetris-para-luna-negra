@@ -165,6 +165,10 @@ let onlinePeerDisplaySnapshots = new Map<string, OnlineGameSnapshot>();
 let onlineAttackSequence = 0;
 let onlineAppliedAttackIds = new Set<string>();
 let onlineHostAuthority: HostAuthoritySimulator | null = null;
+// true cuando el servidor me migró la autoridad a mitad de ronda (el host
+// original se desconectó). Corro como host en "modo degradado": ver
+// ensureMigratedHostAuthority().
+let onlineHostMigrated = false;
 let onlineHostProgressInFlight = new Set<string>();
 let onlineHostLastProgressAt = new Map<string, number>();
 let onlineHostCommittedEliminations = new Set<string>();
@@ -1508,6 +1512,7 @@ function resetOnlineRoomState(): void {
   onlineAttackSequence = 0;
   onlineAppliedAttackIds = new Set();
   onlineHostAuthority = null;
+  onlineHostMigrated = false;
   onlineHostProgressInFlight = new Set();
   onlineHostLastProgressAt = new Map();
   onlineHostCommittedEliminations = new Set();
@@ -1558,6 +1563,7 @@ function resetOnlineRuntimeForNextRound(): void {
   onlineAttackSequence = 0;
   onlineAppliedAttackIds = new Set();
   onlineHostAuthority = null;
+  onlineHostMigrated = false;
   onlineHostProgressInFlight = new Set();
   onlineHostLastProgressAt = new Map();
   onlineHostCommittedEliminations = new Set();
@@ -1843,6 +1849,7 @@ function syncOnline(state: GameState): void {
   const now = performance.now();
   if (shouldPollOnline(now)) pollOnlineRoom();
   if (appMode === 'onlineCountdown') maybeStartOnlineRun();
+  ensureMigratedHostAuthority();
   // El host sigue siendo la autoridad de la ronda aunque su propia partida haya
   // terminado y esté mirando los resultados: si dejara de simular, el resto de
   // los jugadores se quedaría sin garbage, sin snapshots y sin eliminaciones, y
@@ -2088,6 +2095,29 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
   }
 }
 
+/**
+ * El servidor migra la autoridad al siguiente jugador vivo cuando el host se
+ * desconecta a mitad de ronda (ver getRoomState / HOST_STALE_MS en
+ * roomService). Ese jugador se entera al releer `hostPlayerId` en el poll, pero
+ * no tiene HostAuthoritySimulator: solo se crea al arrancar la ronda en
+ * maybeStartOnlineRun, y reconstruirlo ahora resimularía a los demás desde el
+ * frame 0 sin sus inputs (los dejaría reseteados y los eliminaría por error).
+ *
+ * Por eso el sucesor corre en "modo degradado", sin autorar los tableros
+ * ajenos (onlineHostAuthority queda null, y todos los caminos que lo usan están
+ * guardados). Igual recupera la ronda porque, ya reconocido como host:
+ *  - mantiene viva la sala posteando su propio progreso (postOnlineProgress),
+ *  - acredita los KO que los peers anuncian por broadcast
+ *    (decidePeerKoAction -> 'commit' -> commitOnlineElimination), y
+ *  - reporta su propio resultado/eliminación,
+ * con lo que el servidor puede terminar la partida (finishRoomIfOnlyOneAlive).
+ */
+function ensureMigratedHostAuthority(): void {
+  if (!onlineRoom || !onlineRunStarted || !isOnlineHost()) return;
+  if (onlineHostAuthority || onlineHostMigrated) return;
+  onlineHostMigrated = true;
+}
+
 function maybeStartOnlineRun(): void {
   if (!onlineRoom?.startsAtServerMs || onlineRunStarted) return;
   if (onlineNowMs() < onlineRoom.startsAtServerMs) return;
@@ -2098,6 +2128,7 @@ function maybeStartOnlineRun(): void {
   onlineHostAuthority = isOnlineHost() && onlineRoom
     ? new HostAuthoritySimulator(onlineRoom.seed, onlineRulesFromRoom(onlineRoom))
     : null;
+  onlineHostMigrated = false;
   onlineHostProgressInFlight = new Set();
   onlineHostLastProgressAt = new Map();
   onlineHostCommittedEliminations = new Set();
