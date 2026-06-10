@@ -2146,7 +2146,10 @@ async function pollOnlineRoom(): Promise<void> {
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
     applyRoomAttacks(response.room);
-    if (response.room.status === 'finished') appMode = 'onlineResults';
+    if (
+      response.room.status === 'finished'
+      && (appMode === 'roomLobby' || appMode === 'onlineCountdown' || appMode === 'onlinePlaying' || appMode === 'onlineResults')
+    ) appMode = 'onlineResults';
     if (response.room.status === 'countdown' && (appMode === 'roomLobby' || appMode === 'onlineResults')) appMode = 'onlineCountdown';
     if (response.room.status === 'playing' && appMode === 'roomLobby') appMode = 'onlineCountdown';
     onlineError = null;
