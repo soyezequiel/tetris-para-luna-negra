@@ -4255,10 +4255,21 @@ function renderDashboardCenterContent(_state: GameState): string {
   const mode = appMode;
   if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
     return `
-      <div class="dash-hero-container">
-        <div class="dash-hero-image-wrapper">
-          <img class="dash-hero-image" src="/tetris-hero.png" alt="Tetris Board Art" />
-          <div class="dash-scanlines"></div>
+      <div class="dash-hero-card">
+        <img class="dash-hero-img" src="/tetris-hero.png" alt="40 líneas" />
+        <div class="dash-hero-veil"></div>
+        <div class="dash-hero-scan"></div>
+        <div class="dash-hero-sheen"></div>
+        <div class="dash-hero-content">
+          <div class="dash-hero-eyebrow">SPRINT · OBJETIVO 40 LÍNEAS</div>
+          <h2 class="dash-hero-title">40 LÍNEAS</h2>
+          <p class="dash-hero-subtitle">Despejá 40 líneas lo antes posible. Termina con <strong>CLEAR</strong>.</p>
+          <div class="dash-hero-cta">
+            <button class="dash-hero-btn dash-hero-btn--play" type="button" data-ui-action="start" aria-label="Jugar 40 líneas">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="#05070f"><path d="M8 5v14l11-7z"/></svg>JUGAR
+            </button>
+            <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Custom</button>
+          </div>
         </div>
       </div>
     `;
