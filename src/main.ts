@@ -81,6 +81,14 @@ const overlayElement = overlay;
 // recree su nodo y reinicie sus animaciones.
 const koOverlayElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(koOverlayElement);
+// Capa propia para el HUD online (garbage + objetivo + salir). Igual que el KO
+// overlay, vive fuera del overlay general: éste se reescribe cada frame por el
+// cronómetro vivo de los tableros rivales, así que si el HUD estuviera ahí sus
+// botones se recrearían 60 veces por segundo y el hover titilaría. Aparte, solo
+// se redibuja cuando cambia su contenido (ver lastHudOverlayHtml).
+const hudOverlayElement = document.createElement('div');
+(overlay.parentElement ?? document.body).appendChild(hudOverlayElement);
+hudOverlayElement.addEventListener('click', handleOverlayClick);
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
@@ -155,6 +163,9 @@ let lastOverlayHtml = '';
 // 60 veces por segundo y sus animaciones (pop/shake) se reiniciarían sin parar
 // (parpadeo). Manteniéndolo aparte solo se redibuja cuando cambia su contenido.
 let lastKoOverlayHtml = '';
+// Mismo motivo que el KO: el HUD online se diffea aparte para no recrearse cada
+// frame y evitar el titileo del hover en sus botones.
+let lastHudOverlayHtml = '';
 let playback: ReplayPlayback | null = null;
 let importedReplayName: string | null = null;
 let replayImportError: string | null = null;
@@ -2942,6 +2953,13 @@ function renderOverlay(state: GameState): void {
     koOverlayElement.innerHTML = koHtml;
     lastKoOverlayHtml = koHtml;
   }
+  // HUD online en su propia capa: solo se repinta cuando cambia (garbage,
+  // estrategia u objetivo), no cada frame, así el hover de los botones no titila.
+  const hudHtml = appMode === 'onlinePlaying' ? renderOnlineHud() : '';
+  if (hudHtml !== lastHudOverlayHtml) {
+    hudOverlayElement.innerHTML = hudHtml;
+    lastHudOverlayHtml = hudHtml;
+  }
   document.body.classList.toggle('online-spectating', isOnlineSpectating());
   if (appMode === 'replayPlayback' && playback) updateReplayOverlay(playback.snapshot());
 }
@@ -3549,12 +3567,12 @@ function renderOnlineKoOverlay(state: GameState): string {
   `;
 }
 
+// Solo los tableros rivales viven en el overlay general (se redibujan cada frame
+// por el cronómetro vivo). El HUD interactivo se pinta en su propia capa, ver
+// renderOverlay/hudOverlayElement.
 function renderOnlinePlayingOverlay(): string {
   if (!onlineRoom) return '';
-  return `
-    ${renderOnlinePeerBoards()}
-    ${renderOnlineHud()}
-  `;
+  return renderOnlinePeerBoards();
 }
 
 function renderOnlineAvatar(
