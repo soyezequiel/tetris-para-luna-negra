@@ -255,7 +255,7 @@ overlayElement.addEventListener('pointercancel', handleTouchControlPointerEnd);
 overlayElement.addEventListener('lostpointercapture', handleTouchControlPointerEnd);
 
 try { autoPlayAccessGranted = localStorage.getItem(AUTO_PLAY_ACCESS_STORAGE) === '1'; } catch { /* noop */ } // TRUCO AUTOPLAY
-(window as Record<string, unknown>)['test'] = () => { // TRUCO AUTOPLAY
+(window as unknown as Record<string, unknown>)['test'] = () => { // TRUCO AUTOPLAY
   try { localStorage.setItem(AUTO_PLAY_ACCESS_STORAGE, '1'); } catch { /* noop */ }
   autoPlayAccessGranted = true;
   lastOverlayHtml = '';
