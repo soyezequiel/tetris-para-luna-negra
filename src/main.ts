@@ -3926,18 +3926,37 @@ function renderOnlinePeerBoards(): string {
   }
   const spectating = isOnlineSpectating();
   const layout = onlinePeerGridLayout(remotePlayers.length, spectating);
-  return `
-    <aside class="online-versus-grid ${spectating ? 'online-versus-grid--spectator' : ''}" aria-label="Remote player boards">
+  // En espectador el encabezado es estilo tetr.io: cuántos siguen en pie, grande
+  // y centrado, en vez del contador chico de rivales.
+  const aliveCount = onlineRoom.players.filter((candidate) => (
+    candidate.alive
+    && candidate.status !== 'eliminated'
+    && candidate.status !== 'lost'
+    && candidate.status !== 'disconnected'
+  )).length;
+  const title = spectating
+    ? `
+      <div class="online-spec-header">
+        <span class="online-spec-eyebrow">Espectador</span>
+        <strong>${aliveCount}</strong>
+        <span class="online-spec-sub">en pie</span>
+      </div>
+    `
+    : `
       <div class="online-versus-title">
-        <span>${spectating ? 'Espectador' : 'Opponents'}</span>
+        <span>Opponents</span>
         <strong>${remotePlayers.length}</strong>
       </div>
+    `;
+  return `
+    <aside class="online-versus-grid ${spectating ? 'online-versus-grid--spectator' : ''}" aria-label="Remote player boards">
+      ${title}
       <div
         class="online-peer-boards"
         data-peer-count="${remotePlayers.length}"
         style="--online-peer-columns: ${layout.columns}; --online-peer-card-width: ${layout.cardWidth}px;"
       >
-        ${remotePlayers.map(renderOnlinePeerBoard).join('')}
+        ${remotePlayers.map((player) => renderOnlinePeerBoard(player, spectating)).join('')}
       </div>
     </aside>
   `;
@@ -3999,7 +4018,8 @@ function onlinePeerGridColumns(playerCount: number, width: number): number {
   return 6;
 }
 
-function renderOnlinePeerBoard(player: OnlinePlayer): string {
+function renderOnlinePeerBoard(player: OnlinePlayer, spectating = false): string {
+  if (spectating) return renderOnlineSpectatorBoard(player);
   const peerState = onlinePeerStates.get(player.id) ?? 'server';
   const displayGame = displaySnapshotForPlayer(player);
   const outcome = onlinePeerOutcome(player, displayGame);
@@ -4028,6 +4048,84 @@ function renderOnlinePeerBoard(player: OnlinePlayer): string {
       </div>
     </section>
   `;
+}
+
+// Tarjeta de rival en modo espectador, estilo tetr.io: medidor de garbage al
+// costado del tablero, placa con nombre y stats (PPS/APM/líneas) debajo, y
+// overlay con el puesto final cuando el jugador queda eliminado o gana.
+function renderOnlineSpectatorBoard(player: OnlinePlayer): string {
+  const displayGame = displaySnapshotForPlayer(player);
+  const outcome = onlinePeerOutcome(player, displayGame);
+  const stats = onlinePeerStats(player, displayGame);
+  const pending = Math.max(0, displayGame?.pendingGarbage ?? player.pendingGarbage ?? 0);
+  // 12 líneas de garbage pendiente ya es sentencia de muerte: barra llena.
+  const garbagePct = Math.min(100, Math.round((pending / 12) * 100));
+  const danger = !outcome && player.dangerLevel >= 7;
+  const placement = outcome ? onlinePeerPlacement(player, outcome.kind) : null;
+  const boardHtml = displayGame
+    ? renderOnlineMiniBoard(displayGame)
+    : '<div class="online-mini-board online-mini-board-empty">Sin señal</div>';
+  const overlay = outcome
+    ? `
+      <div class="online-spec-overlay online-spec-overlay--${outcome.kind}">
+        <span class="online-spec-overlay-tag">${outcome.kind === 'win' ? 'WINNER' : 'K.O.'}</span>
+        ${placement ? `<span class="online-spec-overlay-place">${placement}º</span>` : ''}
+      </div>
+    `
+    : '';
+  const lines = displayGame?.lines ?? player.lines ?? 0;
+  return `
+    <section class="online-peer-board online-spec-board${outcome ? ` online-spec-board--${outcome.kind}` : ''}${danger ? ' is-danger' : ''}">
+      <div class="online-spec-stage">
+        <div class="online-spec-garbage" aria-hidden="true"><i style="height:${garbagePct}%"></i></div>
+        <div class="online-spec-stage-board">
+          ${boardHtml}
+          ${overlay}
+        </div>
+      </div>
+      <div class="online-spec-plate">
+        <div class="online-spec-name">
+          ${renderOnlineAvatar(player, 'small')}
+          <strong>${escapeHtml(player.name)}</strong>
+          ${player.koCount > 0 ? `<span class="online-spec-kos">${player.koCount}&nbsp;KO</span>` : ''}
+        </div>
+        <div class="online-spec-stats">
+          <span><b>${stats.pps.toFixed(1)}</b> PPS</span>
+          <span><b>${Math.round(stats.apm)}</b> APM</span>
+          <span><b>${lines}</b> líneas</span>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+// PPS y APM (garbage enviado por minuto, como tetr.io) a partir del snapshot en
+// vivo o, si no llegó, del estado de la sala. Bajo un segundo de juego devuelve
+// ceros para no mostrar números absurdos.
+function onlinePeerStats(player: OnlinePlayer, snapshot: OnlineGameSnapshot | null): { pps: number; apm: number } {
+  const frames = Math.max(0, snapshot?.elapsedFrames ?? player.elapsedFrames ?? 0);
+  if (frames < 60) return { pps: 0, apm: 0 };
+  const seconds = frames / 60;
+  const pieces = snapshot?.pieces ?? player.pieces ?? 0;
+  const sent = snapshot?.sentGarbage ?? player.sentGarbage ?? 0;
+  return { pps: pieces / seconds, apm: (sent * 60) / seconds };
+}
+
+// Puesto final estilo tetr.io: el primero en caer queda último; el ganador es 1º.
+// Se deriva del orden de eliminación que reporta el servidor.
+function onlinePeerPlacement(player: OnlinePlayer, kind: 'ko' | 'win'): number | null {
+  if (!onlineRoom) return null;
+  if (kind === 'win') return 1;
+  const total = onlineRoom.players.length;
+  const myTime = player.eliminatedAtServerMs;
+  if (myTime === null || myTime === undefined) return null;
+  const eliminatedBefore = onlineRoom.players.filter((candidate) => (
+    candidate.id !== player.id
+    && candidate.eliminatedAtServerMs !== null
+    && candidate.eliminatedAtServerMs !== undefined
+    && candidate.eliminatedAtServerMs < myTime
+  )).length;
+  return total - eliminatedBefore;
 }
 
 // Desenlace de un rival según el estado autoritativo de la sala (y, como señal
