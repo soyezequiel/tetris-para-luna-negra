@@ -232,6 +232,8 @@ export interface UpdateRoomSettingsRequest {
   roomId: string;
   playerId: string;
   visibility?: RoomVisibility;
+  /** true = solo cambia la visibilidad (no toca reglas, jugadores ni apuesta). */
+  visibilityOnly?: boolean;
   mode?: OnlineRoomMode;
   matchType: OnlineMatchType;
   ruleset?: Partial<OnlineRuleset>;

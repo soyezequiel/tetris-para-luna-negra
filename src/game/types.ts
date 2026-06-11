@@ -13,7 +13,8 @@ export type GameOverReason =
   | 'lockOut'
   | 'garbageTopOut'
   | 'garbageCollision'
-  | 'holdBlockOut';
+  | 'holdBlockOut'
+  | 'topOutTimer';
 
 export interface Vec2 {
   x: number;
@@ -168,4 +169,6 @@ export interface GameEngineSnapshot {
   fallAccumulator: number;
   lockFrames: number;
   lockResets: number;
+  /** Frames seguidos con la pila sobresaliendo del área visible (tolerancia top-out). */
+  aboveFieldFrames?: number;
 }

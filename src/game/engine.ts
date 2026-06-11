@@ -7,6 +7,11 @@ import { SeededRng } from './rng';
 import { DEFAULT_RULES } from './rules';
 import type { ActivePiece, Cell, GameEngineSnapshot, GameEvent, GameInput, GameOverReason, GameRules, GameState, InputAction, PendingGarbage, PieceType, SpinType, Vec2 } from './types';
 
+// Tolerancia top-out estilo tetr.io: la pila puede sobresalir del área visible
+// (hacia las filas ocultas) sin morir, pero si se queda ahí arriba este tiempo
+// seguido, la partida termina ('topOutTimer').
+const TOP_OUT_GRACE_FRAMES = 300;
+
 export class GameEngine {
   private readonly rules: GameRules;
   private rng: SeededRng;
@@ -35,6 +40,7 @@ export class GameEngine {
   private fallAccumulator = 0;
   private lockFrames = 0;
   private lockResets = 0;
+  private aboveFieldFrames = 0;
 
   constructor(seed = Date.now(), rules: GameRules = DEFAULT_RULES) {
     this.seed = seed >>> 0;
@@ -104,6 +110,7 @@ export class GameEngine {
       fallAccumulator: this.fallAccumulator,
       lockFrames: this.lockFrames,
       lockResets: this.lockResets,
+      aboveFieldFrames: this.aboveFieldFrames,
     };
   }
 
@@ -136,6 +143,7 @@ export class GameEngine {
     this.fallAccumulator = snapshot.fallAccumulator;
     this.lockFrames = snapshot.lockFrames;
     this.lockResets = snapshot.lockResets;
+    this.aboveFieldFrames = Number.isFinite(snapshot.aboveFieldFrames) ? snapshot.aboveFieldFrames as number : 0;
   }
 
   tick(frame: number, inputs: GameInput[] = []): GameState {
@@ -144,6 +152,7 @@ export class GameEngine {
     for (const input of inputs) this.applyInput(input.action);
     if (this.status === 'playing') this.applyPendingGarbage(frame);
     if (this.status === 'playing') this.applyGravity();
+    if (this.status === 'playing') this.updateTopOutGrace(frame);
     return this.getState();
   }
 
@@ -228,6 +237,7 @@ export class GameEngine {
     this.fallAccumulator = 0;
     this.lockFrames = 0;
     this.lockResets = 0;
+    this.aboveFieldFrames = 0;
     this.rng = new SeededRng(this.seed);
     this.fillNext();
     this.spawn();
@@ -246,7 +256,7 @@ export class GameEngine {
   private spawn(type = this.next.shift()): void {
     if (!type) throw new Error('Cannot spawn without a piece.');
     this.fillNext();
-    this.active = { type, rotation: 0, x: this.spawnX(), y: 0 };
+    this.active = { type, rotation: 0, x: this.spawnX(), y: this.spawnY() };
     this.canHold = true;
     this.spinCandidate = false;
     this.lockFrames = 0;
@@ -322,7 +332,7 @@ export class GameEngine {
     if (this.hold) {
       const next = this.hold;
       this.hold = current;
-      this.active = { type: next, rotation: 0, x: this.spawnX(), y: 0 };
+      this.active = { type: next, rotation: 0, x: this.spawnX(), y: this.spawnY() };
       this.spinCandidate = false;
       if (this.collides(this.active)) {
         this.status = 'gameover';
@@ -374,6 +384,35 @@ export class GameEngine {
 
   private spawnX(): number {
     return Math.max(0, Math.floor(this.rules.boardWidth / 2) - 2);
+  }
+
+  // La pieza aparece justo encima del área visible, dejando el resto de las
+  // filas ocultas como buffer para sobresalir del mapa sin morir.
+  private spawnY(): number {
+    return Math.max(0, this.rules.hiddenRows - 2);
+  }
+
+  // Mata la partida solo si la pila lleva demasiado tiempo seguido por encima
+  // del área visible (tolerancia estilo tetr.io en vez de muerte instantánea).
+  private updateTopOutGrace(frame: number): void {
+    if (!this.stackAboveVisibleField()) {
+      this.aboveFieldFrames = 0;
+      return;
+    }
+    this.aboveFieldFrames += 1;
+    if (this.aboveFieldFrames < TOP_OUT_GRACE_FRAMES) return;
+    this.status = 'gameover';
+    this.gameOverFrame = frame;
+    this.gameOverReason = 'topOutTimer';
+    this.active = null;
+  }
+
+  private stackAboveVisibleField(): boolean {
+    const hiddenRows = Math.max(0, Math.min(this.rules.hiddenRows, this.board.length));
+    for (let y = 0; y < hiddenRows; y += 1) {
+      if (this.board[y].some((cell) => cell !== null)) return true;
+    }
+    return false;
   }
 
   private isGrounded(): boolean {
@@ -447,6 +486,21 @@ export class GameEngine {
       attackLines: attack.attackLines,
       outgoingLines: resolved.outgoingAfterCancel,
     });
+  }
+
+  // Sube la pieza activa hasta la primera posición libre dentro del tablero.
+  // Devuelve null si no hay lugar sin sacar celdas por encima del buffer.
+  private liftActivePiece(): ActivePiece | null {
+    if (!this.active) return null;
+    let candidate = { ...this.active };
+    for (let lift = 0; lift < this.board.length; lift += 1) {
+      candidate = { ...candidate, y: candidate.y - 1 };
+      // collides() ignora y<0, así que cortamos antes de aceptar una posición
+      // que dejaría celdas fuera del tablero.
+      if (this.occupied(candidate).some(({ y }) => y < 0)) return null;
+      if (!this.collides(candidate)) return candidate;
+    }
+    return null;
   }
 
   private isPerfectClear(): boolean {
@@ -531,10 +585,19 @@ export class GameEngine {
       }
     }
     if (this.status === 'playing' && this.active && this.collides(this.active)) {
-      this.status = 'gameover';
-      this.gameOverFrame = frame;
-      this.gameOverReason = 'garbageCollision';
-      this.active = null;
+      // La basura subió hasta la pieza activa: en vez de matar al instante, la
+      // empujamos hacia arriba (como tetr.io). Solo muere si ya no queda buffer.
+      const lifted = this.liftActivePiece();
+      if (lifted) {
+        this.active = lifted;
+        this.lockFrames = 0;
+        this.fallAccumulator = 0;
+      } else {
+        this.status = 'gameover';
+        this.gameOverFrame = frame;
+        this.gameOverReason = 'garbageCollision';
+        this.active = null;
+      }
     }
     this.events.push({ type: 'appliedGarbage', frame, lines: appliedLines });
   }

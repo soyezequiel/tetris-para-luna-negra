@@ -319,6 +319,50 @@ export async function createBetForRoom(
   return setRoomBet(store, room.id, bet, nowMs);
 }
 
+/**
+ * Mantiene la apuesta pendiente en sincronía con los jugadores de la sala: si
+ * alguien entró (o salió) después de que el host creó la apuesta y todavía NO
+ * hubo ningún depósito, se cancela la apuesta en Luna Negra y se recrea con el
+ * mismo stake incluyendo a todos los jugadores actuales. Con depósitos ya
+ * hechos no se toca (no podemos cambiar participantes sin perder pagos).
+ * Best-effort: ante cualquier falla devuelve la sala sin cambios.
+ */
+export async function syncBetParticipantsWithRoom(
+  store: RoomStore,
+  roomId: string,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await loadRoom(store, roomId);
+  const bet = room.bet;
+  if (!bet || bet.status !== 'pending_deposits') return room;
+  if (room.status !== 'lobby') return room;
+  if (!isLunaNegraApiConfigured()) return room;
+  const anyDeposit = bet.depositsReceived > 0
+    || bet.participants.some((participant) => participant.depositStatus === 'paid');
+  if (anyDeposit) return room;
+  const roomNpubs = room.players.map((player) => player.npub);
+  if (roomNpubs.some((npub) => !npub)) return room;
+  const desired = [...new Set(roomNpubs as string[])].sort();
+  const current = [...new Set(bet.participants.map((participant) => participant.npub))].sort();
+  if (desired.length === current.length && desired.every((npub, index) => npub === current[index])) return room;
+  if (desired.length < 2) return room;
+
+  try {
+    const config = readApiConfig();
+    await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' }).catch(() => undefined);
+    // Limpiamos la apuesta local antes de recrear: createBetForRoom rechaza
+    // salas con una apuesta no terminal.
+    await setRoomBet(store, room.id, null, nowMs);
+    return await createBetForRoom(store, {
+      roomId: room.id,
+      playerId: room.hostPlayerId,
+      stakeSats: bet.stakeSats,
+    }, nowMs);
+  } catch {
+    return loadRoom(store, roomId).catch(() => room);
+  }
+}
+
 export async function refreshRoomBet(
   store: RoomStore,
   roomId: string,

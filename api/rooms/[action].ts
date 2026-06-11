@@ -27,6 +27,7 @@ import {
   kickPlayer,
   leaveRoom,
   listPublicRooms,
+  reopenRoom,
   restartRoom,
   setPlayerReady,
   setPlayerTargeting,
@@ -35,7 +36,7 @@ import {
   updateRoomSettings,
   updateProgress,
 } from '../../src/online/roomService.js';
-import { maybeReportRoomBetResult } from '../../src/online/lunaNegraBets.js';
+import { maybeReportRoomBetResult, syncBetParticipantsWithRoom } from '../../src/online/lunaNegraBets.js';
 import { getRoomStore, handleApiError, handleNodeApi, queryParam, readJsonBody, sendJson, sendMethodNotAllowed } from '../../src/online/vercelApi.js';
 import type { OnlineRoom } from '../../src/online/protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -79,16 +80,19 @@ export async function POST(request: Request): Promise<Response> {
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'join') {
-      const room = await joinRoom(getRoomStore(), await readJsonBody<JoinRoomRequest>(request));
+      const joined = await joinRoom(getRoomStore(), await readJsonBody<JoinRoomRequest>(request));
+      // El que entra después de creada la apuesta también participa: si todavía
+      // no hubo depósitos, la apuesta se recrea incluyéndolo.
+      const room = await syncBetParticipants(joined);
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'leave') {
       const { room: rawRoom, hostMigratedTo } = await leaveRoom(getRoomStore(), await readJsonBody<LeaveRoomRequest>(request));
-      const room = rawRoom ? await settleBetIfFinished(rawRoom) : null;
+      const room = rawRoom ? await syncBetParticipants(await settleBetIfFinished(rawRoom)) : null;
       return sendJson(200, { room, hostMigratedTo, serverNowMs: Date.now() });
     }
     if (action === 'kick') {
-      const room = await kickPlayer(getRoomStore(), await readJsonBody<KickPlayerRequest>(request));
+      const room = await syncBetParticipants(await kickPlayer(getRoomStore(), await readJsonBody<KickPlayerRequest>(request)));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'progress') {
@@ -105,6 +109,10 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (action === 'restart') {
       const room = await restartRoom(getRoomStore(), await readJsonBody<RestartRoomRequest>(request));
+      return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'reopen') {
+      const room = await reopenRoom(getRoomStore(), await readJsonBody<RestartRoomRequest>(request));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'settings') {
@@ -126,6 +134,15 @@ export async function POST(request: Request): Promise<Response> {
     return sendMethodNotAllowed();
   } catch (error) {
     return handleApiError(error);
+  }
+}
+
+async function syncBetParticipants(room: OnlineRoom): Promise<OnlineRoom> {
+  if (!room.bet || room.bet.status !== 'pending_deposits' || room.status !== 'lobby') return room;
+  try {
+    return await syncBetParticipantsWithRoom(getRoomStore(), room.id);
+  } catch {
+    return room;
   }
 }
 

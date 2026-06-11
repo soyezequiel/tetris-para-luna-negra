@@ -1,12 +1,15 @@
 import type { GameRules } from './types';
 
 const DEFAULT_GRAVITY_CELLS_PER_FRAME = 1 / 60;
-const DEFAULT_SOFT_DROP_FACTOR = 20;
+// Soft drop más rápido (40x gravedad) para que bajar piezas se sienta inmediato.
+const DEFAULT_SOFT_DROP_FACTOR = 40;
 
 export const DEFAULT_RULES: GameRules = {
   boardWidth: 10,
   visibleRows: 20,
-  hiddenRows: 2,
+  // Buffer estilo tetr.io: 6 filas ocultas arriba del área visible. La pila puede
+  // sobresalir del mapa sin morir al instante; ver topOutGraceFrames en el engine.
+  hiddenRows: 6,
   nextPreview: 5,
   targetLines: 40,
   attackTable: 'simple',
@@ -37,4 +40,6 @@ export const DEFAULT_RULES: GameRules = {
 export const BATTLE_RULES: GameRules = {
   ...DEFAULT_RULES,
   targetLines: null,
+  // En batallas online los combos, B2B y spins suman ataque (tabla moderna).
+  attackTable: 'modern',
 };

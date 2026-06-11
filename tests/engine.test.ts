@@ -45,6 +45,7 @@ import {
   MemoryRoomStore,
   normalizeRoomId,
   rankPlayers,
+  reopenRoom,
   restartRoom,
   setPlayerTargeting,
   setPlayerReady,
@@ -188,11 +189,13 @@ describe('core stacker engine', () => {
       softDropCellsPerFrame: 0,
     });
 
-    expect(engine.tick(1).active?.y).toBe(0);
+    // La pieza aparece justo encima del área visible (hiddenRows - 2).
+    const spawnY = DEFAULT_RULES.hiddenRows - 2;
+    expect(engine.tick(1).active?.y).toBe(spawnY);
 
     const afterLock = engine.tick(2, [{ frame: 2, action: 'hardDrop' }]);
     expect(afterLock.stats.pieces).toBe(1);
-    expect(afterLock.active?.y).toBe(1);
+    expect(afterLock.active?.y).toBe(spawnY + 1);
   });
 
   it('applies custom control toggles inside the engine', () => {
@@ -462,6 +465,8 @@ describe('core stacker engine', () => {
   it('emits one line clear event with outgoing attack lines', () => {
     const engine = new GameEngine(11, {
       ...BATTLE_RULES,
+      // Tabla simple a propósito: este test cubre el evento, no los bonus.
+      attackTable: 'simple',
       boardWidth: 4,
       visibleRows: 4,
       hiddenRows: 0,
@@ -781,7 +786,7 @@ describe('core stacker engine', () => {
   });
 
   it('defaults to a responsive soft drop speed', () => {
-    expect(DEFAULT_RULES.softDropCellsPerFrame + DEFAULT_RULES.gravityCellsPerFrame).toBeCloseTo(20 / 60);
+    expect(DEFAULT_RULES.softDropCellsPerFrame + DEFAULT_RULES.gravityCellsPerFrame).toBeCloseTo(40 / 60);
   });
 
   it('reuses DAS and ARR timing for held touch controls', () => {
@@ -1300,7 +1305,8 @@ describe('core stacker engine', () => {
     expect(guest.room.lunaGameId).toBe('tetra-game');
     expect(guest.room.players.map((player) => [player.id, player.name, player.status, player.npub])).toEqual([
       ['pubkey-host-player', 'Host', 'disconnected', null],
-      ['pubkey-guest-player', 'Guest Name', 'joined', 'npub-guest-player'],
+      // Auto-ready: todo el que entra a una sala queda listo por defecto.
+      ['pubkey-guest-player', 'Guest Name', 'ready', 'npub-guest-player'],
     ]);
 
     const host = await enterLunaNegraRoom(store, {
@@ -1317,8 +1323,8 @@ describe('core stacker engine', () => {
 
     expect(host.room.hostPlayerId).toBe('pubkey-host-player');
     expect(host.room.players.map((player) => [player.id, player.name, player.status, player.npub, player.avatarUrl])).toEqual([
-      ['pubkey-host-player', 'Nostr Host', 'joined', 'npub-host-player', 'https://example.com/host.png'],
-      ['pubkey-guest-player', 'Guest Name', 'joined', 'npub-guest-player', 'https://example.com/guest.png'],
+      ['pubkey-host-player', 'Nostr Host', 'ready', 'npub-host-player', 'https://example.com/host.png'],
+      ['pubkey-guest-player', 'Guest Name', 'ready', 'npub-guest-player', 'https://example.com/guest.png'],
     ]);
   });
 
@@ -1760,7 +1766,7 @@ describe('core stacker engine', () => {
 
     expect(room.mode).toBe('custom');
     expect(room.matchType).toBe('custom');
-    expect(room.ruleset.rulesetId).toBe('custom-survival-simple');
+    expect(room.ruleset.rulesetId).toBe('custom-survival-modern');
     expect(room.ruleset.objective).toEqual({ type: 'lastStanding' });
     expect(room.rules.targetLines).toBeNull();
   });
@@ -1785,7 +1791,7 @@ describe('core stacker engine', () => {
     expect(rooms[0].hostName).toBe('Public');
     expect(rooms[0].region).toBe('gru1');
     expect(rooms[0].matchType).toBe('custom');
-    expect(rooms[0].customPreset).toBe('custom-survival-simple');
+    expect(rooms[0].customPreset).toBe('custom-survival-modern');
   });
 
   it('lets the lobby host toggle custom room visibility', async () => {
@@ -1814,7 +1820,8 @@ describe('core stacker engine', () => {
     expect(published.visibility).toBe('public');
     expect(published.mode).toBe('custom');
     expect(published.matchType).toBe('custom');
-    expect(published.players.every((player) => !player.ready && player.status === 'joined')).toBe(true);
+    // Auto-ready: cambiar ajustes ya no des-marca a los jugadores.
+    expect(published.players.every((player) => player.ready && player.status === 'ready')).toBe(true);
     expect((await listPublicRooms(store, 1400)).map((summary) => summary.id)).toEqual([room.id]);
 
     const hidden = await updateRoomSettings(store, {
@@ -2507,6 +2514,117 @@ describe('core stacker engine', () => {
     ]);
 
     expect(ranked.map((player) => player.id)).toEqual(['won-fast', 'won-slow', 'lost-high', 'lost-low']);
+  });
+
+  it('scales the back-to-back bonus with the chain length', () => {
+    const attackAt = (b2b: number) => calculateAttack({ table: 'modern', cleared: 4, combo: 0, b2b }).attackLines;
+    expect(attackAt(1)).toBe(4);
+    expect(attackAt(2)).toBe(5);
+    expect(attackAt(4)).toBe(6);
+    expect(attackAt(8)).toBe(8);
+  });
+
+  it('tolerates a stack above the visible field and only dies after the grace window', () => {
+    const engine = new GameEngine(99, {
+      ...DEFAULT_RULES,
+      gravityCellsPerFrame: 0,
+      softDropCellsPerFrame: 0,
+      lockDelayFrames: 10_000,
+    });
+    const unsafe = engine as unknown as { board: Cell[][] };
+    // Una celda en las filas ocultas: la pila sobresale del área visible.
+    unsafe.board[0][0] = 'I';
+
+    let state = engine.getState();
+    for (let frame = 1; frame <= 299 && state.status === 'playing'; frame += 1) {
+      state = engine.tick(frame);
+    }
+    expect(state.status).toBe('playing');
+
+    state = engine.tick(300);
+    expect(state.status).toBe('gameover');
+    expect(state.stats.gameOverReason).toBe('topOutTimer');
+  });
+
+  it('lifts the active piece when incoming garbage rises into it instead of killing', () => {
+    const engine = new GameEngine(7, {
+      ...BATTLE_RULES,
+      boardWidth: 4,
+      visibleRows: 6,
+      hiddenRows: 2,
+      nextPreview: 1,
+      gravityCellsPerFrame: 0,
+      softDropCellsPerFrame: 0,
+      lockDelayFrames: 10_000,
+      garbageTravelFrames: 0,
+      garbageActivationFrames: 0,
+    });
+    const unsafe = engine as unknown as { active: ActivePiece };
+    unsafe.active = { type: 'O', x: 0, y: 6, rotation: 0 };
+
+    engine.queueGarbage(4, 1, 0);
+    const state = engine.tick(1);
+
+    expect(state.status).toBe('playing');
+    expect(state.active).not.toBeNull();
+    expect(state.active!.y).toBeLessThan(6);
+  });
+
+  it('reopens a finished room back to the lobby with a fresh seed and ready players', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-reopen-host',
+      name: 'Host',
+      visibility: 'private',
+      mode: 'custom',
+      matchType: 'custom',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-reopen-guest', name: 'Guest' }, 1100);
+    const started = await startRoom(store, { roomId: room.id, playerId: 'player-reopen-host' }, 1200);
+    const finished = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-reopen-host',
+      playerId: 'player-reopen-guest',
+      seed: started.seed,
+      frame: 600,
+      lines: 3,
+      pieces: 9,
+      elapsedFrames: 600,
+    }, 1300);
+    expect(finished.status).toBe('finished');
+
+    const reopened = await reopenRoom(store, { roomId: room.id, playerId: 'player-reopen-host' }, 1400);
+    expect(reopened.status).toBe('lobby');
+    expect(reopened.seed).not.toBe(started.seed);
+    expect(reopened.winnerPlayerId).toBeNull();
+    expect(reopened.bet).toBeNull();
+    expect(reopened.players.every((player) => player.ready && player.status === 'ready' && player.alive)).toBe(true);
+  });
+
+  it('changes only the visibility with a visibilityOnly settings update', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-visonly-host',
+      name: 'Host',
+      visibility: 'private',
+      mode: 'custom',
+      matchType: 'custom',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-visonly-guest', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'player-visonly-guest', ready: false }, 1200);
+
+    const updated = await updateRoomSettings(store, {
+      roomId: room.id,
+      playerId: 'player-visonly-host',
+      visibility: 'public',
+      visibilityOnly: true,
+      matchType: 'custom',
+    }, 1300);
+
+    expect(updated.visibility).toBe('public');
+    const guest = updated.players.find((player) => player.id === 'player-visonly-guest');
+    expect(guest?.ready).toBe(false);
+    expect((await listPublicRooms(store, 1400)).map((summary) => summary.id)).toEqual([room.id]);
   });
 });
 

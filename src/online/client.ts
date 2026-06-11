@@ -75,6 +75,11 @@ export class OnlineClient {
     return this.post('/restart', request);
   }
 
+  /** Devuelve una sala terminada al lobby (sin que nadie salga de ella). */
+  reopenRoom(request: RestartRoomRequest): Promise<OnlineRoomResponse> {
+    return this.post('/reopen', request);
+  }
+
   updateRoomSettings(request: UpdateRoomSettingsRequest): Promise<OnlineRoomResponse> {
     return this.post('/settings', request);
   }

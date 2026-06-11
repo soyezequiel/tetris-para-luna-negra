@@ -51,7 +51,7 @@ export function calculateAttack(input: AttackCalculationInput): AttackCalculatio
   }
 
   const comboBonus = comboBonusLines(combo);
-  const b2bBonus = difficult && b2b > 1 ? 1 : 0;
+  const b2bBonus = difficult ? b2bBonusLines(b2b) : 0;
   const perfectClearBonus = perfectClear && cleared > 0 ? 10 : 0;
 
   return {
@@ -135,6 +135,16 @@ export function resolveAttack(outgoingLines: number, pendingIncoming: PendingGar
     outgoingAfterCancel: attack,
     cancelledLines,
   };
+}
+
+// Cadena back-to-back (tetris tras tetris, t-spins encadenados, etc.): el bonus
+// escala con el largo de la cadena en vez de quedarse clavado en +1.
+function b2bBonusLines(b2b: number): number {
+  if (b2b <= 1) return 0;
+  if (b2b <= 3) return 1;
+  if (b2b <= 5) return 2;
+  if (b2b <= 7) return 3;
+  return 4;
 }
 
 function comboBonusLines(combo: number): number {

@@ -132,6 +132,7 @@ export const joinRoom = retryRoomConflicts(joinRoomOnce);
 export const setPlayerReady = retryRoomConflicts(setPlayerReadyOnce);
 export const startRoom = retryRoomConflicts(startRoomOnce);
 export const restartRoom = retryRoomConflicts(restartRoomOnce);
+export const reopenRoom = retryRoomConflicts(reopenRoomOnce);
 export const updateRoomSettings = retryRoomConflicts(updateRoomSettingsOnce);
 export const leaveRoom = retryRoomConflicts(leaveRoomOnce);
 export const kickPlayer = retryRoomConflicts(kickPlayerOnce);
@@ -354,6 +355,55 @@ async function restartRoomOnce(
   return room;
 }
 
+/**
+ * Devuelve una sala terminada al lobby sin que nadie salga de ella: limpia el
+ * estado de la ronda anterior, resetea la seed y deja a todos listos. Desde ahí
+ * el host puede crear otra apuesta y volver a lanzar. Si la apuesta anterior
+ * todavía se está liquidando, no se reabre (se reintenta en el próximo poll).
+ */
+async function reopenRoomOnce(
+  store: RoomStore,
+  request: RestartRoomRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, request.roomId);
+  if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can reopen the room.', 403);
+  if (room.status !== 'finished') return room;
+  if (room.bet && !isTerminalRoomBetStatus(room.bet.status)) return room;
+  room.bet = null;
+  room.status = 'lobby';
+  room.startsAtServerMs = null;
+  room.winnerPlayerId = null;
+  room.matchResultId = null;
+  room.seed = randomSeed();
+  room.attacks = [];
+  room.peerSignals = [];
+  room.players = room.players.map((player) => ({
+    ...player,
+    ready: true,
+    status: 'ready' as const,
+    lines: 0,
+    pieces: 0,
+    elapsedFrames: 0,
+    sentGarbage: 0,
+    receivedGarbage: 0,
+    pendingGarbage: 0,
+    alive: true,
+    finishedAtServerMs: null,
+    eliminatedAtFrame: null,
+    eliminatedAtServerMs: null,
+    game: null,
+    currentTargetPlayerId: null,
+    recentAttackers: [],
+    receivedGarbageThisRound: 0,
+    dangerLevel: 0,
+    updatedAtServerMs: nowMs,
+  }));
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return room;
+}
+
 async function updateRoomSettingsOnce(
   store: RoomStore,
   request: UpdateRoomSettingsRequest,
@@ -362,6 +412,16 @@ async function updateRoomSettingsOnce(
   const room = await requireRoom(store, request.roomId);
   if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can change room settings.', 403);
   if (room.status !== 'lobby') throw new OnlineRoomError('Room settings can only change in the lobby.', 409);
+
+  // Toggle rápido de visibilidad: no toca reglas, jugadores ni apuesta, así que
+  // es seguro incluso con una apuesta activa.
+  if (request.visibilityOnly) {
+    room.visibility = normalizeVisibility(request.visibility ?? room.visibility);
+    room.updatedAtServerMs = nowMs;
+    await persistRoom(store, room);
+    return room;
+  }
+
   if (room.bet && !isTerminalRoomBetStatus(room.bet.status)) {
     throw new OnlineRoomError('No se puede cambiar el modo con una apuesta activa.', 409);
   }
@@ -380,8 +440,9 @@ async function updateRoomSettingsOnce(
   room.attacks = [];
   room.players = room.players.map((player) => ({
     ...player,
-    ready: false,
-    status: 'joined',
+    // Auto-ready: cambiar ajustes no obliga a todos a volver a marcarse listos.
+    ready: true,
+    status: 'ready',
     updatedAtServerMs: nowMs,
   }));
   room.updatedAtServerMs = nowMs;
@@ -911,8 +972,9 @@ function createPlayer(id: string, name: string, nowMs: number, avatarUrl?: strin
     npub: normalizeNpub(npub),
     name: normalizedName,
     avatarUrl: normalizeAvatarUrl(avatarUrl),
-    ready: false,
-    status: 'joined',
+    // Todo el que entra a una sala arranca listo; puede des-marcarse a mano.
+    ready: true,
+    status: 'ready',
     lines: 0,
     pieces: 0,
     elapsedFrames: 0,
@@ -1157,10 +1219,11 @@ function normalizeRuleset(value: unknown, matchType: OnlineMatchType, strict = f
 
 function defaultRuleset(matchType: OnlineMatchType): OnlineRuleset {
   return {
-    rulesetId: matchType === 'battle' ? 'battle-last-standing-simple' : 'custom-survival-simple',
+    // Tabla moderna por defecto: combos, B2B y spins suman líneas de ataque.
+    rulesetId: matchType === 'battle' ? 'battle-last-standing-modern' : 'custom-survival-modern',
     rulesetVersion: ONLINE_RULESET_VERSION,
     objective: { type: 'lastStanding' },
-    attackTable: 'simple',
+    attackTable: 'modern',
     targeting: 'random',
   };
 }

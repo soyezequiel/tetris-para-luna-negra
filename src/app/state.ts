@@ -79,6 +79,8 @@ export function gameOverReasonMessage(reason: GameOverReason | null | undefined)
       return 'Las líneas de basura aplastaron tu pieza activa.';
     case 'holdBlockOut':
       return 'La pieza del hold no pudo aparecer — no hay espacio.';
+    case 'topOutTimer':
+      return 'La pila quedó por encima del mapa demasiado tiempo.';
     default:
       return 'La pila superó el tope.';
   }

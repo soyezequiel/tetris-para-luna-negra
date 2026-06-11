@@ -4863,3 +4863,160 @@ canvas {
   animation-delay: -4s;
 }
 
+/* ───────────── Toggle compacto de visibilidad de sala ───────────── */
+
+.room-visibility-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(247, 247, 242, 0.14);
+  border-radius: 8px;
+  background: rgba(247, 247, 242, 0.04);
+  width: fit-content;
+}
+
+.room-visibility-label {
+  color: rgba(247, 247, 242, 0.4);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.room-visibility-label.is-active {
+  color: #39d49a;
+}
+
+/* ───────────── QR de la invoice Lightning ───────────── */
+
+.online-bet-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.online-bet-qr {
+  width: min(260px, 78vw);
+  height: auto;
+  border-radius: 10px;
+  background: #fff;
+  /* Sin suavizado: módulos nítidos para que el celular lo lea de una. */
+  image-rendering: pixelated;
+}
+
+.online-bet-qr-loading {
+  display: grid;
+  place-items: center;
+  width: min(260px, 78vw);
+  aspect-ratio: 1;
+  margin: 10px auto;
+  border-radius: 10px;
+  border: 1px dashed rgba(247, 247, 242, 0.3);
+  color: rgba(247, 247, 242, 0.55);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.online-bet-qr-hint {
+  color: rgba(247, 247, 242, 0.6);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ───────────── KO / modo espectador en online ───────────── */
+
+.online-ko-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 9vh;
+  pointer-events: none;
+}
+
+.online-ko-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 34px;
+  border: 2px solid rgba(255, 0, 127, 0.55);
+  border-radius: 14px;
+  background: rgba(10, 4, 10, 0.82);
+  box-shadow: 0 0 42px rgba(255, 0, 127, 0.35);
+  animation: online-ko-pop 0.45s cubic-bezier(0.18, 1.4, 0.4, 1) both;
+}
+
+.online-ko-title {
+  color: #ff007f;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 56px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  text-shadow: 0 0 24px rgba(255, 0, 127, 0.65);
+  animation: online-ko-shake 0.5s linear 1;
+}
+
+.online-ko-sub {
+  max-width: 320px;
+  color: rgba(247, 247, 242, 0.82);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.online-ko-place {
+  color: #f59e0b;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.online-ko-watch {
+  margin-top: 4px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(0, 245, 255, 0.12);
+  color: #00f5ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+@keyframes online-ko-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes online-ko-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+/* En modo espectador los tableros rivales pasan al centro y se agrandan. */
+.online-versus-grid--spectator {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  justify-items: center;
+}
+
+.online-versus-grid--spectator .online-peer-boards {
+  justify-content: center;
+}
+
+@media (max-width: 760px) {
+  .online-versus-grid--spectator {
+    left: 50%;
+    right: auto;
+  }
+}

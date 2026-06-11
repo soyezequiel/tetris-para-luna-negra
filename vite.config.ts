@@ -3,6 +3,7 @@ import * as health from './api/health';
 import * as lunaNegraAction from './api/luna-negra/[action]';
 import * as lunaNegraEnter from './api/rooms/luna-negra/enter';
 import * as roomsAction from './api/rooms/[action]';
+import * as betsAction from './api/bets/[action]';
 
 type LocalApiHandler = (request: Request) => Response | Promise<Response>;
 type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
@@ -20,15 +21,26 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/rooms/create', roomsAction],
   ['/api/rooms/eliminate', roomsAction],
   ['/api/rooms/join', roomsAction],
+  ['/api/rooms/kick', roomsAction],
+  ['/api/rooms/leave', roomsAction],
   ['/api/rooms/luna-negra/enter', lunaNegraEnter],
   ['/api/rooms/progress', roomsAction],
   ['/api/rooms/public', roomsAction],
   ['/api/rooms/ready', roomsAction],
+  ['/api/rooms/reopen', roomsAction],
+  ['/api/rooms/restart', roomsAction],
   ['/api/rooms/result', roomsAction],
+  ['/api/rooms/settings', roomsAction],
   ['/api/rooms/signal', roomsAction],
   ['/api/rooms/start', roomsAction],
   ['/api/rooms/state', roomsAction],
   ['/api/rooms/targeting', roomsAction],
+
+  ['/api/bets/create', betsAction],
+  ['/api/bets/refresh', betsAction],
+  ['/api/bets/cancel', betsAction],
+  ['/api/bets/settle', betsAction],
+  ['/api/bets/state', betsAction],
 ]);
 
 export default defineConfig({

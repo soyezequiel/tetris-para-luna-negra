@@ -1,4 +1,5 @@
 import './styles.css';
+import QRCode from 'qrcode';
 import { importReplayJson } from './app/replayImport';
 import { createExportedReplay, replayFileName, type ExportedReplay } from './app/replayExport';
 import { ReplayPlayback, type PlaybackSpeed, type ReplayPlaybackSnapshot } from './app/replayPlayback';
@@ -65,7 +66,7 @@ import { decidePeerKoAction } from './online/peerKoAuthority';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBroadcast';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode, UpdateRoomSettingsRequest } from './online/protocol';
+import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 
@@ -81,7 +82,10 @@ const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
 const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_BET_FAST_POLL_MS = 750;
-const ONLINE_BET_FAST_POLL_WINDOW_MS = 45_000;
+// Ventana generosa: pagar copiando la invoice en otra app/billetera puede tardar
+// minutos. Además, mientras MI depósito siga pendiente se pollea rápido siempre
+// (ver maybeRefreshBet); esta ventana cubre los depósitos de los demás.
+const ONLINE_BET_FAST_POLL_WINDOW_MS = 180_000;
 const ONLINE_PEER_BROADCAST_MS = 100;
 // Contenedores con scroll propio que se reconstruyen al regenerar el overlay.
 // Sin esto, cada re-render (p. ej. polling de salas/apuestas) reinicia el scroll al tope.
@@ -196,6 +200,10 @@ let trustedLunaOrigin: string | null = null;
 let lunaLaunchPollInFlight = false;
 let pendingLunaLaunchRequest: PendingLunaLaunchRequest | null = null;
 let ignoredLunaLaunchRequestIds = new Set<string>();
+let onlineRoomReopenInFlight = false;
+// QRs de invoices Lightning, cacheados por bolt11 (el overlay se regenera por HTML).
+const betQrDataUrls = new Map<string, string>();
+const betQrPending = new Set<string>();
 
 const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
 const LUNA_ORIGIN_KEY = 'stack40.lunaOrigin.v1';
@@ -428,7 +436,7 @@ function handleOverlayInput(event: Event): void {
   const target = event.target;
   if (target instanceof HTMLInputElement) {
     const field = target.dataset.onlineField;
-    if (field === 'name') onlineName = target.value;
+    // El nombre ya no se edita acá: siempre se usa el que da Luna Negra.
     if (field === 'join-code') onlineJoinCode = normalizeRoomId(target.value);
     if (field === 'bet-stake') onlineStakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
     const customKey = parseCustomSettingKey(target.dataset.customSetting);
@@ -568,6 +576,12 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-custom-open') openOnlineMenu();
   if (action === 'online-refresh') refreshPublicRooms();
   if (action === 'online-room-visibility') setOnlineRoomVisibility(control.dataset.visibility);
+  if (action === 'online-visibility-toggle') {
+    setOnlineRoomVisibility(onlineRoom?.visibility === 'public' ? 'private' : 'public');
+  }
+  if (action === 'online-results-menu') {
+    closeOnlineResults();
+  }
   if (action === 'online-create-public') createOnlineRoom('public');
   if (action === 'online-create-private') createOnlineRoom('private');
   if (action === 'online-join') joinOnlineRoom(onlineJoinCode);
@@ -1344,9 +1358,17 @@ async function setOnlineRoomVisibility(value: string | undefined): Promise<void>
   }
   onlineBusy = true;
   try {
-    const response = await onlineClient.updateRoomSettings(createOnlineRoomSettingsRequest(visibility));
+    // visibilityOnly: el toggle no reinicia reglas, jugadores ni la apuesta, y
+    // no cambia la pantalla actual (se usa desde el panel persistente también).
+    const response = await onlineClient.updateRoomSettings({
+      roomId: onlineRoom.id,
+      playerId: onlinePlayer.id,
+      visibility,
+      visibilityOnly: true,
+      matchType: 'custom',
+    });
     syncOnlineClock(response.serverNowMs);
-    enterOnlineRoom(response.room, 'roomLobby');
+    adoptOnlineRoom(response.room);
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -1381,17 +1403,6 @@ async function createOnlineRoom(visibility: RoomVisibility): Promise<void> {
   } finally {
     onlineBusy = false;
   }
-}
-
-function createOnlineRoomSettingsRequest(visibility = onlineRoom?.visibility ?? 'private'): UpdateRoomSettingsRequest {
-  return {
-    roomId: onlineRoom?.id ?? '',
-    playerId: onlinePlayer.id,
-    visibility,
-    matchType: 'custom',
-    mode: 'custom',
-    rules: onlineCustomRulesFromSettings(),
-  };
 }
 
 async function joinOnlineRoom(roomId: string): Promise<void> {
@@ -1451,6 +1462,32 @@ async function startOnlineRoom(): Promise<void> {
     onlineError = onlineErrorText(error);
   } finally {
     onlineBusy = false;
+  }
+}
+
+// Después de ver los resultados se vuelve al menú principal SIN salir de la
+// sala. Si soy el host, además reabro la sala al lobby para poder crear otra
+// apuesta y lanzar la próxima ronda desde el panel.
+function closeOnlineResults(): void {
+  goToMenu();
+  if (isOnlineHost()) void reopenOnlineRoom();
+}
+
+async function reopenOnlineRoom(): Promise<void> {
+  if (!onlineRoom || !isOnlineHost() || onlineRoomReopenInFlight) return;
+  if (onlineRoom.status !== 'finished') return;
+  // No reabrimos hasta que la apuesta termine de liquidarse: el server la borra
+  // al reabrir y se perdería el reintento de pago al ganador.
+  if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) return;
+  onlineRoomReopenInFlight = true;
+  try {
+    const response = await onlineClient.reopenRoom({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+  } catch {
+    // Best-effort: el próximo poll lo reintenta (ver pollOnlineRoom).
+  } finally {
+    onlineRoomReopenInFlight = false;
   }
 }
 
@@ -2160,6 +2197,13 @@ async function pollOnlineRoom(): Promise<void> {
     ) appMode = 'onlineResults';
     if (response.room.status === 'countdown' && (appMode === 'roomLobby' || appMode === 'onlineResults')) appMode = 'onlineCountdown';
     if (response.room.status === 'playing' && appMode === 'roomLobby') appMode = 'onlineCountdown';
+    // El host reabrió la sala al lobby: los demás vuelven al menú principal
+    // (la sala sigue viva en el panel lateral).
+    if (response.room.status === 'lobby' && appMode === 'onlineResults') goToMenu();
+    // Host que ya está en el menú con la sala terminada: la reabre solo.
+    if (response.room.status === 'finished' && isOnlineHost() && isPersistentRoomPanelMode(appMode)) {
+      void reopenOnlineRoom();
+    }
     onlineError = null;
     maybeRefreshBet();
   } catch (error) {
@@ -2177,9 +2221,12 @@ function maybeRefreshBet(): void {
   const bet = onlineRoom?.bet;
   if (!isRefreshableRoomBet(bet)) return;
   const now = performance.now();
-  const pollMs = now < onlineBetFastPollUntil && bet.status === 'pending_deposits'
-    ? ONLINE_BET_FAST_POLL_MS
-    : ONLINE_BET_POLL_MS;
+  // Igual que la pantalla de pago por QR de Luna Negra: mientras MI depósito
+  // siga pendiente se pollea rápido siempre, así un pago hecho por fuera
+  // (invoice copiada a otra billetera) se detecta apenas Luna lo registra.
+  const fastPoll = bet.status === 'pending_deposits'
+    && (now < onlineBetFastPollUntil || hasOwnPendingDeposit(bet));
+  const pollMs = fastPoll ? ONLINE_BET_FAST_POLL_MS : ONLINE_BET_POLL_MS;
   if (onlineBetBusy) {
     onlineBetRefreshQueued = true;
     return;
@@ -2190,6 +2237,12 @@ function maybeRefreshBet(): void {
 
 function isRefreshableRoomBet(bet: RoomBet | null | undefined): bet is RoomBet {
   return !!bet && (bet.status === 'pending_deposits' || bet.status === 'funded');
+}
+
+function hasOwnPendingDeposit(bet: RoomBet): boolean {
+  const mine = currentOnlinePlayer();
+  if (!mine?.npub) return false;
+  return bet.participants.some((entry) => entry.npub === mine.npub && entry.depositStatus === 'pending');
 }
 
 function armOnlineBetFastPolling(): void {
@@ -2269,7 +2322,9 @@ async function commitOnlineResult(
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
-    if (response.room.status === 'finished' || playerId === onlinePlayer.id) appMode = 'onlineResults';
+    // Solo pasamos a resultados cuando la sala terminó: si perdí pero quedan
+    // jugadores vivos, me quedo mirando sus partidas (modo espectador).
+    if (response.room.status === 'finished') appMode = 'onlineResults';
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -2328,7 +2383,9 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
-    if (response.room.status === 'finished' || report.playerId === onlinePlayer.id) appMode = 'onlineResults';
+    // Igual que en commitOnlineResult: el eliminado queda de espectador hasta
+    // que la sala entera termine.
+    if (response.room.status === 'finished') appMode = 'onlineResults';
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -2892,6 +2949,13 @@ function renderScreenOverlay(state: GameState): string {
   if (appMode === 'soloCountdown') return renderSoloCountdownOverlay();
   if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
   if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
+  // Online: perder no abre la pantalla de resultados de solo. Mostramos el
+  // banner de KO y el jugador queda de espectador viendo al resto.
+  if (appMode === 'onlinePlaying') {
+    return state.status === 'gameover' || state.status === 'finished'
+      ? renderOnlineKoOverlay(state)
+      : '';
+  }
 
   if (appMode === 'paused') {
     const actions: [string, string][] = [
@@ -3109,10 +3173,6 @@ function renderOnlineMenuPanelContent(): string {
       ${renderOnlineError()}
       ${renderLunaIdentityBadge()}
       <section class="cs2-card">
-        <label class="online-field">
-          <span>Tu nombre</span>
-          <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
-        </label>
         <div class="cs2-play-actions">
           <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
           <button class="cs2-btn" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Sala privada</button>
@@ -3211,10 +3271,12 @@ function renderOnlineLobbyPanelContent(): string {
       ${renderLunaInviteAction(host)}
       ${renderOnlineBetPanel(host)}
       <div class="cs2-lobby-actions">
-        ${player?.ready
-          ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
-          : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
-        ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}
+        ${room.status === 'lobby'
+          ? `${player?.ready
+            ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
+            : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
+            ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}`
+          : '<button class="cs2-btn" type="button" disabled>Ronda en curso…</button>'}
         <button class="cs2-btn" type="button" data-ui-action="main-menu">Menú</button>
         <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
       </div>
@@ -3290,10 +3352,15 @@ function renderOnlineResultsOverlay(_state: GameState): string {
   const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded') ? bet.netPayoutSats : null;
   const isHost = room ? room.hostPlayerId === onlinePlayer.id : false;
   const rows = ranked.map((player, index) => renderOnlineRankingRow(player, index, winnerSats)).join('');
+  // La ronda puede seguir corriendo (p. ej. quedé eliminado y el server aún no
+  // cerró la sala): nadie puede relanzar hasta que termine de verdad.
+  const roundOver = room?.status === 'finished';
   const rematch = room
-    ? isHost
-      ? `<button class="solo-results-btn solo-results-btn--rematch" type="button" data-ui-action="online-restart"${onlineBusy ? ' disabled' : ''}>Revancha</button>`
-      : '<button class="solo-results-btn solo-results-btn--ghost" type="button" disabled>Esperando host</button>'
+    ? !roundOver
+      ? '<button class="solo-results-btn solo-results-btn--ghost" type="button" disabled>Ronda en curso…</button>'
+      : isHost
+        ? `<button class="solo-results-btn solo-results-btn--rematch" type="button" data-ui-action="online-restart"${onlineBusy ? ' disabled' : ''}>Revancha</button>`
+        : '<button class="solo-results-btn solo-results-btn--ghost" type="button" disabled>Esperando host</button>'
     : '';
   return `
     <div class="menu-scrim online-results-scrim">
@@ -3308,7 +3375,7 @@ function renderOnlineResultsOverlay(_state: GameState): string {
         ${renderOnlineBetResult()}
         <div class="online-results-actions">
           ${rematch}
-          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="main-menu">Volver a la sala</button>
+          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="online-results-menu">Volver al menú</button>
           <button class="solo-results-btn solo-results-btn--danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
         </div>
       </div>
@@ -3358,6 +3425,32 @@ function renderConfettiPieces(): string {
     const color = colors[i % colors.length];
     return `<span class="online-confetti-piece" style="left:${left}%; background:${color}; animation-delay:${delay}s; animation-duration:${dur}s;"></span>`;
   }).join('');
+}
+
+// Banner no bloqueante al perder en online: feedback fuerte de KO + aviso de
+// que ahora está mirando las partidas de los demás (los tableros rivales se
+// agrandan en modo espectador; ver onlinePeerGridLayout).
+function renderOnlineKoOverlay(state: GameState): string {
+  const room = onlineRoom;
+  const ranked = room ? rankPlayers(room.players) : [];
+  const myIndex = ranked.findIndex((player) => player.id === onlinePlayer.id);
+  const placement = myIndex >= 0 ? `${myIndex + 1}° de ${ranked.length}` : '';
+  const aliveCount = room
+    ? room.players.filter((player) => player.alive && player.status !== 'eliminated').length
+    : 0;
+  const reason = state.status === 'gameover'
+    ? gameOverReasonMessage(state.stats.gameOverReason)
+    : 'Terminaste tu partida.';
+  return `
+    <div class="online-ko-overlay" aria-live="assertive">
+      <div class="online-ko-card">
+        <div class="online-ko-title">K.O.</div>
+        <div class="online-ko-sub">${escapeHtml(reason)}</div>
+        ${placement ? `<div class="online-ko-place">${escapeHtml(placement)}</div>` : ''}
+        <div class="online-ko-watch">Modo espectador · ${aliveCount} jugador${aliveCount === 1 ? '' : 'es'} en pie</div>
+      </div>
+    </div>
+  `;
 }
 
 function renderOnlinePlayingOverlay(): string {
@@ -3607,6 +3700,7 @@ function renderOnlineBetPanel(host: boolean): string {
     ? `
       <div class="online-bet-deposit">
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        ${myEntry.bolt11 ? renderBetInvoiceQr(myEntry.bolt11) : ''}
         <div class="online-bet-deposit-actions">
           ${myEntry.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
           ${myEntry.bolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
@@ -3634,6 +3728,45 @@ function renderOnlineBetPanel(host: boolean): string {
       </div>
     </section>
   `;
+}
+
+// QR grande y de alto contraste de la invoice Lightning, pensado para escanear
+// con el celular: bolt11 en MAYÚSCULAS (modo alfanumérico = menos módulos),
+// margen de silencio amplio y render nítido sin suavizado.
+function renderBetInvoiceQr(bolt11: string): string {
+  const dataUrl = ensureBetInvoiceQr(bolt11);
+  if (!dataUrl) return '<div class="online-bet-qr online-bet-qr-loading">Generando QR…</div>';
+  return `
+    <div class="online-bet-qr-wrap">
+      <img class="online-bet-qr" src="${dataUrl}" alt="QR de la invoice Lightning" decoding="async" />
+      <span class="online-bet-qr-hint">Escaneá con tu billetera Lightning</span>
+    </div>
+  `;
+}
+
+function ensureBetInvoiceQr(bolt11: string): string | null {
+  const cached = betQrDataUrls.get(bolt11);
+  if (cached) return cached;
+  if (betQrPending.has(bolt11)) return null;
+  betQrPending.add(bolt11);
+  void QRCode.toDataURL(`lightning:${bolt11.toUpperCase()}`, {
+    errorCorrectionLevel: 'M',
+    margin: 4,
+    scale: 8,
+    color: { dark: '#000000', light: '#ffffff' },
+  })
+    .then((url) => {
+      betQrDataUrls.set(bolt11, url);
+      // El overlay se regenera solo cuando cambia el HTML; forzamos el repintado.
+      lastOverlayHtml = '';
+    })
+    .catch(() => {
+      // Sin QR quedan los botones de pagar/copiar.
+    })
+    .finally(() => {
+      betQrPending.delete(bolt11);
+    });
+  return null;
 }
 
 function renderOnlineBetResult(): string {
@@ -3677,11 +3810,12 @@ function renderOnlinePeerBoards(): string {
       </aside>
     `;
   }
-  const layout = onlinePeerGridLayout(remotePlayers.length);
+  const spectating = isOnlineSpectating();
+  const layout = onlinePeerGridLayout(remotePlayers.length, spectating);
   return `
-    <aside class="online-versus-grid" aria-label="Remote player boards">
+    <aside class="online-versus-grid ${spectating ? 'online-versus-grid--spectator' : ''}" aria-label="Remote player boards">
       <div class="online-versus-title">
-        <span>Opponents</span>
+        <span>${spectating ? 'Espectador' : 'Opponents'}</span>
         <strong>${remotePlayers.length}</strong>
       </div>
       <div
@@ -3695,26 +3829,48 @@ function renderOnlinePeerBoards(): string {
   `;
 }
 
-function onlinePeerGridLayout(playerCount: number): { columns: number; cardWidth: number } {
+// El jugador local ya terminó su partida pero la ronda sigue: está mirando.
+function isOnlineSpectating(): boolean {
+  return appMode === 'onlinePlaying' && lastStatus !== 'playing';
+}
+
+// Tamaño automático de los tableros rivales: con pocos enemigos se agrandan,
+// con muchos se achican hasta que entren todos. En modo espectador (ya perdí)
+// ocupan mucho más ancho de pantalla.
+function onlinePeerGridLayout(playerCount: number, spectating = false): { columns: number; cardWidth: number } {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const columns = onlinePeerGridColumns(playerCount, width);
   const rows = Math.ceil(playerCount / columns);
   const gap = width < 760 ? 6 : 8;
-  const panelWidth = width < 760
-    ? Math.max(240, width - 28)
-    : width < 1120
-      ? Math.max(176, width * 0.22)
-      : Math.min(420, width * 0.32);
+  const panelWidth = spectating
+    ? Math.max(240, width * (width < 760 ? 0.92 : 0.55))
+    : width < 760
+      ? Math.max(240, width - 28)
+      : width < 1120
+        ? Math.max(176, width * 0.22)
+        : Math.min(420, width * 0.32);
   const availableHeight = Math.max(240, height - (width < 760 ? 168 : 118));
   const widthBound = (panelWidth - gap * (columns - 1)) / columns;
   const heightBound = (availableHeight - gap * (rows - 1)) / rows / 2.42;
   const minWidth = width < 760 ? 44 : 54;
-  const maxWidth = width < 760 ? 82 : 128;
+  const maxWidth = onlinePeerMaxCardWidth(playerCount, width, spectating);
   return {
     columns,
     cardWidth: Math.floor(Math.max(minWidth, Math.min(maxWidth, widthBound, heightBound))),
   };
+}
+
+function onlinePeerMaxCardWidth(playerCount: number, width: number, spectating: boolean): number {
+  if (width < 760) {
+    if (spectating) return playerCount <= 2 ? 160 : 110;
+    return playerCount <= 2 ? 110 : 82;
+  }
+  if (spectating) return playerCount <= 2 ? 240 : playerCount <= 4 ? 200 : 160;
+  if (playerCount <= 1) return 190;
+  if (playerCount <= 2) return 165;
+  if (playerCount <= 4) return 145;
+  return 128;
 }
 
 function onlinePeerGridColumns(playerCount: number, width: number): number {
@@ -4484,11 +4640,6 @@ function renderDashboardRoomPanel(): string {
 
       <div class="dash-empty-state">
         <div class="dash-field-group">
-          <label for="dash-name-input">Tu nombre</label>
-          <input id="dash-name-input" class="dash-input" type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
-        </div>
-        
-        <div class="dash-field-group">
           <label>Crear Sala</label>
           <div class="dash-buttons-row">
             <button class="dash-action-btn accent" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Privada</button>
@@ -4591,17 +4742,7 @@ function renderDashboardRoomPanel(): string {
     
     ${renderOnlineError()}
 
-    ${host && room.status === 'lobby' ? `
-      <section class="dash-room-section dash-room-visibility">
-        <div class="dash-section-header">
-          <span>Visibilidad</span>
-        </div>
-        <div class="dash-buttons-row">
-          <button class="dash-action-btn ${room.visibility === 'private' ? 'accent' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="private"${onlineBusy ? ' disabled' : ''}>Privada</button>
-          <button class="dash-action-btn ${room.visibility === 'public' ? 'accent' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="public"${onlineBusy ? ' disabled' : ''}>Pública</button>
-        </div>
-      </section>
-    ` : ''}
+    ${host && room.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : ''}
 
     <section class="dash-room-section">
       <div class="dash-section-header">
@@ -4618,10 +4759,12 @@ function renderDashboardRoomPanel(): string {
     ${renderOnlineBetPanel(host)}
 
     <div class="dash-room-actions-group">
-      ${player?.ready
-        ? '<button class="dash-action-btn" type="button" data-ui-action="online-unready">No listo</button>'
-        : '<button class="dash-action-btn accent" type="button" data-ui-action="online-ready">Listo</button>'}
-      ${host ? `<button class="dash-action-btn success" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar juego</button>` : ''}
+      ${room.status === 'lobby'
+        ? `${player?.ready
+          ? '<button class="dash-action-btn" type="button" data-ui-action="online-unready">No listo</button>'
+          : '<button class="dash-action-btn accent" type="button" data-ui-action="online-ready">Listo</button>'}
+          ${host ? `<button class="dash-action-btn success" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar juego</button>` : ''}`
+        : '<button class="dash-action-btn" type="button" disabled>Ronda en curso…</button>'}
       <button class="dash-action-btn danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
     </div>
   `;
@@ -4651,10 +4794,6 @@ function renderEmptyPersistentRoomPanel(): string {
       </div>
       ${renderOnlineError()}
       ${renderLunaIdentityBadge()}
-      <label class="online-field">
-        <span>Tu nombre</span>
-        <input type="text" maxlength="18" value="${escapeHtml(onlineName)}" data-online-field="name" autocomplete="off" />
-      </label>
       <div class="persistent-room-actions">
         <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Crear pública</button>
         <button class="cs2-btn" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Crear privada</button>
@@ -4699,26 +4838,37 @@ function renderActivePersistentRoomPanel(): string {
       </div>
       ${renderLunaInviteAction(host)}
       <div class="cs2-lobby-actions">
-        ${player?.ready
-          ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
-          : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
-        ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar</button>` : ''}
+        ${onlineRoom.status === 'lobby'
+          ? `${player?.ready
+            ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
+            : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
+            ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar</button>` : ''}`
+          : '<button class="cs2-btn" type="button" disabled>Ronda en curso…</button>'}
         <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
       </div>
     </aside>
   `;
 }
 
+// Toggle compacto pública/privada: un switch que alterna la visibilidad de la
+// sala sin tocar nada más (solo lo ve el host y solo en el lobby).
 function renderPersistentRoomVisibilityToggle(): string {
   if (!onlineRoom) return '';
+  const isPublic = onlineRoom.visibility === 'public';
   return `
-    <div class="persistent-room-modes" aria-label="Visibilidad de sala">
-      <button class="${onlineRoom.visibility === 'private' ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="private"${onlineBusy ? ' disabled' : ''}>
-        Privada
+    <div class="room-visibility-toggle" aria-label="Visibilidad de sala">
+      <span class="room-visibility-label ${isPublic ? '' : 'is-active'}">Privada</span>
+      <button
+        class="custom-toggle ${isPublic ? 'custom-toggle-on' : 'custom-toggle-off'}"
+        type="button"
+        role="switch"
+        aria-checked="${isPublic}"
+        aria-label="Sala pública"
+        data-ui-action="online-visibility-toggle"${onlineBusy ? ' disabled' : ''}
+      >
+        <span class="custom-toggle-knob"></span>
       </button>
-      <button class="${onlineRoom.visibility === 'public' ? 'online-filter-active' : ''}" type="button" data-ui-action="online-room-visibility" data-visibility="public"${onlineBusy ? ' disabled' : ''}>
-        Publica
-      </button>
+      <span class="room-visibility-label ${isPublic ? 'is-active' : ''}">Pública</span>
     </div>
   `;
 }
