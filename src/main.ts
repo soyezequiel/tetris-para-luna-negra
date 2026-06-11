@@ -441,6 +441,18 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
     event.preventDefault();
     sound.nextMusicTrack();
   }
+  // Teclas 1–5 (fila numérica o numpad) eligen la estrategia de objetivo
+  // durante una batalla online de 3+ jugadores, al estilo tetr.io.
+  if (appMode === 'onlinePlaying' && onlineRoom && onlineRoom.players.length > 2) {
+    const digit = /^(?:Digit|Numpad)([1-9])$/.exec(event.code);
+    if (digit) {
+      const index = Number(digit[1]) - 1;
+      if (index >= 0 && index < TARGETING_MODES.length) {
+        event.preventDefault();
+        void setOnlineTargeting(TARGETING_MODES[index]);
+      }
+    }
+  }
 }
 
 function handleOverlayInput(event: Event): void {
@@ -3522,12 +3534,12 @@ function renderOnlinePlayingOverlay(): string {
       <div class="panel-eyebrow">ROOM ${escapeHtml(onlineRoom.id)}</div>
       <div class="online-battle-meta">${escapeHtml(onlineAliveText())}</div>
       ${renderOnlineSeriesStatus()}
-      ${renderOnlineTargetingControls()}
       ${renderIncomingGarbage()}
       ${renderOnlineStandings()}
       <button type="button" data-ui-action="online-leave">Leave</button>
     </aside>
     ${renderOnlinePeerBoards()}
+    ${renderOnlineTargetingBar()}
   `;
 }
 
@@ -3592,18 +3604,22 @@ function matchTypeLabel(matchType: OnlineMatchType): string {
   return 'Custom';
 }
 
+// Etiquetas en español de las estrategias de objetivo de tetr.io.
 function targetingModeLabel(mode: TargetingMode): string {
-  if (mode === 'even') return 'Even';
-  if (mode === 'ko') return 'KO';
-  if (mode === 'attackers') return 'Attackers';
-  if (mode === 'leader') return 'Leader';
   if (mode === 'manual') return 'Manual';
-  return 'Random';
+  if (mode === 'even') return 'Parejo';
+  if (mode === 'ko') return 'Eliminación';
+  if (mode === 'attackers') return 'Contraataque';
+  return 'Aleatorio';
 }
 
-function targetingModeShortLabel(mode: TargetingMode): string {
-  if (mode === 'attackers') return 'ATK';
-  return targetingModeLabel(mode).slice(0, 4).toUpperCase();
+// Descripción de una línea para la barra de objetivo.
+function targetingModeHint(mode: TargetingMode): string {
+  if (mode === 'manual') return 'Elegís vos';
+  if (mode === 'even') return 'Reparte parejo';
+  if (mode === 'ko') return 'Al que va a morir';
+  if (mode === 'attackers') return 'A quien te ataca';
+  return 'Al azar';
 }
 
 function renderIncomingGarbage(): string {
@@ -3618,7 +3634,9 @@ function renderIncomingGarbage(): string {
   `;
 }
 
-function renderOnlineTargetingControls(): string {
+// Barra horizontal inferior con las estrategias de objetivo de tetr.io.
+// Se elige con click o con las teclas 1–5 (ver handleGlobalKeyDown).
+function renderOnlineTargetingBar(): string {
   if (!onlineRoom || onlineRoom.players.length <= 2) return '';
   const player = currentOnlinePlayer();
   if (!player) return '';
@@ -3634,27 +3652,33 @@ function renderOnlineTargetingControls(): string {
     ?? liveTargets.find((candidate) => candidate.id === player.manualTargetPlayerId)
     ?? null;
   return `
-    <div class="online-targeting" aria-label="Targeting controls">
-      <div class="online-targeting-head">
-        <span>Target</span>
-        <strong>${escapeHtml(target?.name ?? targetingModeLabel(activeMode))}</strong>
-      </div>
-      <div class="online-targeting-modes">
-        ${TARGETING_MODES.map((mode) => `
-          <button class="${mode === activeMode ? 'online-targeting-active' : ''}" type="button" data-ui-action="online-targeting" data-targeting-mode="${mode}">
-            ${escapeHtml(targetingModeShortLabel(mode))}
+    <div class="online-target-bar" aria-label="Estrategia de objetivo">
+      <div class="online-target-bar-modes">
+        ${TARGETING_MODES.map((mode, index) => `
+          <button class="online-target-chip ${mode === activeMode ? 'is-active' : ''}" type="button" data-ui-action="online-targeting" data-targeting-mode="${mode}">
+            <span class="online-target-key">${index + 1}</span>
+            <span class="online-target-text">
+              <span class="online-target-name">${escapeHtml(targetingModeLabel(mode))}</span>
+              <span class="online-target-hint">${escapeHtml(targetingModeHint(mode))}</span>
+            </span>
           </button>
         `).join('')}
       </div>
       ${activeMode === 'manual' ? `
-        <div class="online-targeting-manual">
-          ${liveTargets.map((candidate) => `
-            <button class="${candidate.id === player.manualTargetPlayerId ? 'online-targeting-active' : ''}" type="button" data-ui-action="online-manual-target" data-target-player-id="${escapeHtml(candidate.id)}">
+        <div class="online-target-manual">
+          <span class="online-target-foot-label">Objetivo</span>
+          ${liveTargets.length === 0 ? '<em>Sin rivales vivos</em>' : liveTargets.map((candidate) => `
+            <button class="online-target-manual-chip ${candidate.id === player.manualTargetPlayerId ? 'is-active' : ''}" type="button" data-ui-action="online-manual-target" data-target-player-id="${escapeHtml(candidate.id)}">
               ${escapeHtml(candidate.name)}
             </button>
           `).join('')}
         </div>
-      ` : ''}
+      ` : `
+        <div class="online-target-current">
+          <span class="online-target-foot-label">Apuntando a</span>
+          <strong>${escapeHtml(target?.name ?? '—')}</strong>
+        </div>
+      `}
     </div>
   `;
 }

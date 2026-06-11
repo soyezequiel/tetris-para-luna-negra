@@ -53,7 +53,10 @@ export const ROOM_TTL_SECONDS = 2 * 60 * 60;
 export const MAX_PEER_SIGNALS_PER_ROOM = 200;
 export const MAX_ATTACKS_PER_ROOM = 300;
 export const ONLINE_RULESET_VERSION = 1;
-export const TARGETING_MODES: TargetingMode[] = ['random', 'even', 'ko', 'attackers', 'leader', 'manual'];
+// Orden = teclas 1–5 en la barra de objetivo (estrategias de tetr.io).
+// 'leader' quedó fuera del juego (no existe en tetr.io); selectAttackTarget aún
+// la soporta para su test unitario, pero ya no se ofrece como modo seleccionable.
+export const TARGETING_MODES: TargetingMode[] = ['manual', 'random', 'even', 'ko', 'attackers'];
 export const DEFAULT_ONLINE_REGION = 'gru1';
 
 /** Registro de presencia de un npub respecto a este juego (para amigos Luna Negra). */
