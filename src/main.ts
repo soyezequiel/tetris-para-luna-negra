@@ -99,7 +99,6 @@ const ONLINE_KO_BROADCAST_RETRY_MS = 1000;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
 const GAME_FRAME_MS = 1000 / 60;
 const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
-const AUTO_PLAY_KONAMI: string[] = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight']; // TRUCO AUTOPLAY
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 type RunKind = 'standard' | 'custom' | 'online';
@@ -156,7 +155,6 @@ let touchControlsHidden = best.touchControlsHidden;
 let autoPlayEnabled = false; // TRUCO AUTOPLAY: el bot juega solo al activarse
 let autoPlayAccessGranted = false; // TRUCO AUTOPLAY: habilitado solo con llave local hasheada
 let ignoreNextAutoPlayClick = false; // TRUCO AUTOPLAY: pointerdown ya hizo el toggle
-let autoPlayKonamiProgress = 0; // TRUCO AUTOPLAY: posición actual en la secuencia konami
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
@@ -257,6 +255,12 @@ overlayElement.addEventListener('pointercancel', handleTouchControlPointerEnd);
 overlayElement.addEventListener('lostpointercapture', handleTouchControlPointerEnd);
 
 try { autoPlayAccessGranted = localStorage.getItem(AUTO_PLAY_ACCESS_STORAGE) === '1'; } catch { /* noop */ } // TRUCO AUTOPLAY
+(window as Record<string, unknown>)['test'] = () => { // TRUCO AUTOPLAY
+  try { localStorage.setItem(AUTO_PLAY_ACCESS_STORAGE, '1'); } catch { /* noop */ }
+  autoPlayAccessGranted = true;
+  lastOverlayHtml = '';
+  console.log('autoplay unlocked');
+};
 
 function loop(): void {
   const beforeState = engine.getState();
@@ -429,7 +433,6 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
   if (isEditableKeyboardTarget(event.target)) return;
   if (isBrowserShortcutKeyDown(event)) return;
   if (event.repeat) return;
-  checkAutoPlayKonami(event.code); // TRUCO AUTOPLAY
   if (event.code === 'KeyM') {
     event.preventDefault();
     best = saveSoundMuted(sound.toggleMuted());
@@ -456,20 +459,6 @@ function handleOverlayInput(event: Event): void {
   if (target instanceof HTMLSelectElement) {
     const customKey = parseCustomSettingKey(target.dataset.customSetting);
     if (customKey) customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.value));
-  }
-}
-
-function checkAutoPlayKonami(code: string): void { // TRUCO AUTOPLAY
-  if (code === AUTO_PLAY_KONAMI[autoPlayKonamiProgress]) {
-    autoPlayKonamiProgress++;
-    if (autoPlayKonamiProgress === AUTO_PLAY_KONAMI.length) {
-      autoPlayKonamiProgress = 0;
-      autoPlayAccessGranted = true;
-      try { localStorage.setItem(AUTO_PLAY_ACCESS_STORAGE, '1'); } catch { /* noop */ }
-      lastOverlayHtml = '';
-    }
-  } else {
-    autoPlayKonamiProgress = code === AUTO_PLAY_KONAMI[0] ? 1 : 0;
   }
 }
 
