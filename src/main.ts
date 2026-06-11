@@ -208,6 +208,7 @@ const betQrPending = new Set<string>();
 const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
 const LUNA_ORIGIN_KEY = 'stack40.lunaOrigin.v1';
 const LUNA_ENTER_ROOM_MESSAGE_TYPE = 'luna-negra:enter-room';
+const LUNA_LOGOUT_MESSAGE_TYPE = 'luna-negra:logout';
 const ONLINE_ROOM_SESSION_KEY = 'stack40.onlineRoomSession.v1';
 trustedLunaOrigin = loadTrustedLunaOrigin();
 // La presencia caduca a los 20s sin heartbeat (ver docs/luna-negra-social-spec.md).
@@ -997,9 +998,8 @@ async function bootstrapLunaSession(): Promise<void> {
       applyLunaIdentity(response.identity);
       saveStoredLunaIdentity(response.identity);
     } catch {
-      // El token pudo haber expirado; caemos a la identidad persistida si la hay.
-      const stored = loadStoredLunaIdentity();
-      if (stored) applyLunaIdentity(stored);
+      // Si Luna Negra rechaza un token fresco, la identidad cacheada ya no prueba sesión.
+      clearLunaIdentity();
     } finally {
       removeLunaSessionParamsFromUrl();
     }
@@ -1117,6 +1117,25 @@ function saveStoredLunaIdentity(identity: LunaIdentity): void {
   }
 }
 
+function clearStoredLunaIdentity(): void {
+  try {
+    localStorage.removeItem(LUNA_IDENTITY_KEY);
+  } catch {
+    // localStorage puede estar bloqueado; limpiamos al menos la identidad en memoria.
+  }
+}
+
+function clearLunaIdentity(): void {
+  lunaIdentity = null;
+  lunaInviteNotice = null;
+  pendingLunaLaunchRequest = null;
+  clearStoredLunaIdentity();
+  if (!onlineRoom) {
+    onlinePlayer = saveOnlinePlayer({ id: '', name: 'Player', avatarUrl: null });
+    onlineName = onlinePlayer.name;
+  }
+}
+
 function loadTrustedLunaOrigin(): string | null {
   try {
     const origin = localStorage.getItem(LUNA_ORIGIN_KEY);
@@ -1147,9 +1166,13 @@ function rememberTrustedLunaOriginFromStartup(params: URLSearchParams): void {
 }
 
 function handleLunaNegraWindowMessage(event: MessageEvent): void {
-  const message = parseLunaEnterRoomMessage(event.data);
+  const message = parseLunaWindowMessage(event.data);
   if (!message) return;
   if (!trustedLunaOrigin || event.origin !== trustedLunaOrigin) return;
+  if (message.type === LUNA_LOGOUT_MESSAGE_TYPE) {
+    clearLunaIdentity();
+    return;
+  }
   void handleLunaLaunchRequest({
     id: `msg-${Date.now()}`,
     roomId: message.roomId,
@@ -1158,6 +1181,16 @@ function handleLunaNegraWindowMessage(event: MessageEvent): void {
     title: 'TETRA',
     gameUrl: window.location.href,
   });
+}
+
+function parseLunaWindowMessage(
+  value: unknown,
+): { type: typeof LUNA_LOGOUT_MESSAGE_TYPE } | ({ type: typeof LUNA_ENTER_ROOM_MESSAGE_TYPE } & { inviteToken: string; roomId: string }) | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  if (record.type === LUNA_LOGOUT_MESSAGE_TYPE) return { type: LUNA_LOGOUT_MESSAGE_TYPE };
+  const enterRoom = parseLunaEnterRoomMessage(value);
+  return enterRoom ? { type: LUNA_ENTER_ROOM_MESSAGE_TYPE, ...enterRoom } : null;
 }
 
 function parseLunaEnterRoomMessage(

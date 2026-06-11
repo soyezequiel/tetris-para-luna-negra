@@ -562,6 +562,29 @@ test.describe('TETRA browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
   });
 
+  test('clears the Luna Negra identity when Luna Negra logs out', async ({ page }) => {
+    await mockOnlineApi(page);
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?lnToken=fake-session&lnOrigin=https%3A%2F%2Fluna.example');
+
+    await expect.poll(() => page.evaluate(() => window.stack40.getLunaIdentity()?.npub ?? null)).not.toBeNull();
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('stack40.lunaIdentity.v1'))).not.toBeNull();
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: 'https://luna.example',
+        data: { type: 'luna-negra:logout' },
+      }));
+    });
+
+    await expect.poll(() => page.evaluate(() => window.stack40.getLunaIdentity())).toBeNull();
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('stack40.lunaIdentity.v1'))).toBeNull();
+    await expect(action(page, 'luna-login').first()).toBeVisible();
+  });
+
   test('shows a Luna Negra login button when the player has no session', async ({ page }) => {
     await mockOnlineApi(page);
     let loginUrlRequests = 0;
