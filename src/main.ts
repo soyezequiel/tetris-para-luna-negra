@@ -4002,9 +4002,19 @@ function onlinePeerGridColumns(playerCount: number, width: number): number {
 function renderOnlinePeerBoard(player: OnlinePlayer): string {
   const peerState = onlinePeerStates.get(player.id) ?? 'server';
   const displayGame = displaySnapshotForPlayer(player);
-  const stateLabel = displayGame ? `${formatFrames(displayGame.elapsedFrames)} - ${peerState}` : peerState;
+  const outcome = onlinePeerOutcome(player, displayGame);
+  // Un jugador eliminado debe verse muerto aunque su peer siga "connecting" o
+  // no haya llegado snapshot: la autoridad es el estado de la sala (alive/status).
+  const stateLabel = outcome
+    ? outcome.label
+    : displayGame
+      ? `${formatFrames(displayGame.elapsedFrames)} - ${peerState}`
+      : peerState;
+  const boardHtml = displayGame
+    ? renderOnlineMiniBoard(displayGame)
+    : '<div class="online-mini-board online-mini-board-empty">No board yet</div>';
   return `
-    <section class="online-peer-board">
+    <section class="online-peer-board${outcome ? ` online-peer-board--${outcome.kind}` : ''}">
       <div class="online-peer-board-head">
         <div class="online-player-label">
           ${renderOnlineAvatar(player, 'small')}
@@ -4012,9 +4022,28 @@ function renderOnlinePeerBoard(player: OnlinePlayer): string {
         </div>
         <span>${escapeHtml(stateLabel)}</span>
       </div>
-      ${displayGame ? renderOnlineMiniBoard(displayGame) : '<div class="online-mini-board online-mini-board-empty">No board yet</div>'}
+      <div class="online-peer-board-body">
+        ${boardHtml}
+        ${outcome ? `<div class="online-peer-board-tag online-peer-board-tag--${outcome.kind}">${escapeHtml(outcome.tag)}</div>` : ''}
+      </div>
     </section>
   `;
+}
+
+// Desenlace de un rival según el estado autoritativo de la sala (y, como señal
+// temprana, el status de su último snapshot). Devuelve null mientras sigue vivo.
+function onlinePeerOutcome(
+  player: OnlinePlayer,
+  snapshot: OnlineGameSnapshot | null,
+): { kind: 'ko' | 'win'; label: string; tag: string } | null {
+  const won = player.status === 'winner' || player.status === 'won' || snapshot?.status === 'finished';
+  if (won) return { kind: 'win', label: 'Ganó', tag: 'WIN' };
+  const ko = !player.alive
+    || player.status === 'eliminated'
+    || player.status === 'lost'
+    || snapshot?.status === 'gameover';
+  if (ko) return { kind: 'ko', label: 'Eliminado', tag: 'KO' };
+  return null;
 }
 
 function displaySnapshotForPlayer(player: OnlinePlayer): OnlineGameSnapshot | null {

@@ -1601,6 +1601,50 @@ canvas {
   justify-content: center;
 }
 
+.online-peer-board-body {
+  position: relative;
+}
+
+.online-peer-board-tag {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
+.online-peer-board-tag--ko {
+  border: 1px solid rgba(255, 92, 92, 0.7);
+  background: rgba(40, 6, 6, 0.82);
+  color: #ff7a7a;
+}
+
+.online-peer-board-tag--win {
+  border: 1px solid rgba(57, 212, 154, 0.7);
+  background: rgba(5, 32, 22, 0.82);
+  color: #4be3a6;
+}
+
+.online-peer-board--ko .online-mini-board,
+.online-peer-board--ko .online-mini-board-empty {
+  border-color: rgba(255, 92, 92, 0.45);
+  filter: grayscale(0.75) brightness(0.6);
+}
+
+.online-peer-board--ko .online-peer-board-head strong {
+  color: rgba(255, 122, 122, 0.85);
+}
+
+.online-peer-board--win .online-mini-board {
+  border-color: rgba(57, 212, 154, 0.6);
+}
+
 .online-mini-board {
   display: grid;
   width: 100%;
