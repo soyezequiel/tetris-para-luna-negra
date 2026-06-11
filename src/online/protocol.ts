@@ -426,6 +426,12 @@ export interface LunaInviteWindowResponse {
   serverNowMs: number;
 }
 
+export interface LunaLoginUrlResponse {
+  /** URL first-party de Luna Negra para iniciar sesión y lanzar este juego. */
+  url: string;
+  serverNowMs: number;
+}
+
 export interface LunaLaunchRequest {
   id: string;
   roomId: string;

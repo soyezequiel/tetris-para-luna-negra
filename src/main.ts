@@ -606,6 +606,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-leave') leaveOnlineRoom();
   if (action === 'online-kick') kickOnlinePlayer(control.dataset.targetPlayerId ?? '');
   if (action === 'online-open-invite') openLunaInviteWindow();
+  if (action === 'luna-login') openLunaLogin();
   if (action === 'online-copy-code') {
     copyToClipboard(control.dataset.code ?? '');
   }
@@ -1297,6 +1298,20 @@ async function openLunaInviteWindow(): Promise<void> {
     onlineError = null;
   } catch (error) {
     popup.close();
+    onlineError = onlineErrorText(error);
+  } finally {
+    lunaInviteWindowBusy = false;
+  }
+}
+
+async function openLunaLogin(): Promise<void> {
+  if (onlineBusy || lunaInviteWindowBusy) return;
+  lunaInviteWindowBusy = true;
+  onlineError = null;
+  try {
+    const response = await lunaSocialClient.loginUrl();
+    window.location.href = response.url;
+  } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
     lunaInviteWindowBusy = false;
@@ -3226,8 +3241,11 @@ function renderLunaIdentityBadge(): string {
     <div class="cs2-identity cs2-identity-anon">
       <div>
         <strong>Sin cuenta de Luna Negra</strong>
-        <span>Abrí el juego desde Luna Negra para ver a tus amigos e invitarlos.</span>
+        <span>Entrá desde Luna Negra para ver a tus amigos e invitarlos.</span>
       </div>
+      <button class="cs2-btn cs2-btn-accent cs2-btn-sm cs2-identity-action" type="button" data-ui-action="luna-login"${lunaInviteWindowBusy ? ' disabled' : ''}>
+        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}
+      </button>
     </div>
   `;
 }
@@ -3294,12 +3312,14 @@ function renderLunaInviteAction(host: boolean): string {
   const status = lunaInviteNotice
     ? lunaInviteNotice
     : unavailable
-      ? 'Disponible al abrir TETRA desde Luna Negra.'
+      ? 'Entrá desde Luna Negra para ver amigos e invitarlos.'
       : 'Luna Negra abre la lista de amigos.';
+  const action = unavailable ? 'luna-login' : 'online-open-invite';
+  const label = unavailable ? 'Iniciar sesión' : 'Invitar amigo';
   return `
     <section class="cs2-invite-action" aria-label="Invitar amigo">
-      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy || unavailable ? ' disabled' : ''}>
-        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigo'}
+      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="${action}"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>
+        ${lunaInviteWindowBusy ? 'Abriendo...' : label}
       </button>
       <span>${escapeHtml(status)}</span>
     </section>
@@ -4593,8 +4613,15 @@ function renderDashboardRoomPanel(): string {
   const inviteStatusText = lunaInviteNotice
     ? lunaInviteNotice
     : inviteUnavailable
-      ? 'Disponible al abrir desde Luna Negra.'
+      ? 'Entrá desde Luna Negra para ver amigos e invitarlos.'
       : 'Abre la lista de amigos en Luna Negra.';
+  const inviteActionHtml = inviteUnavailable
+    ? `<button class="dash-invite-btn" type="button" data-ui-action="luna-login"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>
+        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}
+      </button>`
+    : `<button class="dash-invite-btn" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>
+        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}
+      </button>`;
 
   const inviteSectionHtml = `
     <div class="dash-invite-section ${!room ? 'glow' : ''}">
@@ -4602,9 +4629,7 @@ function renderDashboardRoomPanel(): string {
         <strong>Invitaciones</strong>
         <span class="dash-invite-text">${escapeHtml(inviteStatusText)}</span>
       </div>
-      <button class="dash-invite-btn" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy || inviteUnavailable ? ' disabled' : ''}>
-        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}
-      </button>
+      ${inviteActionHtml}
     </div>
   `;
 

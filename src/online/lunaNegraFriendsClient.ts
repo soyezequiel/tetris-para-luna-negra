@@ -4,6 +4,7 @@ import type {
   LunaInviteResponse,
   LunaInviteWindowResponse,
   LunaLaunchRequestResponse,
+  LunaLoginUrlResponse,
   LunaPresenceRequest,
   LunaSessionResponse,
 } from './protocol';
@@ -32,6 +33,10 @@ export class LunaSocialClient {
   inviteWindow(gameId: string, roomId: string, playerId: string): Promise<LunaInviteWindowResponse> {
     const params = new URLSearchParams({ gameId, roomId, playerId });
     return this.get(`/invite-window?${params.toString()}`);
+  }
+
+  loginUrl(): Promise<LunaLoginUrlResponse> {
+    return this.get('/login-url');
   }
 
   launchRequest(npub: string): Promise<LunaLaunchRequestResponse> {

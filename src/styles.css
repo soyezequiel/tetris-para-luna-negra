@@ -2199,14 +2199,23 @@ canvas {
   display: flex;
   align-items: center;
   gap: 10px;
+  justify-content: space-between;
   padding: 9px 12px;
   border: 1px solid var(--cs2-line);
   border-radius: 10px;
   background: linear-gradient(90deg, rgba(78, 161, 255, 0.12), transparent);
 }
 
+.cs2-identity > div {
+  min-width: 0;
+}
+
 .cs2-identity-anon {
   background: rgba(255, 255, 255, 0.03);
+}
+
+.cs2-identity-action {
+  flex: 0 0 auto;
 }
 
 .cs2-identity strong {

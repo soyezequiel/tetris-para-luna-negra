@@ -57,6 +57,7 @@ import {
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
 import { maybeReportRoomBetResult, settleRoomBet } from '../src/online/lunaNegraBets';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
+import { GET as lunaNegraApiGet } from '../api/luna-negra/[action]';
 import { decidePeerKoAction } from '../src/online/peerKoAuthority';
 import { selectAttackTarget } from '../src/online/targeting';
 import { InputController } from '../src/input';
@@ -1696,6 +1697,29 @@ describe('core stacker engine', () => {
 
     if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
     else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
+  });
+
+  it('builds the Luna Negra game login URL from backend config', async () => {
+    const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
+    const previousSlug = process.env.LUNA_NEGRA_GAME_SLUG;
+    try {
+      process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example/';
+      delete process.env.LUNA_NEGRA_GAME_SLUG;
+
+      const defaultUrl = await lunaNegraApiGet(new Request('http://local/api/luna-negra/login-url'));
+      expect(defaultUrl.status).toBe(200);
+      expect(await defaultUrl.json()).toMatchObject({ url: 'https://luna.example/game/tetris' });
+
+      process.env.LUNA_NEGRA_GAME_SLUG = 'tetra-test';
+      const customUrl = await lunaNegraApiGet(new Request('http://local/api/luna-negra/login-url'));
+      expect(customUrl.status).toBe(200);
+      expect(await customUrl.json()).toMatchObject({ url: 'https://luna.example/game/tetra-test' });
+    } finally {
+      if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
+      else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
+      if (previousSlug === undefined) delete process.env.LUNA_NEGRA_GAME_SLUG;
+      else process.env.LUNA_NEGRA_GAME_SLUG = previousSlug;
+    }
   });
 
   it('simulates remote player inputs on the host authority engine', () => {

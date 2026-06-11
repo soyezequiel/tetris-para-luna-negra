@@ -562,6 +562,35 @@ test.describe('TETRA browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
   });
 
+  test('shows a Luna Negra login button when the player has no session', async ({ page }) => {
+    await mockOnlineApi(page);
+    let loginUrlRequests = 0;
+    await page.route('**/api/luna-negra/login-url', async (route) => {
+      loginUrlRequests += 1;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          url: `${new URL(route.request().url()).origin}/luna-login-test`,
+          serverNowMs: Date.now(),
+        }),
+      });
+    });
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/');
+
+    const loginButton = action(page, 'luna-login').first();
+    await expect(page.getByText(/Luna Negra/).first()).toBeVisible();
+    await expect(loginButton).toBeVisible();
+    await expect(loginButton).toHaveText('Iniciar sesión');
+    await loginButton.click();
+
+    await expect.poll(() => loginUrlRequests).toBe(1);
+    await page.waitForURL('**/luna-login-test');
+  });
+
   test('enters a Luna Negra room from a pending launch request in the open game', async ({ page }) => {
     await mockOnlineApi(page);
     let deliveredLaunch = false;
