@@ -5038,77 +5038,58 @@ canvas {
 
 /* ───────────── KO / modo espectador en online ───────────── */
 
-.online-ko-overlay {
+/* Toast compacto de KO: pegado arriba, poco texto. Una sola animación que entra,
+   se sostiene y se va; queda invisible al terminar (no tapa nada). */
+.online-ko-toast {
   position: fixed;
-  inset: 0;
+  top: 14px;
+  left: 50%;
   z-index: 6;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 9vh;
-  pointer-events: none;
-}
-
-.online-ko-card {
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 18px 34px;
-  border: 2px solid rgba(255, 0, 127, 0.55);
-  border-radius: 14px;
-  background: rgba(10, 4, 10, 0.82);
-  box-shadow: 0 0 42px rgba(255, 0, 127, 0.35);
-  animation: online-ko-pop 0.45s cubic-bezier(0.18, 1.4, 0.4, 1) both;
+  gap: 10px;
+  padding: 7px 16px;
+  border: 1px solid rgba(255, 0, 127, 0.6);
+  border-radius: 999px;
+  background: rgba(10, 4, 10, 0.86);
+  box-shadow: 0 0 26px rgba(255, 0, 127, 0.32);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: online-ko-toast 3.4s cubic-bezier(0.2, 0.9, 0.25, 1) forwards;
 }
 
-.online-ko-title {
+.online-ko-toast--win {
+  border-color: rgba(57, 212, 154, 0.6);
+  box-shadow: 0 0 26px rgba(57, 212, 154, 0.32);
+}
+
+.online-ko-toast-tag {
   color: #ff007f;
   font-family: "Arial Black", Arial, sans-serif;
-  font-size: 56px;
-  font-weight: 900;
-  letter-spacing: 4px;
-  text-shadow: 0 0 24px rgba(255, 0, 127, 0.65);
-  animation: online-ko-shake 0.5s linear 1;
-}
-
-.online-ko-sub {
-  max-width: 320px;
-  color: rgba(247, 247, 242, 0.82);
-  font-size: 13px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.online-ko-place {
-  color: #f59e0b;
   font-size: 18px;
   font-weight: 900;
+  letter-spacing: 2px;
+  text-shadow: 0 0 14px rgba(255, 0, 127, 0.6);
 }
 
-.online-ko-watch {
-  margin-top: 4px;
-  padding: 5px 12px;
-  border-radius: 999px;
-  background: rgba(0, 245, 255, 0.12);
-  color: #00f5ff;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
+.online-ko-toast--win .online-ko-toast-tag {
+  color: #39d49a;
+  text-shadow: 0 0 14px rgba(57, 212, 154, 0.6);
 }
 
-@keyframes online-ko-pop {
-  0% { transform: scale(0.6); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+.online-ko-toast-place {
+  color: #f59e0b;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
 }
 
-@keyframes online-ko-shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-6px); }
-  40% { transform: translateX(6px); }
-  60% { transform: translateX(-4px); }
-  80% { transform: translateX(4px); }
+/* Entra cayendo desde arriba, se sostiene, y se va hacia arriba desvaneciéndose. */
+@keyframes online-ko-toast {
+  0% { transform: translate(-50%, -28px); opacity: 0; }
+  10% { transform: translate(-50%, 0); opacity: 1; }
+  78% { transform: translate(-50%, 0); opacity: 1; }
+  100% { transform: translate(-50%, -16px); opacity: 0; }
 }
 
 /* Ya morí: mi tablero (canvas Pixi) se oculta para no superponerse con los

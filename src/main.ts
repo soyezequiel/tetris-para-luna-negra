@@ -110,6 +110,9 @@ const ONLINE_PEER_BROADCAST_MS = 100;
 const SCROLLABLE_OVERLAY_SELECTORS = ['.dash-room', '.dash-layout', '.menu-panel', '.persistent-room-panel'];
 const ONLINE_KO_BROADCAST_RETRY_MS = 1000;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
+// Al morir en online seguimos dibujando MI tablero esta ventana para que corra la
+// animación de derrota (estilo tetr.io); luego se oculta y paso a espectador.
+const ONLINE_DEATH_ANIM_MS = 1150;
 const GAME_FRAME_MS = 1000 / 60;
 const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
 
@@ -163,6 +166,12 @@ let lastOverlayHtml = '';
 // 60 veces por segundo y sus animaciones (pop/shake) se reiniciarían sin parar
 // (parpadeo). Manteniéndolo aparte solo se redibuja cuando cambia su contenido.
 let lastKoOverlayHtml = '';
+// Datos del KO congelados en el instante de morir: así el toast compacto tiene
+// contenido estable y su animación (entra arriba, se va) corre una sola vez.
+let onlineKoBanner: { placement: string; won: boolean } | null = null;
+// Momento en que morí en online; mientras dura ONLINE_DEATH_ANIM_MS sigo
+// dibujando mi tablero para la animación de derrota antes de pasar a espectador.
+let onlineDeathAnimStartedAt: number | null = null;
 // Mismo motivo que el KO: el HUD online se diffea aparte para no recrearse cada
 // frame y evitar el titileo del hover en sus botones.
 let lastHudOverlayHtml = '';
@@ -322,11 +331,47 @@ function loop(): void {
   }
 
   syncOnline();
-  // Ya morí pero la ronda sigue: dejo de dibujar MI tablero (queda oculto por
-  // CSS) y solo se ven los tableros rivales centrados en modo espectador.
+  syncOnlineDeathPhase(state);
+  // Ya morí y terminó la animación de derrota: dejo de dibujar MI tablero (queda
+  // oculto por CSS) y solo se ven los tableros rivales centrados (espectador).
+  // Durante la animación de derrota sigo dibujando para que se vea morir.
   if (!isOnlineSpectating()) renderer.render(state);
   renderOverlay(state);
   requestAnimationFrame(loop);
+}
+
+// Arranca/limpia la fase de muerte online. Congela los datos del toast de KO en
+// el instante de morir y marca el inicio de la ventana de animación de derrota.
+function syncOnlineDeathPhase(state: GameState): void {
+  const dead = appMode === 'onlinePlaying'
+    && (state.status === 'gameover' || state.status === 'finished');
+  if (!dead) {
+    onlineDeathAnimStartedAt = null;
+    onlineKoBanner = null;
+    return;
+  }
+  if (onlineDeathAnimStartedAt === null) {
+    onlineDeathAnimStartedAt = performance.now();
+    onlineKoBanner = {
+      placement: onlineLocalPlacementLabel(),
+      won: state.status === 'finished',
+    };
+    // Perder (top out) dispara el colapso del tablero; ganar (finished) no.
+    if (state.status === 'gameover') renderer.playDeathAnimation();
+  }
+}
+
+function isOnlineDeathAnimating(): boolean {
+  return onlineDeathAnimStartedAt !== null
+    && performance.now() - onlineDeathAnimStartedAt < ONLINE_DEATH_ANIM_MS;
+}
+
+function onlineLocalPlacementLabel(): string {
+  const room = onlineRoom;
+  if (!room) return '';
+  const ranked = rankPlayers(room.players);
+  const myIndex = ranked.findIndex((player) => player.id === onlinePlayer.id);
+  return myIndex >= 0 ? `${myIndex + 1}° de ${ranked.length}` : '';
 }
 
 loop();
@@ -2932,7 +2977,7 @@ function renderOverlay(state: GameState): void {
       </div>
       <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
     </div>
-    ${appMode === 'onlinePlaying' ? renderOnlinePlayingOverlay() : ''}
+    ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
     ${renderTouchControls()}
   `;
@@ -2944,10 +2989,11 @@ function renderOverlay(state: GameState): void {
     restoreOverlayFieldFocus(focusSnapshot);
     restoreOverlayScroll(scrollSnapshot);
   }
-  // El KO se redibuja en su capa propia solo cuando cambia su contenido, así sus
-  // animaciones corren una vez y no parpadean con el redibujo por frame.
-  const koHtml = appMode === 'onlinePlaying' && (state.status === 'gameover' || state.status === 'finished')
-    ? renderOnlineKoOverlay(state)
+  // Toast compacto de KO: aparece arriba cuando paso a espectador (ya terminó la
+  // animación de derrota, mi tablero está oculto) y se desvanece solo por CSS.
+  // Contenido congelado (onlineKoBanner) → se dibuja una vez y no parpadea.
+  const koHtml = onlineKoBanner && isOnlineSpectating()
+    ? renderOnlineKoToast(onlineKoBanner)
     : '';
   if (koHtml !== lastKoOverlayHtml) {
     koOverlayElement.innerHTML = koHtml;
@@ -3541,28 +3587,15 @@ function renderConfettiPieces(): string {
   }).join('');
 }
 
-// Banner no bloqueante al perder en online: feedback fuerte de KO + aviso de
-// que ahora está mirando las partidas de los demás (los tableros rivales se
-// agrandan en modo espectador; ver onlinePeerGridLayout).
-function renderOnlineKoOverlay(state: GameState): string {
-  const room = onlineRoom;
-  const ranked = room ? rankPlayers(room.players) : [];
-  const myIndex = ranked.findIndex((player) => player.id === onlinePlayer.id);
-  const placement = myIndex >= 0 ? `${myIndex + 1}° de ${ranked.length}` : '';
-  const aliveCount = room
-    ? room.players.filter((player) => player.alive && player.status !== 'eliminated').length
-    : 0;
-  const reason = state.status === 'gameover'
-    ? gameOverReasonMessage(state.stats.gameOverReason)
-    : 'Terminaste tu partida.';
+// Toast compacto y no bloqueante al perder en online: aparece arriba del todo,
+// poco texto, y se desvanece solo (animación CSS). Nunca tapa los tableros: vive
+// por encima de la grilla de espectador (que arranca más abajo).
+function renderOnlineKoToast(banner: { placement: string; won: boolean }): string {
+  const tag = banner.won ? 'FINISH' : 'K.O.';
   return `
-    <div class="online-ko-overlay" aria-live="assertive">
-      <div class="online-ko-card">
-        <div class="online-ko-title">K.O.</div>
-        <div class="online-ko-sub">${escapeHtml(reason)}</div>
-        ${placement ? `<div class="online-ko-place">${escapeHtml(placement)}</div>` : ''}
-        <div class="online-ko-watch">Modo espectador · ${aliveCount} jugador${aliveCount === 1 ? '' : 'es'} en pie</div>
-      </div>
+    <div class="online-ko-toast ${banner.won ? 'online-ko-toast--win' : ''}" aria-live="assertive">
+      <span class="online-ko-toast-tag">${tag}</span>
+      ${banner.placement ? `<span class="online-ko-toast-place">${escapeHtml(banner.placement)}</span>` : ''}
     </div>
   `;
 }
@@ -3911,8 +3944,10 @@ function renderOnlinePeerBoards(): string {
 }
 
 // El jugador local ya terminó su partida pero la ronda sigue: está mirando.
+// Durante la animación de derrota todavía NO es espectador: se sigue viendo su
+// tablero (muriendo, a tamaño completo) y los rivales quedan al costado.
 function isOnlineSpectating(): boolean {
-  return appMode === 'onlinePlaying' && lastStatus !== 'playing';
+  return appMode === 'onlinePlaying' && lastStatus !== 'playing' && !isOnlineDeathAnimating();
 }
 
 // Tamaño automático de los tableros rivales: con pocos enemigos se agrandan,

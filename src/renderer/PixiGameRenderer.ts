@@ -13,6 +13,12 @@ const GRID_LINE = 0x2f3338;
 const GHOST_FILL = 0x07090b;
 const GHOST_LINE = 0x525a60;
 const GHOST_INSET_LINE = 0x262c31;
+// Animación de derrota (top out) estilo tetr.io: la pila se vuelve gris y colapsa
+// fila por fila de arriba hacia abajo mientras cae y se desvanece.
+const DEATH_TOTAL_FRAMES = 46;
+const DEATH_BLOCK = 0x5b626b;
+const DEATH_BLOCK_LIGHT = 0x868d96;
+const DEATH_BLOCK_DARK = 0x2c3036;
 
 type BlockPalette = {
   outerLine: number;
@@ -48,6 +54,9 @@ export class PixiGameRenderer {
   private hiddenRows = DEFAULT_RULES.hiddenRows;
   private lastLines = 0;
   private shakeFrames = 0;
+  // Animación de derrota: -1 = inactiva; si no, frames transcurridos desde el top out.
+  // La dispara main.ts solo en online (playDeathAnimation), no en solo.
+  private deathFrame = -1;
 
   constructor(root: HTMLElement) {
     this.app = new Application({
@@ -88,11 +97,22 @@ export class PixiGameRenderer {
     this.app.destroy(true, true);
   }
 
+  // Dispara la animación de derrota estilo tetr.io sobre el tablero local. La usa
+  // main.ts al morir en online; en solo no se llama (el board no colapsa).
+  playDeathAnimation(): void {
+    if (this.deathFrame >= 0) return;
+    this.deathFrame = 0;
+    this.shakeFrames = 18;
+  }
+
   render(state: GameState): void {
     if (state.stats.lines !== this.lastLines) {
       this.shakeFrames = 10;
       this.lastLines = state.stats.lines;
     }
+    // Si volvió a jugar (retry / nueva ronda), se cancela la animación de derrota.
+    if (state.status === 'playing') this.deathFrame = -1;
+
     this.layout(state);
     const shake = this.shakeFrames > 0 ? Math.sin(this.shakeFrames * 2.3) * 5 : 0;
     this.stage.position.set(shake, 0);
@@ -100,9 +120,63 @@ export class PixiGameRenderer {
 
     this.drawBackground();
     this.drawPanels();
-    this.drawBoard(state);
+    if (this.deathFrame >= 0) {
+      this.drawDeathBoard(state);
+    } else {
+      this.drawBoard(state);
+    }
     this.drawSidePieces(state);
     this.drawHud(state);
+  }
+
+  // Pila gris que colapsa de arriba hacia abajo: cada fila se desvanece y cae con
+  // un retardo según su altura (las de arriba primero), más un flash inicial.
+  private drawDeathBoard(state: GameState): void {
+    this.pieceLayer.clear();
+    const progress = Math.min(1, this.deathFrame / DEATH_TOTAL_FRAMES);
+    if (this.deathFrame < DEATH_TOTAL_FRAMES) this.deathFrame += 1;
+
+    state.board.forEach((row, y) => {
+      if (y < this.hiddenRows) return;
+      const boardY = y - this.hiddenRows;
+      // Las filas superiores empiezan a colapsar antes que las inferiores.
+      const rowStart = (boardY / this.visibleRows) * 0.5;
+      const rowP = clamp01((progress - rowStart) / 0.5);
+      if (rowP >= 1) return;
+      const alpha = 1 - rowP;
+      const drop = rowP * rowP * this.cell * 7;
+      row.forEach((cell, x) => {
+        if (cell && this.isVisibleCell(x, boardY)) this.drawDeathBlock(x, boardY, drop, alpha);
+      });
+    });
+
+    // Flash blanco breve sobre el tablero al momento del impacto.
+    if (progress < 0.2) {
+      const flash = (1 - progress / 0.2) * 0.5;
+      this.effectLayer.beginFill(0xffffff, flash);
+      this.effectLayer.drawRect(this.boardX, this.boardY, this.cell * this.boardColumns, this.cell * this.visibleRows);
+      this.effectLayer.endFill();
+    }
+  }
+
+  private drawDeathBlock(boardX: number, boardY: number, dropPx: number, alpha: number): void {
+    const x = this.boardX + boardX * this.cell;
+    const y = this.boardY + boardY * this.cell + dropPx;
+    const size = this.cell;
+    const pad = Math.max(1, size * 0.045);
+    const inner = size - pad * 2;
+    const bevel = Math.max(1, inner * 0.16);
+
+    this.pieceLayer.beginFill(DEATH_BLOCK, alpha);
+    this.pieceLayer.lineStyle(Math.max(1, size * 0.04), DEATH_BLOCK_DARK, alpha);
+    this.pieceLayer.drawRect(x + pad, y + pad, inner, inner);
+    this.pieceLayer.endFill();
+
+    this.pieceLayer.lineStyle(0, 0, 0);
+    this.pieceLayer.beginFill(DEATH_BLOCK_LIGHT, alpha * 0.5);
+    this.pieceLayer.drawRect(x + pad, y + pad, inner, bevel);
+    this.pieceLayer.drawRect(x + pad, y + pad, bevel, inner);
+    this.pieceLayer.endFill();
   }
 
   private layout(state?: GameState): void {
@@ -381,6 +455,10 @@ function mixColor(color: number, target: number, weight: number): number {
 
 function mixChannel(channel: number, target: number, weight: number): number {
   return channel + (target - channel) * weight;
+}
+
+function clamp01(value: number): number {
+  return value < 0 ? 0 : value > 1 ? 1 : value;
 }
 
 function formatTime(seconds: number): string {
