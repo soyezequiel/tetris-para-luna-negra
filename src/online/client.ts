@@ -24,6 +24,14 @@ import type {
   UpdateRoomSettingsRequest,
 } from './protocol';
 
+/** Error HTTP de la API online, con el status para poder distinguir un 404 (sala inexistente). */
+export class OnlineApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'OnlineApiError';
+  }
+}
+
 export class OnlineClient {
   constructor(private readonly basePath = '/api/rooms') {}
 
@@ -133,7 +141,7 @@ export class OnlineClient {
     const response = await fetch(path.startsWith('/api/') ? path : `${this.basePath}${path}`, init);
     const payload = await readResponsePayload<T | OnlineErrorResponse>(response);
     if (!response.ok) {
-      throw new Error(isErrorResponse(payload) ? payload.error : 'Online request failed.');
+      throw new OnlineApiError(isErrorResponse(payload) ? payload.error : 'Online request failed.', response.status);
     }
     if (payload === null) throw new Error('Online API returned an empty response.');
     return payload as T;

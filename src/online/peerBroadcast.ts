@@ -210,6 +210,16 @@ export class OnlinePeerBroadcaster {
   }
 
   private async handleSignal(signal: OnlinePeerSignal): Promise<void> {
+    try {
+      await this.applySignal(signal);
+    } catch {
+      // Una señal vieja, duplicada o fuera de orden no debe tirar la negociación
+      // entera ni quedar como unhandled rejection; la siguiente oferta/answer
+      // válida (o recreatePeer en 'failed') recupera la conexión.
+    }
+  }
+
+  private async applySignal(signal: OnlinePeerSignal): Promise<void> {
     let entry = this.ensurePeer(signal.fromPlayerId, false);
     // A failed/closed connection never recovers on its own. If a peer renegotiates
     // (e.g. after reconnecting), rebuild from a fresh connection before applying signals.
@@ -228,6 +238,19 @@ export class OnlinePeerBroadcaster {
     }
 
     const description = signal.data as RTCSessionDescriptionInit;
+    if (signal.type === 'answer') {
+      // Una answer duplicada o de una oferta anterior (p. ej. tras recrear la
+      // conexión) llega con la conexión ya en 'stable': setRemoteDescription
+      // lanzaría InvalidStateError y dejaría pendingIce sin aplicar, matando el
+      // canal de datos (sin snapshots/KO/garbage para ese peer). Se ignora.
+      if (entry.connection.signalingState !== 'have-local-offer') return;
+    } else if (entry.connection.signalingState !== 'stable') {
+      // Glare: llegó una oferta mientras nuestra propia oferta está pendiente.
+      // El peer "polite" (el que no inicia) descarta la suya con rollback y
+      // contesta; el "impolite" ignora la entrante y espera su answer.
+      if (this.shouldInitiate(signal.fromPlayerId)) return;
+      await entry.connection.setLocalDescription({ type: 'rollback' });
+    }
     await entry.connection.setRemoteDescription(description);
     await this.flushPendingIce(entry);
     if (signal.type === 'offer') {

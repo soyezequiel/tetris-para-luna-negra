@@ -58,7 +58,7 @@ import {
   updateBinding,
   updateInputTiming,
 } from './input/settings';
-import { OnlineClient } from './online/client';
+import { OnlineApiError, OnlineClient } from './online/client';
 import { LunaSocialClient } from './online/lunaNegraFriendsClient';
 import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostAuthority';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
@@ -80,6 +80,10 @@ const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
+// Polls consecutivos con 404 (sala borrada del servidor) antes de abandonar la
+// sala fantasma: corta el spam infinito de /state y /signal contra una sala que
+// ya no existe y devuelve al jugador al menú con un aviso.
+const ONLINE_ROOM_GONE_POLL_LIMIT = 5;
 const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_BET_FAST_POLL_MS = 750;
 // Ventana generosa: pagar copiando la invoice en otra app/billetera puede tardar
@@ -201,6 +205,7 @@ let lunaLaunchPollInFlight = false;
 let pendingLunaLaunchRequest: PendingLunaLaunchRequest | null = null;
 let ignoredLunaLaunchRequestIds = new Set<string>();
 let onlineRoomReopenInFlight = false;
+let onlineRoomGonePolls = 0;
 // QRs de invoices Lightning, cacheados por bolt11 (el overlay se regenera por HTML).
 const betQrDataUrls = new Map<string, string>();
 const betQrPending = new Set<string>();
@@ -2185,7 +2190,13 @@ function syncOnline(): void {
     applyRoomAttacks(onlineRoom);
     if (shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(liveState);
     if (isOnlineHost()) relayPeerProgressToServer();
-    if (isOnlineHost() && liveState.status === 'playing' && shouldPostOnlineProgress(now)) postOnlineProgress(liveState);
+    // El host postea progreso mientras la sala siga en ronda AUNQUE su propia
+    // partida haya terminado: es el único escritor del servidor, y si los canales
+    // peer no traen snapshots para relayar (WebRTC caído), la sala quedaría
+    // HOST_STALE_MS sin escrituras y applyHostFailover cortaría la ronda con
+    // jugadores todavía vivos. El servidor trata el progreso de un jugador
+    // terminal como keepalive (no toca sus stats).
+    if (isOnlineHost() && roomStillRunning && shouldPostOnlineProgress(now)) postOnlineProgress(liveState);
     if (liveState.status === 'finished' && !onlineResultSubmitted) postOnlineResult(liveState);
     if (liveState.status === 'gameover') postOnlineElimination(liveState);
   }
@@ -2253,9 +2264,25 @@ async function pollOnlineRoom(): Promise<void> {
       void reopenOnlineRoom();
     }
     onlineError = null;
+    onlineRoomGonePolls = 0;
     maybeRefreshBet();
   } catch (error) {
     onlineError = onlineErrorText(error);
+    if (error instanceof OnlineApiError && error.status === 404) {
+      // La sala ya no existe en el servidor: tras varios polls seguidos dejamos
+      // de insistir (cerramos peers, limpiamos sesión) y volvemos al menú, en
+      // vez de quedar atascados polleando y señalizando una sala fantasma.
+      onlineRoomGonePolls += 1;
+      if (onlineRoomGonePolls >= ONLINE_ROOM_GONE_POLL_LIMIT) {
+        onlineRoomGonePolls = 0;
+        resetOnlineRoomState();
+        goToMenu();
+        onlineError = 'La sala ya no existe en el servidor.';
+        void syncLunaPresence();
+      }
+    } else {
+      onlineRoomGonePolls = 0;
+    }
   } finally {
     onlinePollInFlight = false;
   }

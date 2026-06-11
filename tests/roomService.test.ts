@@ -209,6 +209,43 @@ describe('host failover on disconnect', () => {
     expect(afterSecond.players.find((player) => player.id === GUEST_ID)?.status).toBe('eliminated');
   });
 
+  it('treats the dead authority progress post as a room keepalive', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 6_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID, THIRD_ID], startedAtMs);
+
+    // El host muere (espectador) pero sigue siendo la autoridad de la ronda.
+    const eliminatedAtMs = startedAtMs + 1_000;
+    await eliminatePlayer(store, eliminateRequest(room, HOST_ID), eliminatedAtMs);
+
+    // Su cliente sigue posteando progreso como keepalive aunque ya esté terminal.
+    const keepaliveAtMs = eliminatedAtMs + 10_000;
+    const afterKeepalive = await updateProgress(store, {
+      roomId: room.id,
+      authorityPlayerId: HOST_ID,
+      playerId: HOST_ID,
+      seed: room.seed,
+      lines: 5,
+      pieces: 20,
+      elapsedFrames: 100,
+    }, keepaliveAtMs);
+
+    // El keepalive no resucita ni pisa las stats del jugador terminal.
+    const deadHost = afterKeepalive.players.find((player) => player.id === HOST_ID);
+    expect(deadHost?.status).toBe('eliminated');
+    expect(deadHost?.alive).toBe(false);
+
+    // Sin el keepalive, la última escritura habría sido la eliminación y este
+    // poll dispararía el failover (migración + fin de ronda anticipado).
+    const polled = await getRoomState(store, room.id, eliminatedAtMs + HOST_STALE_MS + 1);
+    expect(polled.status).toBe('playing');
+    expect(polled.hostPlayerId).toBe(HOST_ID);
+    const guest = polled.players.find((player) => player.id === GUEST_ID);
+    const third = polled.players.find((player) => player.id === THIRD_ID);
+    expect(guest?.alive).toBe(true);
+    expect(third?.alive).toBe(true);
+  });
+
   it('voids the round when the stale host has no surviving successor', async () => {
     const store = new MemoryRoomStore();
     const startedAtMs = 5_000_000;

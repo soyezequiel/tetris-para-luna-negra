@@ -623,7 +623,17 @@ async function updateProgressOnce(
   requireHostAuthority(room, request.authorityPlayerId);
   if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const player = requirePlayer(room, request.playerId);
-  if (isTerminalPlayer(player)) return room;
+  if (isTerminalPlayer(player)) {
+    // Keepalive de la autoridad: no se tocan las stats de un jugador terminal,
+    // pero el POST cuenta como actividad de la sala. Sin esto, un host muerto
+    // (espectando) sin snapshots peer que relayar dejaba updatedAtServerMs
+    // congelado y applyHostFailover cortaba la ronda con jugadores vivos.
+    if (room.status === 'playing' || room.status === 'countdown') {
+      room.updatedAtServerMs = nowMs;
+      await persistRoom(store, room);
+    }
+    return room;
+  }
   if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
     room.status = 'playing';
   }
