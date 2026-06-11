@@ -130,6 +130,8 @@ let runSplitTracker = new RunSplitTracker();
 let lastPieces = 0;
 let lastLines = 0;
 let lastStatus = engine.getState().status;
+let runMaxCombo = 0;
+let runWasNewBest = false;
 let volumeFeedback: { channel: VolumeChannel; expiresAt: number } | null = null;
 let bindingCapture: ControlAction | null = null;
 let lastExportName: string | null = null;
@@ -756,6 +758,8 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   lastPieces = 0;
   lastLines = 0;
   lastStatus = engine.getState().status;
+  runMaxCombo = 0;
+  runWasNewBest = false;
   if (nextMode === 'playing') {
     const isE2E = !!(window as any).__E2E__ || navigator.webdriver;
     if (isE2E) {
@@ -1838,6 +1842,7 @@ function toGameInputs(inputs: ControlInput[], frame: number): GameInput[] {
 
 function syncRunEffects(state: GameState, events: GameEvent[]): void {
   runSplitTracker.record(state);
+  if (state.stats.combo > runMaxCombo) runMaxCombo = state.stats.combo;
   const progressCue = soundCueForRunProgress(state, events, lastLines, lastPieces);
   if (progressCue) sound.play(progressCue);
   if (state.status !== lastStatus) {
@@ -1848,6 +1853,9 @@ function syncRunEffects(state: GameState, events: GameEvent[]): void {
   lastLines = state.stats.lines;
   lastStatus = state.status;
   if (state.status === 'finished' && state.stats.finishFrame !== null && !savedFinish) {
+    const previousBest = best.best40LineFrames;
+    runWasNewBest = currentRunKind === 'standard'
+      && (previousBest === null || state.stats.finishFrame < previousBest);
     best = saveBest40LineFrames(state.stats.finishFrame);
     savedFinish = true;
   }
@@ -2904,19 +2912,51 @@ function renderScreenOverlay(state: GameState): string {
 
   const terminal = terminalLabel(state.status);
   if (!terminal) return '';
-  const actions: [string, string][] = [
-    ...(canRetryCurrentRun() ? [['restart', 'Restart'] as [string, string]] : []),
-    ['export-replay', 'Export replay'],
-    ['settings', 'Input settings'],
-    ['main-menu', 'Main menu'],
-  ];
-  return renderPanel({
-    eyebrow: terminal,
-    title: formatRunSummary(state),
-    meta: state.status === 'finished' ? 'Guardado si supera tu mejor marca local.' : gameOverReasonMessage(state.stats.gameOverReason),
-    details: renderAdvancedRunStats(currentRunSummary(state)),
-    actions,
-  });
+  return renderSoloResultsOverlay(state);
+}
+
+function renderSoloResultsOverlay(state: GameState): string {
+  const isClear = state.status === 'finished';
+  const summary = currentRunSummary(state);
+  const time = formatFrames(displayedElapsedFrames(state.stats));
+  const lines = state.stats.lines;
+  const target = state.stats.targetLines;
+  const pieces = state.stats.pieces;
+  const pps = summary.pps.toFixed(1);
+  const combo = runMaxCombo;
+  const subtitle = target ? `${target} LÍNEAS · SPRINT` : 'CUSTOM';
+  const badge = isClear
+    ? `<div class="solo-results-badge solo-results-badge--clear">✓ OBJETIVO CUMPLIDO${runWasNewBest ? ' · MEJOR MARCA' : ''}</div>`
+    : `<div class="solo-results-badge solo-results-badge--fail">${escapeHtml(gameOverReasonMessage(state.stats.gameOverReason))}</div>`;
+  const verdict = isClear
+    ? '<div class="solo-results-verdict solo-results-verdict--clear">CLEAR</div>'
+    : '<div class="solo-results-verdict solo-results-verdict--fail">TOP OUT</div>';
+  const retry = canRetryCurrentRun()
+    ? `<button class="solo-results-btn solo-results-btn--retry" type="button" data-ui-action="restart">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M17.65 6.35A8 8 0 1 0 19.73 14h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>Reintentar
+      </button>`
+    : '';
+  return `
+    <div class="menu-scrim solo-results-scrim">
+      <div class="solo-results">
+        ${badge}
+        <div class="solo-results-subtitle">${escapeHtml(subtitle)}</div>
+        <div class="solo-results-hero">${escapeHtml(time)}</div>
+        ${verdict}
+        <div class="solo-results-stats">
+          <div class="solo-results-stat"><span>LÍNEAS</span><strong class="is-cyan">${lines}${target ? `<em> / ${target}</em>` : ''}</strong></div>
+          <div class="solo-results-stat"><span>PIEZAS</span><strong>${pieces}</strong></div>
+          <div class="solo-results-stat"><span>PPS</span><strong class="is-green">${pps}</strong></div>
+          <div class="solo-results-stat"><span>COMBO MÁX</span><strong class="is-amber">×${combo}</strong></div>
+        </div>
+        <div class="solo-results-actions">
+          ${retry}
+          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="export-replay">Guardar replay</button>
+          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="main-menu">Menú</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function canRetryCurrentRun(): boolean {
@@ -3243,39 +3283,81 @@ function renderOnlineCountdownOverlay(): string {
   `;
 }
 
-function renderOnlineResultsOverlay(state: GameState): string {
-  const ownReason = state.status === 'gameover'
-    ? `<div class="panel-note">${escapeHtml(gameOverReasonMessage(state.stats.gameOverReason))}</div>`
-    : '';
-  const ownSummary = terminalLabel(state.status)
-    ? `<div class="panel-note">${escapeHtml(formatRunSummary(state, appMode === 'onlineResults' || appMode === 'onlinePlaying'))}</div>`
-    : '';
-  const winner = onlineRoom?.players.find((player) => player.status === 'winner' || player.id === onlineRoom?.winnerPlayerId);
-  const restartAction = onlineRoom
-    ? onlineRoom.hostPlayerId === onlinePlayer.id
-      ? `<button type="button" data-ui-action="online-restart"${onlineBusy ? ' disabled' : ''}>Nueva partida</button>`
-      : '<button type="button" disabled>Esperando host</button>'
+function renderOnlineResultsOverlay(_state: GameState): string {
+  const room = onlineRoom;
+  const ranked = room ? rankPlayers(room.players) : [];
+  const bet = room?.bet;
+  const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded') ? bet.netPayoutSats : null;
+  const isHost = room ? room.hostPlayerId === onlinePlayer.id : false;
+  const rows = ranked.map((player, index) => renderOnlineRankingRow(player, index, winnerSats)).join('');
+  const rematch = room
+    ? isHost
+      ? `<button class="solo-results-btn solo-results-btn--rematch" type="button" data-ui-action="online-restart"${onlineBusy ? ' disabled' : ''}>Revancha</button>`
+      : '<button class="solo-results-btn solo-results-btn--ghost" type="button" disabled>Esperando host</button>'
     : '';
   return `
-    <div class="menu-scrim">
-      <section class="menu-panel online-panel" aria-label="Online results">
-        <div class="panel-eyebrow">ONLINE RESULTS</div>
-        <h1>${onlineRoom ? escapeHtml(onlineRoom.id) : 'Room'}</h1>
-        <p>${winner ? `${escapeHtml(winner.name)} wins. ` : ''}Ranking is based on survival, then elapsed frames.</p>
-        ${renderOnlineBetResult()}
-        ${renderOnlineError()}
-        ${renderOnlineSeriesStatus()}
-        ${ownReason}
-        ${ownSummary}
-        ${renderOnlineStandings()}
-        <div class="panel-actions">
-          ${restartAction}
-          <button type="button" data-ui-action="main-menu">Menu</button>
-          <button type="button" data-ui-action="online-leave">Salir de la sala</button>
+    <div class="menu-scrim online-results-scrim">
+      <div class="online-results">
+        <div class="online-results-confetti" aria-hidden="true">${renderConfettiPieces()}</div>
+        <div class="online-results-head">
+          <div class="online-results-eyebrow">BATTLE ROYALE · SALA ${room ? escapeHtml(room.id) : ''}</div>
+          <div class="online-results-title">RESULTADOS</div>
         </div>
-      </section>
+        <div class="online-results-list">${rows}</div>
+        ${renderOnlineError()}
+        ${renderOnlineBetResult()}
+        <div class="online-results-actions">
+          ${rematch}
+          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="main-menu">Volver a la sala</button>
+          <button class="solo-results-btn solo-results-btn--danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
+        </div>
+      </div>
     </div>
   `;
+}
+
+function renderOnlineRankingRow(player: OnlinePlayer, index: number, winnerSats: number | null): string {
+  const isWinner = index === 0;
+  const isSelf = player.id === onlinePlayer.id;
+  const time = formatFrames(player.elapsedFrames);
+  const status = isWinner
+    ? `Última en pie · sobrevivió ${time}`
+    : `Eliminado · sobrevivió ${time}`;
+  const sats = isWinner && winnerSats
+    ? `+${winnerSats.toLocaleString('es-AR')} SATS`
+    : '—';
+  const rowClass = [
+    'online-results-row',
+    isWinner ? 'online-results-row--winner' : '',
+    isSelf ? 'online-results-row--self' : '',
+    !isWinner && index >= 3 ? 'online-results-row--dim' : '',
+  ].filter(Boolean).join(' ');
+  return `
+    <div class="${rowClass}">
+      <span class="online-results-rank">${index + 1}</span>
+      ${renderOnlineAvatar(player, 'medium', 'online-results-avatar')}
+      <div class="online-results-identity">
+        <strong>${escapeHtml(player.name)}${isSelf ? ' (Vos)' : ''}${isWinner ? ' <span class="online-results-crown">★ GANADOR</span>' : ''}</strong>
+        <em>${escapeHtml(status)}</em>
+      </div>
+      <div class="online-results-metrics">
+        <div class="online-results-metric"><span>KO</span><strong class="is-amber">${player.koCount}</strong></div>
+        <div class="online-results-metric"><span>LÍNEAS</span><strong>${player.lines}</strong></div>
+        <div class="online-results-metric"><span>SATS</span><strong class="${isWinner && winnerSats ? 'is-green' : 'is-muted'}">${sats}</strong></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderConfettiPieces(): string {
+  const colors = ['#ff007f', '#00f5ff', '#f59e0b', '#39d49a', '#9d4edd'];
+  return Array.from({ length: 14 }, (_, i) => {
+    const left = (i * 7 + 4) % 100;
+    const delay = (i % 5) * 0.4;
+    const dur = 7 + (i % 4);
+    const color = colors[i % colors.length];
+    return `<span class="online-confetti-piece" style="left:${left}%; background:${color}; animation-delay:${delay}s; animation-duration:${dur}s;"></span>`;
+  }).join('');
 }
 
 function renderOnlinePlayingOverlay(): string {
@@ -3881,20 +3963,23 @@ function renderCustomPanelContent(): string {
     <section class="menu-panel custom-panel" aria-label="Custom mode">
         <div class="custom-header">
           <div>
-            <div class="panel-eyebrow">CUSTOM</div>
+            <div class="panel-eyebrow">PARTIDA PERSONALIZADA</div>
             <h1>Custom</h1>
-            <p>PLAY AS YOU WISH. REPLAYS ARE NOT SUBMITTED.</p>
+            <p>Jugá como quieras. Las repeticiones no se envían.</p>
           </div>
-          <button type="button" data-ui-action="custom-export">Export settings</button>
+          <button type="button" data-ui-action="custom-export">Exportar ajustes</button>
         </div>
         <div class="custom-start-row">
-          <div class="custom-music">MUSIC RANDOM: CALM</div>
-          <button class="custom-start-button" type="button" data-ui-action="custom-start">Start</button>
+          <div class="custom-music">Música aleatoria: tranquila</div>
+          <button class="custom-start-button" type="button" data-ui-action="custom-start">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            Empezar
+          </button>
         </div>
-        <div class="custom-tabs" aria-label="Custom sections">
+        <div class="custom-tabs" aria-label="Secciones de custom">
           ${CUSTOM_TABS.map((tab) => `
             <button class="${customTab === tab ? 'custom-tab-active' : ''}" type="button" data-ui-action="custom-tab" data-tab="${tab}">
-              ${tab.toUpperCase()}
+              ${CUSTOM_TAB_LABELS[tab]}
             </button>
           `).join('')}
         </div>
@@ -3916,73 +4001,79 @@ export function renderCustomOverlay(): string {
   return renderPersistentMenuShell(renderCustomPanelContent(), 'custom-scrim');
 }
 
+const CUSTOM_TAB_LABELS: Record<CustomTab, string> = {
+  game: 'Juego',
+  objective: 'Objetivo',
+  meta: 'Meta',
+};
+
 function renderCustomTabBody(): string {
   if (customTab === 'objective') {
     return [
-      renderCustomSection('OBJECTIVE', [
-        renderCustomSelect('Mode', 'objectiveMode', [['none', 'NONE'], ['lines', 'LINES']]),
-        renderCustomNumber('Line target', 'objectiveLineTarget'),
+      renderCustomSection('Objetivo', [
+        renderCustomSelect('Modo', 'objectiveMode', [['none', 'Ninguno'], ['lines', 'Líneas']]),
+        renderCustomNumber('Objetivo de líneas', 'objectiveLineTarget'),
       ]),
     ].join('');
   }
   if (customTab === 'meta') {
     return [
-      renderCustomSection('META', [
-        renderCustomSelect('Music', 'musicMode', [['random-calm', 'RANDOM: CALM']]),
-        renderCustomStaticRow('Replay submission', 'OFF'),
+      renderCustomSection('Meta', [
+        renderCustomSelect('Música', 'musicMode', [['random-calm', 'Aleatoria: tranquila']]),
+        renderCustomStaticRow('Envío de repeticiones', 'No'),
       ]),
     ].join('');
   }
   return [
-    renderCustomSection('GENERAL', [
-      renderCustomSelect('Random bag type', 'randomBagType', [['7-bag', '7-BAG']]),
-      renderCustomSelect('Allowed spins', 'allowedSpins', [['all-mini-plus', 'ALL-MINI+']]),
-      renderCustomSelect('Combo table', 'comboTable', [['multiplier', 'MULTIPLIER']]),
-      renderCustomToggle('Enable all clears', 'enableAllClears'),
-      renderCustomToggle('Use random seed', 'useRandomSeed'),
-      renderCustomNumber('Seed', 'seed'),
-      renderCustomToggle('Allow retry', 'allowRetry'),
+    renderCustomSection('General', [
+      renderCustomSelect('Tipo de bolsa', 'randomBagType', [['7-bag', '7-BAG']]),
+      renderCustomSelect('Giros permitidos', 'allowedSpins', [['all-mini-plus', 'ALL-MINI+']]),
+      renderCustomSelect('Tabla de combos', 'comboTable', [['multiplier', 'MULTIPLIER']]),
+      renderCustomToggle('All clears', 'enableAllClears'),
+      renderCustomToggle('Semilla aleatoria', 'useRandomSeed'),
+      renderCustomNumber('Semilla', 'seed'),
+      renderCustomToggle('Permitir reintento', 'allowRetry'),
       renderCustomNumber('Stock', 'stock'),
-      renderCustomToggle('Enable clutch clears', 'enableClutchClears'),
-      renderCustomToggle('Disable lockout', 'disableLockout'),
-      renderCustomNumber('Board width', 'boardWidth'),
-      renderCustomNumber('Board height', 'boardHeight'),
+      renderCustomToggle('Clutch clears', 'enableClutchClears'),
+      renderCustomToggle('Desactivar lockout', 'disableLockout'),
+      renderCustomNumber('Ancho del tablero', 'boardWidth'),
+      renderCustomNumber('Alto del tablero', 'boardHeight'),
     ]),
-    renderCustomSection('SURVIVAL', [
-      renderCustomSelect('Mode', 'survivalMode', [['none', 'NONE']]),
-      renderCustomNumber('Garbage messiness %', 'garbageMessinessPercent'),
-      renderCustomNumber('Garbage cap', 'garbageCap'),
-      renderCustomToggle('Change on attack', 'changeOnAttack'),
-      renderCustomToggle('Continuous garbage', 'continuousGarbage'),
-      renderCustomNumber('Layer height', 'layerHeight'),
-      renderCustomToggle('Sticky layer', 'stickyLayer'),
-      renderCustomNumber('Minimum layer height', 'minimumLayerHeight'),
-      renderCustomNumber('Timer interval', 'timerIntervalSeconds'),
+    renderCustomSection('Supervivencia', [
+      renderCustomSelect('Modo', 'survivalMode', [['none', 'Ninguno']]),
+      renderCustomNumber('Desorden de basura %', 'garbageMessinessPercent'),
+      renderCustomNumber('Tope de basura', 'garbageCap'),
+      renderCustomToggle('Cambiar al atacar', 'changeOnAttack'),
+      renderCustomToggle('Basura continua', 'continuousGarbage'),
+      renderCustomNumber('Altura de capa', 'layerHeight'),
+      renderCustomToggle('Capa pegajosa', 'stickyLayer'),
+      renderCustomNumber('Altura mínima de capa', 'minimumLayerHeight'),
+      renderCustomNumber('Intervalo del temporizador', 'timerIntervalSeconds'),
     ]),
-    renderCustomSection('CONTROLS', [
-      renderCustomToggle('Allow 180 spins', 'allow180Spins'),
-      renderCustomSelect('Kick table', 'kickTable', [['srs-plus', 'SRS+']]),
-      renderCustomToggle('Use hard drop', 'useHardDrop'),
-      renderCustomToggle('Use next queue', 'useNextQueue'),
-      renderCustomToggle('Use hold queue', 'useHoldQueue'),
-      renderCustomNumber('Next pieces', 'nextPieces'),
-      renderCustomToggle('Infinite movement', 'infiniteMovement'),
-      renderCustomToggle('Infinite hold', 'infiniteHold'),
-      renderCustomToggle('Show shadow piece', 'showShadowPiece'),
-      renderCustomNumber('ARE', 'areFrames'),
-      renderCustomNumber('Line clear ARE', 'lineClearAreFrames'),
+    renderCustomSection('Controles', [
+      renderCustomToggle('Giros 180°', 'allow180Spins'),
+      renderCustomSelect('Tabla de kicks', 'kickTable', [['srs-plus', 'SRS+']]),
+      renderCustomToggle('Hard drop', 'useHardDrop'),
+      renderCustomToggle('Cola next', 'useNextQueue'),
+      renderCustomToggle('Cola hold', 'useHoldQueue'),
+      renderCustomNumber('Piezas next', 'nextPieces'),
+      renderCustomToggle('Movimiento infinito', 'infiniteMovement'),
+      renderCustomToggle('Hold infinito', 'infiniteHold'),
+      renderCustomToggle('Pieza fantasma', 'showShadowPiece'),
+      renderCustomNumber('ARE (frames)', 'areFrames'),
+      renderCustomNumber('ARE de line clear', 'lineClearAreFrames'),
     ]),
-    renderCustomSection('GRAVITY & LEVELLING', [
-      renderCustomNumber('Gravity', 'gravity'),
-      renderCustomToggle('Use levelling', 'useLevelling'),
-      renderCustomToggle('Use master levels', 'useMasterLevels'),
-      renderCustomNumber('Starting level', 'startingLevel'),
-      renderCustomNumber('Level speed', 'levelSpeed'),
-      renderCustomToggle('Use static levelling', 'useStaticLevelling'),
-      renderCustomNumber('Level static speed', 'levelStaticSpeed'),
-      renderCustomNumber('Base gravity', 'baseGravity'),
-      renderCustomNumber('Gravity increase', 'gravityIncrease'),
-      renderCustomNumber('Lock delay', 'lockDelayFrames'),
+    renderCustomSection('Gravedad y niveles', [
+      renderCustomNumber('Gravedad', 'gravity'),
+      renderCustomToggle('Usar niveles', 'useLevelling'),
+      renderCustomToggle('Niveles master', 'useMasterLevels'),
+      renderCustomNumber('Nivel inicial', 'startingLevel'),
+      renderCustomNumber('Velocidad de nivel', 'levelSpeed'),
+      renderCustomToggle('Niveles estáticos', 'useStaticLevelling'),
+      renderCustomNumber('Velocidad estática', 'levelStaticSpeed'),
+      renderCustomNumber('Gravedad base', 'baseGravity'),
+      renderCustomNumber('Incremento de gravedad', 'gravityIncrease'),
+      renderCustomNumber('Lock delay (frames)', 'lockDelayFrames'),
     ]),
   ].join('');
 }
@@ -4014,8 +4105,8 @@ function renderCustomSelect(
 function renderCustomToggle(label: string, key: CustomBooleanSettingKey): string {
   const enabled = customSettings[key];
   return renderCustomRow(label, `
-    <button class="custom-toggle ${enabled ? 'custom-toggle-on' : 'custom-toggle-off'}" type="button" data-ui-action="custom-toggle" data-setting="${key}">
-      ${enabled ? 'ON' : 'OFF'}
+    <button class="custom-toggle ${enabled ? 'custom-toggle-on' : 'custom-toggle-off'}" type="button" role="switch" aria-checked="${enabled}" aria-label="${escapeHtml(label)}" data-ui-action="custom-toggle" data-setting="${key}">
+      <span class="custom-toggle-knob"></span>
     </button>
   `);
 }
@@ -4644,18 +4735,6 @@ function currentRunSummary(state: GameState): RunSummary {
     inputs: replay.inputs,
     splits: runSplitTracker.getSplits(),
   });
-}
-
-function renderAdvancedRunStats(summary: RunSummary): string {
-  return `
-    <div class="run-stats-grid" aria-label="Run stats">
-      <div><span>PPS</span><strong>${summary.pps.toFixed(2)}</strong></div>
-      <div><span>IPP</span><strong>${summary.inputsPerPiece.toFixed(2)}</strong></div>
-      <div><span>LPM</span><strong>${summary.linesPerMinute.toFixed(1)}</strong></div>
-      <div><span>Inputs</span><strong>${summary.inputCount}</strong></div>
-    </div>
-    ${renderSplitList(summary.splits)}
-  `;
 }
 
 function renderSplitList(splits: LineSplit[]): string {
