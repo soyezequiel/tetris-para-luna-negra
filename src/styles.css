@@ -5123,15 +5123,34 @@ body.online-spectating #game-root {
   gap: 18px;
 }
 
-/* Cada tablero espectado se enmarca como uno real: borde neón y resplandor. */
+/* En espectador los tableros se dibujan con el mismo estilo que una partida
+   normal: marco neón con resplandor, rejilla de fondo y bloques biselados. */
 .online-versus-grid--spectator .online-mini-board {
-  border: 2px solid rgba(0, 245, 255, 0.4);
+  border: 2px solid rgba(0, 245, 255, 0.42);
   border-radius: 8px;
-  box-shadow: 0 0 26px rgba(0, 245, 255, 0.18), inset 0 0 24px rgba(0, 0, 0, 0.55);
+  background: rgba(4, 6, 10, 0.94);
+  box-shadow: 0 0 28px rgba(0, 245, 255, 0.2), inset 0 0 26px rgba(0, 0, 0, 0.6);
 }
 
+/* Celdas vacías = rejilla del tablero. */
 .online-versus-grid--spectator .online-mini-cell {
-  border-color: rgba(247, 247, 242, 0.06);
+  border: none;
+  box-shadow: inset -1px -1px 0 rgba(247, 247, 242, 0.045);
+}
+
+.online-versus-grid--spectator .online-mini-cell-empty {
+  background: transparent;
+}
+
+/* Bloques con relieve (luz arriba-izquierda, sombra abajo-derecha) + brillo,
+   imitando el bisel de los bloques del tablero real. */
+.online-versus-grid--spectator .online-mini-cell:not(.online-mini-cell-empty) {
+  border-radius: 2px;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(0, 0, 0, 0.16));
+  box-shadow:
+    inset 2px 2px 0 rgba(255, 255, 255, 0.34),
+    inset -2px -2px 0 rgba(0, 0, 0, 0.38),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.28);
 }
 
 .online-versus-grid--spectator .online-peer-board-head {
