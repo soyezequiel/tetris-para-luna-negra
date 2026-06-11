@@ -98,8 +98,8 @@ const SCROLLABLE_OVERLAY_SELECTORS = ['.dash-room', '.dash-layout', '.menu-panel
 const ONLINE_KO_BROADCAST_RETRY_MS = 1000;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
 const GAME_FRAME_MS = 1000 / 60;
-const AUTO_PLAY_TEST_KEY_STORAGE = 'stack40.autoplayTestKey.v1'; // TRUCO AUTOPLAY
-const AUTO_PLAY_TEST_KEY_HASH = '48be919a7eb47f859d4b39b6f12cf26eab0e8c2cd1f8d890727be2507502df13'; // TRUCO AUTOPLAY
+const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
+const AUTO_PLAY_KONAMI: string[] = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight']; // TRUCO AUTOPLAY
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 type RunKind = 'standard' | 'custom' | 'online';
@@ -156,6 +156,7 @@ let touchControlsHidden = best.touchControlsHidden;
 let autoPlayEnabled = false; // TRUCO AUTOPLAY: el bot juega solo al activarse
 let autoPlayAccessGranted = false; // TRUCO AUTOPLAY: habilitado solo con llave local hasheada
 let ignoreNextAutoPlayClick = false; // TRUCO AUTOPLAY: pointerdown ya hizo el toggle
+let autoPlayKonamiProgress = 0; // TRUCO AUTOPLAY: posición actual en la secuencia konami
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
@@ -255,7 +256,7 @@ overlayElement.addEventListener('pointerup', handleTouchControlPointerEnd);
 overlayElement.addEventListener('pointercancel', handleTouchControlPointerEnd);
 overlayElement.addEventListener('lostpointercapture', handleTouchControlPointerEnd);
 
-void refreshAutoPlayAccess(); // TRUCO AUTOPLAY
+try { autoPlayAccessGranted = localStorage.getItem(AUTO_PLAY_ACCESS_STORAGE) === '1'; } catch { /* noop */ } // TRUCO AUTOPLAY
 
 function loop(): void {
   const beforeState = engine.getState();
@@ -428,6 +429,7 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
   if (isEditableKeyboardTarget(event.target)) return;
   if (isBrowserShortcutKeyDown(event)) return;
   if (event.repeat) return;
+  checkAutoPlayKonami(event.code); // TRUCO AUTOPLAY
   if (event.code === 'KeyM') {
     event.preventDefault();
     best = saveSoundMuted(sound.toggleMuted());
@@ -457,27 +459,18 @@ function handleOverlayInput(event: Event): void {
   }
 }
 
-function loadAutoPlayAccessToken(): string | null { // TRUCO AUTOPLAY
-  try {
-    return localStorage.getItem(AUTO_PLAY_TEST_KEY_STORAGE);
-  } catch {
-    return null;
+function checkAutoPlayKonami(code: string): void { // TRUCO AUTOPLAY
+  if (code === AUTO_PLAY_KONAMI[autoPlayKonamiProgress]) {
+    autoPlayKonamiProgress++;
+    if (autoPlayKonamiProgress === AUTO_PLAY_KONAMI.length) {
+      autoPlayKonamiProgress = 0;
+      autoPlayAccessGranted = true;
+      try { localStorage.setItem(AUTO_PLAY_ACCESS_STORAGE, '1'); } catch { /* noop */ }
+      lastOverlayHtml = '';
+    }
+  } else {
+    autoPlayKonamiProgress = code === AUTO_PLAY_KONAMI[0] ? 1 : 0;
   }
-}
-
-async function sha256Hex(value: string): Promise<string | null> { // TRUCO AUTOPLAY
-  if (!crypto.subtle) return null;
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function refreshAutoPlayAccess(): Promise<void> { // TRUCO AUTOPLAY
-  const token = loadAutoPlayAccessToken();
-  const nextAccess = token !== null && await sha256Hex(token) === AUTO_PLAY_TEST_KEY_HASH;
-  if (autoPlayAccessGranted === nextAccess) return;
-  autoPlayAccessGranted = nextAccess;
-  if (!autoPlayAccessGranted) autoPlayEnabled = false;
-  lastOverlayHtml = '';
 }
 
 function toggleAutoPlay(): void { // TRUCO AUTOPLAY
