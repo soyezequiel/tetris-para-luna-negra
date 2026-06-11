@@ -1219,45 +1219,71 @@ canvas {
   font-weight: 900;
 }
 
-/* Barra horizontal inferior de estrategia de objetivo (estilo tetr.io). */
-.online-target-bar {
+/* HUD inferior compacto: garbage entrante + estrategias de objetivo (estilo
+   tetr.io, teclas 1–5) + salir. Una sola fila fina para no tapar el tablero. */
+.online-hud {
   position: fixed;
   left: 50%;
-  bottom: 18px;
+  bottom: 12px;
   transform: translateX(-50%);
   z-index: 6;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  max-width: calc(100vw - 24px);
-  padding: 10px 12px;
-  border: 2px solid rgba(247, 247, 242, 0.72);
-  border-radius: 10px;
-  background: rgba(4, 5, 7, 0.85);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+  justify-content: center;
+  gap: 6px;
+  max-width: calc(100vw - 20px);
+  padding: 6px 8px;
+  border: 1px solid rgba(247, 247, 242, 0.5);
+  border-radius: 8px;
+  background: rgba(4, 5, 7, 0.78);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   pointer-events: auto;
 }
 
-.online-target-bar-modes {
+.online-hud-incoming {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(247, 247, 242, 0.06);
+  color: rgba(247, 247, 242, 0.7);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.online-hud-incoming i {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid currentColor;
+}
+
+.online-hud-incoming.is-hot {
+  background: rgba(235, 68, 90, 0.16);
+  color: #eb445a;
+}
+
+.online-target-chips {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
 }
 
 .online-target-chip {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 7px 11px 7px 8px;
-  border: 1px solid rgba(247, 247, 242, 0.22);
+  gap: 6px;
+  padding: 4px 9px 4px 5px;
+  border: 1px solid rgba(247, 247, 242, 0.2);
   border-radius: 6px;
   background: rgba(247, 247, 242, 0.06);
   color: rgba(247, 247, 242, 0.78);
   cursor: pointer;
-  text-align: left;
 }
 
 .online-target-chip:hover {
@@ -1274,14 +1300,13 @@ canvas {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 4px;
   background: rgba(247, 247, 242, 0.16);
   color: inherit;
   font-family: "Arial Black", Arial, sans-serif;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
 }
 
@@ -1290,45 +1315,25 @@ canvas {
   color: #04050a;
 }
 
-.online-target-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
 .online-target-name {
   font-family: "Arial Black", Arial, sans-serif;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 900;
 }
 
-.online-target-hint {
-  font-size: 10px;
-  opacity: 0.7;
-}
-
-.online-target-current,
-.online-target-manual {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.online-target-foot-label {
-  color: rgba(247, 247, 242, 0.6);
-  font-family: "Arial Black", Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.online-target-current strong {
+.online-target-now {
   color: #39d49a;
   font-family: "Arial Black", Arial, sans-serif;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 900;
+  white-space: nowrap;
+}
+
+.online-target-manual {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
 .online-target-manual em {
@@ -1337,8 +1342,8 @@ canvas {
 }
 
 .online-target-manual-chip {
-  padding: 5px 10px;
-  border: 1px solid rgba(247, 247, 242, 0.22);
+  padding: 4px 8px;
+  border: 1px solid rgba(247, 247, 242, 0.2);
   border-radius: 5px;
   background: rgba(247, 247, 242, 0.06);
   color: rgba(247, 247, 242, 0.78);
@@ -1354,6 +1359,22 @@ canvas {
 .online-target-manual-chip.is-active {
   border-color: #39d49a;
   color: #39d49a;
+}
+
+.online-hud-leave {
+  padding: 4px 12px;
+  border: 1px solid rgba(247, 247, 242, 0.28);
+  border-radius: 6px;
+  background: rgba(247, 247, 242, 0.06);
+  color: rgba(247, 247, 242, 0.82);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.online-hud-leave:hover {
+  border-color: rgba(235, 68, 90, 0.7);
+  color: #eb445a;
 }
 
 .online-garbage-meter {
@@ -5090,21 +5111,66 @@ canvas {
   80% { transform: translateX(4px); }
 }
 
-/* En modo espectador los tableros rivales pasan al centro y se agrandan. */
+/* Ya morí: mi tablero (canvas Pixi) se oculta para no superponerse con los
+   tableros rivales. El fondo oscuro del documento queda detrás del espectador. */
+body.online-spectating #game-root {
+  visibility: hidden;
+}
+
+/* En modo espectador los tableros rivales ocupan el centro de la pantalla y se
+   agrandan, con el mismo estilo de tablero que una partida normal. */
 .online-versus-grid--spectator {
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
+  top: 78px;
+  left: 0;
+  right: 0;
+  bottom: 22px;
+  transform: none;
   justify-items: center;
+  align-content: center;
+  gap: 14px;
+}
+
+.online-versus-grid--spectator .online-versus-title {
+  justify-content: center;
+  font-size: 12px;
+  letter-spacing: 1px;
 }
 
 .online-versus-grid--spectator .online-peer-boards {
   justify-content: center;
+  align-content: center;
+  gap: 18px;
+}
+
+/* Cada tablero espectado se enmarca como uno real: borde neón y resplandor. */
+.online-versus-grid--spectator .online-mini-board {
+  border: 2px solid rgba(0, 245, 255, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 0 26px rgba(0, 245, 255, 0.18), inset 0 0 24px rgba(0, 0, 0, 0.55);
+}
+
+.online-versus-grid--spectator .online-mini-cell {
+  border-color: rgba(247, 247, 242, 0.06);
+}
+
+.online-versus-grid--spectator .online-peer-board-head {
+  height: auto;
+  justify-content: center;
+  gap: 8px;
+}
+
+.online-versus-grid--spectator .online-peer-board-head strong {
+  font-size: 12px;
+}
+
+.online-versus-grid--spectator .online-peer-board-head span {
+  font-size: 9px;
 }
 
 @media (max-width: 760px) {
   .online-versus-grid--spectator {
-    left: 50%;
-    right: auto;
+    top: 70px;
+    left: 0;
+    right: 0;
   }
 }

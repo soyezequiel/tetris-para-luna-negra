@@ -76,6 +76,11 @@ const overlay = document.getElementById('hud-overlay');
 if (!root || !overlay) throw new Error('Missing application root.');
 
 const overlayElement = overlay;
+// Capa propia para el banner de KO online (ver lastKoOverlayHtml). Vive fuera del
+// overlay general para que el redibujo por frame de los tableros rivales no
+// recree su nodo y reinicie sus animaciones.
+const koOverlayElement = document.createElement('div');
+(overlay.parentElement ?? document.body).appendChild(koOverlayElement);
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
@@ -144,6 +149,12 @@ let bindingCapture: ControlAction | null = null;
 let lastExportName: string | null = null;
 let lastCustomExportName: string | null = null;
 let lastOverlayHtml = '';
+// El banner de KO vive en su propia capa persistente (no en el innerHTML del
+// overlay general). El overlay se reescribe cada frame porque los tableros
+// rivales tienen un cronómetro vivo; si el KO estuviera ahí, su DOM se recrearía
+// 60 veces por segundo y sus animaciones (pop/shake) se reiniciarían sin parar
+// (parpadeo). Manteniéndolo aparte solo se redibuja cuando cambia su contenido.
+let lastKoOverlayHtml = '';
 let playback: ReplayPlayback | null = null;
 let importedReplayName: string | null = null;
 let replayImportError: string | null = null;
@@ -300,7 +311,9 @@ function loop(): void {
   }
 
   syncOnline();
-  renderer.render(state);
+  // Ya morí pero la ronda sigue: dejo de dibujar MI tablero (queda oculto por
+  // CSS) y solo se ven los tableros rivales centrados en modo espectador.
+  if (!isOnlineSpectating()) renderer.render(state);
   renderOverlay(state);
   requestAnimationFrame(loop);
 }
@@ -2920,6 +2933,16 @@ function renderOverlay(state: GameState): void {
     restoreOverlayFieldFocus(focusSnapshot);
     restoreOverlayScroll(scrollSnapshot);
   }
+  // El KO se redibuja en su capa propia solo cuando cambia su contenido, así sus
+  // animaciones corren una vez y no parpadean con el redibujo por frame.
+  const koHtml = appMode === 'onlinePlaying' && (state.status === 'gameover' || state.status === 'finished')
+    ? renderOnlineKoOverlay(state)
+    : '';
+  if (koHtml !== lastKoOverlayHtml) {
+    koOverlayElement.innerHTML = koHtml;
+    lastKoOverlayHtml = koHtml;
+  }
+  document.body.classList.toggle('online-spectating', isOnlineSpectating());
   if (appMode === 'replayPlayback' && playback) updateReplayOverlay(playback.snapshot());
 }
 
@@ -3018,12 +3041,11 @@ function renderScreenOverlay(state: GameState): string {
   if (appMode === 'soloCountdown') return renderSoloCountdownOverlay();
   if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
   if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
-  // Online: perder no abre la pantalla de resultados de solo. Mostramos el
-  // banner de KO y el jugador queda de espectador viendo al resto.
+  // Online: perder no abre la pantalla de resultados de solo. El banner de KO se
+  // dibuja en su propia capa persistente (koOverlayElement) para que no parpadee
+  // con el redibujo por frame de los tableros rivales; aquí no devolvemos nada.
   if (appMode === 'onlinePlaying') {
-    return state.status === 'gameover' || state.status === 'finished'
-      ? renderOnlineKoOverlay(state)
-      : '';
+    return '';
   }
 
   if (appMode === 'paused') {
@@ -3530,40 +3552,9 @@ function renderOnlineKoOverlay(state: GameState): string {
 function renderOnlinePlayingOverlay(): string {
   if (!onlineRoom) return '';
   return `
-    <aside class="online-race-panel" aria-label="Online race status">
-      <div class="panel-eyebrow">ROOM ${escapeHtml(onlineRoom.id)}</div>
-      <div class="online-battle-meta">${escapeHtml(onlineAliveText())}</div>
-      ${renderOnlineSeriesStatus()}
-      ${renderIncomingGarbage()}
-      ${renderOnlineStandings()}
-      <button type="button" data-ui-action="online-leave">Leave</button>
-    </aside>
     ${renderOnlinePeerBoards()}
-    ${renderOnlineTargetingBar()}
+    ${renderOnlineHud()}
   `;
-}
-
-function renderOnlineStandings(): string {
-  if (!onlineRoom) return '<div class="online-empty">No room state.</div>';
-  return `
-    <div class="online-standings">
-      ${rankPlayers(onlineRoom.players).map((player, index) => `
-        <div class="online-standing-row ${player.id === onlinePlayer.id ? 'online-standing-self' : ''}">
-          <span class="online-standing-rank">${index + 1}</span>
-          ${renderOnlineAvatar(player, 'small')}
-          <strong>${escapeHtml(player.name)}</strong>
-          <em>${escapeHtml(formatOnlinePlayerState(player))}</em>
-          <b>${player.sentGarbage}G</b>
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-
-function onlineAliveText(): string {
-  if (!onlineRoom) return 'Alive 0/0';
-  const alive = onlineRoom.players.filter((player) => player.alive && player.status !== 'eliminated').length;
-  return `Alive ${alive}/${onlineRoom.players.length}`;
 }
 
 function renderOnlineAvatar(
@@ -3622,63 +3613,49 @@ function targetingModeHint(mode: TargetingMode): string {
   return 'Al azar';
 }
 
-function renderIncomingGarbage(): string {
-  const pending = engine.getState().stats.pendingGarbage;
-  const capped = Math.min(12, pending);
-  return `
-    <div class="online-garbage-meter" aria-label="Incoming garbage">
-      <span>Incoming</span>
-      <strong>${pending}</strong>
-      <div>${Array.from({ length: 12 }, (_, index) => `<i class="${index < capped ? 'online-garbage-cell-active' : ''}"></i>`).join('')}</div>
-    </div>
-  `;
-}
-
-// Barra horizontal inferior con las estrategias de objetivo de tetr.io.
-// Se elige con click o con las teclas 1–5 (ver handleGlobalKeyDown).
-function renderOnlineTargetingBar(): string {
-  if (!onlineRoom || onlineRoom.players.length <= 2) return '';
+// HUD inferior compacto de una sola fila: garbage entrante + estrategias de
+// objetivo (teclas 1–5, estilo tetr.io) + salir. Reemplaza al panel lateral
+// grande y se mantiene fino para no tapar el tablero.
+function renderOnlineHud(): string {
+  if (!onlineRoom) return '';
   const player = currentOnlinePlayer();
-  if (!player) return '';
-  const activeMode = player.targetingMode ?? onlineRoom.ruleset.targeting;
-  const liveTargets = onlineRoom.players.filter((candidate) => (
-    candidate.id !== player.id
-    && candidate.alive
-    && candidate.status !== 'eliminated'
-    && candidate.status !== 'winner'
-    && candidate.status !== 'disconnected'
-  ));
-  const target = onlineRoom.players.find((candidate) => candidate.id === player.currentTargetPlayerId)
-    ?? liveTargets.find((candidate) => candidate.id === player.manualTargetPlayerId)
+  const activeMode = player?.targetingMode ?? onlineRoom.ruleset.targeting;
+  const showTargeting = onlineRoom.players.length > 2 && !!player;
+  const pending = engine.getState().stats.pendingGarbage;
+  const liveTargets = showTargeting
+    ? onlineRoom.players.filter((candidate) => (
+        candidate.id !== player!.id
+        && candidate.alive
+        && candidate.status !== 'eliminated'
+        && candidate.status !== 'winner'
+        && candidate.status !== 'disconnected'
+      ))
+    : [];
+  const target = onlineRoom.players.find((candidate) => candidate.id === player?.currentTargetPlayerId)
+    ?? liveTargets.find((candidate) => candidate.id === player?.manualTargetPlayerId)
     ?? null;
   return `
-    <div class="online-target-bar" aria-label="Estrategia de objetivo">
-      <div class="online-target-bar-modes">
-        ${TARGETING_MODES.map((mode, index) => `
-          <button class="online-target-chip ${mode === activeMode ? 'is-active' : ''}" type="button" data-ui-action="online-targeting" data-targeting-mode="${mode}">
-            <span class="online-target-key">${index + 1}</span>
-            <span class="online-target-text">
-              <span class="online-target-name">${escapeHtml(targetingModeLabel(mode))}</span>
-              <span class="online-target-hint">${escapeHtml(targetingModeHint(mode))}</span>
-            </span>
-          </button>
-        `).join('')}
-      </div>
-      ${activeMode === 'manual' ? `
-        <div class="online-target-manual">
-          <span class="online-target-foot-label">Objetivo</span>
-          ${liveTargets.length === 0 ? '<em>Sin rivales vivos</em>' : liveTargets.map((candidate) => `
-            <button class="online-target-manual-chip ${candidate.id === player.manualTargetPlayerId ? 'is-active' : ''}" type="button" data-ui-action="online-manual-target" data-target-player-id="${escapeHtml(candidate.id)}">
-              ${escapeHtml(candidate.name)}
+    <div class="online-hud" aria-label="HUD online">
+      <span class="online-hud-incoming${pending > 0 ? ' is-hot' : ''}" title="Garbage entrante" aria-label="Garbage entrante: ${pending}">
+        <i aria-hidden="true"></i>${pending}
+      </span>
+      ${showTargeting ? `
+        <div class="online-target-chips">
+          ${TARGETING_MODES.map((mode, index) => `
+            <button class="online-target-chip ${mode === activeMode ? 'is-active' : ''}" type="button" title="${escapeHtml(targetingModeHint(mode))}" data-ui-action="online-targeting" data-targeting-mode="${mode}">
+              <span class="online-target-key">${index + 1}</span><span class="online-target-name">${escapeHtml(targetingModeLabel(mode))}</span>
             </button>
           `).join('')}
         </div>
-      ` : `
-        <div class="online-target-current">
-          <span class="online-target-foot-label">Apuntando a</span>
-          <strong>${escapeHtml(target?.name ?? '—')}</strong>
-        </div>
-      `}
+        ${activeMode === 'manual' ? `
+          <div class="online-target-manual">
+            ${liveTargets.length === 0 ? '<em>sin rivales</em>' : liveTargets.map((candidate) => `
+              <button class="online-target-manual-chip ${candidate.id === player!.manualTargetPlayerId ? 'is-active' : ''}" type="button" data-ui-action="online-manual-target" data-target-player-id="${escapeHtml(candidate.id)}">${escapeHtml(candidate.name)}</button>
+            `).join('')}
+          </div>
+        ` : `<span class="online-target-now" title="Apuntando a">→ ${escapeHtml(target?.name ?? '—')}</span>`}
+      ` : ''}
+      <button type="button" class="online-hud-leave" data-ui-action="online-leave">Leave</button>
     </div>
   `;
 }
@@ -5241,17 +5218,6 @@ function parseTargetingMode(value: string | undefined): TargetingMode | null {
 
 function prependUnique(values: string[], value: string, limit: number): string[] {
   return [value, ...values.filter((candidate) => candidate !== value)].slice(0, limit);
-}
-
-function formatOnlinePlayerState(player: OnlinePlayer): string {
-  if (player.status === 'winner') return `${formatFrames(player.elapsedFrames)} winner`;
-  if (player.status === 'eliminated') return `${formatFrames(player.elapsedFrames)} eliminated`;
-  if (player.status === 'won') return `${formatFrames(player.elapsedFrames)} clear`;
-  if (player.status === 'lost') return `${formatFrames(player.elapsedFrames)} top out`;
-  if (player.status === 'disconnected') return 'stale';
-  if (player.status === 'ready') return 'ready';
-  if (player.status === 'playing') return `${formatFrames(player.elapsedFrames)} alive`;
-  return 'joined';
 }
 
 function onlineErrorText(error: unknown): string {
