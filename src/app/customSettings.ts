@@ -60,6 +60,7 @@ export interface CustomSettings {
   objectiveMode: ObjectiveMode;
   objectiveLineTarget: number;
   musicMode: MusicMode;
+  colorBlindMode: boolean;
 }
 
 export type CustomSettingKey = keyof CustomSettings;
@@ -129,6 +130,7 @@ export const CUSTOM_DEFAULT_SETTINGS: CustomSettings = {
   objectiveMode: 'none',
   objectiveLineTarget: 0,
   musicMode: 'random-calm',
+  colorBlindMode: false,
 };
 
 export const CUSTOM_NUMBER_SETTING_META: Record<CustomNumberSettingKey, NumberSettingMeta> = {
@@ -173,6 +175,7 @@ const BOOLEAN_SETTING_KEYS: CustomBooleanSettingKey[] = [
   'useLevelling',
   'useMasterLevels',
   'useStaticLevelling',
+  'colorBlindMode',
 ];
 
 const SETTING_KEYS = Object.keys(CUSTOM_DEFAULT_SETTINGS) as CustomSettingKey[];
@@ -246,6 +249,7 @@ export function normalizeCustomSettings(value: unknown): CustomSettings {
     objectiveMode: normalizeLiteral(source.objectiveMode, ['none', 'lines'], CUSTOM_DEFAULT_SETTINGS.objectiveMode),
     objectiveLineTarget: normalizeNumber(source.objectiveLineTarget, 'objectiveLineTarget'),
     musicMode: normalizeLiteral(source.musicMode, ['random-calm'], CUSTOM_DEFAULT_SETTINGS.musicMode),
+    colorBlindMode: normalizeBoolean(source.colorBlindMode, CUSTOM_DEFAULT_SETTINGS.colorBlindMode),
   };
 }
 

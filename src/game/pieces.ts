@@ -12,6 +12,20 @@ export const PIECE_COLORS: Record<PieceType, number> = {
   Z: 0xcf4651,
 };
 
+// Paleta para modo daltónico: tonos del set Okabe–Ito, elegidos para ser
+// distinguibles entre sí en deuteranopía, protanopía y tritanopía (los tipos
+// de daltonismo más comunes). Se usa en lugar de PIECE_COLORS cuando el
+// jugador activa el modo daltónico.
+export const PIECE_COLORS_COLORBLIND: Record<PieceType, number> = {
+  I: 0x56b4e9, // celeste
+  J: 0x0072b2, // azul
+  L: 0xe69f00, // naranja
+  O: 0xf0e442, // amarillo
+  S: 0x009e73, // verde azulado
+  T: 0xcc79a7, // púrpura rosado
+  Z: 0xd55e00, // bermellón
+};
+
 const SHAPES: Record<PieceType, Vec2[][]> = {
   I: [
     [

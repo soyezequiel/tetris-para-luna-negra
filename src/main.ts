@@ -162,6 +162,7 @@ let engine = new GameEngine(seed, gameRules);
 let replay = createReplayLog(seed, gameRules);
 const input = new InputController(inputSettings);
 const renderer = new PixiGameRenderer(root);
+renderer.setColorBlind(customSettings.colorBlindMode);
 const sound = new SoundEngine(loadRecord().soundMuted, MUSIC_TRACKS, loadRecord().sfxVolume, loadRecord().musicVolume);
 // Capa de "feel" (partículas, audio rico, danger, KO/win). Es aditiva: AudioContext
 // propio en paralelo al SoundEngine, sincronizando mute/volumen (ver setMuted/setSfxVolume).
@@ -726,7 +727,10 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'custom-open') openCustomMode();
   if (action === 'custom-back') goToMenu();
   if (action === 'custom-start') startCustomRun();
-  if (action === 'custom-reset') customSettings = resetCustomSettings();
+  if (action === 'custom-reset') {
+    customSettings = resetCustomSettings();
+    renderer.setColorBlind(customSettings.colorBlindMode);
+  }
   if (action === 'custom-export') lastCustomExportName = exportCustomSettings();
   if (action === 'custom-tab') {
     const nextTab = parseCustomTab(control.dataset.tab);
@@ -736,6 +740,7 @@ function handleOverlayClick(event: MouseEvent): void {
     const setting = parseCustomSettingKey(control.dataset.setting);
     if (setting && isCustomBooleanSetting(setting)) {
       customSettings = saveCustomSettings(updateCustomSetting(customSettings, setting, !customSettings[setting]));
+      if (setting === 'colorBlindMode') renderer.setColorBlind(customSettings.colorBlindMode);
     }
   }
   if (action === 'custom-step') {
@@ -4919,6 +4924,9 @@ function renderSettingsPanelContent(): string {
           ${renderTimingControl('ARR', 'arrFrames', inputSettings.arrFrames)}
           ${renderTimingControl('Soft drop', 'softDropFactor', inputSettings.softDropFactor)}
         </div>
+        ${renderCustomSection('Accesibilidad', [
+          renderCustomToggle('Modo daltónico', 'colorBlindMode'),
+        ])}
         <div class="panel-actions" style="display: flex; gap: 12px; margin-top: 24px;">
           <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="settings-back">Volver</button>
           <button class="dash-action-btn danger" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="settings-reset">Restablecer</button>

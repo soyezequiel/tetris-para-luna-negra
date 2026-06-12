@@ -3,7 +3,7 @@ import { Container } from '@pixi/display';
 import { Graphics } from '@pixi/graphics';
 import { Text, TextStyle } from '@pixi/text';
 import { JuiceFX, type BoardGeometry } from './JuiceFX';
-import { cellsFor, PIECE_COLORS } from '../game/pieces';
+import { cellsFor, PIECE_COLORS, PIECE_COLORS_COLORBLIND } from '../game/pieces';
 import { DEFAULT_RULES } from '../game/rules';
 import { displayedElapsedFrames } from '../game/timing';
 import type { GameState, PieceType } from '../game/types';
@@ -60,6 +60,9 @@ export class PixiGameRenderer {
   // Animación de derrota: -1 = inactiva; si no, frames transcurridos desde el top out.
   // La dispara main.ts solo en online (playDeathAnimation), no en solo.
   private deathFrame = -1;
+  // Modo daltónico: cambia a la paleta Okabe–Ito, con tonos distinguibles entre
+  // sí en los tipos de daltonismo más comunes. Lo sincroniza main.ts.
+  private colorBlind = false;
 
   constructor(root: HTMLElement) {
     this.app = new Application({
@@ -106,6 +109,10 @@ export class PixiGameRenderer {
     if (this.deathFrame >= 0) return;
     this.deathFrame = 0;
     this.shakeFrames = 18;
+  }
+
+  setColorBlind(enabled: boolean): void {
+    this.colorBlind = enabled;
   }
 
   getJuice(): JuiceFX {
@@ -394,7 +401,7 @@ export class PixiGameRenderer {
   }
 
   private drawBlockAt(g: Graphics, x: number, y: number, size: number, piece: PieceType, alpha: number): void {
-    const color = PIECE_COLORS[piece];
+    const color = (this.colorBlind ? PIECE_COLORS_COLORBLIND : PIECE_COLORS)[piece];
     const palette = blockPaletteFor(color);
     const pad = Math.max(1, size * 0.045);
     const outerX = x + pad;
