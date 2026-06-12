@@ -2,6 +2,7 @@ import { Application } from '@pixi/app';
 import { Container } from '@pixi/display';
 import { Graphics } from '@pixi/graphics';
 import { Text, TextStyle } from '@pixi/text';
+import { JuiceFX, type BoardGeometry } from './JuiceFX';
 import { cellsFor, PIECE_COLORS } from '../game/pieces';
 import { DEFAULT_RULES } from '../game/rules';
 import { displayedElapsedFrames } from '../game/timing';
@@ -40,6 +41,8 @@ export class PixiGameRenderer {
   private readonly sideLayer = new Graphics();
   private readonly pieceLayer = new Graphics();
   private readonly effectLayer = new Graphics();
+  private readonly juiceLayer = new Container();
+  private readonly juice = new JuiceFX(this.juiceLayer);
   private readonly labelLayer = new Container();
   private readonly hudText: Text;
   private readonly holdLabel: Text;
@@ -87,7 +90,7 @@ export class PixiGameRenderer {
     this.holdLabel = new Text('HOLD', sideLabelStyle);
     this.nextLabel = new Text('NEXT', sideLabelStyle);
     this.labelLayer.addChild(this.holdLabel, this.nextLabel);
-    this.stage.addChild(this.bg, this.sideLayer, this.boardLayer, this.pieceLayer, this.effectLayer, this.labelLayer, this.hudText);
+    this.stage.addChild(this.bg, this.sideLayer, this.boardLayer, this.pieceLayer, this.effectLayer, this.juiceLayer, this.labelLayer, this.hudText);
     this.app.stage.addChild(this.stage);
     window.addEventListener('resize', () => this.layout());
     this.layout();
@@ -105,17 +108,30 @@ export class PixiGameRenderer {
     this.shakeFrames = 18;
   }
 
+  getJuice(): JuiceFX {
+    return this.juice;
+  }
+
+  boardGeometry(): BoardGeometry {
+    return { boardX: this.boardX, boardY: this.boardY, cell: this.cell, columns: this.boardColumns, rows: this.visibleRows };
+  }
+
   render(state: GameState): void {
+    // El shake por line-clear ahora lo gestiona JuiceFX (vía el conductor); aquí
+    // solo se mantiene el conteo de líneas por si algo más lo consulta.
     if (state.stats.lines !== this.lastLines) {
-      this.shakeFrames = 10;
       this.lastLines = state.stats.lines;
     }
     // Si volvió a jugar (retry / nueva ronda), se cancela la animación de derrota.
     if (state.status === 'playing') this.deathFrame = -1;
 
     this.layout(state);
-    const shake = this.shakeFrames > 0 ? Math.sin(this.shakeFrames * 2.3) * 5 : 0;
-    this.stage.position.set(shake, 0);
+    this.juice.update(this.boardGeometry()); // partículas, overlays, popups
+    // El shake legacy se conserva SOLO para playDeathAnimation(); el de gameplay
+    // fluye por JuiceFX.
+    const legacy = this.shakeFrames > 0 ? Math.sin(this.shakeFrames * 2.3) * 5 : 0;
+    const js = this.juice.shakeOffset();
+    this.stage.position.set(legacy + js.x, js.y);
     this.shakeFrames = Math.max(0, this.shakeFrames - 1);
 
     this.drawBackground();

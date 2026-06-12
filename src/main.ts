@@ -69,6 +69,8 @@ import { selectAttackTarget as selectTargetForAttack } from './online/targeting'
 import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
+import { JuiceAudio } from './audio/JuiceAudio';
+import { JuiceConductor } from './effects/JuiceConductor';
 
 const root = document.getElementById('game-root');
 const overlay = document.getElementById('hud-overlay');
@@ -134,6 +136,14 @@ let replay = createReplayLog(seed, gameRules);
 const input = new InputController(inputSettings);
 const renderer = new PixiGameRenderer(root);
 const sound = new SoundEngine(loadRecord().soundMuted, MUSIC_TRACKS, loadRecord().sfxVolume, loadRecord().musicVolume);
+// Capa de "feel" (partículas, audio rico, danger, KO/win). Es aditiva: AudioContext
+// propio en paralelo al SoundEngine, sincronizando mute/volumen (ver setMuted/setSfxVolume).
+const juiceAudio = new JuiceAudio(loadRecord().soundMuted, loadRecord().sfxVolume);
+const juice = new JuiceConductor(renderer.getJuice(), juiceAudio);
+// Desbloquea el AudioContext de la capa juice en el primer gesto del usuario.
+const unlockJuiceAudio = (): void => { void juiceAudio.unlock(); };
+window.addEventListener('pointerdown', unlockJuiceAudio, { once: true });
+window.addEventListener('keydown', unlockJuiceAudio, { once: true });
 const onlineClient = new OnlineClient();
 const lunaSocialClient = new LunaSocialClient();
 
@@ -328,6 +338,11 @@ function loop(): void {
     for (const event of gameInputs) recordInput(replay, event);
     state = advanceGameToFrame(candidateFrame, gameInputs);
     playAcceptedMoveSound(beforeTickState.active, state.active, gameInputs.map((event) => event.action));
+    // Micro-feel al fijar pieza: el hard drop ya dispara su propio efecto en
+    // playImmediateInputSounds, así que aquí solo el lock "natural".
+    const lockedPiece = state.stats.pieces > beforeTickState.stats.pieces;
+    const didHardDrop = gameInputs.some((event) => event.action === 'hardDrop');
+    if (lockedPiece && !didHardDrop) juice.onLock();
   }
 
   syncOnline();
@@ -336,6 +351,7 @@ function loop(): void {
   // oculto por CSS) y solo se ven los tableros rivales centrados (espectador).
   // Durante la animación de derrota sigo dibujando para que se vea morir.
   if (!isOnlineSpectating()) renderer.render(state);
+  juice.frame(state); // peligro por altura de pila + transiciones KO/Win
   renderOverlay(state);
   requestAnimationFrame(loop);
 }
@@ -400,6 +416,7 @@ Object.assign(window, {
     isSoundMuted: () => sound.isMuted(),
     toggleSound: () => {
       best = saveSoundMuted(sound.toggleMuted());
+      juiceAudio.setMuted(sound.isMuted());
       return sound.isMuted();
     },
     getCurrentMusicTrack: () => sound.getCurrentMusicTrack(),
@@ -411,6 +428,7 @@ Object.assign(window, {
     setAudioVolume: (channel: VolumeChannel, volume: number) => {
       const nextVolume = sound.setVolume(channel, volume);
       best = saveAudioVolumes(sound.getSfxVolume(), sound.getMusicVolume());
+      if (channel === 'sfx') juiceAudio.setSfxVolume(sound.getSfxVolume());
       return nextVolume;
     },
     startNewRun,
@@ -478,6 +496,7 @@ function advanceGameToFrame(targetFrame: number, finalFrameInputs: GameInput[]):
     const events = engine.drainEvents();
     syncRunEffects(state, events);
     syncOnlineBattleEvents(events, state);
+    juice.handleEvents(state, events);
   }
   return state;
 }
@@ -505,6 +524,7 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
   if (event.code === 'KeyM') {
     event.preventDefault();
     best = saveSoundMuted(sound.toggleMuted());
+    juiceAudio.setMuted(sound.isMuted());
   }
   if (event.code === 'KeyN') {
     event.preventDefault();
@@ -729,7 +749,10 @@ function handleOverlayClick(event: MouseEvent): void {
     if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) playback?.setSpeed(speed as PlaybackSpeed);
   }
   if (action === 'main-menu') goToMenu();
-  if (action === 'toggle-sound') best = saveSoundMuted(sound.toggleMuted());
+  if (action === 'toggle-sound') {
+    best = saveSoundMuted(sound.toggleMuted());
+    juiceAudio.setMuted(sound.isMuted());
+  }
   if (action === 'next-music') sound.nextMusicTrack();
   if (action === 'capture-binding') {
     const controlAction = parseControlAction(control.dataset.controlAction);
@@ -5176,6 +5199,7 @@ function handleVolumeWheel(event: WheelEvent): void {
   const direction = event.deltaY < 0 ? 1 : -1;
   sound.adjustVolume(channel, direction * VOLUME_WHEEL_STEP);
   best = saveAudioVolumes(sound.getSfxVolume(), sound.getMusicVolume());
+  if (channel === 'sfx') juiceAudio.setSfxVolume(sound.getSfxVolume());
   volumeFeedback = { channel, expiresAt: performance.now() + 900 };
   event.preventDefault();
 }
@@ -5193,7 +5217,10 @@ function playImmediateInputSounds(actions: InputAction[]): void {
   for (const action of actions) {
     if (action === 'rotateCW' || action === 'rotateCCW' || action === 'rotate180') sound.play('rotate');
     if (action === 'softDrop') sound.play('softDrop');
-    if (action === 'hardDrop') sound.play('hardDrop');
+    if (action === 'hardDrop') {
+      sound.play('hardDrop');
+      juice.onHardDrop();
+    }
     if (action === 'hold') sound.play('hold');
   }
 }
