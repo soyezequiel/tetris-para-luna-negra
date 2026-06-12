@@ -201,8 +201,8 @@ export class JuiceFX {
     this.shake = Math.min(40, Math.max(this.shake, magnitude * this.intensity));
   }
 
-  flashBoard(color: number, peak = 0.85): void {
-    this.flash = { color, t: 0, dur: 0.36 };
+  flashBoard(color: number, peak = 0.85, durSec = 0.36): void {
+    this.flash = { color, t: 0, dur: durSec };
     this._flashPeak = peak * (this.reducedMotion ? 0.4 : this.intensity);
   }
   private _flashPeak = 0.85;
@@ -301,7 +301,7 @@ export class JuiceFX {
     });
   }
 
-  showPopup(text: string, opts: { color?: number; sub?: string; big?: boolean } = {}): void {
+  showPopup(text: string, opts: { color?: number; sub?: string; big?: boolean; hold?: number } = {}): void {
     const col = opts.color ?? 0xffffff;
     const p = this.popup;
     p.baseSize = (opts.big ? 104 : 60) * Math.max(0.7, this.scale);
@@ -312,7 +312,7 @@ export class JuiceFX {
     p.sub.style.fill = col;
     p.t = 0;
     p.inDur = opts.big ? 0.28 : 0.28;
-    p.hold = opts.big ? 0.95 : 0.56;
+    p.hold = opts.hold ?? (opts.big ? 0.95 : 0.56);
     p.outDur = 0.32;
     p.active = true;
   }

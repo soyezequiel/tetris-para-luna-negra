@@ -16,7 +16,7 @@ const GHOST_LINE = 0x525a60;
 const GHOST_INSET_LINE = 0x262c31;
 // Animación de derrota (top out) estilo tetr.io: la pila se vuelve gris y colapsa
 // fila por fila de arriba hacia abajo mientras cae y se desvanece.
-const DEATH_TOTAL_FRAMES = 46;
+const DEATH_TOTAL_FRAMES = 104;
 const DEATH_BLOCK = 0x5b626b;
 const DEATH_BLOCK_LIGHT = 0x868d96;
 const DEATH_BLOCK_DARK = 0x2c3036;

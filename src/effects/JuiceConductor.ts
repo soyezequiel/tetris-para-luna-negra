@@ -217,16 +217,17 @@ export class JuiceConductor {
   }
 
   // ---------- hooks de input (disparar desde main.ts) ----------
-  /** Junto a sound.play('hardDrop'). */
+  /** Junto a sound.play('hardDrop'). Destello en el marco (no en todo el tablero,
+   * que resultaba molesto) + ráfaga de impacto en el piso + shake corto. */
   onHardDrop(): void {
     const r = this.boardCenterRow();
-    this.fx.flashBoard(P.cyanSoft, 0.5);
+    this.fx.boardGlow(P.cyanSoft, 0.55);
     this.fx.addShake(6);
     this.fx.spawnBurst(r.x, this.boardBottom(), 16, P.cyanSoft, { spd: 200, life: 0.4, up: -40, grav: 200 });
   }
-  /** Junto a sound.play('lock'). */
+  /** Junto a sound.play('lock'). Solo un micro-shake: sin flash de tablero para
+   * no saturar la pantalla en cada pieza. */
   onLock(): void {
-    this.fx.flashBoard(0xdfe7ee, 0.35);
     this.fx.addShake(2.2);
   }
 
@@ -236,11 +237,17 @@ export class JuiceConductor {
     this.audio.ko();
     this.fx.setDanger(0);
     this.fx.addShake(28);
-    this.fx.flashBoard(P.danger, 0.8);
+    // Flash rojo más largo y popup que aguanta para que la derrota se aprecie.
+    this.fx.flashBoard(P.danger, 0.8, 0.9);
     const r = this.boardCenterRow();
-    this.fx.spawnBurst(r.x, r.y, 80, P.danger, { spd: 320, life: 0.9, size: 3.6 });
+    this.fx.spawnBurst(r.x, r.y, 80, P.danger, { spd: 320, life: 1.1, size: 3.6 });
     this.fx.spawnRing(r.x, r.y, P.danger, 280);
-    this.fx.showPopup('K.O.', { color: P.red, sub: 'TOP OUT', big: true });
+    this.fx.showPopup('K.O.', { color: P.red, sub: 'TOP OUT', big: true, hold: 2.1 });
+    // Onda secundaria escalonada: prolonga el momento sin recargarlo de golpe.
+    window.setTimeout(() => {
+      this.fx.spawnRing(r.x, r.y, P.danger, 360);
+      this.fx.spawnBurst(r.x, r.y, 40, P.red, { spd: 220, life: 1.0, size: 3 });
+    }, 260);
     this.audio.enterSpectator();
   }
 
