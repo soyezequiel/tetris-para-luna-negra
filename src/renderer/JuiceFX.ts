@@ -112,6 +112,11 @@ export class JuiceFX {
   private dangerPhase = 0;
   private pendingGarbage = 0; // líneas de garbage entrante (telegraph en el borde)
   private garbagePhase = 0;
+  // Countdown de top-out (pila sobre el techo): texto propio, separado del popup
+  // para no pisar los carteles de combo/tetris.
+  private readonly topOutText: Text;
+  private topOutSeconds: number | null = null;
+  private topOutPhase = 0;
 
   private intensity: number;
   private reducedMotion: boolean;
@@ -149,7 +154,22 @@ export class JuiceFX {
     subText.alpha = 0;
     this.popup = { text: mainText, sub: subText, t: 0, hold: 0, inDur: 0, outDur: 0, baseSize: 64, active: false };
 
-    this.layer.addChild(this.overlayG, this.particleG, mainText, subText);
+    this.topOutText = new Text('', new TextStyle({
+      fill: 0xff3b52,
+      fontFamily: 'Arial Black, Arial, sans-serif',
+      fontWeight: '900',
+      fontSize: 56,
+      letterSpacing: 2,
+      dropShadow: true,
+      dropShadowColor: 0xff3b52,
+      dropShadowBlur: 14,
+      dropShadowDistance: 0,
+      dropShadowAlpha: 0.9,
+    }));
+    this.topOutText.anchor.set(0.5);
+    this.topOutText.alpha = 0;
+
+    this.layer.addChild(this.overlayG, this.particleG, mainText, subText, this.topOutText);
   }
 
   setIntensity(value: number): void {
@@ -218,6 +238,11 @@ export class JuiceFX {
   /** Garbage entrante pendiente (en líneas): dibuja un telegraph en el borde. */
   setPendingGarbage(lines: number): void {
     this.pendingGarbage = Math.max(0, Math.floor(lines));
+  }
+
+  /** Segundos restantes del timer de top-out (pila sobre el techo); null lo oculta. */
+  setTopOutCountdown(secondsLeft: number | null): void {
+    this.topOutSeconds = secondsLeft;
   }
 
   spawnBurst(
@@ -311,9 +336,9 @@ export class JuiceFX {
     p.sub.text = opts.sub ?? '';
     p.sub.style.fill = col;
     p.t = 0;
-    p.inDur = opts.big ? 0.28 : 0.28;
-    p.hold = opts.hold ?? (opts.big ? 0.95 : 0.56);
-    p.outDur = 0.32;
+    p.inDur = 0.14;
+    p.hold = opts.hold ?? (opts.big ? 0.48 : 0.28);
+    p.outDur = 0.16;
     p.active = true;
   }
 
@@ -327,6 +352,8 @@ export class JuiceFX {
     this.dangerPhase = 0;
     this.pendingGarbage = 0;
     this.garbagePhase = 0;
+    this.topOutSeconds = null;
+    this.topOutText.alpha = 0;
     this.popup.active = false;
     this.popup.text.alpha = 0;
     this.popup.sub.alpha = 0;
@@ -352,6 +379,25 @@ export class JuiceFX {
     this.updateProjectiles(dt);
     this.updateParticles(dt);
     this.updatePopup(dt);
+    this.updateTopOutCountdown(dt);
+  }
+
+  // Número rojo latiente sobre la parte alta del tablero mientras corre el timer
+  // de gracia de top-out. Separado del popup para no pisar combos/tetris.
+  private updateTopOutCountdown(dt: number): void {
+    const t = this.topOutText;
+    if (this.topOutSeconds === null) {
+      t.alpha = 0;
+      this.topOutPhase = 0;
+      return;
+    }
+    const r = this.boardRect();
+    this.topOutPhase += dt * 3;
+    const beat = 0.72 + 0.28 * Math.abs(Math.sin(this.topOutPhase * Math.PI));
+    t.text = `${this.topOutSeconds}`;
+    t.position.set(r.cx, r.y + r.h * 0.16);
+    t.scale.set(Math.max(0.7, this.scale) * beat);
+    t.alpha = 0.9;
   }
 
   // ---------- internos ----------
@@ -554,8 +600,9 @@ export class JuiceFX {
     }
     const s = (p.baseSize / 64) * scale;
     p.text.scale.set(s);
-    p.text.alpha = alpha;
-    p.sub.alpha = p.sub.text ? alpha : 0;
+    // 50% de transparencia: los carteles no deben tapar el tablero.
+    p.text.alpha = alpha * 0.5;
+    p.sub.alpha = p.sub.text ? alpha * 0.5 : 0;
     const ss = (p.baseSize / 64) * (0.9 + 0.1 * scale);
     p.sub.scale.set(ss);
   }

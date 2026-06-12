@@ -129,6 +129,10 @@ export interface GameStats {
   finishFrame: number | null;
   gameOverFrame: number | null;
   gameOverReason: GameOverReason | null;
+  /** Frames seguidos con la pila sobresaliendo del área visible (0 = dentro). */
+  aboveFieldFrames: number;
+  /** Umbral de frames de gracia antes del top-out por 'topOutTimer'. */
+  topOutGraceFrames: number;
 }
 
 export interface GameState {

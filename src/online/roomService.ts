@@ -623,7 +623,14 @@ async function updateProgressOnce(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
-  requireHostAuthority(room, request.authorityPlayerId);
+  // Self-report: un invitado puede postear SU PROPIO progreso como fallback cuando
+  // su canal WebRTC al host está caído (así los demás lo ven vía player.game al
+  // pollear). No es la autoridad, así que solo toca sus campos y, crucialmente, NO
+  // mueve room.updatedAtServerMs (ese timestamp alimenta applyHostFailover; si un
+  // invitado lo refrescara, enmascararía a un host realmente caído).
+  const isSelfReport = request.authorityPlayerId !== room.hostPlayerId
+    && request.authorityPlayerId === request.playerId;
+  if (!isSelfReport) requireHostAuthority(room, request.authorityPlayerId);
   if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const player = requirePlayer(room, request.playerId);
   if (isTerminalPlayer(player)) {
@@ -631,13 +638,13 @@ async function updateProgressOnce(
     // pero el POST cuenta como actividad de la sala. Sin esto, un host muerto
     // (espectando) sin snapshots peer que relayar dejaba updatedAtServerMs
     // congelado y applyHostFailover cortaba la ronda con jugadores vivos.
-    if (room.status === 'playing' || room.status === 'countdown') {
+    if (!isSelfReport && (room.status === 'playing' || room.status === 'countdown')) {
       room.updatedAtServerMs = nowMs;
       await persistRoom(store, room);
     }
     return room;
   }
-  if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
+  if (!isSelfReport && room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
     room.status = 'playing';
   }
   player.status = player.alive ? 'playing' : player.status;
@@ -650,7 +657,7 @@ async function updateProgressOnce(
   player.game = request.game ?? null;
   player.dangerLevel = calculateDangerLevel(player.game, player.pendingGarbage);
   player.updatedAtServerMs = nowMs;
-  room.updatedAtServerMs = nowMs;
+  if (!isSelfReport) room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
   return room;
 }
@@ -683,7 +690,10 @@ async function submitResultOnce(
     finishSprintRace(room, player, nowMs);
   } else if (room.players.every((candidate) => candidate.status === 'won' || candidate.status === 'lost')) {
     room.status = 'finished';
-    room.winnerPlayerId = room.players.find((candidate) => candidate.status === 'won')?.id ?? null;
+    // El ganador sale del ranking (mejor tiempo entre los 'won'), no del orden
+    // de join: con dos finishers casi simultáneos, find() coronaba al que llegó
+    // primero al servidor aunque hubiera terminado más lento.
+    room.winnerPlayerId = rankPlayers(room.players).find((candidate) => candidate.status === 'won')?.id ?? null;
     sealMatchResult(room, nowMs);
   }
   await persistRoom(store, room);
@@ -1047,16 +1057,29 @@ function normalizePeerSignalType(value: string): OnlinePeerSignal['type'] {
 
 function finishRoomIfOnlyOneAlive(room: OnlineRoom, nowMs: number): void {
   if (room.status !== 'playing' && room.status !== 'countdown') return;
+  if (room.players.length < 2) return;
   const alive = room.players.filter((player) => player.alive && player.status !== 'eliminated');
-  if (alive.length !== 1 || room.players.length < 2) return;
-  const winner = alive[0];
-  winner.status = 'winner';
-  winner.alive = true;
-  winner.finishedAtServerMs = nowMs;
-  winner.updatedAtServerMs = nowMs;
-  room.winnerPlayerId = winner.id;
-  room.status = 'finished';
-  sealMatchResult(room, nowMs);
+  if (alive.length === 1) {
+    const winner = alive[0];
+    winner.status = 'winner';
+    winner.alive = true;
+    winner.finishedAtServerMs = nowMs;
+    winner.updatedAtServerMs = nowMs;
+    room.winnerPlayerId = winner.id;
+    room.status = 'finished';
+    sealMatchResult(room, nowMs);
+    return;
+  }
+  // Muertes simultáneas (reportes que se cruzaron): nadie quedó vivo. La sala
+  // debe terminar igual, coronando al que sobrevivió más frames según el
+  // ranking (eliminatedAtFrame más tardío); antes quedaba colgada en 'playing'
+  // hasta el failover del host.
+  if (alive.length === 0) {
+    const best = rankPlayers(room.players)[0] ?? null;
+    room.winnerPlayerId = best?.id ?? null;
+    room.status = 'finished';
+    sealMatchResult(room, nowMs);
+  }
 }
 
 /**

@@ -10,7 +10,7 @@ import type { ActivePiece, Cell, GameEngineSnapshot, GameEvent, GameInput, GameO
 // Tolerancia top-out estilo tetr.io: la pila puede sobresalir del área visible
 // (hacia las filas ocultas) sin morir, pero si se queda ahí arriba este tiempo
 // seguido, la partida termina ('topOutTimer').
-const TOP_OUT_GRACE_FRAMES = 300;
+const TOP_OUT_GRACE_FRAMES = 600;
 
 export class GameEngine {
   private readonly rules: GameRules;
@@ -77,6 +77,8 @@ export class GameEngine {
         finishFrame: this.finishFrame,
         gameOverFrame: this.gameOverFrame,
         gameOverReason: this.gameOverReason,
+        aboveFieldFrames: this.aboveFieldFrames,
+        topOutGraceFrames: TOP_OUT_GRACE_FRAMES,
       },
       status: this.status,
       seed: this.seed,

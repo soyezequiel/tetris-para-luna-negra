@@ -74,7 +74,18 @@ export class JuiceConductor {
     // peligro
     if (this.alive && state.status === 'playing') {
       const ratio = stackHeightRatio(state);
-      const level = ratio > this.dangerStart ? Math.min(1, (ratio - this.dangerStart) / (1 - this.dangerStart - 0.08)) : 0;
+      let level = ratio > this.dangerStart ? Math.min(1, (ratio - this.dangerStart) / (1 - this.dangerStart - 0.08)) : 0;
+      // Timer de top-out corriendo (pila sobre el techo): danger mínimo creciente
+      // + countdown en los últimos 5 segundos, para que la muerte nunca sorprenda.
+      const above = state.stats.aboveFieldFrames;
+      if (above > 0) {
+        const progress = Math.min(1, above / state.stats.topOutGraceFrames);
+        level = Math.max(level, 0.4 + 0.6 * progress);
+        const secondsLeft = Math.ceil((state.stats.topOutGraceFrames - above) / 60);
+        this.fx.setTopOutCountdown(secondsLeft <= 5 ? Math.max(1, secondsLeft) : null);
+      } else {
+        this.fx.setTopOutCountdown(null);
+      }
       this.fx.setDanger(level);
       this.audio.setDanger(level);
       this.fx.setPendingGarbage(state.stats.pendingGarbage);
@@ -82,6 +93,7 @@ export class JuiceConductor {
       this.fx.setDanger(0);
       this.audio.setDanger(0);
       this.fx.setPendingGarbage(0);
+      this.fx.setTopOutCountdown(null);
     }
 
     // transiciones de status
@@ -225,9 +237,10 @@ export class JuiceConductor {
     this.fx.addShake(6);
     this.fx.spawnBurst(r.x, this.boardBottom(), 16, P.cyanSoft, { spd: 200, life: 0.4, up: -40, grav: 200 });
   }
-  /** Junto a sound.play('lock'). Solo un micro-shake: sin flash de tablero para
-   * no saturar la pantalla en cada pieza. */
+  /** Junto a sound.play('lock'). Ilumina el marco (sin flash de tablero, que
+   * saturaba la pantalla en cada pieza) + micro-shake. */
   onLock(): void {
+    this.fx.boardGlow(0xdfe7ee, 0.35);
     this.fx.addShake(2.2);
   }
 

@@ -2321,7 +2321,10 @@ describe('core stacker engine', () => {
     await startRoom(store, { roomId: room.id, playerId: 'player-host-auth' }, 1300);
     const playing = await getRoomState(store, room.id, 7000);
 
-    await expect(updateProgress(store, {
+    // Self-report: un invitado SÍ puede postear su PROPIO progreso (fallback
+    // cuando su canal al host está caído), pero no debe mover el reloj de
+    // actividad de la sala (alimenta el failover del host).
+    const selfReported = await updateProgress(store, {
       roomId: room.id,
       authorityPlayerId: 'player-guest-auth',
       playerId: 'player-guest-auth',
@@ -2329,7 +2332,20 @@ describe('core stacker engine', () => {
       lines: 8,
       pieces: 24,
       elapsedFrames: 600,
-    }, 7100)).rejects.toThrow('Only the host');
+    }, 7100);
+    expect(selfReported.players.find((player) => player.id === 'player-guest-auth')?.lines).toBe(8);
+    expect(selfReported.updatedAtServerMs).toBe(playing.updatedAtServerMs);
+
+    // Pero un invitado NO puede actualizar el progreso de OTRO jugador.
+    await expect(updateProgress(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-guest-auth',
+      playerId: 'player-host-auth',
+      seed: playing.seed,
+      lines: 3,
+      pieces: 5,
+      elapsedFrames: 100,
+    }, 7150)).rejects.toThrow('Only the host');
 
     await expect(addAttack(store, {
       roomId: room.id,
@@ -2474,6 +2490,47 @@ describe('core stacker engine', () => {
     expect(updated.players.filter((player) => player.alive)).toHaveLength(2);
   });
 
+  it('crowns the faster finisher when two players report a win in the same round', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'co-host-1',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'co-guest-1', name: 'Guest' }, 1100);
+    for (const playerId of ['co-host-1', 'co-guest-1']) {
+      await setPlayerReady(store, { roomId: room.id, playerId, ready: true }, 1200);
+    }
+    await startRoom(store, { roomId: room.id, playerId: 'co-host-1' }, 1300);
+    const playing = await getRoomState(store, room.id, 7000);
+
+    // El más LENTO reporta primero. El ganador debe salir del ranking (menos
+    // frames), no del orden de llegada al servidor.
+    await submitResult(store, {
+      roomId: room.id,
+      authorityPlayerId: 'co-host-1',
+      playerId: 'co-host-1',
+      seed: playing.seed,
+      result: 'won',
+      lines: 40,
+      pieces: 100,
+      elapsedFrames: 5000,
+    }, 7100);
+    const finished = await submitResult(store, {
+      roomId: room.id,
+      authorityPlayerId: 'co-host-1',
+      playerId: 'co-guest-1',
+      seed: playing.seed,
+      result: 'won',
+      lines: 40,
+      pieces: 98,
+      elapsedFrames: 3600,
+    }, 7200);
+
+    expect(finished.status).toBe('finished');
+    expect(finished.winnerPlayerId).toBe('co-guest-1');
+  });
+
   it('selects battle targets by explicit targeting mode', () => {
     const source = createOnlinePlayerFixture('source', 'playing', 10, 1000, 0);
     const lowGarbage = {
@@ -2560,12 +2617,14 @@ describe('core stacker engine', () => {
     unsafe.board[0][0] = 'I';
 
     let state = engine.getState();
-    for (let frame = 1; frame <= 299 && state.status === 'playing'; frame += 1) {
+    const grace = state.stats.topOutGraceFrames;
+    for (let frame = 1; frame <= grace - 1 && state.status === 'playing'; frame += 1) {
       state = engine.tick(frame);
     }
     expect(state.status).toBe('playing');
+    expect(state.stats.aboveFieldFrames).toBe(grace - 1);
 
-    state = engine.tick(300);
+    state = engine.tick(grace);
     expect(state.status).toBe('gameover');
     expect(state.stats.gameOverReason).toBe('topOutTimer');
   });

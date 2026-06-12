@@ -91,6 +91,13 @@ const koOverlayElement = document.createElement('div');
 const hudOverlayElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(hudOverlayElement);
 hudOverlayElement.addEventListener('click', handleOverlayClick);
+// Capa propia para el toast de invitación durante partida (no invasivo): vive
+// fuera del overlay general por la misma razón que el HUD online — sus botones
+// no deben recrearse cada frame (hover) — y porque el overlay puede repintarse
+// con el cronómetro vivo de los tableros rivales.
+const inviteOverlayElement = document.createElement('div');
+(overlay.parentElement ?? document.body).appendChild(inviteOverlayElement);
+inviteOverlayElement.addEventListener('click', handleOverlayClick);
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
@@ -106,6 +113,10 @@ const ONLINE_BET_FAST_POLL_MS = 750;
 // (ver maybeRefreshBet); esta ventana cubre los depósitos de los demás.
 const ONLINE_BET_FAST_POLL_WINDOW_MS = 180_000;
 const ONLINE_PEER_BROADCAST_MS = 100;
+// Si mi canal WebRTC al host no abre en esta ventana durante una ronda activa,
+// el invitado postea su propio progreso al servidor (self-report) para que el
+// resto lo vea igual vía player.game. Rompe el Catch-22 del relay del host.
+const ONLINE_SELF_REPORT_GRACE_MS = 3000;
 // Contenedores con scroll propio que se reconstruyen al regenerar el overlay.
 // Sin esto, cada re-render (p. ej. polling de salas/apuestas) reinicia el scroll al tope.
 // Debe declararse antes del primer render (loop() al final del módulo) para evitar TDZ.
@@ -185,6 +196,7 @@ let onlineDeathAnimStartedAt: number | null = null;
 // Mismo motivo que el KO: el HUD online se diffea aparte para no recrearse cada
 // frame y evitar el titileo del hover en sus botones.
 let lastHudOverlayHtml = '';
+let lastInviteOverlayHtml = '';
 let playback: ReplayPlayback | null = null;
 let importedReplayName: string | null = null;
 let replayImportError: string | null = null;
@@ -213,6 +225,9 @@ let onlinePollInFlight = false;
 let onlineProgressInFlight = false;
 let onlineLastPollAt = 0;
 let onlineLastProgressAt = 0;
+let onlineSelfReportInFlight = false;
+let onlineLastSelfReportAt = 0;
+let onlineHostChannelDownSince = 0;
 let onlineLastPeerBroadcastAt = 0;
 let onlineLastKoBroadcastAt = 0;
 let onlineServerOffsetMs = 0;
@@ -1371,7 +1386,9 @@ async function handleLunaLaunchRequest(request: LunaLaunchRequest): Promise<void
   const pending = { ...request, normalizedRoomId };
   pendingLunaLaunchRequest = pending;
   bindingCapture = null;
-  input.releaseAll();
+  // En partida la invitación es un toast: no soltamos los inputs ni robamos el
+  // control. Solo el modal (en menús) limpia el estado de teclado.
+  if (!lunaInviteShowsAsToast()) input.releaseAll();
 }
 
 async function acceptPendingLunaLaunchRequest(): Promise<void> {
@@ -1383,9 +1400,13 @@ async function acceptPendingLunaLaunchRequest(): Promise<void> {
 
 function cancelPendingLunaLaunchRequest(): void {
   const request = pendingLunaLaunchRequest;
+  const wasToast = request !== null && lunaInviteShowsAsToast();
   if (request) ignoredLunaLaunchRequestIds.add(request.id);
   pendingLunaLaunchRequest = null;
   bindingCapture = null;
+  // Si era toast, el juego nunca se pausó: no hay que resincronizar el reloj ni
+  // soltar las teclas que el jugador tiene apretadas.
+  if (wasToast) return;
   if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
   input.releaseAll();
 }
@@ -1877,6 +1898,8 @@ function resetOnlineRoomState(): void {
   onlineInputOutbox = [];
   onlineLastPollAt = 0;
   onlineLastProgressAt = 0;
+  onlineLastSelfReportAt = 0;
+  onlineHostChannelDownSince = 0;
   onlineLastPeerBroadcastAt = 0;
   onlineLastKoBroadcastAt = 0;
   onlineActiveRoundId = null;
@@ -1927,6 +1950,8 @@ function resetOnlineRuntimeForNextRound(): void {
   onlinePeerDisplaySnapshots = new Map();
   onlineInputOutbox = [];
   onlineLastProgressAt = 0;
+  onlineLastSelfReportAt = 0;
+  onlineHostChannelDownSince = 0;
   onlineLastPeerBroadcastAt = 0;
   onlineLastKoBroadcastAt = 0;
   input.releaseAll();
@@ -2301,7 +2326,7 @@ function syncOnline(): void {
       });
     }
     if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(liveState));
-    else flushOnlineInputOutbox();
+    else { flushOnlineInputOutbox(); maybePostSelfProgressFallback(now, liveState); }
     applyRoomAttacks(onlineRoom);
     if (shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(liveState);
     if (isOnlineHost()) relayPeerProgressToServer();
@@ -2472,6 +2497,56 @@ async function postOnlineProgress(state: GameState): Promise<void> {
   }
 }
 
+// ¿Tengo abierto el canal de datos hacia el host? (El host siempre "se ve" a sí
+// mismo.) Si no, los snapshots peer no llegan y dependo del fallback por servidor.
+function isHostChannelOpen(): boolean {
+  if (!onlineRoom) return false;
+  if (isOnlineHost()) return true;
+  return onlinePeerStates.get(onlineRoom.hostPlayerId) === 'open';
+}
+
+// Fallback del invitado: si el canal al host lleva caído ONLINE_SELF_REPORT_GRACE_MS
+// durante una ronda activa, posteo mi propio progreso al servidor (self-report) para
+// que los demás me vean vía player.game. No mueve room.updatedAtServerMs (el server
+// lo trata como self-report; ver updateProgressOnce).
+function maybePostSelfProgressFallback(now: number, state: GameState): void {
+  if (!onlineRoom || isOnlineHost()) return;
+  if (state.status !== 'playing') { onlineHostChannelDownSince = 0; return; }
+  if (isHostChannelOpen()) { onlineHostChannelDownSince = 0; return; }
+  if (onlineHostChannelDownSince === 0) { onlineHostChannelDownSince = now; return; }
+  if (now - onlineHostChannelDownSince < ONLINE_SELF_REPORT_GRACE_MS) return;
+  if (onlineSelfReportInFlight || now - onlineLastSelfReportAt < ONLINE_POLL_MS) return;
+  void postSelfProgress(state);
+}
+
+async function postSelfProgress(state: GameState): Promise<void> {
+  if (!onlineRoom || isOnlineHost()) return;
+  onlineSelfReportInFlight = true;
+  onlineLastSelfReportAt = performance.now();
+  const requestSeed = onlineRoom.seed;
+  try {
+    const response = await onlineClient.updateProgress({
+      roomId: onlineRoom.id,
+      authorityPlayerId: onlinePlayer.id, // no soy host: el server lo trata como self-report
+      playerId: onlinePlayer.id,
+      seed: onlineRoom.seed,
+      lines: state.stats.lines,
+      pieces: state.stats.pieces,
+      elapsedFrames: displayedElapsedFrames(state.stats),
+      sentGarbage: state.stats.sentGarbage,
+      receivedGarbage: state.stats.receivedGarbage,
+      pendingGarbage: state.stats.pendingGarbage,
+      game: createOnlineGameSnapshot(state),
+    });
+    if (!isCurrentOnlineSeed(requestSeed)) return;
+    adoptOnlineRoom(response.room);
+  } catch {
+    // Best-effort: el fallback no debe romper el loop ni spamear errores.
+  } finally {
+    onlineSelfReportInFlight = false;
+  }
+}
+
 async function postOnlineResult(state: GameState): Promise<void> {
   if (!onlineRoom) return;
   onlineResultSubmitted = true;
@@ -2628,6 +2703,8 @@ function maybeStartOnlineRun(): void {
   onlineLastAuthoritativeFrame = 0;
   onlineInputOutbox = [];
   onlineLastProgressAt = 0;
+  onlineLastSelfReportAt = 0;
+  onlineHostChannelDownSince = 0;
   onlineLastPeerBroadcastAt = 0;
   onlineLastKoBroadcastAt = 0;
   syncHostAuthorityPlayers();
@@ -3058,6 +3135,15 @@ function renderOverlay(state: GameState): void {
     hudOverlayElement.innerHTML = hudHtml;
     lastHudOverlayHtml = hudHtml;
   }
+  // Toast de invitación durante partida: capa propia con caché para que los
+  // botones no se recreen cada frame (el juego sigue corriendo detrás).
+  const inviteHtml = pendingLunaLaunchRequest && lunaInviteShowsAsToast()
+    ? renderLunaInviteToast(pendingLunaLaunchRequest)
+    : '';
+  if (inviteHtml !== lastInviteOverlayHtml) {
+    inviteOverlayElement.innerHTML = inviteHtml;
+    lastInviteOverlayHtml = inviteHtml;
+  }
   document.body.classList.toggle('online-spectating', isOnlineSpectating());
   if (appMode === 'replayPlayback' && playback) updateReplayOverlay(playback.snapshot());
 }
@@ -3135,7 +3221,7 @@ function restoreOverlayScroll(snapshot: Map<string, number>): void {
 }
 
 function renderScreenOverlay(state: GameState): string {
-  if (pendingLunaLaunchRequest) return renderLunaLaunchRequestOverlay(pendingLunaLaunchRequest);
+  if (pendingLunaLaunchRequest && !lunaInviteShowsAsToast()) return renderLunaLaunchRequestOverlay(pendingLunaLaunchRequest);
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
   if (
@@ -3339,7 +3425,34 @@ function renderLunaLaunchRequestOverlay(request: PendingLunaLaunchRequest): stri
 }
 
 function hasBlockingModal(): boolean {
-  return pendingConfirmAction !== null || pendingLunaLaunchRequest !== null;
+  // La invitación de Luna durante una partida NO bloquea: se muestra como toast
+  // clicable (ver renderLunaInviteToast) y el juego sigue corriendo.
+  return pendingConfirmAction !== null || (pendingLunaLaunchRequest !== null && !lunaInviteShowsAsToast());
+}
+
+// Con el juego corriendo (o pausado), la invitación se presenta como toast no
+// invasivo en vez del modal de pantalla completa. En menús se mantiene el modal.
+function lunaInviteShowsAsToast(): boolean {
+  return appMode === 'playing'
+    || appMode === 'soloCountdown'
+    || appMode === 'paused'
+    || appMode === 'onlinePlaying'
+    || appMode === 'onlineCountdown';
+}
+
+function renderLunaInviteToast(request: PendingLunaLaunchRequest): string {
+  return `
+    <div class="luna-invite-toast" role="status" aria-live="polite">
+      <div class="luna-invite-toast-body">
+        <span class="luna-invite-toast-eyebrow">LUNA NEGRA</span>
+        <strong>Te invitaron a ${escapeHtml(request.normalizedRoomId)}</strong>
+      </div>
+      <div class="luna-invite-toast-actions">
+        <button class="luna-invite-toast-btn luna-invite-toast-btn-accept" type="button" data-ui-action="luna-launch-accept">Unirme</button>
+        <button class="luna-invite-toast-btn" type="button" data-ui-action="luna-launch-cancel">Ignorar</button>
+      </div>
+    </div>
+  `;
 }
 
 // Envoltorio estilo CS2: contenido principal a la izquierda, panel de amigos de
@@ -4132,7 +4245,7 @@ function renderOnlineSpectatorBoard(player: OnlinePlayer): string {
   const overlay = outcome
     ? `
       <div class="online-spec-overlay online-spec-overlay--${outcome.kind}">
-        <span class="online-spec-overlay-tag">${outcome.kind === 'win' ? 'WINNER' : 'K.O.'}</span>
+        <span class="online-spec-overlay-tag">${outcome.kind === 'win' ? 'WINNER' : outcome.kind === 'done' ? 'FINISH' : 'K.O.'}</span>
         ${placement ? `<span class="online-spec-overlay-place">${placement}º</span>` : ''}
       </div>
     `
@@ -4177,9 +4290,15 @@ function onlinePeerStats(player: OnlinePlayer, snapshot: OnlineGameSnapshot | nu
 
 // Puesto final estilo tetr.io: el primero en caer queda último; el ganador es 1º.
 // Se deriva del orden de eliminación que reporta el servidor.
-function onlinePeerPlacement(player: OnlinePlayer, kind: 'ko' | 'win'): number | null {
+function onlinePeerPlacement(player: OnlinePlayer, kind: 'ko' | 'win' | 'done'): number | null {
   if (!onlineRoom) return null;
   if (kind === 'win') return 1;
+  // 'done' (terminó pero la sala no lo coronó): el puesto sale del ranking.
+  if (kind === 'done') {
+    const ranked = rankPlayers(onlineRoom.players);
+    const index = ranked.findIndex((candidate) => candidate.id === player.id);
+    return index >= 0 ? index + 1 : null;
+  }
   const total = onlineRoom.players.length;
   const myTime = player.eliminatedAtServerMs;
   if (myTime === null || myTime === undefined) return null;
@@ -4194,12 +4313,17 @@ function onlinePeerPlacement(player: OnlinePlayer, kind: 'ko' | 'win'): number |
 
 // Desenlace de un rival según el estado autoritativo de la sala (y, como señal
 // temprana, el status de su último snapshot). Devuelve null mientras sigue vivo.
+// "Ganó" solo lo decide la sala (winnerPlayerId / status 'winner'): un snapshot
+// 'finished' o un status 'won' (sprint completado) significan "terminó", no
+// necesariamente ganador — antes etiquetaban WIN a ambos finishers.
 function onlinePeerOutcome(
   player: OnlinePlayer,
   snapshot: OnlineGameSnapshot | null,
-): { kind: 'ko' | 'win'; label: string; tag: string } | null {
-  const won = player.status === 'winner' || player.status === 'won' || snapshot?.status === 'finished';
-  if (won) return { kind: 'win', label: 'Ganó', tag: 'WIN' };
+): { kind: 'ko' | 'win' | 'done'; label: string; tag: string } | null {
+  const crowned = player.status === 'winner' || onlineRoom?.winnerPlayerId === player.id;
+  if (crowned) return { kind: 'win', label: 'Ganó', tag: 'WIN' };
+  const finished = player.status === 'won' || snapshot?.status === 'finished';
+  if (finished) return { kind: 'done', label: 'Terminó', tag: 'FIN' };
   const ko = !player.alive
     || player.status === 'eliminated'
     || player.status === 'lost'

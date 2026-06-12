@@ -5136,6 +5136,80 @@ canvas {
   100% { transform: translate(-50%, -16px); opacity: 0; }
 }
 
+/* Invitación de Luna durante una partida: toast no invasivo en la esquina
+   superior derecha. El contenedor no roba clicks; solo los botones son
+   interactivos. El teclado sigue siendo del juego (aceptar/ignorar es con
+   mouse/touch) y queda visible hasta que el jugador decida o termine. */
+.luna-invite-toast {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 260px;
+  padding: 12px 14px;
+  border: 1px solid rgba(124, 92, 252, 0.55);
+  border-radius: 12px;
+  background: rgba(10, 8, 18, 0.88);
+  box-shadow: 0 0 24px rgba(124, 92, 252, 0.28);
+  pointer-events: none;
+  animation: luna-invite-toast-in 0.32s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+.luna-invite-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #f1edff;
+  font-size: 13px;
+}
+
+.luna-invite-toast-eyebrow {
+  color: #a78bfa;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.luna-invite-toast-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.luna-invite-toast-btn {
+  pointer-events: auto;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e5e3f2;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.luna-invite-toast-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.luna-invite-toast-btn-accept {
+  border-color: rgba(124, 92, 252, 0.7);
+  background: rgba(124, 92, 252, 0.28);
+  color: #ffffff;
+}
+
+.luna-invite-toast-btn-accept:hover {
+  background: rgba(124, 92, 252, 0.45);
+}
+
+@keyframes luna-invite-toast-in {
+  0% { transform: translateX(24px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
 /* Ya morí: mi tablero (canvas Pixi) se oculta para no superponerse con los
    tableros rivales. El fondo oscuro del documento queda detrás del espectador. */
 body.online-spectating #game-root {
@@ -5357,6 +5431,21 @@ body.online-spectating #game-root {
 
 .online-spec-board--win .online-mini-board {
   border-color: rgba(57, 212, 154, 0.55);
+}
+
+/* Terminó (sprint completado) pero la sala aún no lo coronó: azul neutro,
+   ni festejo verde ni K.O. gris. */
+.online-spec-overlay--done {
+  background: linear-gradient(180deg, rgba(10, 28, 44, 0.42), rgba(3, 10, 16, 0.74));
+}
+
+.online-spec-overlay--done .online-spec-overlay-tag {
+  color: #5ec8f5;
+}
+
+.online-spec-board--done .online-mini-board,
+.online-peer-board--done .online-mini-board {
+  border-color: rgba(94, 200, 245, 0.55);
 }
 
 /* Tablero en peligro (pila alta o mucho garbage): pulso rojo, como el flash de

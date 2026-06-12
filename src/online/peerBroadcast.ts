@@ -73,9 +73,14 @@ interface PeerEntry {
   pendingIce: RTCIceCandidateInit[];
   makingOffer: boolean;
   state: PeerConnectionState;
+  createdAt: number;
 }
 
 const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+// Una conexión que sigue en 'new'/'connecting' pasado este tiempo (ICE pegado por
+// NAT/firewall) nunca recupera sola: la recreamos para reintentar la negociación.
+// Sin esto, ese peer queda invisible (sin snapshots) indefinidamente.
+const PEER_CONNECT_TIMEOUT_MS = 8000;
 
 export class OnlinePeerBroadcaster {
   private readonly peers = new Map<string, PeerEntry>();
@@ -84,6 +89,7 @@ export class OnlinePeerBroadcaster {
   constructor(private readonly options: OnlinePeerBroadcasterOptions) {}
 
   syncRoom(room: OnlineRoom): void {
+    this.reviveStalledPeers();
     const remoteIds = new Set(room.players.map((player) => player.id).filter((id) => id !== this.options.playerId));
     for (const remoteId of remoteIds) this.ensurePeer(remoteId, this.shouldInitiate(remoteId));
     for (const remoteId of this.peers.keys()) {
@@ -160,6 +166,7 @@ export class OnlinePeerBroadcaster {
       pendingIce: [],
       makingOffer: false,
       state: 'new',
+      createdAt: Date.now(),
     };
     this.peers.set(remoteId, entry);
     this.setPeerState(remoteId, 'connecting');
@@ -330,6 +337,19 @@ export class OnlinePeerBroadcaster {
       }
     } catch {
       // Ignore malformed peer messages. The server polling fallback remains authoritative for room state.
+    }
+  }
+
+  // Recrea conexiones atascadas en negociación más allá del timeout. Se llama
+  // desde syncRoom (cada poll de la sala), así no hace falta un timer propio.
+  private reviveStalledPeers(): void {
+    const now = Date.now();
+    for (const [remoteId, peer] of this.peers) {
+      if (peer.state === 'open' || peer.channel?.readyState === 'open') continue;
+      const cs = peer.connection.connectionState;
+      if (cs !== 'new' && cs !== 'connecting' && cs !== 'disconnected') continue;
+      if (now - peer.createdAt < PEER_CONNECT_TIMEOUT_MS) continue;
+      this.recreatePeer(remoteId);
     }
   }
 
