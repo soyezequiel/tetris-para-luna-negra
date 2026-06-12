@@ -98,6 +98,14 @@ hudOverlayElement.addEventListener('click', handleOverlayClick);
 const inviteOverlayElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(inviteOverlayElement);
 inviteOverlayElement.addEventListener('click', handleOverlayClick);
+// BOT DEV: capa propia para el panel de control del bot, fuera del overlay
+// general (que se reescribe cada frame durante la partida online) para que sus
+// botones no se recreen a 60fps y los clicks/hover funcionen.
+const devBotOverlayElement = import.meta.env.DEV ? document.createElement('div') : null;
+if (devBotOverlayElement) {
+  (overlay.parentElement ?? document.body).appendChild(devBotOverlayElement);
+  devBotOverlayElement.addEventListener('click', handleOverlayClick);
+}
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
@@ -208,6 +216,10 @@ let touchControlsHidden = best.touchControlsHidden;
 let autoPlayEnabled = false; // TRUCO AUTOPLAY: el bot juega solo al activarse
 let autoPlayAccessGranted = false; // TRUCO AUTOPLAY: habilitado solo con llave local hasheada
 let ignoreNextAutoPlayClick = false; // TRUCO AUTOPLAY: pointerdown ya hizo el toggle
+// BOT DEV: oponente simulado para ver el flujo multijugador completo en modo dev
+// (ver src/dev/devBotOpponent.ts). Solo existe detrás de import.meta.env.DEV.
+let devBotMatch: import('./dev/devBotOpponent').DevBotOpponent | null = null;
+let lastDevBotOverlayHtml = '';
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
@@ -345,7 +357,12 @@ function loop(): void {
     const gameInputs = toGameInputs(controlInputs, candidateFrame);
     // TRUCO AUTOPLAY: inyecta la acción del bot como si fuera una tecla más.
     if (autoPlayEnabled) {
-      const botAction = nextAutoPlayInput(state);
+      // BOT DEV: en una partida vs bot el autoplay local se frena al mismo ritmo
+      // del oponente (a toda velocidad la ronda dura ~10s y no se ve nada).
+      const devBotPaced = import.meta.env.DEV && devBotMatch
+        ? candidateFrame % devBotMatch.getConfig().inputCadenceFrames === 0
+        : true;
+      const botAction = devBotPaced ? nextAutoPlayInput(state) : null;
       if (botAction) gameInputs.push({ frame: candidateFrame, action: botAction });
     }
     sendOnlineInputsToHost(gameInputs);
@@ -361,6 +378,7 @@ function loop(): void {
   }
 
   syncOnline();
+  if (import.meta.env.DEV) devBotMatch?.frame(); // BOT DEV: avanza al oponente simulado
   syncOnlineDeathPhase(state);
   // Ya morí y terminó la animación de derrota: dejo de dibujar MI tablero (queda
   // oculto por CSS) y solo se ven los tableros rivales centrados (espectador).
@@ -449,6 +467,7 @@ Object.assign(window, {
     startNewRun,
     exportReplay,
     importReplayText,
+    ...(import.meta.env.DEV ? { getDevBot: () => devBotMatch } : {}), // BOT DEV
   },
 });
 
@@ -637,6 +656,30 @@ function handleOverlayClick(event: MouseEvent): void {
   if (requiresRunConfirmation(action, appMode, engine.getState().status, settingsReturnMode)) {
     requestRunConfirmation(action);
     return;
+  }
+
+  if (import.meta.env.DEV) { // BOT DEV: acciones del panel de control
+    if (action === 'dev-bot-match') {
+      void startDevBotMatch();
+      return;
+    }
+    if (action === 'dev-bot-attack') {
+      devBotMatch?.forceAttack(Number(control.dataset.lines ?? '2'));
+      return;
+    }
+    if (action === 'dev-bot-topout') {
+      devBotMatch?.forceTopOut();
+      return;
+    }
+    if (action === 'dev-bot-cadence') {
+      devBotMatch?.setConfig({ inputCadenceFrames: Math.max(1, Number(control.dataset.value ?? '6')) });
+      lastDevBotOverlayHtml = '';
+      return;
+    }
+    if (action === 'dev-bot-next-round') {
+      void startOnlineRoom();
+      return;
+    }
   }
 
   if (action === 'sidebar-play') {
@@ -1568,6 +1611,50 @@ async function createOnlineRoom(visibility: RoomVisibility): Promise<void> {
   }
 }
 
+// BOT DEV: lanza una partida multijugador completa contra el oponente simulado.
+// Crea una sala privada REAL en el API local, une al bot como segundo cliente,
+// activa el autoplay local (la partida corre sola de ambos lados) y arranca la
+// ronda por el flujo normal del host. El bridge conecta los hooks del bot a los
+// mismos handlers que usaría el peer broadcast WebRTC.
+async function startDevBotMatch(): Promise<void> {
+  if (!import.meta.env.DEV || devBotMatch) return;
+  await createOnlineRoom('private');
+  if (!onlineRoom) return;
+  const { DevBotOpponent } = await import('./dev/devBotOpponent');
+  const bot = new DevBotOpponent({
+    getRoom: () => onlineRoom,
+    getNowMs: onlineNowMs,
+    botRules: () => onlineRulesFromRoom(onlineRoom),
+    deliverAttackIntent: (intent) => {
+      // Mismo camino que onAttackIntent del peer broadcast: el host rutea.
+      if (onlineRoom && isOnlineHost()) commitOnlineAttack(intent);
+    },
+    deliverSnapshot: (playerId, game) => {
+      // Mismo camino que el snapshot por peer: display local + relay del host
+      // al servidor vía relayPeerProgressToServer (mantiene fresco al bot).
+      rememberPeerDisplaySnapshot(playerId, game);
+      applyPeerSnapshot(playerId, playerId, game);
+    },
+    commitKo: (report) => {
+      void commitOnlineElimination(report);
+    },
+  }, onlineClient);
+  try {
+    await bot.join(onlineRoom.id);
+  } catch (error) {
+    bot.dispose();
+    onlineError = onlineErrorText(error);
+    return;
+  }
+  devBotMatch = bot;
+  autoPlayAccessGranted = true; // TRUCO AUTOPLAY: el jugador local también se automatiza
+  autoPlayEnabled = true;
+  // startOnlineRoom exige ver a otro jugador en la sala (si no, arranca una run
+  // solo): refrescamos la sala para que incluya al bot antes de arrancar.
+  await pollOnlineRoom();
+  await startOnlineRoom();
+}
+
 async function joinOnlineRoom(roomId: string): Promise<void> {
   const normalizedRoomId = normalizeRoomId(roomId);
   if (onlineBusy || normalizedRoomId.length < ROOM_ID_MIN_LENGTH) {
@@ -1871,6 +1958,10 @@ async function leaveCurrentRoomBeforeNew(targetRoomId?: string): Promise<void> {
 }
 
 function resetOnlineRoomState(): void {
+  if (import.meta.env.DEV) { // BOT DEV: salir de la sala mata al bot (antes de perder onlineRoom)
+    devBotMatch?.dispose();
+    devBotMatch = null;
+  }
   clearOnlineRoomSession();
   onlinePeerBroadcaster?.close();
   onlinePeerBroadcaster = null;
@@ -3086,7 +3177,51 @@ function createOnlineGameSnapshotFromState(
   };
 }
 
+// BOT DEV: panel de control fijo para provocar cada efecto del multijugador a
+// demanda (ataques entrantes, top-out del bot, velocidad) y encadenar rondas.
+// Vive en su propia capa (devBotOverlayElement) y solo se redibuja al cambiar.
+function renderDevBotOverlay(): void {
+  if (!devBotOverlayElement) return;
+  const html = devBotMatch ? renderDevBotPanel() : '';
+  if (html === lastDevBotOverlayHtml) return;
+  lastDevBotOverlayHtml = html;
+  devBotOverlayElement.innerHTML = html;
+}
+
+function renderDevBotPanel(): string {
+  const cadence = devBotMatch?.getConfig().inputCadenceFrames ?? 6;
+  const buttonStyle = 'pointer-events:auto;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.85);border:1px solid rgba(255,255,255,0.18);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;';
+  const activeStyle = 'background:rgba(80,200,120,0.3);';
+  const speedButton = (value: number, label: string) =>
+    `<button type="button" style="${buttonStyle}${cadence === value ? activeStyle : ''}" data-ui-action="dev-bot-cadence" data-value="${value}">${label}</button>`;
+  const botState = devBotMatch?.getState();
+  const statusLine = botState
+    ? `${botState.status} · ${botState.stats.lines} líneas · ${botState.stats.pendingGarbage} pend.`
+    : 'esperando ronda';
+  const nextRoundHtml = onlineRoom?.status === 'lobby'
+    ? `<button type="button" style="${buttonStyle}${activeStyle}" data-ui-action="dev-bot-next-round">Siguiente ronda</button>`
+    : '';
+  return `
+    <div style="position:fixed;left:12px;bottom:12px;z-index:80;display:flex;flex-direction:column;gap:6px;background:rgba(10,12,18,0.82);border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:10px;font-family:monospace;pointer-events:auto;">
+      <div style="font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.5);">BOT DEV · ${statusLine}</div>
+      <div style="display:flex;gap:6px;">
+        <button type="button" style="${buttonStyle}" data-ui-action="dev-bot-attack" data-lines="1">Ataca 1</button>
+        <button type="button" style="${buttonStyle}" data-ui-action="dev-bot-attack" data-lines="2">Ataca 2</button>
+        <button type="button" style="${buttonStyle}" data-ui-action="dev-bot-attack" data-lines="4">Ataca 4</button>
+        <button type="button" style="${buttonStyle}" data-ui-action="dev-bot-topout">Top-out</button>
+      </div>
+      <div style="display:flex;gap:6px;">
+        ${speedButton(12, 'Lento')}
+        ${speedButton(6, 'Normal')}
+        ${speedButton(2, 'Rápido')}
+        ${nextRoundHtml}
+      </div>
+    </div>
+  `;
+}
+
 function renderOverlay(state: GameState): void {
+  if (import.meta.env.DEV) renderDevBotOverlay(); // BOT DEV
   const currentMusicTrack = sound.getCurrentMusicTrack()?.title ?? 'No music';
   const activeVolumeChannel = getActiveVolumeChannel();
   const html = `
@@ -5078,6 +5213,9 @@ function renderDashboardRoomPanel(): string {
             <button class="dash-action-btn accent" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Privada</button>
             <button class="dash-action-btn" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Pública</button>
           </div>
+          ${import.meta.env.DEV ? `<div class="dash-buttons-row" style="margin-top: 6px;">
+            <button class="dash-action-btn" type="button" data-ui-action="dev-bot-match"${onlineBusy ? ' disabled' : ''}>Partida vs bot (dev)</button>
+          </div>` : ''}
         </div>
         
         <div class="dash-field-group">
