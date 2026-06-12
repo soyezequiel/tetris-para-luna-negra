@@ -3643,11 +3643,16 @@ function renderEmptyLobbySlot(): string {
 
 function renderSoloCountdownOverlay(): string {
   const remainingMs = Math.max(0, soloCountdownStartsAtMs - performance.now());
+  return renderCountdownStage(remainingMs, '');
+}
+
+// Cuenta regresiva animada compartida (solo + online). Dirigida por frame (el
+// overlay se reconstruye cada frame): el número entra grande y se asienta mientras
+// un anillo se expande detrás; ambos se desvanecen al final del segundo. La leyenda
+// opcional aparece debajo (p. ej. la sala en multijugador).
+function renderCountdownStage(remainingMs: number, caption: string): string {
   const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
   const numberText = `${seconds}`;
-  // Animación dirigida por frame (el overlay se reconstruye cada frame): el número
-  // entra grande y se asienta mientras un anillo se expande detrás; ambos se
-  // desvanecen al final del segundo. Reemplaza el número estático anterior.
   const elapsed = seconds * 1000 - remainingMs; // 0 al aparecer -> 1000 al irse
   const appear = Math.min(1, elapsed / 220);
   const ease = 1 - Math.pow(1 - appear, 3);
@@ -3657,29 +3662,21 @@ function renderSoloCountdownOverlay(): string {
   const ringScale = 0.55 + ease * 1.05;
   const ringOpacity = (1 - appear) * 0.55;
   return `
-    <div class="menu-scrim" style="background: radial-gradient(circle at center, rgba(12, 18, 30, 0.45), rgba(6, 9, 16, 0.7)) !important; display: flex; align-items: center; justify-content: center;">
+    <div class="menu-scrim" style="background: radial-gradient(circle at center, rgba(12, 18, 30, 0.45), rgba(6, 9, 16, 0.7)) !important; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;">
       <div style="position: relative; display: flex; align-items: center; justify-content: center; width: 280px; height: 280px;">
         <div style="position: absolute; width: 220px; height: 220px; border-radius: 50%; border: 4px solid rgba(0, 245, 255, ${ringOpacity.toFixed(3)}); box-shadow: 0 0 40px rgba(0, 245, 255, ${(ringOpacity * 0.8).toFixed(3)}); transform: scale(${ringScale.toFixed(3)});"></div>
         <div style="font-size: 180px; font-weight: 900; font-family: 'Arial Black', system-ui, sans-serif; line-height: 1; color: #eafdff; text-shadow: 0 0 45px rgba(0, 245, 255, 0.75), 0 0 18px rgba(176, 107, 255, 0.65); transform: scale(${numScale.toFixed(3)}); opacity: ${numOpacity.toFixed(3)};">${numberText}</div>
       </div>
+      ${caption ? `<div style="color: rgba(234, 253, 255, 0.78); font-family: system-ui, -apple-system, sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px;">${caption}</div>` : ''}
     </div>
   `;
 }
 
 function renderOnlineCountdownOverlay(): string {
   if (!onlineRoom?.startsAtServerMs) return renderOnlineLobbyOverlay();
+  // Reloj del servidor (compartido por todos), no el reloj local del solo.
   const remainingMs = Math.max(0, onlineRoom.startsAtServerMs - onlineNowMs());
-  const modeLabel = roomModeLabel(onlineRoom.mode);
-  return `
-    <div class="menu-scrim">
-      <section class="menu-panel online-panel online-countdown" aria-label="Online countdown">
-        <div class="panel-eyebrow">${escapeHtml(modeLabel.toUpperCase())} START</div>
-        <h1>${Math.ceil(remainingMs / 1000)}</h1>
-        <p>Room ${escapeHtml(onlineRoom.id)} starts from seed ${onlineRoom.seed}. Last player standing wins.</p>
-        ${renderOnlineSeriesStatus()}
-      </section>
-    </div>
-  `;
+  return renderCountdownStage(remainingMs, `SALA ${escapeHtml(onlineRoom.id)} · ÚLTIMO EN PIE GANA`);
 }
 
 function renderOnlineResultsOverlay(_state: GameState): string {
