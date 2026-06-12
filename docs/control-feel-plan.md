@@ -231,6 +231,15 @@ P1 (acumulador de ARR), P3 (prioridad última-tecla), P2 (independencia del
 refresh rate, con buffering de inputs). Defaults intactos. Gate: tests verdes,
 checklist subjetiva, partida online de humo.
 
+> **Estado:** P1 y P3 implementados en `src/input.ts` (reescritura de
+> `InputController`: acumulador robusto a jitter + last-key-wins con DAS
+> preservado). Soporte de ARR 0 ya cableado (inactivo hasta Fase 2). Cubierto
+> por `tests/input.test.ts` (7 tests). `npm test` (136), `tsc` y `npm run build`
+> en verde. **Pendiente P2** (refresh rate): requiere verificar primero en un
+> monitor 120/144Hz; toca `targetGameplayFrame()`, compartida con online.
+> Verificación en navegador del feel real pendiente de una pestaña enfocada (el
+> preview headless pausa el rAF).
+
 **Fase 2 — Nuevas opciones, mismos defaults**
 P4 (ARR 0 habilitado en UI), P5 (SDF configurable), P6 (buffer de countdown),
 presets de handling en settings. Quien no toca nada, no nota nada.
