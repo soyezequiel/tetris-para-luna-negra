@@ -36,11 +36,20 @@ export class JuiceConductor {
   private lastCombo = 0;
   private lastStatus: GameState['status'] = 'ready';
   private alive = true;
+  // 'auto': el ataque saliente se siente como retroceso en tu propio borde.
+  // 'external': main.ts conoce el tablero rival y dispara el proyectil con
+  // onAttackToward(); aquí se omite el retroceso automático para no duplicarlo.
+  private attackRouting: 'auto' | 'external' = 'auto';
 
   constructor(fx: JuiceFX, audio: JuiceAudio, options: JuiceConductorOptions = {}) {
     this.fx = fx;
     this.audio = audio;
     this.dangerStart = options.dangerStart ?? 0.6;
+  }
+
+  /** 'external' cuando main.ts enruta el proyectil al rival (online); 'auto' en solo. */
+  setAttackRouting(mode: 'auto' | 'external'): void {
+    this.attackRouting = mode;
   }
 
   /** Eventos drenados del motor en un tick (line clears, garbage entrante/aplicada). */
@@ -68,9 +77,11 @@ export class JuiceConductor {
       const level = ratio > this.dangerStart ? Math.min(1, (ratio - this.dangerStart) / (1 - this.dangerStart - 0.08)) : 0;
       this.fx.setDanger(level);
       this.audio.setDanger(level);
+      this.fx.setPendingGarbage(state.stats.pendingGarbage);
     } else {
       this.fx.setDanger(0);
       this.audio.setDanger(0);
+      this.fx.setPendingGarbage(0);
     }
 
     // transiciones de status
@@ -154,8 +165,9 @@ export class JuiceConductor {
     // combo
     this.onCombo(e.combo);
 
-    // ataque saliente (lo que TÚ sientes al mandar líneas)
-    if (e.outgoingLines > 0) this.onAttackOutgoing(e.outgoingLines);
+    // ataque saliente (lo que TÚ sientes al mandar líneas). En modo 'external'
+    // lo dispara main.ts con onAttackToward() hacia el tablero rival.
+    if (e.outgoingLines > 0 && this.attackRouting === 'auto') this.onAttackOutgoing(e.outgoingLines);
   }
 
   private onCombo(combo: number): void {
@@ -170,7 +182,9 @@ export class JuiceConductor {
   }
 
   // ---------- ataque ----------
-  private onAttackOutgoing(lines: number): void {
+  /** Retroceso/fogonazo en tu propio borde. Público para usarlo como fallback
+   * cuando main.ts no tiene coordenadas del rival (ver onAttackToward). */
+  onAttackOutgoing(lines: number): void {
     const size = ATTACK_BY_LINES(lines);
     this.audio.attackLaunch(size);
     this.fx.addShake({ S: 6, M: 11, L: 18 }[size] * 0.25);

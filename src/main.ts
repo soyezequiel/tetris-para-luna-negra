@@ -853,6 +853,9 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   importedReplayName = null;
   playback = null;
   currentRunKind = nextRunKind;
+  // Online: main.ts conoce los tableros rivales y enruta el proyectil de ataque
+  // hacia ellos (ver flyOnlineAttackProjectile). En solo, retroceso en tu borde.
+  juice.setAttackRouting(nextRunKind === 'online' ? 'external' : 'auto');
   gameRules = rulesForRun(nextMode, nextRunKind);
   seed = nextSeed;
   engine = new GameEngine(seed, gameRules);
@@ -2081,6 +2084,32 @@ function sendOnlineAttack(event: LineClearEvent, state: GameState): void {
   } else {
     onlinePeerBroadcaster?.sendAttackIntent(onlineRoom.hostPlayerId, { ...attack, seed: onlineRoom.seed });
   }
+  // Efecto visual: el proyectil vuela hacia el tablero del rival objetivo. El host
+  // ya conoce el objetivo; el invitado lo predice localmente con su mismo modo de
+  // targeting (el host puede decidir distinto, pero para el FX la predicción basta).
+  flyOnlineAttackProjectile(attack.attackId, attack.lines);
+}
+
+// Lanza el proyectil de ataque de la capa juice hacia el tablero rival objetivo.
+// Si no hay coordenadas (sin DOM del rival aún), cae al retroceso en tu borde.
+function flyOnlineAttackProjectile(attackId: string, lines: number): void {
+  const target = selectAttackTarget(onlinePlayer.id, attackId);
+  const point = target ? onlinePeerBoardScreenPoint(target.id) : null;
+  if (point) juice.onAttackToward(point, lines);
+  else juice.onAttackOutgoing(lines);
+}
+
+// Centro en píxeles de viewport del mini-tablero de un rival. El canvas de Pixi
+// cubre toda la ventana sin escala, así que estas coords coinciden con el espacio
+// del stage que usa JuiceFX para dibujar el proyectil.
+function onlinePeerBoardScreenPoint(playerId: string): { x: number; y: number } | null {
+  const section = Array.from(document.querySelectorAll<HTMLElement>('.online-peer-board[data-player-id]'))
+    .find((node) => node.dataset.playerId === playerId);
+  if (!section) return null;
+  const board = section.querySelector<HTMLElement>('.online-mini-board') ?? section;
+  const rect = board.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return null;
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 }
 
 function commitOnlineAttack(request: {
@@ -4057,7 +4086,7 @@ function renderOnlinePeerBoard(player: OnlinePlayer, spectating = false): string
     ? renderOnlineMiniBoard(displayGame)
     : '<div class="online-mini-board online-mini-board-empty">No board yet</div>';
   return `
-    <section class="online-peer-board${outcome ? ` online-peer-board--${outcome.kind}` : ''}">
+    <section class="online-peer-board${outcome ? ` online-peer-board--${outcome.kind}` : ''}" data-player-id="${escapeHtml(player.id)}">
       <div class="online-peer-board-head">
         <div class="online-player-label">
           ${renderOnlineAvatar(player, 'small')}

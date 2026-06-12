@@ -110,6 +110,8 @@ export class JuiceFX {
   private glow: { color: number; t: number; dur: number; intensity: number } | null = null;
   private dangerLevel = 0;
   private dangerPhase = 0;
+  private pendingGarbage = 0; // líneas de garbage entrante (telegraph en el borde)
+  private garbagePhase = 0;
 
   private intensity: number;
   private reducedMotion: boolean;
@@ -211,6 +213,11 @@ export class JuiceFX {
 
   setDanger(level: number): void {
     this.dangerLevel = Math.max(0, Math.min(1, level));
+  }
+
+  /** Garbage entrante pendiente (en líneas): dibuja un telegraph en el borde. */
+  setPendingGarbage(lines: number): void {
+    this.pendingGarbage = Math.max(0, Math.floor(lines));
   }
 
   spawnBurst(
@@ -318,6 +325,8 @@ export class JuiceFX {
     this.glow = null;
     this.dangerLevel = 0;
     this.dangerPhase = 0;
+    this.pendingGarbage = 0;
+    this.garbagePhase = 0;
     this.popup.active = false;
     this.popup.text.alpha = 0;
     this.popup.sub.alpha = 0;
@@ -396,6 +405,33 @@ export class JuiceFX {
       }
       g.lineStyle(2, 0xff3c50, a * 0.7);
       g.drawRect(r.x, r.y, r.w, r.h);
+      g.lineStyle(0, 0, 0);
+    }
+
+    // telegraph de garbage entrante: barra vertical en el borde izquierdo del
+    // tablero que crece con las líneas pendientes y late para avisar del ataque.
+    if (this.pendingGarbage > 0) {
+      this.garbagePhase += dt * 6;
+      const cap = Math.max(1, this.geo.rows);
+      const shown = Math.min(this.pendingGarbage, cap);
+      const barW = Math.max(3, this.geo.cell * 0.26);
+      const barH = (r.h * shown) / cap;
+      const barY = r.y + r.h - barH;
+      const pulse = 0.55 + 0.45 * Math.abs(Math.sin(this.garbagePhase));
+      const col = this.pendingGarbage >= 4 ? PALETTE.danger : PALETTE.warn;
+      g.beginFill(col, 0.5 * pulse);
+      g.drawRect(r.x, barY, barW, barH);
+      g.endFill();
+      // separadores por línea pendiente + arista superior brillante
+      g.lineStyle(Math.max(1, this.geo.cell * 0.04), 0x120608, 0.5);
+      for (let i = 1; i < shown; i += 1) {
+        const yy = r.y + r.h - (r.h * i) / cap;
+        g.moveTo(r.x, yy);
+        g.lineTo(r.x + barW, yy);
+      }
+      g.lineStyle(Math.max(1, this.geo.cell * 0.06), PALETTE.white, 0.7 * pulse);
+      g.moveTo(r.x, barY);
+      g.lineTo(r.x + barW, barY);
       g.lineStyle(0, 0, 0);
     }
   }
