@@ -244,6 +244,23 @@ checklist subjetiva, partida online de humo.
 P4 (ARR 0 habilitado en UI), P5 (SDF configurable), P6 (buffer de countdown),
 presets de handling en settings. Quien no toca nada, no nota nada.
 
+> **Estado:** P4 y P5 implementados + presets de handling.
+> - `MIN_ARR_FRAMES = 0` en `input/settings.ts` (el controlador ya hace la
+>   ráfaga a la pared con ARR 0).
+> - `softDropFactor` agregado a `InputSettings`, normalizado [5, 41] (41 = ∞),
+>   mapeado por `softDropCellsPerFrameForFactor()` en `game/rules.ts` y
+>   threadeado a las 4 funciones de reglas (solo/battle/online/custom).
+> - Presets `HANDLING_PRESETS` (Clásico / Actual / Ágil / Competitivo) +
+>   `applyHandlingPreset` / `matchHandlingPreset`. UI: fila de soft drop, botones
+>   de preset con resaltado del activo (`renderHandlingPresets`) y CSS en
+>   `styles.css`.
+> - Tests nuevos en `tests/input.test.ts` (mapeo SDF, ARR 0, normalización,
+>   presets) + ajuste del test legacy que asumía ARR mín 1. `npm test` (141),
+>   `tsc` y `build` en verde. Data layer verificado en vivo (`softDropFactor`
+>   presente, cambio de modo OK). **Pendiente:** verificación visual del panel
+>   (bloqueada por el preview headless con rAF pausado) y P6 (buffer de
+>   countdown), que queda como último ítem de la fase.
+
 **Fase 3 — Ajuste de defaults**
 Probar "Ágil" (DAS 7/ARR 1) como default con el tester ~1 semana. Si convence,
 migrar con el patrón `LEGACY_DEFAULT_TIMINGS` para no pisar settings

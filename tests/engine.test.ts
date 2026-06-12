@@ -749,9 +749,12 @@ describe('core stacker engine', () => {
   });
 
   it('normalizes input settings and resolves custom bindings', () => {
-    const clamped = normalizeInputSettings({ dasFrames: 999, arrFrames: 0 });
+    const clamped = normalizeInputSettings({ dasFrames: 999, arrFrames: -5 });
     expect(clamped.dasFrames).toBe(30);
-    expect(clamped.arrFrames).toBe(1);
+    expect(clamped.arrFrames).toBe(0); // ARR 0 ("instantáneo a la pared") ya es válido
+
+    // ARR 0 es un valor aceptado, no se sube a 1.
+    expect(normalizeInputSettings({ arrFrames: 0 }).arrFrames).toBe(0);
 
     const rebound = updateBinding(DEFAULT_INPUT_SETTINGS, 'rotateCW', 'KeyA');
     expect(rebound.bindings.rotateCW).toEqual(['KeyA']);

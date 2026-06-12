@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { InputController, type ControlInput } from '../src/input';
-import { DEFAULT_INPUT_SETTINGS, type InputSettings } from '../src/input/settings';
+import {
+  applyHandlingPreset,
+  DEFAULT_INPUT_SETTINGS,
+  matchHandlingPreset,
+  normalizeInputSettings,
+  type InputSettings,
+} from '../src/input/settings';
+import {
+  DEFAULT_SOFT_DROP_FACTOR,
+  INSTANT_SOFT_DROP_FACTOR,
+  softDropCellsPerFrameForFactor,
+} from '../src/game/rules';
 
 function makeController(overrides: Partial<InputSettings> = {}): InputController {
   // eventTarget null => no se enganchan listeners de teclado; manejamos todo a mano.
@@ -104,5 +115,41 @@ describe('InputController prioridad last-key-wins', () => {
     controller.releaseControl('key:ArrowRight');
     // Left venía mantenida desde el frame 1 (DAS sobradamente cargado): dispara ya.
     expect(countAction(tick(controller, 13), 'moveLeft')).toBeGreaterThan(0);
+  });
+});
+
+describe('soft drop configurable', () => {
+  it('mapea el factor a celdas por frame y soporta instantáneo', () => {
+    expect(softDropCellsPerFrameForFactor(DEFAULT_SOFT_DROP_FACTOR)).toBeCloseTo(39 / 60, 6);
+    expect(softDropCellsPerFrameForFactor(20)).toBeCloseTo(19 / 60, 6);
+    // Instantáneo: cae lo suficiente para cruzar cualquier tablero en un frame.
+    expect(softDropCellsPerFrameForFactor(INSTANT_SOFT_DROP_FACTOR)).toBeGreaterThanOrEqual(30);
+  });
+});
+
+describe('normalizeInputSettings', () => {
+  it('permite ARR 0 y completa softDropFactor por defecto', () => {
+    const normalized = normalizeInputSettings({ arrFrames: 0 });
+    expect(normalized.arrFrames).toBe(0);
+    expect(normalized.softDropFactor).toBe(DEFAULT_SOFT_DROP_FACTOR);
+  });
+
+  it('clampea softDropFactor al rango válido', () => {
+    expect(normalizeInputSettings({ softDropFactor: 1 }).softDropFactor).toBe(5);
+    expect(normalizeInputSettings({ softDropFactor: 999 }).softDropFactor).toBe(INSTANT_SOFT_DROP_FACTOR);
+  });
+});
+
+describe('presets de handling', () => {
+  it('Competitivo aplica DAS 6 / ARR 0 / soft drop instantáneo sin tocar bindings', () => {
+    const next = applyHandlingPreset(DEFAULT_INPUT_SETTINGS, 'competitive');
+    expect(next.dasFrames).toBe(6);
+    expect(next.arrFrames).toBe(0);
+    expect(next.softDropFactor).toBe(INSTANT_SOFT_DROP_FACTOR);
+    expect(next.bindings).toEqual(DEFAULT_INPUT_SETTINGS.bindings);
+  });
+
+  it('los settings por defecto coinciden con el preset "Actual"', () => {
+    expect(matchHandlingPreset(DEFAULT_INPUT_SETTINGS)).toBe('default');
   });
 });

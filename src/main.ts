@@ -40,17 +40,23 @@ import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
 import { GameEngine } from './game/engine';
 import { cellsFor } from './game/pieces';
 import { createReplayLog, recordInput } from './game/replay';
-import { BATTLE_RULES, DEFAULT_RULES } from './game/rules';
+import { BATTLE_RULES, DEFAULT_RULES, softDropCellsPerFrameForFactor } from './game/rules';
 import { displayedElapsedFrames } from './game/timing';
 import type { GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
 import {
+  applyHandlingPreset,
   CONTROL_ACTION_LABELS,
   CONTROL_ACTIONS,
   cloneInputSettings,
+  HANDLING_PRESET_ORDER,
+  HANDLING_PRESETS,
+  type HandlingPreset,
+  type InputTimingKey,
   isGameAction,
   keyLabel,
   loadInputSettings,
+  matchHandlingPreset,
   resetInputSettings,
   saveInputSettings,
   type ControlAction,
@@ -58,6 +64,7 @@ import {
   updateBinding,
   updateInputTiming,
 } from './input/settings';
+import { INSTANT_SOFT_DROP_FACTOR } from './game/rules';
 import { OnlineApiError, OnlineClient } from './online/client';
 import { LunaSocialClient } from './online/lunaNegraFriendsClient';
 import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostAuthority';
@@ -817,10 +824,24 @@ function handleOverlayClick(event: MouseEvent): void {
     if (controlAction) bindingCapture = controlAction;
   }
   if (action === 'timing') {
-    const setting = control.dataset.setting === 'arrFrames' ? 'arrFrames' : 'dasFrames';
+    const setting = parseTimingKey(control.dataset.setting);
     const delta = Number(control.dataset.delta ?? 0);
     applyInputSettings(updateInputTiming(inputSettings, setting, delta));
   }
+  if (action === 'handling-preset') {
+    const preset = parseHandlingPreset(control.dataset.preset);
+    if (preset) applyInputSettings(applyHandlingPreset(inputSettings, preset));
+  }
+}
+
+function parseTimingKey(value: string | undefined): InputTimingKey {
+  if (value === 'arrFrames') return 'arrFrames';
+  if (value === 'softDropFactor') return 'softDropFactor';
+  return 'dasFrames';
+}
+
+function parseHandlingPreset(value: string | undefined): HandlingPreset | null {
+  return HANDLING_PRESET_ORDER.find((preset) => preset === value) ?? null;
 }
 
 function handleTouchControlPointerDown(event: PointerEvent): void {
@@ -4873,9 +4894,11 @@ function renderSettingsPanelContent(): string {
         <div class="panel-eyebrow">${escapeHtml(captureText)}</div>
         <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: inherit; font-weight: 800;">Controles</h1>
         <div class="settings-grid">${bindingRows}</div>
+        <div class="handling-presets">${renderHandlingPresets()}</div>
         <div class="timing-panel">
           ${renderTimingControl('DAS', 'dasFrames', inputSettings.dasFrames)}
           ${renderTimingControl('ARR', 'arrFrames', inputSettings.arrFrames)}
+          ${renderTimingControl('Soft drop', 'softDropFactor', inputSettings.softDropFactor)}
         </div>
         <div class="panel-actions" style="display: flex; gap: 12px; margin-top: 24px;">
           <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="settings-back">Volver</button>
@@ -4893,15 +4916,36 @@ function renderSettingsOverlay(): string {
   `;
 }
 
-function renderTimingControl(label: string, setting: 'dasFrames' | 'arrFrames', value: number): string {
+function renderTimingControl(label: string, setting: InputTimingKey, value: number): string {
+  const display = setting === 'softDropFactor'
+    ? (value >= INSTANT_SOFT_DROP_FACTOR ? '∞' : String(value))
+    : `${value}f`;
   return `
     <div class="timing-row">
       <span>${label}</span>
       <button type="button" data-ui-action="timing" data-setting="${setting}" data-delta="-1">-</button>
-      <strong>${value}f</strong>
+      <strong>${display}</strong>
       <button type="button" data-ui-action="timing" data-setting="${setting}" data-delta="1">+</button>
     </div>
   `;
+}
+
+function renderHandlingPresets(): string {
+  const active = matchHandlingPreset(inputSettings);
+  const buttons = HANDLING_PRESET_ORDER.map((preset) => {
+    const def = HANDLING_PRESETS[preset];
+    const isActive = preset === active;
+    return `
+      <button
+        type="button"
+        class="handling-preset-btn${isActive ? ' is-active' : ''}"
+        data-ui-action="handling-preset"
+        data-preset="${preset}"
+        aria-pressed="${isActive}"
+      >${escapeHtml(def.label)}</button>
+    `;
+  }).join('');
+  return `<span class="handling-presets-label">Preset</span>${buttons}`;
 }
 
 function renderPanel(options: {
@@ -5536,6 +5580,7 @@ function rulesFromSettings(settings: InputSettings): GameRules {
     ...DEFAULT_RULES,
     dasFrames: settings.dasFrames,
     arrFrames: settings.arrFrames,
+    softDropCellsPerFrame: softDropCellsPerFrameForFactor(settings.softDropFactor),
   };
 }
 
@@ -5550,6 +5595,7 @@ function battleRulesFromSettings(settings: InputSettings): GameRules {
     ...BATTLE_RULES,
     dasFrames: settings.dasFrames,
     arrFrames: settings.arrFrames,
+    softDropCellsPerFrame: softDropCellsPerFrameForFactor(settings.softDropFactor),
   };
 }
 
@@ -5567,6 +5613,7 @@ function onlineRulesFromRoom(room = onlineRoom): GameRules {
     attackTable: room?.ruleset.attackTable ?? sharedRules.attackTable,
     dasFrames: inputSettings.dasFrames,
     arrFrames: inputSettings.arrFrames,
+    softDropCellsPerFrame: softDropCellsPerFrameForFactor(inputSettings.softDropFactor),
   };
 }
 

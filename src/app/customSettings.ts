@@ -1,4 +1,4 @@
-import { DEFAULT_RULES } from '../game/rules';
+import { DEFAULT_RULES, softDropCellsPerFrameForFactor } from '../game/rules';
 import type { GameRules } from '../game/types';
 import type { InputSettings } from '../input/settings';
 
@@ -312,6 +312,7 @@ export function customRulesFromSettings(settings: CustomSettings, inputSettings:
     lockDelayFrames: normalized.lockDelayFrames,
     dasFrames: inputSettings.dasFrames,
     arrFrames: inputSettings.arrFrames,
+    softDropCellsPerFrame: softDropCellsPerFrameForFactor(inputSettings.softDropFactor),
     garbageCap: normalized.garbageCap,
     garbageMessinessPercent: normalized.garbageMessinessPercent,
     changeOnAttack: normalized.changeOnAttack,

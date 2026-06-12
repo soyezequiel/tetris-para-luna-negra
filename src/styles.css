@@ -4952,6 +4952,47 @@ canvas {
   border-color: var(--dash-accent) !important;
 }
 
+.handling-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.handling-presets-label {
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--dash-text-dim);
+  margin-right: 4px;
+}
+
+.handling-preset-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--dash-border);
+  color: var(--dash-text-dim);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.handling-preset-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--dash-text);
+  border-color: var(--dash-accent);
+}
+
+.handling-preset-btn.is-active {
+  background: color-mix(in srgb, var(--dash-accent) 22%, transparent);
+  border-color: var(--dash-accent);
+  color: var(--dash-text);
+}
+
 /* Floating Tetris Background Particles */
 .dash-particles {
   position: absolute;

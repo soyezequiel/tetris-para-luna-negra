@@ -1,4 +1,9 @@
-import { DEFAULT_RULES } from '../game/rules';
+import {
+  DEFAULT_RULES,
+  DEFAULT_SOFT_DROP_FACTOR,
+  INSTANT_SOFT_DROP_FACTOR,
+  MIN_SOFT_DROP_FACTOR,
+} from '../game/rules';
 import type { InputAction } from '../game/types';
 
 export type ControlAction = InputAction | 'pause';
@@ -36,6 +41,8 @@ export interface InputSettings {
   bindings: InputBindings;
   dasFrames: number;
   arrFrames: number;
+  // Velocidad de soft drop (≈ celdas/seg). INSTANT_SOFT_DROP_FACTOR = instantáneo.
+  softDropFactor: number;
 }
 
 export const DEFAULT_BINDINGS: InputBindings = {
@@ -55,7 +62,27 @@ export const DEFAULT_INPUT_SETTINGS: InputSettings = {
   bindings: cloneBindings(DEFAULT_BINDINGS),
   dasFrames: DEFAULT_RULES.dasFrames,
   arrFrames: DEFAULT_RULES.arrFrames,
+  softDropFactor: DEFAULT_SOFT_DROP_FACTOR,
 };
+
+// Presets de handling de un click. Sólo tocan timing; respetan los bindings.
+export type HandlingPreset = 'classic' | 'default' | 'agile' | 'competitive';
+
+export interface HandlingPresetDef {
+  label: string;
+  dasFrames: number;
+  arrFrames: number;
+  softDropFactor: number;
+}
+
+export const HANDLING_PRESETS: Record<HandlingPreset, HandlingPresetDef> = {
+  classic: { label: 'Clásico', dasFrames: 10, arrFrames: 2, softDropFactor: 20 },
+  default: { label: 'Actual', dasFrames: 8, arrFrames: 2, softDropFactor: 40 },
+  agile: { label: 'Ágil', dasFrames: 7, arrFrames: 1, softDropFactor: 40 },
+  competitive: { label: 'Competitivo', dasFrames: 6, arrFrames: 0, softDropFactor: INSTANT_SOFT_DROP_FACTOR },
+};
+
+export const HANDLING_PRESET_ORDER: HandlingPreset[] = ['classic', 'default', 'agile', 'competitive'];
 
 const STORAGE_KEY = 'stack40.inputSettings';
 const LEGACY_DEFAULT_TIMINGS = [
@@ -64,7 +91,7 @@ const LEGACY_DEFAULT_TIMINGS = [
 ];
 const MIN_DAS_FRAMES = 0;
 const MAX_DAS_FRAMES = 30;
-const MIN_ARR_FRAMES = 1;
+const MIN_ARR_FRAMES = 0;
 const MAX_ARR_FRAMES = 10;
 
 export function loadInputSettings(): InputSettings {
@@ -88,6 +115,12 @@ export function normalizeInputSettings(value: unknown): InputSettings {
     bindings,
     dasFrames: normalizeInteger(partial.dasFrames, DEFAULT_INPUT_SETTINGS.dasFrames, MIN_DAS_FRAMES, MAX_DAS_FRAMES),
     arrFrames: normalizeInteger(partial.arrFrames, DEFAULT_INPUT_SETTINGS.arrFrames, MIN_ARR_FRAMES, MAX_ARR_FRAMES),
+    softDropFactor: normalizeInteger(
+      partial.softDropFactor,
+      DEFAULT_INPUT_SETTINGS.softDropFactor,
+      MIN_SOFT_DROP_FACTOR,
+      INSTANT_SOFT_DROP_FACTOR,
+    ),
   };
 }
 
@@ -101,9 +134,11 @@ export function updateBinding(settings: InputSettings, action: ControlAction, co
   return normalizeInputSettings({ ...normalized, bindings: nextBindings });
 }
 
+export type InputTimingKey = 'dasFrames' | 'arrFrames' | 'softDropFactor';
+
 export function updateInputTiming(
   settings: InputSettings,
-  key: 'dasFrames' | 'arrFrames',
+  key: InputTimingKey,
   delta: number,
 ): InputSettings {
   const normalized = normalizeInputSettings(settings);
@@ -111,6 +146,29 @@ export function updateInputTiming(
     ...normalized,
     [key]: normalized[key] + delta,
   });
+}
+
+export function applyHandlingPreset(settings: InputSettings, preset: HandlingPreset): InputSettings {
+  const normalized = normalizeInputSettings(settings);
+  const def = HANDLING_PRESETS[preset];
+  return normalizeInputSettings({
+    ...normalized,
+    dasFrames: def.dasFrames,
+    arrFrames: def.arrFrames,
+    softDropFactor: def.softDropFactor,
+  });
+}
+
+// Devuelve el preset cuyos timings coinciden exactamente con los settings (para
+// resaltar el activo en la UI), o null si están personalizados.
+export function matchHandlingPreset(settings: InputSettings): HandlingPreset | null {
+  const normalized = normalizeInputSettings(settings);
+  return HANDLING_PRESET_ORDER.find((preset) => {
+    const def = HANDLING_PRESETS[preset];
+    return normalized.dasFrames === def.dasFrames
+      && normalized.arrFrames === def.arrFrames
+      && normalized.softDropFactor === def.softDropFactor;
+  }) ?? null;
 }
 
 export function resetInputSettings(): InputSettings {
@@ -134,6 +192,7 @@ export function cloneInputSettings(settings: InputSettings): InputSettings {
     bindings: cloneBindings(normalized.bindings),
     dasFrames: normalized.dasFrames,
     arrFrames: normalized.arrFrames,
+    softDropFactor: normalized.softDropFactor,
   };
 }
 
