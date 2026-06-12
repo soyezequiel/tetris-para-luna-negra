@@ -231,14 +231,30 @@ P1 (acumulador de ARR), P3 (prioridad última-tecla), P2 (independencia del
 refresh rate, con buffering de inputs). Defaults intactos. Gate: tests verdes,
 checklist subjetiva, partida online de humo.
 
-> **Estado:** P1 y P3 implementados en `src/input.ts` (reescritura de
-> `InputController`: acumulador robusto a jitter + last-key-wins con DAS
-> preservado). Soporte de ARR 0 ya cableado (inactivo hasta Fase 2). Cubierto
-> por `tests/input.test.ts` (7 tests). `npm test` (136), `tsc` y `npm run build`
-> en verde. **Pendiente P2** (refresh rate): requiere verificar primero en un
-> monitor 120/144Hz; toca `targetGameplayFrame()`, compartida con online.
-> Verificación en navegador del feel real pendiente de una pestaña enfocada (el
-> preview headless pausa el rAF).
+> **Estado:** P1, P3 y **P2 implementados**.
+> - P1 y P3 en `src/input.ts` (reescritura de `InputController`: acumulador
+>   robusto a jitter + last-key-wins con DAS preservado).
+> - **P2 (refresh rate)**, confirmado en hardware (180Hz acelera ~3×, 60Hz no):
+>   `targetGameplayFrame()` ahora ancla al reloj real vía
+>   `resolveGameplayFrame(gameFrame, elapsed)` = `Math.max(...)` (antes
+>   `gameFrame + 1`, que forzaba un tick de engine por rAF). Helper puro nuevo en
+>   `src/game/frameClock.ts` (testeable; `main.ts` no se puede importar en tests
+>   porque ejecuta `loop()`). El `loop()` detecta el rAF sin frame nuevo
+>   (`candidateFrame === gameFrame` con el juego activo): NO llama
+>   `advanceFrame`/`collect` (los inputs quedan en la cola del controlador hasta
+>   el próximo tick real → no se pierden taps ni se doble-cuentan repeats de
+>   DAS/ARR) y gatea el bloque de aplicación al engine con `candidateFrame >
+>   gameFrame` (evita inyectar bot/online/replay con inputs sellados a un frame
+>   ya pasado). El path online usa la misma función anclada a `startsAtServerMs`,
+>   así que mejora la alineación host/cliente. `syncOnlineBackground()` (tab
+>   oculta) ahora avanza al frame del server en vez de +1 por poll.
+> - Cubierto por `tests/input.test.ts`: `resolveGameplayFrame` (no fuerza +1,
+>   catch-up) y preservación de cola entre frames salteados (tap único, soft drop
+>   sin duplicar). `npm test` (145), `tsc` y `npm run build` en verde.
+> - **Verificación manual pendiente** (no automatizable acá): medir en navegador
+>   real ENFOCADO a >60Hz que el engine avanza ~60 fps sin importar el refresh
+>   (el preview headless pausa el rAF con la pestaña en background) + 1 batalla
+>   online de humo tras el cambio.
 
 **Fase 2 — Nuevas opciones, mismos defaults**
 P4 (ARR 0 habilitado en UI), P5 (SDF configurable), P6 (buffer de countdown),

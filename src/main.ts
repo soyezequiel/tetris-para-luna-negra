@@ -41,6 +41,7 @@ import { GameEngine } from './game/engine';
 import { cellsFor } from './game/pieces';
 import { createReplayLog, recordInput } from './game/replay';
 import { BATTLE_RULES, DEFAULT_RULES, softDropCellsPerFrameForFactor } from './game/rules';
+import { resolveGameplayFrame } from './game/frameClock';
 import { displayedElapsedFrames } from './game/timing';
 import type { GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
@@ -342,8 +343,16 @@ function loop(): void {
   const canAdvanceThisLoop = !hasBlockingModal() && canAdvanceGame(appMode, beforeState.status);
   if (!canAdvanceThisLoop) syncGameplayClockToCurrentFrame();
   const candidateFrame = canAdvanceThisLoop ? targetGameplayFrame() : gameFrame;
-  input.advanceFrame(candidateFrame);
-  const controlInputs = input.collect(candidateFrame);
+  // P2: con el frame anclado al reloj real, un rAF de un monitor >60Hz puede no
+  // producir un frame de engine nuevo (candidateFrame === gameFrame). En ese caso NO
+  // recolectamos inputs: quedan en la cola del InputController hasta el próximo tick
+  // real, para no perder taps ni doble-contar repeats de DAS/ARR (collect corre así
+  // exactamente una vez por frame de engine). En menús/gameover canAdvanceThisLoop es
+  // false y candidateFrame también queda en gameFrame, pero ahí SÍ seguimos
+  // recolectando para que la navegación responda en cada rAF.
+  const skipInputThisLoop = canAdvanceThisLoop && candidateFrame === gameFrame;
+  if (!skipInputThisLoop) input.advanceFrame(candidateFrame);
+  const controlInputs = skipInputThisLoop ? [] : input.collect(candidateFrame);
   const consumedByApp = handleControlInputs(controlInputs);
 
   if (appMode === 'soloCountdown') {
@@ -359,7 +368,11 @@ function loop(): void {
   }
 
   let state = engine.getState();
-  if (!consumedByApp && canAdvanceGame(appMode, state.status)) {
+  // candidateFrame > gameFrame garantiza que advanceGameToFrame ticará al menos un
+  // frame: en un rAF sin frame nuevo (skipInputThisLoop) el for de catch-up no
+  // iteraría, pero evitamos igual el autoplay/bot/sendOnline/recordInput con inputs
+  // vacíos o sellados a un frame ya pasado (rompería el determinismo del replay).
+  if (!consumedByApp && canAdvanceGame(appMode, state.status) && candidateFrame > gameFrame) {
     const beforeTickState = engine.getState();
     const gameInputs = toGameInputs(controlInputs, candidateFrame);
     // TRUCO AUTOPLAY: inyecta la acción del bot como si fuera una tecla más.
@@ -489,12 +502,18 @@ function targetGameplayFrame(now = performance.now()): number {
   // host aplicara los inputs en frames distintos a los que el cliente jugó, divergiendo
   // hasta toparlo falsamente y reemplazarle el tablero por reconciliación. Anclamos el
   // frame al reloj del servidor (startsAtServerMs) para que ambos avancen alineados.
+  // P2: anclamos el frame objetivo al reloj real (Math.max(gameFrame, ...)), NO a
+  // gameFrame + 1. Forzar al menos un frame de engine por cada requestAnimationFrame
+  // hacía que en un monitor >60Hz el juego entero (gravedad, DAS, ARR, lock delay)
+  // corriera proporcionalmente más rápido (~3× a 180Hz). Con el reloj anclado, un rAF
+  // puede no producir frame nuevo (candidateFrame === gameFrame); loop() detecta ese
+  // caso y conserva los inputs recolectados hasta el próximo tick real.
   if (appMode === 'onlinePlaying' && onlineRoom?.startsAtServerMs) {
     const serverFrames = Math.floor((onlineNowMs() - onlineRoom.startsAtServerMs) / GAME_FRAME_MS);
-    return Math.max(gameFrame + 1, serverFrames);
+    return resolveGameplayFrame(gameFrame, serverFrames);
   }
   const elapsedFrames = Math.floor((now - gameClockOriginMs) / GAME_FRAME_MS);
-  return Math.max(gameFrame + 1, elapsedFrames);
+  return resolveGameplayFrame(gameFrame, elapsedFrames);
 }
 
 function syncGameplayClockToCurrentFrame(): void {

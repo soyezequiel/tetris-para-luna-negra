@@ -12,6 +12,7 @@ import {
   INSTANT_SOFT_DROP_FACTOR,
   softDropCellsPerFrameForFactor,
 } from '../src/game/rules';
+import { resolveGameplayFrame } from '../src/game/frameClock';
 
 function makeController(overrides: Partial<InputSettings> = {}): InputController {
   // eventTarget null => no se enganchan listeners de teclado; manejamos todo a mano.
@@ -137,6 +138,43 @@ describe('normalizeInputSettings', () => {
   it('clampea softDropFactor al rango válido', () => {
     expect(normalizeInputSettings({ softDropFactor: 1 }).softDropFactor).toBe(5);
     expect(normalizeInputSettings({ softDropFactor: 999 }).softDropFactor).toBe(INSTANT_SOFT_DROP_FACTOR);
+  });
+});
+
+describe('resolveGameplayFrame (P2: independencia del refresh rate)', () => {
+  it('un rAF sin tiempo transcurrido no fuerza un frame nuevo', () => {
+    // Regresión del bug P2: antes devolvía gameFrame + 1, forzando un tick por rAF
+    // (el juego corría ~3× en 180Hz). Ahora un rAF sin frame nuevo deja gameFrame igual.
+    expect(resolveGameplayFrame(5, 5)).toBe(5);
+    expect(resolveGameplayFrame(5, 4)).toBe(5); // jitter hacia atrás: nunca retrocede
+  });
+
+  it('avanza al frame del reloj real, alcanzando varios de golpe si hizo falta', () => {
+    expect(resolveGameplayFrame(5, 6)).toBe(6); // un frame normal
+    expect(resolveGameplayFrame(5, 9)).toBe(9); // catch-up tras un salto (GC / pestaña)
+  });
+});
+
+describe('InputController: inputs preservados en rAFs sin frame (P2)', () => {
+  it('un tap pulsado en un rAF salteado se emite en el próximo tick real', () => {
+    const controller = makeController({ dasFrames: 8, arrFrames: 2 });
+    // rAFs de un monitor >60Hz que NO producen frame nuevo: el loop no llama ni
+    // advanceFrame ni collect. El tap queda en la cola sin perderse ni duplicarse.
+    controller.pressControl('key:ArrowLeft', 'moveLeft');
+    // (simulamos 3 rAFs salteados sin tocar el controlador)
+    // Recién en el tick real del frame 1 se ancla DAS y se emite el tap, una sola vez.
+    expect(countAction(tick(controller, 1), 'moveLeft')).toBe(1);
+    controller.releaseControl('key:ArrowLeft');
+    expect(countAction(tick(controller, 2), 'moveLeft')).toBe(0);
+  });
+
+  it('saltear frames entre collects no duplica el soft drop (uno por frame de engine)', () => {
+    const controller = makeController();
+    controller.pressControl('key:ArrowDown', 'softDrop');
+    tick(controller, 1); // tap inicial
+    // El loop saltea del frame 2 al 5 (rAFs sin frame): collect corre solo en ticks
+    // reales, así que soft drop suma exactamente un input por frame de engine.
+    expect(countAction(tick(controller, 5), 'softDrop')).toBe(1);
   });
 });
 
