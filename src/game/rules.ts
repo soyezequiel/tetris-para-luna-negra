@@ -21,9 +21,11 @@ export function softDropCellsPerFrameForFactor(factor: number): number {
 export const DEFAULT_RULES: GameRules = {
   boardWidth: 10,
   visibleRows: 20,
-  // Buffer estilo tetr.io: 6 filas ocultas arriba del área visible. La pila puede
-  // sobresalir del mapa sin morir al instante; ver topOutGraceFrames en el engine.
-  hiddenRows: 6,
+  // Buffer estilo tetr.io: campo de 40 de alto (20 visibles + 20 ocultas). La pila
+  // puede crecer dentro del buffer sin morir; solo matan block-out (la pieza no
+  // entra en el spawn) y lock-out (se fija entera sobre el techo). No hay muerte
+  // por tiempo: apilar arriba está permitido mientras sigan apareciendo piezas.
+  hiddenRows: 20,
   nextPreview: 5,
   targetLines: 40,
   attackTable: 'simple',

@@ -7,9 +7,10 @@ import { SeededRng } from './rng';
 import { DEFAULT_RULES } from './rules';
 import type { ActivePiece, Cell, GameEngineSnapshot, GameEvent, GameInput, GameOverReason, GameRules, GameState, InputAction, PendingGarbage, PieceType, SpinType, Vec2 } from './types';
 
-// Tolerancia top-out estilo tetr.io: la pila puede sobresalir del área visible
-// (hacia las filas ocultas) sin morir, pero si se queda ahí arriba este tiempo
-// seguido, la partida termina ('topOutTimer').
+// Estilo tetr.io: la pila puede crecer dentro del buffer oculto sin morir por
+// tiempo. Solo matan block-out (la pieza nueva no entra) y lock-out (se fija
+// entera sobre el techo). Este valor ya NO es un umbral de muerte: solo define la
+// ventana sobre la que la UI de peligro rampa al máximo mientras estás arriba.
 const TOP_OUT_GRACE_FRAMES = 600;
 
 export class GameEngine {
@@ -394,19 +395,11 @@ export class GameEngine {
     return Math.max(0, this.rules.hiddenRows - 2);
   }
 
-  // Mata la partida solo si la pila lleva demasiado tiempo seguido por encima
-  // del área visible (tolerancia estilo tetr.io en vez de muerte instantánea).
-  private updateTopOutGrace(frame: number): void {
-    if (!this.stackAboveVisibleField()) {
-      this.aboveFieldFrames = 0;
-      return;
-    }
-    this.aboveFieldFrames += 1;
-    if (this.aboveFieldFrames < TOP_OUT_GRACE_FRAMES) return;
-    this.status = 'gameover';
-    this.gameOverFrame = frame;
-    this.gameOverReason = 'topOutTimer';
-    this.active = null;
+  // Estilo tetr.io: apilar dentro del buffer oculto NO mata por tiempo. Solo
+  // contamos los frames seguidos por encima del área visible para que la UI de
+  // peligro reaccione; la muerte real llega por block-out (spawn) o lock-out.
+  private updateTopOutGrace(_frame: number): void {
+    this.aboveFieldFrames = this.stackAboveVisibleField() ? this.aboveFieldFrames + 1 : 0;
   }
 
   private stackAboveVisibleField(): boolean {

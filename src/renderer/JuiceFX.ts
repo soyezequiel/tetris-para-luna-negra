@@ -128,6 +128,10 @@ export class JuiceFX {
     this.intensity = options.intensity ?? 0.7;
     this.reducedMotion = options.reducedMotion ?? false;
 
+    // Glow en blanco: el color del cartel se aplica con `tint` (operación de GPU,
+    // sin re-rasterizar). Así cambiar de color entre carteles no cuesta nada y solo
+    // el cambio de TEXTO re-genera la textura. dropShadowBlur bajo + resolution fija
+    // acotan ese costo para que el TETRIS no produzca un tirón. Ver showPopup().
     const mainStyle = new TextStyle({
       fill: 0xffffff,
       fontFamily: 'Arial Black, Arial, sans-serif',
@@ -135,8 +139,8 @@ export class JuiceFX {
       fontSize: 64,
       letterSpacing: 1,
       dropShadow: true,
-      dropShadowColor: 0x00f5ff,
-      dropShadowBlur: 12,
+      dropShadowColor: 0xffffff,
+      dropShadowBlur: 6,
       dropShadowDistance: 0,
       dropShadowAlpha: 0.9,
     });
@@ -149,6 +153,10 @@ export class JuiceFX {
     });
     const mainText = new Text('', mainStyle);
     const subText = new Text('', subStyle);
+    // Los carteles se animan escalados y son transitorios: una resolución acotada
+    // reduce el tamaño del canvas/textura (y el costo de rasterizar) sin que se note.
+    mainText.resolution = 1.5;
+    subText.resolution = 1.5;
     mainText.anchor.set(0.5);
     subText.anchor.set(0.5);
     mainText.alpha = 0;
@@ -163,10 +171,11 @@ export class JuiceFX {
       letterSpacing: 2,
       dropShadow: true,
       dropShadowColor: 0xff3b52,
-      dropShadowBlur: 14,
+      dropShadowBlur: 6,
       dropShadowDistance: 0,
       dropShadowAlpha: 0.9,
     }));
+    this.topOutText.resolution = 1.5;
     this.topOutText.anchor.set(0.5);
     this.topOutText.alpha = 0;
 
@@ -332,10 +341,11 @@ export class JuiceFX {
     const p = this.popup;
     p.baseSize = (opts.big ? 104 : 60) * Math.max(0.7, this.scale);
     p.text.text = text;
-    p.text.style.fill = col;
-    (p.text.style as TextStyle).dropShadowColor = col;
+    // Color por `tint` (GPU) en vez de mutar el estilo: evita re-rasterizar la
+    // textura cuando solo cambia el color entre carteles del mismo texto.
+    p.text.tint = col;
     p.sub.text = opts.sub ?? '';
-    p.sub.style.fill = col;
+    p.sub.tint = col;
     p.t = 0;
     p.inDur = 0.14;
     p.hold = opts.hold ?? (opts.big ? 0.48 : 0.28);

@@ -75,17 +75,16 @@ export class JuiceConductor {
     if (this.alive && state.status === 'playing') {
       const ratio = stackHeightRatio(state);
       let level = ratio > this.dangerStart ? Math.min(1, (ratio - this.dangerStart) / (1 - this.dangerStart - 0.08)) : 0;
-      // Timer de top-out corriendo (pila sobre el techo): danger mínimo creciente
-      // + countdown en los últimos 5 segundos, para que la muerte nunca sorprenda.
+      // Pila por encima del área visible (dentro del buffer, estilo tetr.io): no
+      // hay muerte por tiempo, así que en vez de un countdown subimos el peligro
+      // visual al máximo mientras estás topeado. La rampa usa los primeros frames
+      // arriba para que el aviso crezca rápido pero no salte de golpe.
       const above = state.stats.aboveFieldFrames;
       if (above > 0) {
-        const progress = Math.min(1, above / state.stats.topOutGraceFrames);
-        level = Math.max(level, 0.4 + 0.6 * progress);
-        const secondsLeft = Math.ceil((state.stats.topOutGraceFrames - above) / 60);
-        this.fx.setTopOutCountdown(secondsLeft <= 5 ? Math.max(1, secondsLeft) : null);
-      } else {
-        this.fx.setTopOutCountdown(null);
+        const progress = Math.min(1, above / 30);
+        level = Math.max(level, 0.6 + 0.4 * progress);
       }
+      this.fx.setTopOutCountdown(null);
       this.fx.setDanger(level);
       this.audio.setDanger(level);
       this.fx.setPendingGarbage(state.stats.pendingGarbage);

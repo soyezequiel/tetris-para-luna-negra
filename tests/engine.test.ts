@@ -2608,7 +2608,7 @@ describe('core stacker engine', () => {
     expect(attackAt(8)).toBe(8);
   });
 
-  it('tolerates a stack above the visible field and only dies after the grace window', () => {
+  it('lets the stack live above the visible field indefinitely (no top-out timer)', () => {
     const engine = new GameEngine(99, {
       ...DEFAULT_RULES,
       gravityCellsPerFrame: 0,
@@ -2619,17 +2619,36 @@ describe('core stacker engine', () => {
     // Una celda en las filas ocultas: la pila sobresale del área visible.
     unsafe.board[0][0] = 'I';
 
+    // Estilo tetr.io: apilar en el buffer no mata por tiempo. Corremos muy por
+    // encima de la antigua ventana de gracia y la partida sigue viva.
     let state = engine.getState();
-    const grace = state.stats.topOutGraceFrames;
-    for (let frame = 1; frame <= grace - 1 && state.status === 'playing'; frame += 1) {
+    const frames = state.stats.topOutGraceFrames * 3;
+    for (let frame = 1; frame <= frames; frame += 1) {
       state = engine.tick(frame);
     }
     expect(state.status).toBe('playing');
-    expect(state.stats.aboveFieldFrames).toBe(grace - 1);
+    expect(state.stats.aboveFieldFrames).toBe(frames);
+  });
 
-    state = engine.tick(grace);
+  it('still tops out when a new piece cannot spawn (block out)', () => {
+    const engine = new GameEngine(123, {
+      ...DEFAULT_RULES,
+      gravityCellsPerFrame: 0,
+      softDropCellsPerFrame: 0,
+    });
+    const unsafe = engine as unknown as { board: Cell[][] };
+    // Ocupamos las columnas del spawn (3..6) en las dos filas donde nace la pieza,
+    // sin completar la fila (cols 0..2 y 7..9 vacías) para no disparar un line clear.
+    // La pieza activa actual se fija y la siguiente no entra → block-out.
+    const spawnRow = DEFAULT_RULES.hiddenRows - 2;
+    for (let x = 3; x <= 6; x += 1) {
+      unsafe.board[spawnRow][x] = 'I';
+      unsafe.board[spawnRow + 1][x] = 'I';
+    }
+
+    const state = engine.tick(1, [{ frame: 1, action: 'hardDrop' }]);
     expect(state.status).toBe('gameover');
-    expect(state.stats.gameOverReason).toBe('topOutTimer');
+    expect(state.stats.gameOverReason).toBe('blockOut');
   });
 
   it('lifts the active piece when incoming garbage rises into it instead of killing', () => {

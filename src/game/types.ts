@@ -131,7 +131,8 @@ export interface GameStats {
   gameOverReason: GameOverReason | null;
   /** Frames seguidos con la pila sobresaliendo del área visible (0 = dentro). */
   aboveFieldFrames: number;
-  /** Umbral de frames de gracia antes del top-out por 'topOutTimer'. */
+  /** Informativo: ventana sobre la que la UI de peligro rampa estando arriba.
+   * Ya NO es un umbral de muerte (estilo tetr.io: apilar en el buffer no mata). */
   topOutGraceFrames: number;
 }
 
