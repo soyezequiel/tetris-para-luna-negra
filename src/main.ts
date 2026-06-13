@@ -149,6 +149,9 @@ const ONLINE_SELF_REPORT_GRACE_MS = 3000;
 const SCROLLABLE_OVERLAY_SELECTORS = ['.dash-room', '.dash-layout', '.menu-panel', '.persistent-room-panel'];
 const ONLINE_KO_BROADCAST_RETRY_MS = 1000;
 const ONLINE_BACKGROUND_SYNC_MS = 1000;
+// Refresco automático de la lista de salas públicas mientras el jugador navega el
+// dashboard sin estar en una sala: así aparecen las salas nuevas sin recargar.
+const ONLINE_ROOMS_AUTO_REFRESH_MS = 5000;
 // Al morir en online seguimos dibujando MI tablero esta ventana para que corra la
 // animación de derrota (estilo tetr.io); luego se oculta y paso a espectador.
 const ONLINE_DEATH_ANIM_MS = 2000;
@@ -342,6 +345,12 @@ let onlineWinSubmittedRoundId: string | null = null;
 let lunaIdentity: LunaIdentity | null = null;
 let lunaInviteWindowBusy = false;
 let lunaInviteNotice: string | null = null;
+// Momento en que se copió el link de invitación de la sala, para mostrar un
+// "¡Link copiado!" efímero en el botón sin necesidad de un toast aparte.
+let roomInviteLinkCopiedAt = 0;
+// Si el bloque de depósito (QR de pago) estaba visible en el render anterior, para
+// auto-scrollearlo a la vista la primera vez que aparece (antes quedaba abajo).
+let depositWasVisible = false;
 let trustedLunaOrigin: string | null = null;
 let lunaLaunchPollInFlight = false;
 let pendingLunaLaunchRequest: PendingLunaLaunchRequest | null = null;
@@ -382,6 +391,9 @@ window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
   if (lunaIdentity && isPlayerActivelyPresent()) void syncLunaPresence();
 }, LUNA_PRESENCE_HEARTBEAT_MS);
+window.setInterval(() => {
+  if (shouldAutoRefreshPublicRooms()) void refreshPublicRooms();
+}, ONLINE_ROOMS_AUTO_REFRESH_MS);
 window.setInterval(() => {
   void syncLunaLaunchRequest();
 }, LUNA_LAUNCH_POLL_MS);
@@ -986,6 +998,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'luna-login') openLunaLogin();
   if (action === 'online-copy-code') {
     copyToClipboard(control.dataset.code ?? '');
+  }
+  if (action === 'online-copy-invite-link') {
+    shareRoomInviteLink();
   }
   if (action === 'resume') resumeGame();
   if (action === 'settings') openSettings();
@@ -1785,6 +1800,17 @@ async function kickOnlinePlayer(targetPlayerId: string): Promise<void> {
   }
 }
 
+// La lista de salas públicas solo se auto-refresca cuando el jugador la está
+// mirando (dashboard/menú online, sin sala propia y con la pestaña al frente).
+// Así ve salas nuevas sin recargar, sin pegarle a la API jugando o en segundo plano.
+const ROOM_BROWSER_APP_MODES: AppMode[] = ['menu', 'multiplayerMenu', 'onlineMenu'];
+
+function shouldAutoRefreshPublicRooms(): boolean {
+  if (document.hidden) return false;
+  if (onlineRoom || onlineBusy) return false;
+  return ROOM_BROWSER_APP_MODES.includes(appMode);
+}
+
 async function refreshPublicRooms(): Promise<void> {
   if (onlineBusy) return;
   onlineBusy = true;
@@ -2150,6 +2176,36 @@ async function copyToClipboard(text: string): Promise<void> {
   } catch {
     // Clipboard puede estar bloqueado; el usuario puede copiar manualmente.
   }
+}
+
+// Link de invitación universal: cualquiera que lo abra cae en ?join=<sala> y
+// bootstrapJoinLink lo mete directo a la sala (sirve para públicas y privadas,
+// mientras estén en lobby). Limpiamos query/hash para no arrastrar tokens previos.
+function buildRoomInviteLink(roomId: string): string {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('join', roomId);
+  return url.toString();
+}
+
+function roomInviteLinkRecentlyCopied(): boolean {
+  return Date.now() - roomInviteLinkCopiedAt < 2200;
+}
+
+// Copia (o comparte en móvil) el link de invitación de la sala activa.
+function shareRoomInviteLink(): void {
+  if (!onlineRoom) return;
+  const link = buildRoomInviteLink(onlineRoom.id);
+  roomInviteLinkCopiedAt = Date.now();
+  const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
+  if (typeof nav.share === 'function') {
+    void nav.share({ title: 'Tetra', text: `Unite a mi sala ${onlineRoom.id}`, url: link }).catch(() => {
+      void copyToClipboard(link);
+    });
+    return;
+  }
+  void copyToClipboard(link);
 }
 
 async function wakeUpServer(): Promise<void> {
@@ -3671,6 +3727,7 @@ function renderOverlay(state: GameState): void {
     restoreOverlayFieldFocus(focusSnapshot);
     restoreOverlayScroll(scrollSnapshot);
   }
+  maybeScrollDepositIntoView();
   // Toast compacto de KO: aparece arriba cuando paso a espectador (ya terminó la
   // animación de derrota, mi tablero está oculto) y se desvanece solo por CSS.
   // Contenido congelado (onlineKoBanner) → se dibuja una vez y no parpadea.
@@ -3761,6 +3818,19 @@ function captureOverlayScroll(): Map<string, number> {
     });
   }
   return snapshot;
+}
+
+// Cuando aparece el bloque de depósito (QR de pago), lo traemos a la vista dentro
+// de su panel scrolleable: antes el QR quedaba por debajo del borde y había que
+// scrollear a mano para verlo completo. Solo en la transición a visible para no
+// pelear con el scroll manual del usuario en renders posteriores.
+function maybeScrollDepositIntoView(): void {
+  const deposit = overlayElement.querySelector<HTMLElement>('[data-bet-deposit]');
+  const visible = deposit !== null;
+  if (visible && !depositWasVisible) {
+    deposit.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  depositWasVisible = visible;
 }
 
 function restoreOverlayScroll(snapshot: Map<string, number>): void {
@@ -4722,7 +4792,7 @@ function renderOnlineBetPanel(host: boolean): string {
 
   const myDeposit = myEntry && myEntry.depositStatus === 'pending' && (myEntry.bolt11 || myEntry.payUrl)
     ? `
-      <div class="online-bet-deposit">
+      <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
         ${myEntry.bolt11 ? renderBetInvoiceQr(myEntry.bolt11) : ''}
         <div class="online-bet-deposit-actions">
@@ -5844,13 +5914,22 @@ function renderDashboardRoomPanel(): string {
         ${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}
       </button>`;
 
+  const inviteLinkHtml = room
+    ? `<button class="dash-invite-btn dash-invite-link-btn" type="button" data-ui-action="online-copy-invite-link">
+        ${roomInviteLinkRecentlyCopied() ? '¡Link copiado!' : 'Copiar link de invitación'}
+      </button>`
+    : '';
+
   const inviteSectionHtml = `
     <div class="dash-invite-section ${!room ? 'glow' : ''}">
       <div class="dash-invite-copy">
         <strong>Invitaciones</strong>
-        <span class="dash-invite-text">${escapeHtml(inviteStatusText)}</span>
+        <span class="dash-invite-text">${escapeHtml(room ? 'Compartí el link y cualquiera entra a la sala.' : inviteStatusText)}</span>
       </div>
-      ${inviteActionHtml}
+      <div class="dash-invite-actions">
+        ${inviteLinkHtml}
+        ${inviteActionHtml}
+      </div>
     </div>
   `;
 
