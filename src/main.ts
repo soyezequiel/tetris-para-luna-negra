@@ -152,11 +152,15 @@ const ONLINE_BACKGROUND_SYNC_MS = 1000;
 // Al morir en online seguimos dibujando MI tablero esta ventana para que corra la
 // animación de derrota (estilo tetr.io); luego se oculta y paso a espectador.
 const ONLINE_DEATH_ANIM_MS = 2000;
-// En solo/offline también demoramos la pantalla de resultados esta ventana para que
-// se aprecie la animación de derrota (colapso del tablero + cartel "GAME!") antes de
-// tapar el canvas con el panel de TOP OUT. Más corto que online: aquí solo hay un
-// tablero y no hay nada que esperar tras la animación.
-const SOLO_DEATH_ANIM_MS = 1600;
+// En solo/offline la derrota tiene dos fases antes de mostrar el panel de TOP OUT:
+//  1) ESTUDIO: el tablero queda congelado tal cual quedó al perder, para que puedas
+//     ver POR QUÉ perdiste (sin colapso todavía). Solo se ve un cartel discreto.
+//  2) COLAPSO: recién entonces corre la animación de derrota (colapso + "GAME!"),
+//     igual que online. Al terminar aparecen los resultados.
+const SOLO_DEATH_STUDY_MS = 2600;
+const SOLO_DEATH_COLLAPSE_MS = 1600;
+// Reproducción opcional de "los últimos 5 segundos" desde el panel de resultados.
+const DEATH_REPLAY_SECONDS = 5;
 const GAME_FRAME_MS = 1000 / 60;
 // Umbral de catch-up en solo/offline: por encima de ~0.5 s de frames acumulados
 // asumimos que la pestaña estuvo en segundo plano (rAF congelado) y reanclamos el
@@ -229,14 +233,22 @@ let onlineKoBanner: { placement: string; won: boolean } | null = null;
 // Momento en que morí en online; mientras dura ONLINE_DEATH_ANIM_MS sigo
 // dibujando mi tablero para la animación de derrota antes de pasar a espectador.
 let onlineDeathAnimStartedAt: number | null = null;
-// Equivalente para solo/offline: instante en que toqué el techo; durante
-// SOLO_DEATH_ANIM_MS se difiere el panel de resultados para ver la animación.
-let soloDeathAnimStartedAt: number | null = null;
+// Equivalente para solo/offline: instante en que toqué el techo. Durante la fase de
+// estudio + colapso se difiere el panel de resultados (ver SOLO_DEATH_*_MS).
+let soloDeathStartedAt: number | null = null;
+// Ya disparé el colapso del tablero (segunda fase). Evita re-dispararlo cada frame.
+let soloDeathCollapseStarted = false;
+// La secuencia de derrota terminó y ya se muestran los resultados. Se mantiene true
+// aunque entres/salgas de la repetición, para no re-animar al volver.
+let soloDeathSequenceDone = false;
 // Mismo motivo que el KO: el HUD online se diffea aparte para no recrearse cada
 // frame y evitar el titileo del hover en sus botones.
 let lastHudOverlayHtml = '';
 let lastInviteOverlayHtml = '';
 let playback: ReplayPlayback | null = null;
+// A dónde volver al salir de la reproducción. null = al menú (replays importados/
+// del historial). Lo setea la repetición de "últimos 5s" para volver a resultados.
+let replayReturnMode: AppMode | null = null;
 let importedReplayName: string | null = null;
 let replayImportError: string | null = null;
 let libraryFilter: LibraryFilter = 'all';
@@ -516,25 +528,40 @@ function isOnlineDeathAnimating(): boolean {
     && performance.now() - onlineDeathAnimStartedAt < ONLINE_DEATH_ANIM_MS;
 }
 
-// Arranca/limpia la fase de muerte en solo (no online). Al tocar el techo dispara
-// el colapso del tablero y marca la ventana durante la cual se difiere el panel de
-// resultados para que la animación de derrota se vea, como en online.
+// Maneja la secuencia de muerte en solo (no online): primero congela el tablero para
+// estudiarlo (fase ESTUDIO), después dispara el colapso (fase COLAPSO) y al terminar
+// deja aparecer el panel de resultados. La marca de "terminado" sobrevive a entrar y
+// salir de la repetición, para no re-animar al volver de "ver últimos 5s".
 function syncSoloDeathPhase(state: GameState): void {
-  const soloContext = appMode === 'playing' || appMode === 'paused';
-  const dead = soloContext && state.status === 'gameover';
-  if (!dead) {
-    soloDeathAnimStartedAt = null;
+  if (state.status !== 'gameover') {
+    // Nueva partida / reset: limpiamos toda la secuencia.
+    soloDeathStartedAt = null;
+    soloDeathCollapseStarted = false;
+    soloDeathSequenceDone = false;
     return;
   }
-  if (soloDeathAnimStartedAt === null) {
-    soloDeathAnimStartedAt = performance.now();
+  const soloContext = appMode === 'playing' || appMode === 'paused';
+  // En gameover pero fuera del contexto solo (p. ej. mirando la repetición) no
+  // tocamos el estado: preservamos la secuencia para retomarla al volver.
+  if (!soloContext || soloDeathSequenceDone) return;
+  if (soloDeathStartedAt === null) soloDeathStartedAt = performance.now();
+  const elapsed = performance.now() - soloDeathStartedAt;
+  if (!soloDeathCollapseStarted && elapsed >= SOLO_DEATH_STUDY_MS) {
+    soloDeathCollapseStarted = true;
     renderer.playDeathAnimation(); // colapso del tablero, igual que online
   }
+  if (elapsed >= SOLO_DEATH_STUDY_MS + SOLO_DEATH_COLLAPSE_MS) soloDeathSequenceDone = true;
 }
 
+// True mientras la derrota en solo sigue su secuencia (estudio o colapso): difiere el
+// panel de resultados hasta que termine.
 function isSoloDeathAnimating(): boolean {
-  return soloDeathAnimStartedAt !== null
-    && performance.now() - soloDeathAnimStartedAt < SOLO_DEATH_ANIM_MS;
+  return soloDeathStartedAt !== null && !soloDeathSequenceDone;
+}
+
+// True solo durante la fase de estudio (tablero congelado, sin colapso aún).
+function isSoloDeathStudying(): boolean {
+  return soloDeathStartedAt !== null && !soloDeathCollapseStarted && !soloDeathSequenceDone;
 }
 
 function onlineLocalPlacementLabel(): string {
@@ -941,6 +968,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'settings-back') closeSettings();
   if (action === 'settings-reset') applyInputSettings(resetInputSettings());
   if (action === 'export-replay') exportReplay();
+  if (action === 'replay-last-seconds') startDeathReplay();
   if (action === 'import-replay') openReplayFilePicker();
   if (action === 'replay-library' || action === 'run-history') openReplayLibrary();
   if (action === 'library-back' || action === 'history-back') goToMenu();
@@ -980,7 +1008,7 @@ function handleOverlayClick(event: MouseEvent): void {
   }
   if (action === 'replay-toggle') playback?.togglePaused();
   if (action === 'replay-restart') playback?.restart();
-  if (action === 'replay-exit') goToMenu();
+  if (action === 'replay-exit') exitReplayPlayback();
   if (action === 'replay-speed') {
     const speed = Number(control.dataset.speed);
     if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) playback?.setSpeed(speed as PlaybackSpeed);
@@ -2380,10 +2408,58 @@ function startReplayPlayback(importedReplay: ExportedReplay, fileName: string): 
   pendingConfirmAction = null;
   lastExportName = null;
   replayImportError = null;
+  replayReturnMode = null; // replay importado/historial: al salir vuelvo al menú
   importedReplayName = fileName;
   playback = new ReplayPlayback(importedReplay);
   appMode = 'replayPlayback';
   settingsReturnMode = 'menu';
+}
+
+// Frame final de la partida actual (gameover o clear). Sirve para recortar la
+// reproducción de "los últimos N segundos".
+function terminalRunFrame(state: GameState): number {
+  return state.stats.gameOverFrame ?? state.stats.finishFrame ?? state.stats.frame;
+}
+
+// La repetición de los últimos segundos necesita inputs grabados; en custom las
+// repeticiones están deshabilitadas, así que no ofrecemos el botón.
+function canReplayLastSeconds(state: GameState): boolean {
+  return currentRunKind !== 'custom' && replay.inputs.length > 0 && terminalRunFrame(state) > 0;
+}
+
+// Reproduce solo los últimos DEATH_REPLAY_SECONDS de la partida recién terminada,
+// reutilizando el motor de repetición (arranca el dibujo en startFrame). Al salir
+// se vuelve a la pantalla de resultados, no al menú.
+function startDeathReplay(): void {
+  const state = engine.getState();
+  if (!canReplayLastSeconds(state)) return;
+  const endFrame = terminalRunFrame(state);
+  const startFrame = Math.max(0, endFrame - DEATH_REPLAY_SECONDS * 60);
+  const exported = createExportedReplay(replay, state, inputSettings, undefined, currentRunSummary(state));
+  input.releaseAll();
+  bindingCapture = null;
+  pendingConfirmAction = null;
+  replayImportError = null;
+  importedReplayName = `Últimos ${DEATH_REPLAY_SECONDS} segundos`;
+  playback = new ReplayPlayback(exported, { startFrame });
+  replayReturnMode = appMode; // vuelvo a la pantalla de resultados de esta partida
+  appMode = 'replayPlayback';
+  settingsReturnMode = 'menu';
+}
+
+// Salida de la reproducción. Si vino de "ver últimos 5s" vuelve a los resultados de
+// la partida (el motor principal sigue intacto en gameover); si no, va al menú.
+function exitReplayPlayback(): void {
+  if (replayReturnMode === null) {
+    goToMenu();
+    return;
+  }
+  const returnMode = replayReturnMode;
+  replayReturnMode = null;
+  playback = null;
+  importedReplayName = null;
+  input.releaseAll();
+  appMode = returnMode;
 }
 
 function toGameInputs(inputs: ControlInput[], frame: number): GameInput[] {
@@ -3732,11 +3808,25 @@ function renderScreenOverlay(state: GameState): string {
 
   const terminal = terminalLabel(state.status);
   if (!terminal) return '';
-  // Perder en solo no abre el panel al instante: durante la ventana de muerte se ve
-  // la animación (colapso + cartel "GAME!") sobre el tablero, luego aparecen los
-  // resultados. Ganar (finished) no se difiere: la celebración ya es la pantalla.
-  if (state.status === 'gameover' && isSoloDeathAnimating()) return '';
+  // Perder en solo no abre el panel al instante. Primero el tablero queda congelado
+  // (fase de estudio, con un cartel discreto para que veas por qué perdiste), luego
+  // corre el colapso ("GAME!") y recién ahí aparecen los resultados. Ganar (finished)
+  // no se difiere: la celebración ya es la pantalla.
+  if (state.status === 'gameover' && isSoloDeathAnimating()) {
+    return isSoloDeathStudying() ? renderSoloDeathStudyHint() : '';
+  }
   return renderSoloResultsOverlay(state);
+}
+
+// Cartel discreto durante la fase de estudio: no tapa el tablero, solo avisa que
+// quedó congelado a propósito para que veas cómo perdiste.
+function renderSoloDeathStudyHint(): string {
+  return `
+    <div class="death-study-hint">
+      <span class="death-study-hint-tag">TOP OUT</span>
+      <span class="death-study-hint-text">Observá tu tablero — así quedó al perder</span>
+    </div>
+  `;
 }
 
 function renderSoloResultsOverlay(state: GameState): string {
@@ -3775,6 +3865,7 @@ function renderSoloResultsOverlay(state: GameState): string {
         </div>
         <div class="solo-results-actions">
           ${retry}
+          ${canReplayLastSeconds(state) ? `<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="replay-last-seconds">Ver últimos ${DEATH_REPLAY_SECONDS}s</button>` : ''}
           <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="export-replay">Guardar replay</button>
           <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="main-menu">Menú</button>
         </div>

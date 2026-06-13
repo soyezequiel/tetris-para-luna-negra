@@ -15,6 +15,14 @@ export interface ReplayPlaybackSnapshot {
   validation: PlaybackValidation;
 }
 
+export interface ReplayPlaybackOptions {
+  // Frame desde el cual mostrar la reproducción. La simulación SIEMPRE corre desde
+  // el frame 0 (es determinista a partir de la semilla), pero los frames previos a
+  // startFrame se avanzan de golpe sin dibujarse. Sirve para ver "los últimos N
+  // segundos" de una partida sin reproducirla entera.
+  startFrame?: number;
+}
+
 export class ReplayPlayback {
   private engine: GameEngine;
   private frame = 0;
@@ -23,9 +31,12 @@ export class ReplayPlayback {
   private paused = false;
   private speed: PlaybackSpeed = 1;
   private validation: PlaybackValidation = 'pending';
+  private readonly startFrame: number;
 
-  constructor(private readonly replay: ExportedReplay) {
+  constructor(private readonly replay: ExportedReplay, options: ReplayPlaybackOptions = {}) {
     this.engine = new GameEngine(replay.seed, replay.rules);
+    this.startFrame = Math.max(0, Math.min(options.startFrame ?? 0, this.targetFrame()));
+    this.seekToStartFrame();
   }
 
   tick(): ReplayPlaybackSnapshot {
@@ -55,6 +66,13 @@ export class ReplayPlayback {
     this.garbageIndex = 0;
     this.paused = false;
     this.validation = 'pending';
+    this.seekToStartFrame();
+  }
+
+  // Avanza la simulación (sin dibujar) hasta startFrame para arrancar la
+  // reproducción ahí. Con startFrame = 0 no hace nada (reproducción completa).
+  private seekToStartFrame(): void {
+    while (this.frame < this.startFrame) this.advanceOneFrame();
   }
 
   snapshot(): ReplayPlaybackSnapshot {
