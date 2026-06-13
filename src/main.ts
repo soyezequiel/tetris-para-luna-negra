@@ -73,7 +73,8 @@ import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { decidePeerKoAction } from './online/peerKoAuthority';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayMessage } from './online/peerBroadcast';
 import { OnlineReplayCollector } from './app/multiplayerReplay';
-import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlayerSnapshot } from './app/multiReplayPlayback';
+import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlaybackSnapshot, type MultiReplayPlayerSnapshot } from './app/multiReplayPlayback';
+import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
@@ -116,6 +117,13 @@ if (devBotOverlayElement) {
   (overlay.parentElement ?? document.body).appendChild(devBotOverlayElement);
   devBotOverlayElement.addEventListener('click', handleOverlayClick);
 }
+// Capa propia para el visor multi-tablero (appMode 'onlineReplay'). A diferencia
+// del overlay general, sus canvas son persistentes: se crean una vez al abrir y
+// se redibujan por frame sin recrear el DOM (innerHTML cada frame rompería el
+// contexto 2D de cada canvas y haría flicker).
+const multiReplayOverlayElement = document.createElement('div');
+(overlay.parentElement ?? document.body).appendChild(multiReplayOverlayElement);
+multiReplayOverlayElement.addEventListener('click', handleOverlayClick);
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
@@ -278,6 +286,15 @@ let onlineReplayBroadcast = false;
 let multiReplay: MultiReplayPlayback | null = null;
 // Sala desde la que se abrió el visor, para poder volver a los resultados.
 let multiReplayReturnRoomId: string | null = null;
+// Referencias persistentes a cada tarjeta/canvas del visor (creadas al abrir).
+interface MultiReplayCard {
+  playerId: string;
+  card: HTMLElement;
+  canvas: HTMLCanvasElement;
+  tag: HTMLElement;
+  stat: HTMLElement;
+}
+let multiReplayCards: MultiReplayCard[] = [];
 let onlinePeerStates = new Map<string, string>();
 let onlinePeerDisplaySnapshots = new Map<string, OnlineGameSnapshot>();
 let onlineAttackSequence = 0;
@@ -412,10 +429,10 @@ function loopBody(): void {
   }
 
   if (appMode === 'onlineReplay' && multiReplay) {
-    // Visor multi-tablero: corre N motores y se pinta como overlay DOM (un
-    // mini-tablero por jugador). El canvas queda tapado por el scrim.
-    multiReplay.tick();
-    renderOverlay(engine.getState());
+    // Visor multi-tablero: corre N motores y dibuja cada GameState en su canvas
+    // (look real del juego). Vive en su capa persistente, no en el overlay general.
+    const snapshot = multiReplay.tick();
+    drawMultiReplayFrame(snapshot);
     return;
   }
 
@@ -545,6 +562,7 @@ Object.assign(window, {
         ],
       });
       multiReplayReturnRoomId = 'DEMO';
+      buildMultiReplayDom(multiReplay.snapshot());
       appMode = 'onlineReplay';
       return multiReplay.snapshot();
     },
@@ -3581,7 +3599,9 @@ function renderScreenOverlay(state: GameState): string {
   if (pendingLunaLaunchRequest && !lunaInviteShowsAsToast()) return renderLunaLaunchRequestOverlay(pendingLunaLaunchRequest);
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
-  if (appMode === 'onlineReplay') return renderMultiReplayOverlay();
+  // El visor multi-tablero vive en su capa propia (multiReplayOverlayElement),
+  // no en el overlay general; aquí no aporta nada.
+  if (appMode === 'onlineReplay') return '';
   if (
     appMode === 'menu'
     || appMode === 'soloMenu'
@@ -4113,40 +4133,46 @@ function openMultiReplay(): void {
   multiReplay = new MultiReplayPlayback(pkg);
   multiReplayReturnRoomId = roomId;
   onlineError = null;
+  buildMultiReplayDom(multiReplay.snapshot());
   appMode = 'onlineReplay';
 }
 
 function exitMultiReplay(): void {
   multiReplay = null;
+  multiReplayCards = [];
+  multiReplayOverlayElement.innerHTML = '';
   appMode = 'onlineResults';
 }
 
-// Visor multi-tablero estilo tetr.io: una grilla con el tablero de cada jugador
-// reproduciéndose en sincronía, más controles de pausa/velocidad/reinicio. Se
-// repinta cada frame (el contador cambia), igual que la grilla de espectador.
-function renderMultiReplayOverlay(): string {
-  if (!multiReplay) return '';
-  const snapshot = multiReplay.snapshot();
-  const layout = onlinePeerGridLayout(snapshot.players.length, true);
+// Construye una sola vez el DOM del visor: scrim + grilla con una tarjeta (canvas
+// + placa) por jugador + controles. Los canvas se conservan y se redibujan por
+// frame en drawMultiReplayFrame (no se recrea el DOM, ver multiReplayOverlayElement).
+function buildMultiReplayDom(snapshot: MultiReplayPlaybackSnapshot): void {
   const speedButtons = REPLAY_SPEEDS.map((speed) => (
-    `<button class="solo-results-btn solo-results-btn--ghost${snapshot.speed === speed ? ' button-active' : ''}" type="button" data-ui-action="multi-replay-speed" data-speed="${speed}">${speed}x</button>`
+    `<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="multi-replay-speed" data-speed="${speed}">${speed}x</button>`
   )).join('');
-  return `
-    <div class="menu-scrim online-results-scrim">
-      <div class="online-results multi-replay">
-        <div class="online-results-head">
+  const cards = snapshot.players.map((player) => `
+    <section class="multi-replay-card" data-mr-player="${escapeHtml(player.playerId)}">
+      <div class="multi-replay-stage">
+        <canvas data-mr-canvas></canvas>
+        <div class="multi-replay-tag" data-mr-tag></div>
+      </div>
+      <div class="multi-replay-plate">
+        <strong>${escapeHtml(player.name)}</strong>
+        <span data-mr-stat></span>
+      </div>
+    </section>
+  `).join('');
+  multiReplayOverlayElement.innerHTML = `
+    <div class="menu-scrim multi-replay-scrim">
+      <div class="multi-replay-shell">
+        <div class="multi-replay-head">
           <div class="online-results-eyebrow">REPETICIÓN · SALA ${escapeHtml(multiReplayReturnRoomId ?? '')}</div>
-          <div class="multi-replay-clock">${formatFrames(snapshot.frame)} / ${formatFrames(snapshot.targetFrame)}</div>
+          <div class="multi-replay-clock" data-mr-clock></div>
         </div>
-        <div
-          class="online-peer-boards multi-replay-boards"
-          data-peer-count="${snapshot.players.length}"
-          style="--online-peer-columns: ${layout.columns}; --online-peer-card-width: ${layout.cardWidth}px;"
-        >
-          ${snapshot.players.map((player) => renderMultiReplayBoard(player)).join('')}
-        </div>
-        <div class="online-results-actions">
-          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="multi-replay-toggle">${snapshot.paused ? 'Reanudar' : 'Pausa'}</button>
+        <div class="multi-replay-grid" data-mr-grid>${cards}</div>
+        <div class="online-results-actions multi-replay-controls">
+          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="multi-replay-toggle" data-mr-toggle></button>
           <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="multi-replay-restart">Reiniciar</button>
           ${speedButtons}
           <button class="solo-results-btn solo-results-btn--danger" type="button" data-ui-action="multi-replay-exit">Cerrar</button>
@@ -4154,27 +4180,73 @@ function renderMultiReplayOverlay(): string {
       </div>
     </div>
   `;
+  multiReplayCards = snapshot.players.map((player) => {
+    const card = multiReplayOverlayElement.querySelector<HTMLElement>(`[data-mr-player="${cssAttrEscape(player.playerId)}"]`)!;
+    return {
+      playerId: player.playerId,
+      card,
+      canvas: card.querySelector<HTMLCanvasElement>('[data-mr-canvas]')!,
+      tag: card.querySelector<HTMLElement>('[data-mr-tag]')!,
+      stat: card.querySelector<HTMLElement>('[data-mr-stat]')!,
+    };
+  });
 }
 
-function renderMultiReplayBoard(player: MultiReplayPlayerSnapshot): string {
-  const snapshot = createOnlineGameSnapshotFromState(player.state);
-  const label = `${player.state.stats.lines} L · ${formatFrames(player.state.stats.frame)}`;
+// Tamaño de cada tablero para que entren todos en pantalla, respetando el aspecto
+// 1:2 (ancho:alto) de un tablero estándar. Reusa la lógica de columnas del modo
+// espectador para que la grilla se sienta igual que en vivo.
+function multiReplayLayout(count: number): { columns: number; boardW: number; boardH: number } {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const columns = onlinePeerGridColumns(count, width);
+  const rows = Math.ceil(count / columns);
+  const gap = 14;
+  const plateH = 30;
+  const availW = width * 0.96 - gap * (columns - 1);
+  const availH = height - 150 - gap * (rows - 1);
+  const cell = Math.max(6, Math.floor(Math.min((availW / columns) / 10, (availH / rows - plateH) / 20)));
+  return { columns, boardW: cell * 10, boardH: cell * 20 };
+}
+
+function drawMultiReplayFrame(snapshot: MultiReplayPlaybackSnapshot): void {
+  if (multiReplayCards.length === 0) return;
+  const layout = multiReplayLayout(snapshot.players.length);
+  const grid = multiReplayOverlayElement.querySelector<HTMLElement>('[data-mr-grid]');
+  if (grid) grid.style.gridTemplateColumns = `repeat(${layout.columns}, max-content)`;
+  setMrText('[data-mr-clock]', `${formatFrames(snapshot.frame)} / ${formatFrames(snapshot.targetFrame)}`);
+  setMrText('[data-mr-toggle]', snapshot.paused ? 'Reanudar' : 'Pausa');
+  for (const button of multiReplayOverlayElement.querySelectorAll<HTMLElement>('[data-ui-action="multi-replay-speed"]')) {
+    button.classList.toggle('button-active', Number(button.dataset.speed) === snapshot.speed);
+  }
+  const byId = new Map(snapshot.players.map((player) => [player.playerId, player]));
+  for (const entry of multiReplayCards) {
+    const player = byId.get(entry.playerId);
+    if (!player) continue;
+    sizeBoardCanvas(entry.canvas, layout.boardW, layout.boardH);
+    drawBoardToCanvas(entry.canvas, player.state, { colorBlind: customSettings.colorBlindMode });
+    setMrCardState(entry, player);
+  }
+}
+
+function setMrCardState(entry: MultiReplayCard, player: MultiReplayPlayerSnapshot): void {
   const dead = player.state.status === 'gameover';
   const won = player.state.status === 'finished';
-  const tagClass = dead ? ' online-peer-board--ko' : won ? ' online-peer-board--win' : '';
-  return `
-    <section class="online-peer-board${tagClass}" data-player-id="${escapeHtml(player.playerId)}">
-      <div class="online-peer-board-head">
-        <div class="online-player-label"><strong>${escapeHtml(player.name)}</strong></div>
-        <span>${escapeHtml(label)}</span>
-      </div>
-      <div class="online-peer-board-body">
-        ${renderOnlineMiniBoard(snapshot)}
-        ${dead ? '<div class="online-peer-board-tag online-peer-board-tag--ko">K.O.</div>' : ''}
-        ${won ? '<div class="online-peer-board-tag online-peer-board-tag--win">FINISH</div>' : ''}
-      </div>
-    </section>
-  `;
+  const tagText = dead ? 'K.O.' : won ? 'FINISH' : '';
+  if (entry.tag.textContent !== tagText) entry.tag.textContent = tagText;
+  entry.tag.className = `multi-replay-tag${dead ? ' multi-replay-tag--ko' : won ? ' multi-replay-tag--win' : ''}`;
+  entry.card.classList.toggle('is-dead', dead);
+  const stat = `${player.state.stats.lines} L · ${formatFrames(player.state.stats.frame)}`;
+  if (entry.stat.textContent !== stat) entry.stat.textContent = stat;
+}
+
+function setMrText(selector: string, value: string): void {
+  const el = multiReplayOverlayElement.querySelector(selector);
+  if (el && el.textContent !== value) el.textContent = value;
+}
+
+// Escapa un valor para usarlo dentro de un selector de atributo CSS.
+function cssAttrEscape(value: string): string {
+  return value.replace(/["\\]/g, '\\$&');
 }
 
 function renderOnlineRankingRow(

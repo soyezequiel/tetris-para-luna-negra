@@ -3461,14 +3461,31 @@ canvas {
   padding: 24px;
 }
 
-.online-results.multi-replay {
-  width: min(1180px, 96vw);
-  max-height: 94vh;
-  overflow-y: auto;
+.multi-replay-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 30%, rgba(16, 22, 30, 0.96), rgba(4, 6, 10, 0.98));
+}
+
+.multi-replay-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 96vw;
+  max-height: 96vh;
+}
+
+.multi-replay-head {
+  text-align: center;
 }
 
 .multi-replay-clock {
-  margin-top: 6px;
+  margin-top: 4px;
   font-family: 'Exo 2', monospace;
   font-size: 22px;
   font-weight: 800;
@@ -3476,8 +3493,74 @@ canvas {
   color: rgba(247, 247, 242, 0.92);
 }
 
-.multi-replay-boards {
-  width: 100%;
+.multi-replay-grid {
+  display: grid;
+  gap: 14px;
+  justify-content: center;
+  align-content: center;
+  overflow: auto;
+}
+
+.multi-replay-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.multi-replay-stage {
+  position: relative;
+  line-height: 0;
+}
+
+.multi-replay-card.is-dead .multi-replay-stage canvas {
+  filter: grayscale(0.55) brightness(0.7);
+}
+
+.multi-replay-tag {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-weight: 900;
+  font-size: clamp(16px, 2vw, 30px);
+  letter-spacing: 2px;
+  color: #fff;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+}
+
+.multi-replay-tag--ko { color: #ff5b6e; }
+.multi-replay-tag--win { color: #ffd45b; }
+
+.multi-replay-plate {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.multi-replay-plate strong {
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(247, 247, 242, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.multi-replay-plate span {
+  font-family: 'Exo 2', monospace;
+  font-size: 12px;
+  color: rgba(247, 247, 242, 0.6);
+  white-space: nowrap;
+}
+
+.multi-replay-controls {
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .online-results-confetti {
