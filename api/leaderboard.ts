@@ -1,5 +1,5 @@
 import type { SubmitScoreRequest } from '../src/online/protocol.js';
-import { getSprint40Leaderboard, submitSprint40Score, LEADERBOARD_DEFAULT_LIMIT } from '../src/online/leaderboard.js';
+import { getWinsLeaderboard, submitWin, LEADERBOARD_DEFAULT_LIMIT } from '../src/online/leaderboard.js';
 import { getLeaderboardStore, handleApiError, handleNodeApi, readJsonBody, sendJson } from '../src/online/vercelApi.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -11,7 +11,7 @@ export default function handler(request: IncomingMessage, response: ServerRespon
 
 export async function GET(request: Request): Promise<Response> {
   try {
-    const entries = await getSprint40Leaderboard(getLeaderboardStore(), readLimit(request));
+    const entries = await getWinsLeaderboard(getLeaderboardStore(), readLimit(request));
     return sendJson(200, { entries, serverNowMs: Date.now() });
   } catch (error) {
     return handleApiError(error);
@@ -21,8 +21,8 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   try {
     const store = getLeaderboardStore();
-    await submitSprint40Score(store, await readJsonBody<SubmitScoreRequest>(request));
-    const entries = await getSprint40Leaderboard(store);
+    await submitWin(store, await readJsonBody<SubmitScoreRequest>(request));
+    const entries = await getWinsLeaderboard(store);
     return sendJson(200, { entries, serverNowMs: Date.now() });
   } catch (error) {
     return handleApiError(error);

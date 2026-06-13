@@ -317,6 +317,8 @@ let onlineLastDiagLogAt = 0;
 let onlineLastHostSimLogAt = new Map<string, number>();
 let onlineInputOutbox: SequencedOnlineInput[] = [];
 let onlineActiveRoundId: string | null = null;
+// Ronda cuya victoria ya reporté al ranking mundial (evita doble conteo).
+let onlineWinSubmittedRoundId: string | null = null;
 let lunaIdentity: LunaIdentity | null = null;
 let lunaInviteWindowBusy = false;
 let lunaInviteNotice: string | null = null;
@@ -1943,20 +1945,30 @@ async function refreshLeaderboard(): Promise<void> {
   }
 }
 
-// Reporta el tiempo de un sprint de 40 líneas terminado al ranking mundial.
+// Suma una victoria multijugador del jugador al ranking mundial.
 // Best-effort: el tablero global es secundario, nunca corta el juego local.
-async function submitLeaderboardScore(elapsedFrames: number): Promise<void> {
+async function submitLeaderboardWin(): Promise<void> {
   try {
     await onlineClient.submitScore({
       playerId: onlinePlayer.id,
       name: onlineName.trim() || onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
       npub: lunaIdentity?.npub ?? null,
-      elapsedFrames,
     });
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
   }
+}
+
+// Cuando la sala termina conmigo coronado ganador, sumo una victoria al ranking
+// mundial — una sola vez por ronda (la clave de ronda evita el doble conteo del
+// polling). Solo cuenta el multijugador: las salas online siempre tienen rivales.
+function maybeSubmitOnlineWin(room: OnlineRoom): void {
+  if (room.status !== 'finished' || room.winnerPlayerId !== onlinePlayer.id) return;
+  const roundId = onlineRoundKey(room);
+  if (onlineWinSubmittedRoundId === roundId) return;
+  onlineWinSubmittedRoundId = roundId;
+  void submitLeaderboardWin();
 }
 
 // Después de ver los resultados se vuelve al menú principal SIN salir de la
@@ -2264,6 +2276,7 @@ function adoptOnlineRoom(room: OnlineRoom): void {
   if (room.bet?.status !== 'pending_deposits') onlineBetFastPollUntil = 0;
   onlineActiveRoundId = nextRoundId;
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
+  maybeSubmitOnlineWin(room);
 }
 
 function onlineRoundKey(room: OnlineRoom): string {
@@ -2397,8 +2410,6 @@ function syncRunEffects(state: GameState, events: GameEvent[]): void {
       && (previousBest === null || state.stats.finishFrame < previousBest);
     best = saveBest40LineFrames(state.stats.finishFrame);
     savedFinish = true;
-    // Solo el sprint estándar de 40 líneas alimenta el ranking mundial.
-    if (currentRunKind === 'standard') void submitLeaderboardScore(state.stats.finishFrame);
   }
   if ((state.status === 'finished' || state.status === 'gameover') && !savedRunHistoryEntry) {
     const entry = createRunHistoryEntry(createExportedReplay(replay, state, inputSettings, undefined, currentRunSummary(state)));
@@ -5665,18 +5676,19 @@ function renderLeaderboardPanelContent(): string {
   } else if (leaderboardError && leaderboardEntries.length === 0) {
     body = `<p class="leaderboard-note leaderboard-note--error">${escapeHtml(leaderboardError)}</p>`;
   } else if (leaderboardEntries.length === 0) {
-    body = '<p class="leaderboard-note">Todavía no hay tiempos registrados. ¡Jugá un sprint de 40 líneas y aparecé acá!</p>';
+    body = '<p class="leaderboard-note">Todavía no hay victorias registradas. ¡Ganá una partida multijugador y aparecé acá!</p>';
   } else {
     const rows = leaderboardEntries.map((entry, index) => {
       const rank = index + 1;
       const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`;
       const mine = entry.playerId === myId ? ' leaderboard-row--me' : '';
+      const wins = entry.wins === 1 ? '1 victoria' : `${entry.wins} victorias`;
       return `
         <div class="leaderboard-row${mine}">
           <span class="leaderboard-rank">${escapeHtml(medal)}</span>
           ${renderOnlineAvatar({ name: entry.name, avatarUrl: entry.avatarUrl }, 'small', 'leaderboard-avatar')}
           <span class="leaderboard-name">${escapeHtml(entry.name)}</span>
-          <span class="leaderboard-time">${escapeHtml(formatFrames(entry.elapsedFrames))}</span>
+          <span class="leaderboard-time">${escapeHtml(wins)}</span>
         </div>
       `;
     }).join('');
@@ -5687,7 +5699,7 @@ function renderLeaderboardPanelContent(): string {
     <div class="menu-panel" style="width: 100%; max-width: 480px; border: none; background: transparent; box-shadow: none; padding: 0;">
       <div class="panel-eyebrow">TOP MUNDIAL</div>
       <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Top mundial</h1>
-      <p style="color: var(--dash-text-dim); margin-bottom: 20px; font-size: 14px; font-weight: 500;">Mejores tiempos del sprint de 40 líneas. Cada jugador figura con su mejor marca.</p>
+      <p style="color: var(--dash-text-dim); margin-bottom: 20px; font-size: 14px; font-weight: 500;">Ranking por victorias en partidas multijugador. Ganá batallas online para subir.</p>
       ${body}
       <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px; margin-top: 20px;">
         <button class="dash-action-btn" type="button" data-ui-action="leaderboard-refresh"${leaderboardLoading ? ' disabled' : ''}>${leaderboardLoading ? 'Actualizando…' : 'Actualizar'}</button>

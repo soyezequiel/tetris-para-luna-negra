@@ -5,43 +5,42 @@ import type { LeaderboardEntry, SubmitScoreRequest } from './protocol';
 // del sorted set y de la memoria en dev.
 export const LEADERBOARD_MAX_ENTRIES = 100;
 export const LEADERBOARD_DEFAULT_LIMIT = 50;
-// Cotas de validación del tiempo de un sprint de 40 líneas (el juego corre a 60
-// fps). Piso y techo descartan envíos absurdos sin pretender ser anti-cheat.
-export const SPRINT40_MIN_FRAMES = 60; // 1 segundo
-export const SPRINT40_MAX_FRAMES = 60 * 60 * 60; // 60 minutos
+
+// Metadatos de una victoria. Las `wins` no viajan en el request: las cuenta el
+// store (cada envío suma una). Esto evita que un cliente declare su propio total.
+export type LeaderboardWinMeta = Omit<LeaderboardEntry, 'wins'>;
 
 export interface LeaderboardStore {
-  /** Devuelve el top de mejores tiempos, ascendente (el más rápido primero). */
-  topSprint40(limit: number): Promise<LeaderboardEntry[]>;
-  /** Guarda el resultado solo si mejora el mejor tiempo previo del jugador. */
-  submitSprint40(entry: LeaderboardEntry): Promise<void>;
+  /** Devuelve el top por victorias, descendente (el que más ganó primero). */
+  topWins(limit: number): Promise<LeaderboardEntry[]>;
+  /** Suma una victoria al jugador (crea la entrada si no existía). */
+  recordWin(meta: LeaderboardWinMeta): Promise<void>;
 }
 
 /**
- * Implementación en memoria (dev / tests / fallback sin Redis). Conserva solo el
- * mejor tiempo de cada jugador, igual que la versión con Upstash.
+ * Implementación en memoria (dev / tests / fallback sin Redis). Acumula las
+ * victorias de cada jugador, igual que la versión con Upstash.
  */
 export class MemoryLeaderboardStore implements LeaderboardStore {
-  private best = new Map<string, LeaderboardEntry>();
+  private entries = new Map<string, LeaderboardEntry>();
 
-  async topSprint40(limit: number): Promise<LeaderboardEntry[]> {
-    return [...this.best.values()].sort(compareEntries).slice(0, clampLimit(limit));
+  async topWins(limit: number): Promise<LeaderboardEntry[]> {
+    return [...this.entries.values()].sort(compareEntries).slice(0, clampLimit(limit));
   }
 
-  async submitSprint40(entry: LeaderboardEntry): Promise<void> {
-    const current = this.best.get(entry.playerId);
-    if (!current || entry.elapsedFrames < current.elapsedFrames) {
-      this.best.set(entry.playerId, entry);
-    }
-    if (this.best.size > LEADERBOARD_MAX_ENTRIES) {
-      const trimmed = [...this.best.values()].sort(compareEntries).slice(0, LEADERBOARD_MAX_ENTRIES);
-      this.best = new Map(trimmed.map((item) => [item.playerId, item]));
+  async recordWin(meta: LeaderboardWinMeta): Promise<void> {
+    const current = this.entries.get(meta.playerId);
+    this.entries.set(meta.playerId, { ...meta, wins: (current?.wins ?? 0) + 1 });
+    if (this.entries.size > LEADERBOARD_MAX_ENTRIES) {
+      const trimmed = [...this.entries.values()].sort(compareEntries).slice(0, LEADERBOARD_MAX_ENTRIES);
+      this.entries = new Map(trimmed.map((item) => [item.playerId, item]));
     }
   }
 }
 
 function compareEntries(a: LeaderboardEntry, b: LeaderboardEntry): number {
-  return a.elapsedFrames - b.elapsedFrames || a.createdAtServerMs - b.createdAtServerMs;
+  // Más victorias primero; a igualdad, el que llegó antes a ese total.
+  return b.wins - a.wins || a.createdAtServerMs - b.createdAtServerMs;
 }
 
 export function clampLimit(limit: number): number {
@@ -49,34 +48,29 @@ export function clampLimit(limit: number): number {
   return Math.min(LEADERBOARD_MAX_ENTRIES, Math.floor(limit));
 }
 
-export async function getSprint40Leaderboard(
+export async function getWinsLeaderboard(
   store: LeaderboardStore,
   limit = LEADERBOARD_DEFAULT_LIMIT,
 ): Promise<LeaderboardEntry[]> {
-  return store.topSprint40(clampLimit(limit));
+  return store.topWins(clampLimit(limit));
 }
 
-export async function submitSprint40Score(
+export async function submitWin(
   store: LeaderboardStore,
   input: SubmitScoreRequest,
   nowMs = Date.now(),
-): Promise<LeaderboardEntry> {
+): Promise<LeaderboardWinMeta> {
   const playerId = normalizeId(input.playerId);
   if (!playerId) throw new OnlineRoomError('playerId inválido.', 400);
-  const elapsedFrames = Math.floor(Number(input.elapsedFrames));
-  if (!Number.isFinite(elapsedFrames) || elapsedFrames < SPRINT40_MIN_FRAMES || elapsedFrames > SPRINT40_MAX_FRAMES) {
-    throw new OnlineRoomError('Tiempo de sprint inválido.', 400);
-  }
-  const entry: LeaderboardEntry = {
+  const meta: LeaderboardWinMeta = {
     playerId,
     npub: normalizeNullable(input.npub),
     name: normalizeName(input.name),
     avatarUrl: normalizeNullable(input.avatarUrl),
-    elapsedFrames,
     createdAtServerMs: nowMs,
   };
-  await store.submitSprint40(entry);
-  return entry;
+  await store.recordWin(meta);
+  return meta;
 }
 
 function normalizeId(value: unknown): string {

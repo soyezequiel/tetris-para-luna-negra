@@ -1,5 +1,5 @@
 import { MemoryRoomStore, OnlineRoomError, RoomVersionConflictError, type LunaPresenceRecord, type RoomStore } from './roomService.js';
-import { LEADERBOARD_MAX_ENTRIES, MemoryLeaderboardStore, type LeaderboardStore } from './leaderboard.js';
+import { LEADERBOARD_MAX_ENTRIES, MemoryLeaderboardStore, type LeaderboardStore, type LeaderboardWinMeta } from './leaderboard.js';
 import type { LeaderboardEntry, OnlineRoom } from './protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -117,9 +117,10 @@ declare global {
 }
 
 /**
- * Ranking mundial sobre Upstash: un sorted set con el mejor tiempo (menor = más
- * rápido) de cada jugador, más un hash con los metadatos (nombre, avatar, npub).
- * El sorted set ordena y acota el top; el hash guarda lo que no entra en el score.
+ * Ranking mundial sobre Upstash: un sorted set con la cantidad de victorias
+ * (mayor = mejor) de cada jugador, más un hash con los metadatos (nombre, avatar,
+ * npub). El sorted set ordena y acota el top; el hash guarda lo que no entra en el
+ * score.
  */
 class UpstashLeaderboardStore implements LeaderboardStore {
   constructor(
@@ -127,9 +128,9 @@ class UpstashLeaderboardStore implements LeaderboardStore {
     private readonly token: string,
   ) {}
 
-  async topSprint40(limit: number): Promise<LeaderboardEntry[]> {
+  async topWins(limit: number): Promise<LeaderboardEntry[]> {
     const flat = await upstashCommand<string[] | null>(this.url, this.token, [
-      'ZRANGE', sprint40Key(), '0', String(Math.max(0, limit - 1)), 'WITHSCORES',
+      'ZRANGE', winsKey(), '0', String(Math.max(0, limit - 1)), 'REV', 'WITHSCORES',
     ]);
     if (!Array.isArray(flat) || flat.length === 0) return [];
     const members: string[] = [];
@@ -140,18 +141,18 @@ class UpstashLeaderboardStore implements LeaderboardStore {
       scores.set(member, Number(flat[index + 1]));
     }
     const metas = await upstashCommand<(string | null)[] | null>(this.url, this.token, [
-      'HMGET', sprint40MetaKey(), ...members,
+      'HMGET', winsMetaKey(), ...members,
     ]);
     return members.map((member, index) => (
       parseLeaderboardEntry(member, scores.get(member) ?? 0, metas?.[index] ?? null)
     ));
   }
 
-  async submitSprint40(entry: LeaderboardEntry): Promise<void> {
+  async recordWin(meta: LeaderboardWinMeta): Promise<void> {
     await upstashCommand(this.url, this.token, [
-      'EVAL', LEADERBOARD_SUBMIT_SCRIPT, 2,
-      sprint40Key(), sprint40MetaKey(),
-      entry.playerId, String(entry.elapsedFrames), JSON.stringify(entry), String(LEADERBOARD_MAX_ENTRIES),
+      'EVAL', LEADERBOARD_WIN_SCRIPT, 2,
+      winsKey(), winsMetaKey(),
+      meta.playerId, JSON.stringify(meta), String(LEADERBOARD_MAX_ENTRIES),
     ]);
   }
 }
@@ -175,7 +176,7 @@ async function upstashCommand<T>(url: string, token: string, command: unknown[])
   return payload.result as T;
 }
 
-function parseLeaderboardEntry(playerId: string, elapsedFrames: number, metaJson: string | null): LeaderboardEntry {
+function parseLeaderboardEntry(playerId: string, wins: number, metaJson: string | null): LeaderboardEntry {
   let name = playerId;
   let avatarUrl: string | null = null;
   let npub: string | null = null;
@@ -191,7 +192,7 @@ function parseLeaderboardEntry(playerId: string, elapsedFrames: number, metaJson
       // Metadato corrupto: caemos al playerId como nombre.
     }
   }
-  return { playerId, npub, name, avatarUrl, elapsedFrames, createdAtServerMs };
+  return { playerId, npub, name, avatarUrl, wins, createdAtServerMs };
 }
 
 export async function readJsonBody<T = Record<string, unknown>>(request: Request): Promise<T> {
@@ -294,20 +295,18 @@ end
 return 1
 `;
 
-// Guarda el resultado solo si mejora el mejor tiempo previo del jugador y poda el
-// sorted set (y su hash de metadatos) al top N, todo de forma atómica.
-const LEADERBOARD_SUBMIT_SCRIPT = `
+// Suma una victoria al jugador, actualiza sus metadatos y poda el sorted set (y su
+// hash) al top N por victorias, todo de forma atómica. Como el ranking es
+// descendente, la poda elimina a los de MENOR puntaje (los primeros en orden asc).
+const LEADERBOARD_WIN_SCRIPT = `
 local key = KEYS[1]
 local meta = KEYS[2]
 local member = ARGV[1]
-local score = tonumber(ARGV[2])
-local cur = redis.call('ZSCORE', key, member)
-if cur ~= false and score >= tonumber(cur) then return 0 end
-redis.call('ZADD', key, score, member)
-redis.call('HSET', meta, member, ARGV[3])
-local max = tonumber(ARGV[4])
+redis.call('ZINCRBY', key, 1, member)
+redis.call('HSET', meta, member, ARGV[2])
+local max = tonumber(ARGV[3])
 if redis.call('ZCARD', key) > max then
-  local removed = redis.call('ZRANGE', key, max, -1)
+  local removed = redis.call('ZRANGE', key, 0, -(max + 1))
   for _, m in ipairs(removed) do
     redis.call('ZREM', key, m)
     redis.call('HDEL', meta, m)
@@ -316,12 +315,12 @@ end
 return 1
 `;
 
-function sprint40Key(): string {
-  return 'stack40:leaderboard:sprint40';
+function winsKey(): string {
+  return 'stack40:leaderboard:wins';
 }
 
-function sprint40MetaKey(): string {
-  return 'stack40:leaderboard:sprint40:meta';
+function winsMetaKey(): string {
+  return 'stack40:leaderboard:wins:meta';
 }
 
 function roomKey(id: string): string {

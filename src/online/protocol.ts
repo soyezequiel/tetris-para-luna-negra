@@ -472,7 +472,9 @@ export interface LeaderboardEntry {
   npub: string | null;
   name: string;
   avatarUrl: string | null;
-  elapsedFrames: number;
+  // Cantidad de partidas multijugador ganadas (mayor = mejor).
+  wins: number;
+  // Momento de la última victoria (desempata el ranking).
   createdAtServerMs: number;
 }
 
@@ -481,7 +483,6 @@ export interface SubmitScoreRequest {
   name: string;
   avatarUrl?: string | null;
   npub?: string | null;
-  elapsedFrames: number;
 }
 
 export interface LeaderboardResponse {

@@ -133,7 +133,7 @@ export class OnlineClient {
     return this.get(`/api/leaderboard${query}`);
   }
 
-  /** Reporta un tiempo de sprint terminado al ranking mundial. */
+  /** Suma una victoria multijugador del jugador al ranking mundial. */
   submitScore(request: SubmitScoreRequest): Promise<LeaderboardResponse> {
     return this.post('/api/leaderboard', request);
   }
