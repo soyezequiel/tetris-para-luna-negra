@@ -236,7 +236,7 @@ export async function sendLunaInvite(
   if (config) {
     // Luna Negra es dueña de la entrega: notifica al amigo (toast in-app /
     // deep-link). fromNpub alimenta el "X te invitó" del toast.
-    const result = await lunaPost<{ delivered?: boolean }>(config, '/api/v1/friends/invite', {
+    const result = await lunaPost<{ delivered?: boolean }>(config, '/api/v1/invites', {
       fromNpub,
       toNpub: request.friendNpub,
       roomId: request.roomId,
@@ -257,7 +257,7 @@ export async function consumeLunaLaunchRequest(
   if (config && self) {
     const payload = await lunaGet<{ request?: unknown }>(
       config,
-      `/api/v1/launch-requests?npub=${encodeURIComponent(self)}`,
+      `/api/v1/invites?npub=${encodeURIComponent(self)}`,
     );
     if (payload && 'request' in payload) {
       return { request: normalizeLaunchRequest(payload.request), source: 'luna-negra' };
