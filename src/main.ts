@@ -142,6 +142,11 @@ const ONLINE_BACKGROUND_SYNC_MS = 1000;
 // Al morir en online seguimos dibujando MI tablero esta ventana para que corra la
 // animación de derrota (estilo tetr.io); luego se oculta y paso a espectador.
 const ONLINE_DEATH_ANIM_MS = 2000;
+// En solo/offline también demoramos la pantalla de resultados esta ventana para que
+// se aprecie la animación de derrota (colapso del tablero + cartel "GAME!") antes de
+// tapar el canvas con el panel de TOP OUT. Más corto que online: aquí solo hay un
+// tablero y no hay nada que esperar tras la animación.
+const SOLO_DEATH_ANIM_MS = 1600;
 const GAME_FRAME_MS = 1000 / 60;
 // Umbral de catch-up en solo/offline: por encima de ~0.5 s de frames acumulados
 // asumimos que la pestaña estuvo en segundo plano (rAF congelado) y reanclamos el
@@ -214,6 +219,9 @@ let onlineKoBanner: { placement: string; won: boolean } | null = null;
 // Momento en que morí en online; mientras dura ONLINE_DEATH_ANIM_MS sigo
 // dibujando mi tablero para la animación de derrota antes de pasar a espectador.
 let onlineDeathAnimStartedAt: number | null = null;
+// Equivalente para solo/offline: instante en que toqué el techo; durante
+// SOLO_DEATH_ANIM_MS se difiere el panel de resultados para ver la animación.
+let soloDeathAnimStartedAt: number | null = null;
 // Mismo motivo que el KO: el HUD online se diffea aparte para no recrearse cada
 // frame y evitar el titileo del hover en sus botones.
 let lastHudOverlayHtml = '';
@@ -425,6 +433,7 @@ function loopBody(): void {
   syncOnline();
   if (import.meta.env.DEV) devBotMatch?.frame(); // BOT DEV: avanza al oponente simulado
   syncOnlineDeathPhase(state);
+  syncSoloDeathPhase(state);
   // Ya morí y terminó la animación de derrota: dejo de dibujar MI tablero (queda
   // oculto por CSS) y solo se ven los tableros rivales centrados (espectador).
   // Durante la animación de derrota sigo dibujando para que se vea morir.
@@ -457,6 +466,27 @@ function syncOnlineDeathPhase(state: GameState): void {
 function isOnlineDeathAnimating(): boolean {
   return onlineDeathAnimStartedAt !== null
     && performance.now() - onlineDeathAnimStartedAt < ONLINE_DEATH_ANIM_MS;
+}
+
+// Arranca/limpia la fase de muerte en solo (no online). Al tocar el techo dispara
+// el colapso del tablero y marca la ventana durante la cual se difiere el panel de
+// resultados para que la animación de derrota se vea, como en online.
+function syncSoloDeathPhase(state: GameState): void {
+  const soloContext = appMode === 'playing' || appMode === 'paused';
+  const dead = soloContext && state.status === 'gameover';
+  if (!dead) {
+    soloDeathAnimStartedAt = null;
+    return;
+  }
+  if (soloDeathAnimStartedAt === null) {
+    soloDeathAnimStartedAt = performance.now();
+    renderer.playDeathAnimation(); // colapso del tablero, igual que online
+  }
+}
+
+function isSoloDeathAnimating(): boolean {
+  return soloDeathAnimStartedAt !== null
+    && performance.now() - soloDeathAnimStartedAt < SOLO_DEATH_ANIM_MS;
 }
 
 function onlineLocalPlacementLabel(): string {
@@ -3497,6 +3527,10 @@ function renderScreenOverlay(state: GameState): string {
 
   const terminal = terminalLabel(state.status);
   if (!terminal) return '';
+  // Perder en solo no abre el panel al instante: durante la ventana de muerte se ve
+  // la animación (colapso + cartel "GAME!") sobre el tablero, luego aparecen los
+  // resultados. Ganar (finished) no se difiere: la celebración ya es la pantalla.
+  if (state.status === 'gameover' && isSoloDeathAnimating()) return '';
   return renderSoloResultsOverlay(state);
 }
 

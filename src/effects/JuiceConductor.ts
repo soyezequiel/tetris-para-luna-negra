@@ -249,19 +249,51 @@ export class JuiceConductor {
     this.alive = false;
     this.audio.ko();
     this.fx.setDanger(0);
-    this.fx.addShake(28);
-    // Flash rojo más largo y popup que aguanta para que la derrota se aprecie.
-    this.fx.flashBoard(P.danger, 0.8, 0.9);
+    this.fx.addShake(30);
+    // Destello cálido + marco dorado encendido: el momento de derrota se celebra
+    // en oro, no en rojo de error (estilo "GAME!" del final de ronda).
+    this.fx.flashBoard(P.warn, 0.75, 0.7);
+    this.fx.boardGlow(P.gold, 1);
     const r = this.boardCenterRow();
-    this.fx.spawnBurst(r.x, r.y, 80, P.danger, { spd: 320, life: 1.1, size: 3.6 });
-    this.fx.spawnRing(r.x, r.y, P.danger, 280);
-    this.fx.showPopup('K.O.', { color: P.red, sub: 'TOP OUT', big: true, hold: 2.1 });
-    // Onda secundaria escalonada: prolonga el momento sin recargarlo de golpe.
-    window.setTimeout(() => {
-      this.fx.spawnRing(r.x, r.y, P.danger, 360);
-      this.fx.spawnBurst(r.x, r.y, 40, P.red, { spd: 220, life: 1.0, size: 3 });
-    }, 260);
+    // Confeti central + anillos de onda expansiva.
+    this.fx.spawnBurst(r.x, r.y, 90, P.gold, { spd: 320, life: 1.2, size: 3.4, up: 40 });
+    this.fx.spawnRing(r.x, r.y, P.gold, 300);
+    this.fx.spawnRing(r.x, r.y, P.warn, 230);
+    // Chorros de fuego en las 4 esquinas del tablero (escalonados ~0.7s).
+    this.fireCornerFountains();
+    // Cartel dorado "GAME!" a alpha pleno, con golpe de entrada y hold largo.
+    this.fx.showPopup('GAME!', { color: P.gold, big: true, hold: 2.0, fullAlpha: true });
     this.audio.enterSpectator();
+  }
+
+  /** Fuentes de chispas cálidas saliendo de las 4 esquinas del tablero, en
+   * pulsos escalonados, como los flares del final de ronda del video. */
+  private fireCornerFountains(): void {
+    const cols = this.fx.columns;
+    const rows = this.fx.rows;
+    const corners = [
+      this.fx.cellPoint(-0.5, rows - 0.5), // inferior izquierda
+      this.fx.cellPoint(cols - 0.5, rows - 0.5), // inferior derecha
+      this.fx.cellPoint(-0.5, -0.5), // superior izquierda
+      this.fx.cellPoint(cols - 0.5, -0.5), // superior derecha
+    ];
+    const warm = [P.gold, P.warn, P.red, 0xffe08a];
+    const pulses = 6;
+    for (let i = 0; i < pulses; i += 1) {
+      window.setTimeout(() => {
+        for (const c of corners) {
+          const col = warm[(Math.random() * warm.length) | 0];
+          this.fx.spawnBurst(c.x, c.y, 14, col, {
+            spd: 200,
+            life: 0.9,
+            up: 240,
+            grav: 420,
+            size: 3,
+            shape: 'spark',
+          });
+        }
+      }, i * 110);
+    }
   }
 
   private onWin(): void {

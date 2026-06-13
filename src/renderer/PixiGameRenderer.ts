@@ -58,7 +58,7 @@ export class PixiGameRenderer {
   private lastLines = 0;
   private shakeFrames = 0;
   // Animación de derrota: -1 = inactiva; si no, frames transcurridos desde el top out.
-  // La dispara main.ts solo en online (playDeathAnimation), no en solo.
+  // La dispara main.ts al morir (playDeathAnimation), tanto en online como en solo.
   private deathFrame = -1;
   // Modo daltónico: cambia a la paleta Okabe–Ito, con tonos distinguibles entre
   // sí en los tipos de daltonismo más comunes. Lo sincroniza main.ts.
@@ -104,7 +104,7 @@ export class PixiGameRenderer {
   }
 
   // Dispara la animación de derrota estilo tetr.io sobre el tablero local. La usa
-  // main.ts al morir en online; en solo no se llama (el board no colapsa).
+  // main.ts al morir, tanto en online como en solo (el tablero colapsa).
   playDeathAnimation(): void {
     if (this.deathFrame >= 0) return;
     this.deathFrame = 0;

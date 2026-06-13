@@ -89,6 +89,7 @@ type Popup = {
   outDur: number;
   baseSize: number;
   active: boolean;
+  fullAlpha: boolean; // true: no se atenúa al 50% (carteles de derrota/victoria)
 };
 
 type Point = { x: number; y: number };
@@ -152,7 +153,7 @@ export class JuiceFX {
     subText.anchor.set(0.5);
     mainText.alpha = 0;
     subText.alpha = 0;
-    this.popup = { text: mainText, sub: subText, t: 0, hold: 0, inDur: 0, outDur: 0, baseSize: 64, active: false };
+    this.popup = { text: mainText, sub: subText, t: 0, hold: 0, inDur: 0, outDur: 0, baseSize: 64, active: false, fullAlpha: false };
 
     this.topOutText = new Text('', new TextStyle({
       fill: 0xff3b52,
@@ -326,7 +327,7 @@ export class JuiceFX {
     });
   }
 
-  showPopup(text: string, opts: { color?: number; sub?: string; big?: boolean; hold?: number } = {}): void {
+  showPopup(text: string, opts: { color?: number; sub?: string; big?: boolean; hold?: number; fullAlpha?: boolean } = {}): void {
     const col = opts.color ?? 0xffffff;
     const p = this.popup;
     p.baseSize = (opts.big ? 104 : 60) * Math.max(0.7, this.scale);
@@ -339,6 +340,7 @@ export class JuiceFX {
     p.inDur = 0.14;
     p.hold = opts.hold ?? (opts.big ? 0.48 : 0.28);
     p.outDur = 0.16;
+    p.fullAlpha = opts.fullAlpha ?? false;
     p.active = true;
   }
 
@@ -600,9 +602,11 @@ export class JuiceFX {
     }
     const s = (p.baseSize / 64) * scale;
     p.text.scale.set(s);
-    // 50% de transparencia: los carteles no deben tapar el tablero.
-    p.text.alpha = alpha * 0.5;
-    p.sub.alpha = p.sub.text ? alpha * 0.5 : 0;
+    // 50% de transparencia: los carteles no deben tapar el tablero. Excepción:
+    // carteles de derrota/victoria (fullAlpha) se ven plenos, como en el final.
+    const dim = p.fullAlpha ? 1 : 0.5;
+    p.text.alpha = alpha * dim;
+    p.sub.alpha = p.sub.text ? alpha * dim : 0;
     const ss = (p.baseSize / 64) * (0.9 + 0.1 * scale);
     p.sub.scale.set(ss);
   }
