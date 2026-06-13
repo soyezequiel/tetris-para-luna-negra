@@ -1332,6 +1332,9 @@ async function enterLunaNegraRoomFromInvite(
   roomId: string,
   options: { cleanUrl?: boolean } = {},
 ): Promise<void> {
+  pendingConfirmAction = null;
+  pendingLunaLaunchRequest = null;
+  bindingCapture = null;
   appMode = 'onlineMenu';
   settingsReturnMode = 'menu';
   input.releaseAll();
@@ -1599,14 +1602,7 @@ function handleLunaNegraWindowMessage(event: MessageEvent): void {
     clearLunaIdentity();
     return;
   }
-  void handleLunaLaunchRequest({
-    id: `msg-${Date.now()}`,
-    roomId: message.roomId,
-    inviteToken: message.inviteToken,
-    slug: 'TETRA',
-    title: 'TETRA',
-    gameUrl: window.location.href,
-  });
+  void enterLunaNegraRoomFromInvite(message.inviteToken, normalizeRoomId(message.roomId));
 }
 
 function parseLunaWindowMessage(

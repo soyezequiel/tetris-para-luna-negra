@@ -553,11 +553,9 @@ test.describe('TETRA browser flows', () => {
       }));
     });
 
-    await expect(page.getByRole('heading', { name: 'Te invitaron a ABC12345' })).toBeVisible();
-    await page.getByRole('button', { name: 'Unirme' }).click();
-
     await expect.poll(() => appMode(page)).toBe('roomLobby');
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ABC12345');
+    await expect(page.getByRole('heading', { name: 'Te invitaron a ABC12345' })).toBeHidden();
     await expect(page.getByText('SALA PRIVADA ABC12345')).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
   });
@@ -861,6 +859,24 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
   await page.route('**/api/health', async (route) => {
     requests.healthCount += 1;
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+
+  await page.route('**/api/luna-negra/session**', async (route) => {
+    const token = new URL(route.request().url()).searchParams.get('token') ?? 'Already Open';
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        identity: {
+          npub: 'npub-already-open',
+          pubkey: 'pubkey-already-open',
+          name: token === 'fake-session' ? 'Luna Player' : token,
+          avatarUrl: null,
+          gameId: 'tetra-game',
+        },
+        source: 'luna-negra',
+        serverNowMs: Date.now(),
+      }),
+    });
   });
 
   await page.route('**/api/bets/**', async (route) => {
