@@ -210,7 +210,9 @@ let runHistory = loadRunHistory();
 let appMode: AppMode = 'menu';
 let settingsReturnMode: AppMode = 'menu';
 let soloCountdownStartsAtMs = 0;
-let lastSoloCountdownSecondPlayed = -1;
+// Compartido por la cuenta regresiva solo y online: el último segundo cuyo sonido
+// ya se reprodujo, para no repetir el beep dentro del mismo segundo.
+let lastCountdownSecondPlayed = -1;
 let currentRunKind: RunKind = 'standard';
 let customTab: CustomTab = 'game';
 let gameFrame = 0;
@@ -1209,7 +1211,7 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
     } else {
       appMode = 'soloCountdown';
       soloCountdownStartsAtMs = performance.now() + 3000;
-      lastSoloCountdownSecondPlayed = -1;
+      lastCountdownSecondPlayed = -1;
     }
   } else {
     appMode = nextMode;
@@ -2456,6 +2458,7 @@ function resetOnlineRuntimeForNextRound(): void {
   onlineLastPeerBroadcastAt = 0;
   onlineLastKoBroadcastAt = 0;
   input.releaseAll();
+  lastCountdownSecondPlayed = -1;
   if (onlineRoom?.status === 'countdown' || onlineRoom?.status === 'playing') appMode = 'onlineCountdown';
 }
 
@@ -2840,7 +2843,14 @@ function syncOnline(): void {
   if (!onlineRoom) return;
   const now = performance.now();
   if (shouldPollOnline(now)) pollOnlineRoom();
-  if (appMode === 'onlineCountdown') maybeStartOnlineRun();
+  if (appMode === 'onlineCountdown') {
+    // Mismo sonido de cuenta regresiva que el solo, dirigido por el reloj del
+    // servidor (compartido por todos los jugadores de la sala).
+    if (onlineRoom.startsAtServerMs) {
+      playCountdownAudio(Math.max(0, onlineRoom.startsAtServerMs - onlineNowMs()));
+    }
+    maybeStartOnlineRun();
+  }
   ensureMigratedHostAuthority();
   // maybeStartOnlineRun() pudo haber arrancado la ronda nueva (motor fresco vía
   // startNewRun) en esta misma vuelta. El `state` recibido se capturó en loop()
@@ -3273,17 +3283,20 @@ function maybeStartOnlineRun(): void {
   startNewRun(onlineRoom.seed, 'onlinePlaying');
 }
 
+// Sonido de cuenta regresiva compartido por solo y online: un beep por cada
+// segundo (3, 2, 1) y un acorde de arranque al llegar a cero. Idempotente dentro
+// de un mismo segundo gracias a lastCountdownSecondPlayed.
+function playCountdownAudio(remainingMs: number): void {
+  const seconds = Math.ceil(remainingMs / 1000);
+  if (seconds === lastCountdownSecondPlayed) return;
+  lastCountdownSecondPlayed = seconds;
+  if (seconds > 0) sound.play('countdownTick');
+  else sound.play('countdownGo');
+}
+
 function updateSoloCountdown(): void {
   const remainingMs = Math.max(0, soloCountdownStartsAtMs - performance.now());
-  const seconds = Math.ceil(remainingMs / 1000);
-  if (seconds !== lastSoloCountdownSecondPlayed) {
-    lastSoloCountdownSecondPlayed = seconds;
-    if (seconds > 0) {
-      sound.play('lock');
-    } else {
-      sound.play('lineClear');
-    }
-  }
+  playCountdownAudio(remainingMs);
   if (remainingMs === 0) {
     appMode = 'playing';
     syncGameplayClockToCurrentFrame();

@@ -9,7 +9,9 @@ export type SoundCue =
   | 'tSpin'
   | 'finish'
   | 'gameOver'
-  | 'retry';
+  | 'retry'
+  | 'countdownTick'
+  | 'countdownGo';
 
 export interface MusicTrack {
   title: string;
@@ -111,7 +113,9 @@ export class SoundEngine {
 
     switch (cue) {
       case 'move':
-        this.tone(230, 0.018, 0.045, 'sine', 0.035);
+        // Tick crujiente: chasquido de ruido filtrado + cuerpo corto cuadrado.
+        this.noise(0.024, 0.05, 3200);
+        this.tone(190, 0.003, 0.026, 'square', 0.05);
         break;
       case 'rotate':
         this.tone(480, 0.022, 0.04, 'triangle', 0.09);
@@ -144,6 +148,14 @@ export class SoundEngine {
         break;
       case 'retry':
         this.chord([220, 440], 0.035, 0.07);
+        break;
+      case 'countdownTick':
+        // Beep arcade nítido por cada segundo (3, 2, 1).
+        this.tone(680, 0.006, 0.16, 'square', 0.11);
+        break;
+      case 'countdownGo':
+        // Acorde ascendente de arranque (¡YA!).
+        this.arpeggio([784, 1046, 1568], 0.05, 0.16);
         break;
     }
   }
