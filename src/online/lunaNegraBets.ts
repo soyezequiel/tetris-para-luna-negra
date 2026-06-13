@@ -143,7 +143,7 @@ function nonNegInt(value: unknown, fallback = 0): number {
   return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : fallback;
 }
 
-function normalizeDepositStatus(value: unknown): RoomBetParticipant['depositStatus'] {
+export function normalizeDepositStatus(value: unknown): RoomBetParticipant['depositStatus'] {
   const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
   // Luna Negra puede reportar el depósito confirmado con distintas palabras según
   // el endpoint; las tratamos todas como 'paid'.

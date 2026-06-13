@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { getWebhookSecret, refreshRoomBet } from '../../src/online/lunaNegraBets.js';
+import { getWebhookSecret, normalizeDepositStatus, refreshRoomBet } from '../../src/online/lunaNegraBets.js';
 import { normalizeRoomId } from '../../src/online/roomService.js';
 import { getRoomStore, handleApiError, handleNodeApi, sendJson } from '../../src/online/vercelApi.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -39,6 +39,18 @@ function roomIdFromPayload(payload: unknown): string | null {
   return value ? normalizeRoomId(value) : null;
 }
 
+// Decide si un evento `deposit.*` confirma el pago. Luna Negra usa distintos
+// nombres de evento según cómo se pagó (in-app vs. invoice/LNURL/QR desde una
+// billetera externa); en vez de listar tipos exactos, derivamos el "pagado" del
+// estado real del payload (mismo vocabulario que normalizeDepositStatus) y, como
+// respaldo, de un patrón de tipo amplio. Evita marcar 'paid' en eventos de
+// depósito que NO son pago (p. ej. deposit.created/deposit.pending).
+function depositEventIsPaid(type: string, data: Record<string, unknown>): boolean {
+  const status = data.status ?? data.depositStatus ?? data.state;
+  if (status !== undefined) return normalizeDepositStatus(status) === 'paid';
+  return /deposit\.(paid|complete|completed|settled|confirmed|received|deposited|funded|succe)/.test(type);
+}
+
 export async function POST(request: Request): Promise<Response> {
   try {
     const rawBody = await request.text();
@@ -63,8 +75,8 @@ export async function POST(request: Request): Promise<Response> {
             if (room.bet) {
               const bet = { ...room.bet };
               const npub = typeof data.npub === 'string' ? data.npub : null;
-              
-              if ((type === 'deposit.paid' || type === 'deposit.completed' || type === 'deposit.settled') && npub) {
+
+              if (type.startsWith('deposit.') && npub && depositEventIsPaid(type, data)) {
                 bet.participants = bet.participants.map((p) => 
                   p.npub === npub ? { ...p, depositStatus: 'paid' } : p
                 );
