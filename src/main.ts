@@ -445,7 +445,13 @@ function loopBody(): void {
 // Arranca/limpia la fase de muerte online. Congela los datos del toast de KO en
 // el instante de morir y marca el inicio de la ventana de animación de derrota.
 function syncOnlineDeathPhase(state: GameState): void {
-  const dead = appMode === 'onlinePlaying'
+  // La ventana arranca jugando, pero DEBE sobrevivir a que la sala pase a
+  // 'finished' (appMode 'onlineResults'): en un 1v1 tu muerte cierra la ronda en el
+  // mismo frame, y si cortáramos la ventana ahí el panel de resultados taparía la
+  // animación al instante. La mantenemos viva durante onlineResults; el timer
+  // (ONLINE_DEATH_ANIM_MS) decide cuándo deja de animar, no la transición de modo.
+  const inOnlineRound = appMode === 'onlinePlaying' || appMode === 'onlineResults';
+  const dead = inOnlineRound
     && (state.status === 'gameover' || state.status === 'finished');
   if (!dead) {
     onlineDeathAnimStartedAt = null;
@@ -3500,7 +3506,13 @@ function renderScreenOverlay(state: GameState): string {
   if (appMode === 'settings') return renderSettingsOverlay();
   if (appMode === 'soloCountdown') return renderSoloCountdownOverlay();
   if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
-  if (appMode === 'onlineResults') return renderOnlineResultsOverlay(state);
+  if (appMode === 'onlineResults') {
+    // Mientras corre la ventana de muerte, el tablero local sigue dibujándose con la
+    // animación de derrota ("GAME!" + colapso); recién después aparecen los
+    // resultados. Así la animación se ve también cuando tu muerte cierra la ronda.
+    if (isOnlineDeathAnimating()) return '';
+    return renderOnlineResultsOverlay(state);
+  }
   // Online: perder no abre la pantalla de resultados de solo. El banner de KO se
   // dibuja en su propia capa persistente (koOverlayElement) para que no parpadee
   // con el redibujo por frame de los tableros rivales; aquí no devolvemos nada.
