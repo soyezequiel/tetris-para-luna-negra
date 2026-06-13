@@ -55,6 +55,13 @@ export class PixiGameRenderer {
   private boardColumns = DEFAULT_RULES.boardWidth;
   private visibleRows = DEFAULT_RULES.visibleRows;
   private hiddenRows = DEFAULT_RULES.hiddenRows;
+  // Geometría de los paneles laterales (HOLD/NEXT), en celdas. Se recalcula en layout()
+  // para que el tablero + ambos paneles entren siempre dentro del viewport.
+  private sideUnits = 5.2;
+  private gapUnits = 0.7;
+  private sideW = 0;
+  private holdX = 0;
+  private nextX = 0;
   private lastLines = 0;
   private shakeFrames = 0;
   // Animación de derrota: -1 = inactiva; si no, frames transcurridos desde el top out.
@@ -212,13 +219,27 @@ export class PixiGameRenderer {
       ? this.width > this.height ? 96 : 164
       : 0;
     const availableHeight = Math.max(360, this.height - touchControlsInset);
-    const horizontalBudget = this.width < 760 ? this.width * 0.58 : this.width * 0.2;
-    const verticalBudget = availableHeight * 0.86 / this.visibleRows;
-    this.cell = Math.max(15, Math.min(34, horizontalBudget / this.boardColumns, verticalBudget));
+
+    // En pantallas angostas los paneles laterales se compactan para dejar más espacio al tablero.
+    const compact = this.width < 640;
+    this.sideUnits = compact ? 3.6 : 5.2;
+    this.gapUnits = compact ? 0.5 : 0.7;
+
+    // El presupuesto horizontal debe contener el tablero MÁS los dos paneles laterales,
+    // de lo contrario HOLD/NEXT se salen del viewport (se recortaban en móvil).
+    const totalUnits = this.boardColumns + 2 * (this.sideUnits + this.gapUnits);
+    const horizMargin = this.width < 760 ? 0.99 : 0.94;
+    const horizontalCell = (this.width * horizMargin) / totalUnits;
+    const verticalCell = availableHeight * 0.86 / this.visibleRows;
+    this.cell = Math.max(12, Math.min(34, horizontalCell, verticalCell));
+
+    this.sideW = this.cell * this.sideUnits;
     const boardW = this.cell * this.boardColumns;
     const boardH = this.cell * this.visibleRows;
     this.boardX = Math.round(this.width / 2 - boardW / 2);
     this.boardY = Math.round(availableHeight / 2 - boardH / 2 + 8);
+    this.holdX = this.boardX - this.sideW - this.cell * this.gapUnits;
+    this.nextX = this.boardX + boardW + this.cell * this.gapUnits;
   }
 
   private drawBackground(): void {
@@ -253,9 +274,9 @@ export class PixiGameRenderer {
     this.drawAngledPanel(this.boardLayer, this.boardX, this.boardY, this.cell * this.boardColumns, this.cell * this.visibleRows, 0);
     this.drawGrid();
 
-    const sideW = this.cell * 5.2;
-    const holdX = this.boardX - sideW - this.cell * 0.7;
-    const nextX = this.boardX + this.cell * this.boardColumns + this.cell * 0.7;
+    const sideW = this.sideW;
+    const holdX = this.holdX;
+    const nextX = this.nextX;
     this.drawLabelPanel(this.sideLayer, 'HOLD', holdX, this.boardY, sideW, this.cell * 3.8);
     this.drawLabelPanel(this.sideLayer, 'NEXT', nextX, this.boardY, sideW, this.cell * Math.max(3.8, 1.55 + Math.max(1, DEFAULT_RULES.nextPreview) * 2.45));
     this.positionLabel(this.holdLabel, holdX, this.boardY);
@@ -297,13 +318,14 @@ export class PixiGameRenderer {
   }
 
   private drawSidePieces(state: GameState): void {
-    const sideW = this.cell * 5.2;
-    const holdX = this.boardX - sideW - this.cell * 0.7;
-    const nextX = this.boardX + this.cell * this.boardColumns + this.cell * 0.7;
+    const holdX = this.holdX;
+    const nextX = this.nextX;
+    // Centrado horizontal de la mini-pieza dentro del panel (ancho ~2.5 celdas a escala).
+    const holdInset = Math.max(0.5, (this.sideUnits - 2.5) / 2);
     if (state.status !== 'playing') return;
-    if (state.hold) this.drawMiniPiece(this.sideLayer, state.hold, holdX + this.cell * 1.1, this.boardY + this.cell * 1.25, 0.62);
+    if (state.hold) this.drawMiniPiece(this.sideLayer, state.hold, holdX + this.cell * holdInset, this.boardY + this.cell * 1.25, 0.62);
     state.next.forEach((piece, index) => {
-      this.drawMiniPiece(this.sideLayer, piece, nextX + this.cell * 1.05, this.boardY + this.cell * (1.3 + index * 2.45), 0.58);
+      this.drawMiniPiece(this.sideLayer, piece, nextX + this.cell * holdInset, this.boardY + this.cell * (1.3 + index * 2.45), 0.58);
     });
   }
 

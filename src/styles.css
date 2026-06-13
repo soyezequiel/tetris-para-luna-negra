@@ -4481,23 +4481,54 @@ canvas {
 
 @media (max-width: 900px) {
   .dash-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: var(--dash-topbar-h) auto 1fr auto;
+    /* minmax(0, 1fr) permite que la columna encoja por debajo del min-content de sus hijos;
+       con 1fr el nav de 4 botones forzaba el track a ~480px y todo desbordaba el viewport. */
+    grid-template-columns: minmax(0, 1fr);
+    /* 'main' en auto (no 1fr): la fila crece con el contenido del hero en vez de
+       quedar comprimida por el viewport y recortar el botón de JUGAR. */
+    grid-template-rows: var(--dash-topbar-h) auto auto auto;
     grid-template-areas:
       "topbar"
       "sidebar"
       "main"
       "room";
     overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .dash-hero {
+    overflow: visible;
+  }
+  .dash-hero-card {
+    /* El contenido del hero va posicionado al fondo; sin una altura mínima la card
+       queda muy baja en este rango y recorta el eyebrow + título (overflow:hidden). */
+    min-height: 280px;
+  }
+  /* Cada área debe poder encoger; si no, su contenido impone un ancho mínimo y recorta. */
+  .dash-topbar,
+  .dash-sidebar,
+  .dash-hero,
+  .dash-room {
+    min-width: 0;
   }
   .dash-sidebar {
     border-right: none;
     border-bottom: 1px solid var(--dash-border);
     flex-direction: row;
-    padding: 10px 24px;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 10px 16px;
   }
   .dash-sidebar-nav {
     flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    width: 100%;
+  }
+  .dash-sidebar-btn {
+    width: auto;
+    flex: 0 1 auto;
+    align-self: center;
+    padding: 10px 12px;
   }
   .dash-sidebar-footer {
     display: none;
@@ -4506,6 +4537,36 @@ canvas {
     border-left: none;
     border-top: 1px solid var(--dash-border);
     max-height: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .dash-hero {
+    padding: 16px;
+  }
+  .dash-hero-card {
+    /* El contenido va posicionado en el fondo; sin una altura mínima la card queda
+       demasiado baja en móvil y recorta el eyebrow + título (overflow:hidden). */
+    min-height: 270px;
+  }
+  .dash-hero-content {
+    left: 18px;
+    right: 18px;
+    bottom: 18px;
+  }
+  .dash-hero-title {
+    font-size: clamp(34px, 11vw, 54px);
+  }
+  .dash-hero-cta {
+    flex-wrap: wrap;
+  }
+  .dash-topbar {
+    gap: 12px;
+    padding: 0 14px;
+  }
+  .dash-logo {
+    font-size: 21px;
+    letter-spacing: 2px;
   }
 }
 
