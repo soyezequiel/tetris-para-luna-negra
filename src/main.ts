@@ -392,7 +392,7 @@ window.setInterval(() => {
   if (lunaIdentity && isPlayerActivelyPresent()) void syncLunaPresence();
 }, LUNA_PRESENCE_HEARTBEAT_MS);
 window.setInterval(() => {
-  if (shouldAutoRefreshPublicRooms()) void refreshPublicRooms();
+  if (shouldAutoRefreshPublicRooms()) void refreshPublicRooms({ silent: true });
 }, ONLINE_ROOMS_AUTO_REFRESH_MS);
 window.setInterval(() => {
   void syncLunaLaunchRequest();
@@ -1810,9 +1810,23 @@ function shouldAutoRefreshPublicRooms(): boolean {
   return ROOM_BROWSER_APP_MODES.includes(appMode);
 }
 
-async function refreshPublicRooms(): Promise<void> {
-  if (onlineBusy) return;
-  onlineBusy = true;
+// El refresco automático de salas (cada ONLINE_ROOMS_AUTO_REFRESH_MS) corre en
+// segundo plano y NO debe togglear `onlineBusy`: ese flag deshabilita los botones
+// del panel, así que prenderlo/apagarlo en cada ciclo cambia el HTML del overlay
+// y fuerza un repintado completo (recreando los <img> de avatar) → el panel
+// "SALA ONLINE" parpadea. El modo silencioso usa su propio guard de concurrencia
+// para no tocar el HTML renderizado; solo repinta si los datos realmente cambian.
+let publicRoomsRefreshInFlight = false;
+
+async function refreshPublicRooms(options: { silent?: boolean } = {}): Promise<void> {
+  const silent = options.silent === true;
+  if (silent) {
+    if (onlineBusy || publicRoomsRefreshInFlight) return;
+    publicRoomsRefreshInFlight = true;
+  } else {
+    if (onlineBusy) return;
+    onlineBusy = true;
+  }
   try {
     const response = await onlineClient.listPublicRooms(publicRoomFilters());
     syncOnlineClock(response.serverNowMs);
@@ -1821,7 +1835,8 @@ async function refreshPublicRooms(): Promise<void> {
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
-    onlineBusy = false;
+    if (silent) publicRoomsRefreshInFlight = false;
+    else onlineBusy = false;
   }
 }
 
