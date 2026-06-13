@@ -2193,19 +2193,12 @@ function roomInviteLinkRecentlyCopied(): boolean {
   return Date.now() - roomInviteLinkCopiedAt < 2200;
 }
 
-// Copia (o comparte en móvil) el link de invitación de la sala activa.
+// Copia el link de invitación de la sala activa al portapapeles. Sin diálogo de
+// "compartir" del sistema: copia directo y muestra el feedback en el botón.
 function shareRoomInviteLink(): void {
   if (!onlineRoom) return;
-  const link = buildRoomInviteLink(onlineRoom.id);
   roomInviteLinkCopiedAt = Date.now();
-  const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
-  if (typeof nav.share === 'function') {
-    void nav.share({ title: 'Tetra', text: `Unite a mi sala ${onlineRoom.id}`, url: link }).catch(() => {
-      void copyToClipboard(link);
-    });
-    return;
-  }
-  void copyToClipboard(link);
+  void copyToClipboard(buildRoomInviteLink(onlineRoom.id));
 }
 
 async function wakeUpServer(): Promise<void> {
