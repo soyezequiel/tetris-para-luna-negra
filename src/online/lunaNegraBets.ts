@@ -31,7 +31,16 @@ interface LunaBetDetail extends LunaEconomics {
   status?: string;
   potSats?: number;
   depositDeadline?: string | null;
-  participants?: Array<{ npub: string; depositStatus?: string; payoutSats?: number | null }>;
+  depositsReceived?: number;
+  depositsTotal?: number;
+  participants?: Array<{
+    npub: string;
+    depositStatus?: string;
+    payoutSats?: number | null;
+    bolt11?: string | null;
+    lnurl?: string | null;
+    payUrl?: string | null;
+  }>;
 }
 
 interface LunaDepositHandle {
@@ -267,14 +276,33 @@ function settlementErrorMessage(error: unknown): string {
   return code ? `${code}: ${message}` : message;
 }
 
+// GET /api/v1/bets/{id} ahora trae todo en una sola llamada: estado, economía y,
+// por participante, los handles de pago (bolt11/lnurl/payUrl). Derivamos la vista
+// `deposits` desde el detalle para no cambiar buildRoomBet.
 async function fetchDetailAndDeposits(
   config: LunaConfig,
   betId: string,
 ): Promise<{ detail: LunaBetDetail | null; deposits: LunaBetDeposits | null }> {
-  const [detail, deposits] = await Promise.all([
-    lunaFetch<LunaBetDetail>(config, `/api/v1/bets/${encodeURIComponent(betId)}`).catch(() => null),
-    lunaFetch<LunaBetDeposits>(config, `/api/v1/bets/${encodeURIComponent(betId)}/deposits`).catch(() => null),
-  ]);
+  const detail = await lunaFetch<LunaBetDetail>(
+    config,
+    `/api/v1/bets/${encodeURIComponent(betId)}`,
+  ).catch(() => null);
+  if (!detail) return { detail: null, deposits: null };
+  const deposits: LunaBetDeposits = {
+    status: detail.status,
+    potSats: detail.potSats,
+    potTargetSats: detail.potTargetSats,
+    depositsReceived: detail.depositsReceived,
+    depositsTotal: detail.depositsTotal,
+    depositDeadline: detail.depositDeadline,
+    deposits: (detail.participants ?? []).map((p) => ({
+      npub: p.npub,
+      depositStatus: p.depositStatus,
+      bolt11: p.bolt11 ?? null,
+      lnurl: p.lnurl ?? null,
+      payUrl: p.payUrl ?? null,
+    })),
+  };
   return { detail, deposits };
 }
 
