@@ -87,10 +87,9 @@ export class ReplayPlayback {
 
   private queueGarbageForFrame(frame: number): void {
     const garbage = this.replay.garbage;
-    while (this.garbageIndex < garbage.length && garbage[this.garbageIndex].queuedAtFrame < frame) {
-      this.garbageIndex += 1;
-    }
-    while (this.garbageIndex < garbage.length && garbage[this.garbageIndex].queuedAtFrame === frame) {
+    // Encolamos todo lo vencido (queuedAtFrame <= frame), no solo lo exacto: nada se
+    // pierde si quedó por debajo del primer frame. applyFrame es absoluto.
+    while (this.garbageIndex < garbage.length && garbage[this.garbageIndex].queuedAtFrame <= frame) {
       const event = garbage[this.garbageIndex];
       this.engine.queueGarbage(event.lines, event.holeSeed, event.frame, event.id);
       this.garbageIndex += 1;

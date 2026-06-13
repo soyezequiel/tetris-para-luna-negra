@@ -10,10 +10,11 @@
 
 import { nextAutoPlayInput } from '../app/autoPlay';
 import { GameEngine } from '../game/engine';
+import { createReplayLog, recordGarbage, recordInput, type ReplayLog } from '../game/replay';
 import { displayedElapsedFrames } from '../game/timing';
 import type { GameInput, GameRules, GameState, InputAction } from '../game/types';
 import type { OnlineClient } from '../online/client';
-import type { OnlinePeerKoMessage } from '../online/peerBroadcast';
+import type { OnlinePeerKoMessage, OnlinePeerReplayMessage } from '../online/peerBroadcast';
 import type { OnlineGameSnapshot, OnlineRoom } from '../online/protocol';
 
 const GAME_FRAME_MS = 1000 / 60;
@@ -39,6 +40,9 @@ export interface DevBotBridge {
   deliverAttackIntent(intent: DevBotAttackIntent): void;
   deliverSnapshot(playerId: string, game: OnlineGameSnapshot): void;
   commitKo(report: Omit<OnlinePeerKoMessage, 'type'>): void;
+  // Mismo camino que broadcastReplay del peer real: entrega el log determinista del
+  // bot al recolectar la repetición, una vez al terminar su ronda.
+  deliverReplay(report: Omit<OnlinePeerReplayMessage, 'type'>): void;
 }
 
 export interface DevBotConfig {
@@ -59,6 +63,10 @@ export class DevBotOpponent {
 
   private config: DevBotConfig;
   private engine: GameEngine | null = null;
+  // Log determinista de la ronda (seed/rules/inputs/garbage), igual que el `replay`
+  // local de main, para que el bot aparezca en la repetición multi-tablero.
+  private replay: ReplayLog | null = null;
+  private replayDelivered = false;
   private roundSeed: number | null = null;
   private botFrame = 0;
   private attackSequence = 0;
@@ -109,7 +117,9 @@ export class DevBotOpponent {
     const nowMs = this.bridge.getNowMs();
     if (nowMs < room.startsAtServerMs) return;
     if (!this.engine) {
-      this.engine = new GameEngine(room.seed, this.bridge.botRules());
+      const rules = this.bridge.botRules();
+      this.engine = new GameEngine(room.seed, rules);
+      this.replay = createReplayLog(room.seed, rules);
       this.botFrame = 0;
     }
     this.applyIncomingAttacks(room);
@@ -117,6 +127,7 @@ export class DevBotOpponent {
     this.advanceToServerFrame(room, nowMs);
     this.processEvents(room);
     this.maybeDeliverSnapshot(room, nowMs);
+    this.maybeDeliverReplay(room);
   }
 
   // Ataque sintético desde el panel dev: entra al host por el mismo camino que
@@ -150,6 +161,8 @@ export class DevBotOpponent {
   private resetRound(seed: number): void {
     this.roundSeed = seed;
     this.engine = null;
+    this.replay = null;
+    this.replayDelivered = false;
     this.botFrame = 0;
     this.attackSequence = 0;
     this.appliedAttackIds = new Set();
@@ -171,6 +184,15 @@ export class DevBotOpponent {
       if (attack.toPlayerId !== this.playerId || this.appliedAttackIds.has(attack.id)) continue;
       this.appliedAttackIds.add(attack.id);
       this.engine.queueGarbage(attack.lines, attack.holeSeed, attack.frame, attack.id);
+      if (this.replay) {
+        recordGarbage(this.replay, {
+          queuedAtFrame: this.botFrame,
+          frame: attack.frame,
+          lines: attack.lines,
+          holeSeed: attack.holeSeed,
+          id: attack.id,
+        });
+      }
     }
   }
 
@@ -179,12 +201,18 @@ export class DevBotOpponent {
     const state = this.engine.getState();
     if (state.status !== 'playing') return;
     this.attackSequence += 1;
-    this.engine.queueGarbage(
-      state.board.length,
-      (this.botFrame + this.attackSequence * 31) >>> 0,
-      this.botFrame,
-      `${this.playerId}-topout-${this.attackSequence}`,
-    );
+    const holeSeed = (this.botFrame + this.attackSequence * 31) >>> 0;
+    const id = `${this.playerId}-topout-${this.attackSequence}`;
+    this.engine.queueGarbage(state.board.length, holeSeed, this.botFrame, id);
+    if (this.replay) {
+      recordGarbage(this.replay, {
+        queuedAtFrame: this.botFrame,
+        frame: this.botFrame,
+        lines: state.board.length,
+        holeSeed,
+        id,
+      });
+    }
   }
 
   private advanceToServerFrame(room: OnlineRoom, nowMs: number): void {
@@ -200,6 +228,9 @@ export class DevBotOpponent {
         const action = this.nextAction(state);
         if (action) inputs.push({ frame, action });
       }
+      // Inputs del bot generados con azar (mistakeRate): NO son reproducibles sin
+      // grabarlos, así que los registramos como el replay local de main.
+      if (this.replay) for (const input of inputs) recordInput(this.replay, input);
       state = this.engine.tick(frame, inputs);
       this.botFrame = frame;
     }
@@ -242,6 +273,24 @@ export class DevBotOpponent {
       // Última foto del tablero muerto para que el rival vea cómo quedó.
       this.bridge.deliverSnapshot(this.playerId, this.createSnapshot(room, state));
     }
+  }
+
+  // Entrega el log del bot una sola vez por ronda, cuando su partida terminó (KO)
+  // o la sala cerró (el bot sobrevivió). Espejo de maybeBroadcastOwnReplay de main.
+  private maybeDeliverReplay(room: OnlineRoom): void {
+    if (this.replayDelivered || !this.replay) return;
+    const status = this.engine?.getState().status;
+    const terminal = status === 'gameover' || status === 'finished' || room.status === 'finished';
+    if (!terminal) return;
+    this.replayDelivered = true;
+    this.bridge.deliverReplay({
+      playerId: this.playerId,
+      name: this.name,
+      seed: this.replay.seed,
+      rules: this.replay.rules,
+      inputs: this.replay.inputs,
+      garbage: this.replay.garbage,
+    });
   }
 
   private maybeDeliverSnapshot(room: OnlineRoom, nowMs: number): void {

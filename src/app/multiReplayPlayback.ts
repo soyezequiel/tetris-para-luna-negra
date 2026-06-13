@@ -44,8 +44,11 @@ class PlayerRunner {
     return new PlayerRunner(this.player);
   }
 
-  // Avanza este motor al frame global dado, si aún no terminó. Más allá de su
-  // endFrame o al tocar estado terminal, se congela: el tablero queda fijo.
+  // Avanza este motor al frame global dado, si aún no terminó. Se congela al tocar
+  // estado terminal (KO/clear). El sobreviviente nunca llega a terminal por sus
+  // inputs (ganó por aguante), así que también se congela pasado su último evento
+  // —pero solo cuando ya no le queda garbage pendiente, para no cortar el top-out
+  // antes de que la basura encolada caiga (applyFrame = frame + delay).
   advanceTo(frame: number): void {
     if (this.isFrozen(frame)) return;
     const inputs = this.inputsForFrame(frame);
@@ -54,7 +57,13 @@ class PlayerRunner {
   }
 
   private isFrozen(frame: number): boolean {
-    return frame > this.endFrame || this.engine.getState().status !== 'playing';
+    const state = this.engine.getState();
+    if (state.status !== 'playing') return true;
+    return frame > this.endFrame && state.stats.pendingGarbage === 0;
+  }
+
+  isFrozenAt(frame: number): boolean {
+    return this.isFrozen(frame);
   }
 
   private inputsForFrame(frame: number): GameInput[] {
@@ -70,8 +79,11 @@ class PlayerRunner {
 
   private queueGarbageForFrame(frame: number): void {
     const list = this.player.garbage;
-    while (this.garbageIndex < list.length && list[this.garbageIndex].queuedAtFrame < frame) this.garbageIndex += 1;
-    while (this.garbageIndex < list.length && list[this.garbageIndex].queuedAtFrame === frame) {
+    // Encolamos todo lo vencido (queuedAtFrame <= frame), no solo lo exacto: si un
+    // evento quedó por debajo del primer frame reproducido (p. ej. queuedAtFrame 0)
+    // igual entra. applyFrame = anchor.frame + delay es absoluto, así que encolarlo
+    // un toque tarde no cambia cuándo cae.
+    while (this.garbageIndex < list.length && list[this.garbageIndex].queuedAtFrame <= frame) {
       const event = list[this.garbageIndex];
       this.engine.queueGarbage(event.lines, event.holeSeed, event.frame, event.id);
       this.garbageIndex += 1;
@@ -85,7 +97,7 @@ class PlayerRunner {
       name: this.player.name,
       state,
       endFrame: this.endFrame,
-      finished: state.status !== 'playing' || globalFrame >= this.endFrame,
+      finished: this.isFrozenAt(globalFrame),
     };
   }
 }
@@ -109,8 +121,26 @@ export class MultiReplayPlayback {
 
   constructor(private readonly replay: MultiplayerReplay) {
     this.runners = replay.players.map((player) => new PlayerRunner(player));
-    // La línea de tiempo cubre al jugador que más duró.
-    this.target = this.runners.reduce((max, runner) => Math.max(max, runner.endFrame), 0);
+    // El fin real no es el último input: la basura entrante se aplica unos frames
+    // después (applyFrame = frame + delay) y el top-out resultante cae todavía más
+    // tarde. Simulamos hasta que TODOS los tableros se asientan (terminal o
+    // sobreviviente sin garbage pendiente) y usamos ese frame como objetivo; luego
+    // reconstruimos los motores para reproducir desde cero.
+    this.target = this.computeTarget();
+    this.runners = replay.players.map((player) => new PlayerRunner(player));
+  }
+
+  private computeTarget(): number {
+    const lastEvent = this.runners.reduce((max, runner) => Math.max(max, runner.endFrame), 0);
+    // Tope duro por si algún tablero nunca se asienta (no debería): evita un bucle
+    // infinito. 10s de cola alcanza de sobra para que caiga el garbage y el top-out.
+    const hardCap = lastEvent + 600;
+    let frame = 0;
+    while (frame < hardCap && !this.runners.every((runner) => runner.isFrozenAt(frame))) {
+      frame += 1;
+      for (const runner of this.runners) runner.advanceTo(frame);
+    }
+    return frame;
   }
 
   tick(): MultiReplayPlaybackSnapshot {

@@ -1834,6 +1834,11 @@ async function startDevBotMatch(): Promise<void> {
     commitKo: (report) => {
       void commitOnlineElimination(report);
     },
+    deliverReplay: (report) => {
+      // Mismo camino que onReplay del peer real: el bot no es un peer WebRTC, así
+      // que entrega su log por acá para aparecer en la repetición multi-tablero.
+      collectPeerReplay(report.playerId, { type: 'replay', ...report });
+    },
   }, onlineClient);
   try {
     await bot.join(onlineRoom.id);
@@ -2626,8 +2631,12 @@ function syncOnline(): void {
     if (isOnlineHost() && roomStillRunning && shouldPostOnlineProgress(now)) postOnlineProgress(liveState);
     if (liveState.status === 'finished' && !onlineResultSubmitted) postOnlineResult(liveState);
     if (liveState.status === 'gameover') postOnlineElimination(liveState);
-    maybeBroadcastOwnReplay(liveState);
   }
+  // FUERA del bloque anterior: un cliente NO-host que muere y pasa a 'onlineResults'
+  // deja de entrar ahí, pero su partida ya terminó y todavía sigue conectado como
+  // espectador. Difundimos su replay igual (idempotente por flag) para que el host
+  // y el resto lo reciban; si no, solo se vería el tablero del host.
+  maybeBroadcastOwnReplay(liveState);
 }
 
 // Mientras el host juega, la simulación autoritativa avanza con su gameFrame.
@@ -3121,12 +3130,17 @@ function broadcastOnlineSnapshot(state: GameState): void {
   }
 }
 
-// Difunde mi log de replay una sola vez por ronda, en cuanto mi partida termina
-// (KO o victoria). Los canales peer siguen abiertos mientras la sala no cierra,
-// así que muertos/espectadores también lo reciben. Ver OnlineReplayCollector.
+// Difunde mi log de replay una sola vez por ronda. Se dispara cuando mi partida
+// termina (KO/victoria propia) O cuando la sala cierra: el ÚLTIMO en pie gana por
+// supervivencia y su status local sigue 'playing' (nunca topó ni completó), así
+// que sin el caso "sala finished" el ganador jamás grabaría su propio tablero y
+// solo se vería el del perdedor. Los canales peer siguen abiertos hasta que la
+// sala cierra, así que muertos/espectadores también lo reciben.
 function maybeBroadcastOwnReplay(state: GameState): void {
   if (currentRunKind !== 'online' || onlineReplayBroadcast) return;
-  if (state.status !== 'gameover' && state.status !== 'finished') return;
+  const localTerminal = state.status === 'gameover' || state.status === 'finished';
+  const roundOver = onlineRoom?.status === 'finished';
+  if (!localTerminal && !roundOver) return;
   onlineReplayBroadcast = true;
   const report: Omit<OnlinePeerReplayMessage, 'type'> = {
     playerId: onlinePlayer.id,

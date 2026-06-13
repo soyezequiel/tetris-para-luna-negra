@@ -196,9 +196,10 @@ describe('MultiReplayPlayback', () => {
     let snapshot = playback.snapshot();
     while (!snapshot.done) snapshot = playback.tick();
 
-    // El timeline cubre al jugador que más duró (último input de B: 120).
-    expect(snapshot.targetFrame).toBe(120);
-    expect(snapshot.frame).toBe(120);
+    // El timeline corre hasta que todos los tableros se asientan: el último input
+    // de B es 120, y B se congela el frame siguiente (sin garbage pendiente).
+    expect(snapshot.targetFrame).toBe(121);
+    expect(snapshot.frame).toBe(121);
     expect(snapshot.done).toBe(true);
 
     const boardA = snapshot.players.find((p) => p.playerId === 'a')!;

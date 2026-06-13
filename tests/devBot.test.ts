@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { DevBotOpponent, type DevBotAttackIntent, type DevBotConfig } from '../src/dev/devBotOpponent';
-import type { OnlinePeerKoMessage } from '../src/online/peerBroadcast';
+import type { OnlinePeerKoMessage, OnlinePeerReplayMessage } from '../src/online/peerBroadcast';
 import type { JoinRoomRequest, OnlineAttack, OnlineGameSnapshot, OnlineRoom } from '../src/online/protocol';
 import { createRoom, joinRoom, MemoryRoomStore, startRoom } from '../src/online/roomService';
+import { MultiReplayPlayback } from '../src/app/multiReplayPlayback';
 
 const HOST_ID = 'host-player-1';
 const GAME_FRAME_MS = 1000 / 60;
@@ -16,6 +17,7 @@ interface BotHarness {
   intents: DevBotAttackIntent[];
   kos: Omit<OnlinePeerKoMessage, 'type'>[];
   snapshots: OnlineGameSnapshot[];
+  replays: Omit<OnlinePeerReplayMessage, 'type'>[];
   /** Avanza el reloj del servidor y llama frame() las veces necesarias. */
   advance: (frames: number) => void;
   now: () => number;
@@ -30,6 +32,7 @@ async function createBotHarness(config: Partial<DevBotConfig> = {}): Promise<Bot
   const intents: DevBotAttackIntent[] = [];
   const kos: Omit<OnlinePeerKoMessage, 'type'>[] = [];
   const snapshots: OnlineGameSnapshot[] = [];
+  const replays: Omit<OnlinePeerReplayMessage, 'type'>[] = [];
   const bot = new DevBotOpponent({
     getRoom: () => room,
     getNowMs: () => now,
@@ -37,6 +40,7 @@ async function createBotHarness(config: Partial<DevBotConfig> = {}): Promise<Bot
     deliverAttackIntent: (intent) => intents.push(intent),
     deliverSnapshot: (_playerId, game) => snapshots.push(game),
     commitKo: (report) => kos.push(report),
+    deliverReplay: (report) => replays.push(report),
   }, {
     joinRoom: async (request: JoinRoomRequest) => {
       room = await joinRoom(store, request);
@@ -56,6 +60,7 @@ async function createBotHarness(config: Partial<DevBotConfig> = {}): Promise<Bot
     intents,
     kos,
     snapshots,
+    replays,
     advance: (frames) => {
       for (let advanced = 0; advanced < frames; advanced += FRAMES_PER_CALL) {
         now += Math.min(FRAMES_PER_CALL, frames - advanced) * GAME_FRAME_MS;
@@ -137,6 +142,39 @@ describe('DevBotOpponent', () => {
 
     harness.advance(600);
     expect(harness.kos.length).toBe(1);
+  });
+
+  it('delivers a replay log once that reproduces the bot board', async () => {
+    const harness = await createBotHarness();
+    harness.advance(FRAMES_PER_CALL);
+    harness.bot.forceTopOut();
+    harness.advance(3600);
+    const dead = harness.bot.getState()!;
+    expect(dead.status).toBe('gameover');
+
+    // Entrega exactamente un log, con inputs y la basura del top-out grabados.
+    expect(harness.replays.length).toBe(1);
+    const report = harness.replays[0];
+    expect(report.playerId).toBe(harness.bot.playerId);
+    expect(report.seed).toBe(harness.room().seed);
+    expect(report.inputs.length).toBeGreaterThan(0);
+    expect(report.garbage.length).toBeGreaterThan(0);
+
+    // El log reproduce el tablero final del bot al correrlo en el visor.
+    const playback = new MultiReplayPlayback({
+      version: 1, game: 'stack40', createdAt: 'x', roomId: harness.room().id,
+      seed: report.seed,
+      players: [{ playerId: report.playerId, name: report.name, seed: report.seed, rules: report.rules, inputs: report.inputs, garbage: report.garbage }],
+    });
+    let snap = playback.snapshot();
+    while (!snap.done) snap = playback.tick();
+    const board = snap.players[0].state;
+    expect(board.status).toBe('gameover');
+    expect(board.board).toEqual(dead.board);
+
+    // No se reentrega en frames posteriores.
+    harness.advance(600);
+    expect(harness.replays.length).toBe(1);
   });
 
   it('starts a fresh engine when the room reopens with a new seed', async () => {
