@@ -143,6 +143,10 @@ const ONLINE_BACKGROUND_SYNC_MS = 1000;
 // animación de derrota (estilo tetr.io); luego se oculta y paso a espectador.
 const ONLINE_DEATH_ANIM_MS = 2000;
 const GAME_FRAME_MS = 1000 / 60;
+// Umbral de catch-up en solo/offline: por encima de ~0.5 s de frames acumulados
+// asumimos que la pestaña estuvo en segundo plano (rAF congelado) y reanclamos el
+// reloj en vez de fast-forwardear la gravedad. Un hitch normal queda por debajo.
+const MAX_OFFLINE_RESUME_FRAMES = 30;
 const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
@@ -339,7 +343,28 @@ try { autoPlayAccessGranted = localStorage.getItem(AUTO_PLAY_ACCESS_STORAGE) ===
   console.log('autoplay unlocked');
 };
 
+// Scheduler del bucle principal. Por defecto se ancla a requestAnimationFrame,
+// pero es intercambiable: en DEV (stack40.useTimerLoop) se cambia a un timer para
+// poder correr/observar el flujo —incluido el multijugador vs bot— en una pestaña
+// en segundo plano o headless, donde el navegador congela rAF.
+let scheduleNextFrame: (cb: FrameRequestCallback) => void = (cb) => {
+  requestAnimationFrame(cb);
+};
+
+// Envoltorio resiliente: si un frame lanza, lo registramos pero SIEMPRE volvemos a
+// agendar el siguiente. Antes, una excepción en cualquier paso por-frame mataba el
+// bucle entero de forma permanente y silenciosa (juego congelado, sin error visible).
 function loop(): void {
+  try {
+    loopBody();
+  } catch (error) {
+    console.error('[loop] error en el frame; continúo con el siguiente', error);
+  } finally {
+    scheduleNextFrame(loop);
+  }
+}
+
+function loopBody(): void {
   const beforeState = engine.getState();
   const canAdvanceThisLoop = !hasBlockingModal() && canAdvanceGame(appMode, beforeState.status);
   if (!canAdvanceThisLoop) syncGameplayClockToCurrentFrame();
@@ -364,7 +389,6 @@ function loop(): void {
     const snapshot = playback.tick();
     renderer.render(snapshot.state);
     renderOverlay(snapshot.state);
-    requestAnimationFrame(loop);
     return;
   }
 
@@ -407,7 +431,6 @@ function loop(): void {
   if (!isOnlineSpectating()) renderer.render(state);
   juice.frame(state); // peligro por altura de pila + transiciones KO/Win
   renderOverlay(state);
-  requestAnimationFrame(loop);
 }
 
 // Arranca/limpia la fase de muerte online. Congela los datos del toast de KO en
@@ -488,7 +511,18 @@ Object.assign(window, {
     startNewRun,
     exportReplay,
     importReplayText,
-    ...(import.meta.env.DEV ? { getDevBot: () => devBotMatch } : {}), // BOT DEV
+    ...(import.meta.env.DEV ? { // BOT DEV
+      getDevBot: () => devBotMatch,
+      // Cambia el bucle a un timer en vez de requestAnimationFrame para poder correr
+      // y observar el flujo (incluido el multijugador vs bot) en una pestaña en
+      // segundo plano/headless, donde el navegador congela rAF. Arranca un frame
+      // de inmediato para reanimar el bucle si el rAF pendiente quedó congelado.
+      useTimerLoop: () => {
+        scheduleNextFrame = (cb) => { window.setTimeout(() => cb(performance.now()), 16); };
+        scheduleNextFrame(loop);
+        return 'loop sobre setTimeout';
+      },
+    } : {}),
   },
 });
 
@@ -510,11 +544,25 @@ function targetGameplayFrame(now = performance.now()): number {
   // puede no producir frame nuevo (candidateFrame === gameFrame); loop() detecta ese
   // caso y conserva los inputs recolectados hasta el próximo tick real.
   if (appMode === 'onlinePlaying' && onlineRoom?.startsAtServerMs) {
+    // Online: el frame SIEMPRE se ancla al reloj del servidor, incluso tras un stall
+    // largo. Host y cliente deben compartir la línea de frames (ver arriba), y en un
+    // "último en pie" irse a segundo plano y volver con la gravedad/garbage al día es
+    // parte de la competencia: no lo clampeamos.
     const serverFrames = Math.floor((onlineNowMs() - onlineRoom.startsAtServerMs) / GAME_FRAME_MS);
     return resolveGameplayFrame(gameFrame, serverFrames);
   }
   const elapsedFrames = Math.floor((now - gameClockOriginMs) / GAME_FRAME_MS);
-  return resolveGameplayFrame(gameFrame, elapsedFrames);
+  const target = resolveGameplayFrame(gameFrame, elapsedFrames);
+  // Solo/offline: si la pestaña estuvo en segundo plano o congelada, rAF se detiene y
+  // al volver habríamos acumulado cientos de frames. Simularlos todos de golpe hace
+  // fast-forward de la gravedad y topa al jugador que ni estaba mirando. Como en solo
+  // el tiempo perdido no cuenta, reanclamos el reloj al frame actual (pausa-al-perder-
+  // foco) en vez de recuperar el hueco. Un hitch normal (GC, <0.5 s) sí se recupera.
+  if (target - gameFrame > MAX_OFFLINE_RESUME_FRAMES) {
+    gameClockOriginMs = now - gameFrame * GAME_FRAME_MS;
+    return gameFrame;
+  }
+  return target;
 }
 
 function syncGameplayClockToCurrentFrame(): void {
@@ -3865,7 +3913,20 @@ function renderOnlineResultsOverlay(_state: GameState): string {
   const bet = room?.bet;
   const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded') ? bet.netPayoutSats : null;
   const isHost = room ? room.hostPlayerId === onlinePlayer.id : false;
-  const rows = ranked.map((player, index) => renderOnlineRankingRow(player, index, winnerSats)).join('');
+  // Frame en que terminó la partida = el del último rival eliminado. El ganador sigue
+  // vivo, así que su elapsedFrames quedó congelado en su último snapshot y puede ser
+  // MENOR al de quien eliminó; mostrarlo crudo hacía que el "último en pie" figurara
+  // sobreviviendo menos que su víctima. El ganador sobrevivió hasta este frame.
+  const survivalFrameOf = (p: OnlinePlayer) => p.eliminatedAtFrame ?? p.elapsedFrames;
+  const matchEndFrame = ranked.reduce((max, p) => Math.max(max, survivalFrameOf(p)), 0);
+  const rows = ranked
+    .map((player, index) => {
+      const survivedFrames = index === 0
+        ? Math.max(matchEndFrame, player.elapsedFrames)
+        : survivalFrameOf(player);
+      return renderOnlineRankingRow(player, index, winnerSats, survivedFrames);
+    })
+    .join('');
   // La ronda puede seguir corriendo (p. ej. quedé eliminado y el server aún no
   // cerró la sala): nadie puede relanzar hasta que termine de verdad.
   const roundOver = room?.status === 'finished';
@@ -3897,10 +3958,15 @@ function renderOnlineResultsOverlay(_state: GameState): string {
   `;
 }
 
-function renderOnlineRankingRow(player: OnlinePlayer, index: number, winnerSats: number | null): string {
+function renderOnlineRankingRow(
+  player: OnlinePlayer,
+  index: number,
+  winnerSats: number | null,
+  survivedFrames: number,
+): string {
   const isWinner = index === 0;
   const isSelf = player.id === onlinePlayer.id;
-  const time = formatFrames(player.elapsedFrames);
+  const time = formatFrames(survivedFrames);
   const status = isWinner
     ? `Última en pie · sobrevivió ${time}`
     : `Eliminado · sobrevivió ${time}`;
@@ -3924,6 +3990,7 @@ function renderOnlineRankingRow(player: OnlinePlayer, index: number, winnerSats:
       <div class="online-results-metrics">
         <div class="online-results-metric"><span>KO</span><strong class="is-amber">${player.koCount}</strong></div>
         <div class="online-results-metric"><span>LÍNEAS</span><strong>${player.lines}</strong></div>
+        <div class="online-results-metric"><span>ENVIÓ</span><strong>${player.sentGarbage}</strong></div>
         <div class="online-results-metric"><span>SATS</span><strong class="${isWinner && winnerSats ? 'is-green' : 'is-muted'}">${sats}</strong></div>
       </div>
     </div>

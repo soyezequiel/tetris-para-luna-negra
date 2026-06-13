@@ -3597,7 +3597,9 @@ canvas {
 
 .online-results-metrics {
   display: flex;
-  gap: 22px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px 18px;
   flex: 0 0 auto;
 }
 
@@ -3628,6 +3630,22 @@ canvas {
 .online-results-metric strong.is-amber { color: #f59e0b; }
 .online-results-metric strong.is-green { color: var(--dash-success); }
 .online-results-metric strong.is-muted { color: rgba(247, 247, 242, 0.4); }
+
+/* En pantallas angostas las 4 métricas no caben junto a la identidad: dejamos que la
+   fila envuelva y las métricas pasen a una segunda línea, repartidas a lo ancho. */
+@media (max-width: 560px) {
+  .online-results-row { flex-wrap: wrap; }
+  .online-results-metrics {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 10px 16px;
+  }
+  .online-results-metric {
+    min-width: 0;
+    flex: 1 1 0;
+    align-items: flex-start;
+  }
+}
 
 .online-results-actions {
   display: flex;
