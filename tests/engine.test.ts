@@ -1686,7 +1686,7 @@ describe('core stacker engine', () => {
 
       const defaultUrl = await lunaNegraApiGet(new Request('http://local/api/luna-negra/login-url'));
       expect(defaultUrl.status).toBe(200);
-      expect(await defaultUrl.json()).toMatchObject({ url: 'https://luna.example/game/tetris' });
+      expect(await defaultUrl.json()).toMatchObject({ url: 'https://luna.example/game/tetris-beta' });
 
       process.env.LUNA_NEGRA_GAME_SLUG = 'tetra-test';
       const customUrl = await lunaNegraApiGet(new Request('http://local/api/luna-negra/login-url'));
