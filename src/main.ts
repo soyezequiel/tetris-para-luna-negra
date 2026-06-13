@@ -986,6 +986,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-pay') {
     wakeUpBetDetection();
   }
+  if (action === 'online-bet-webln') {
+    void payOnlineBetWithExtension(control.dataset.invoice ?? '');
+  }
   if (action === 'online-bet-copy') {
     copyToClipboard(control.dataset.copy ?? '');
     wakeUpBetDetection();
@@ -2175,6 +2178,44 @@ async function copyToClipboard(text: string): Promise<void> {
     await navigator.clipboard.writeText(text);
   } catch {
     // Clipboard puede estar bloqueado; el usuario puede copiar manualmente.
+  }
+}
+
+// Proveedor WebLN inyectado por extensiones como Alby (alby-extension). Permite
+// pagar un invoice Lightning con un click, sin escanear el QR ni salir del juego.
+interface WebLNProvider {
+  enable(): Promise<void>;
+  sendPayment(bolt11: string): Promise<{ preimage: string }>;
+}
+
+function getWebLNProvider(): WebLNProvider | null {
+  const provider = (window as unknown as { webln?: WebLNProvider }).webln;
+  return provider && typeof provider.sendPayment === 'function' ? provider : null;
+}
+
+// Paga el depósito de la apuesta con la extensión WebLN (Alby u otra). El éxito
+// se confirma por el polling normal del estado de la apuesta (depositStatus →
+// paid); acá solo disparamos el pago y aceleramos la detección.
+async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
+  if (!bolt11 || onlineBetBusy) return;
+  const provider = getWebLNProvider();
+  if (!provider) {
+    onlineError = 'No se detectó una extensión Lightning (instalá Alby) o habilitá WebLN.';
+    return;
+  }
+  onlineBetBusy = true;
+  try {
+    await provider.enable();
+    await provider.sendPayment(bolt11);
+    onlineError = null;
+    wakeUpBetDetection();
+  } catch (error) {
+    // El usuario pudo cancelar el popup de la extensión, o el pago falló.
+    onlineError = error instanceof Error && error.message
+      ? `No se pudo pagar con la extensión: ${error.message}`
+      : 'No se pudo pagar con la extensión.';
+  } finally {
+    onlineBetBusy = false;
   }
 }
 
@@ -4789,6 +4830,7 @@ function renderOnlineBetPanel(host: boolean): string {
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
         ${myEntry.bolt11 ? renderBetInvoiceQr(myEntry.bolt11) : ''}
         <div class="online-bet-deposit-actions">
+          ${myEntry.bolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myEntry.bolt11)}"${onlineBetBusy ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : ''}
           ${myEntry.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
           ${myEntry.bolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
           ${myEntry.lnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.lnurl)}">Copiar LNURL</button>` : ''}
