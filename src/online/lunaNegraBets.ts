@@ -238,6 +238,12 @@ function buildRoomBet(
   // No regresamos de un estado terminal; si no, traducimos el vocabulario de Luna
   // Negra y, como respaldo, marcamos 'settled' cuando ya reportamos el resultado y
   // el ganador tiene un payout efectivo (la palabra de estado puede no llegarnos).
+  const paidParticipants = participants.filter((p) => p.depositStatus === 'paid').length;
+  // Un depósito ya confirmado (p. ej. por el webhook de Luna) es monótono: si
+  // todos los participantes ya pagaron, la apuesta está fondeada y NO debe volver
+  // a 'pending_deposits' solo porque el GET de Luna llegue cacheado/atrasado (su
+  // cache de ~3 min hacía rebotar la UI a "pendiente" tras un pago ya detectado).
+  const allDepositsIn = participants.length > 0 && paidParticipants === participants.length;
   let status: RoomBet['status'];
   if (isTerminalBetStatus(previous?.status)) {
     status = previous!.status;
@@ -245,14 +251,30 @@ function buildRoomBet(
     const normalized = normalizeBetStatus(detail?.status ?? deposits?.status);
     const paidOut = previous?.resultReported === true
       && participants.some((p) => typeof p.payoutSats === 'number' && p.payoutSats > 0);
-    status = paidOut ? 'settled' : (normalized ?? previous?.status ?? 'pending_deposits');
+    if (paidOut) {
+      status = 'settled';
+    } else if (normalized && isTerminalBetStatus(normalized)) {
+      // Cancelación/expiración/reembolso reportado por Luna sí manda sobre el conteo local.
+      status = normalized;
+    } else if (allDepositsIn) {
+      status = 'funded';
+    } else {
+      status = normalized ?? previous?.status ?? 'pending_deposits';
+    }
   }
-  const depositsReceived = deposits?.depositsReceived ?? participants.filter((p) => p.depositStatus === 'paid').length;
+  // El recuento de depósitos también es monótono: el mayor entre lo que dice Luna,
+  // los pagos ya confirmados localmente y el conteo previo, para que un GET
+  // atrasado no muestre "0/N" tras un pago ya detectado.
+  const depositsReceived = Math.max(
+    nonNegInt(deposits?.depositsReceived),
+    paidParticipants,
+    nonNegInt(previous?.depositsReceived),
+  );
   return {
     betId: econ.betId,
     status,
     stakeSats: nonNegInt(detail?.stakeSats ?? econ.stakeSats ?? previous?.stakeSats),
-    potSats: nonNegInt(detail?.potSats ?? deposits?.potSats ?? previous?.potSats),
+    potSats: Math.max(nonNegInt(detail?.potSats ?? deposits?.potSats), nonNegInt(previous?.potSats)),
     potTargetSats: nonNegInt(detail?.potTargetSats ?? econ.potTargetSats ?? deposits?.potTargetSats ?? previous?.potTargetSats),
     feeSats: nonNegInt(detail?.feeSats ?? econ.feeSats ?? previous?.feeSats),
     feePct: Number.isFinite(Number(detail?.feePct ?? econ.feePct)) ? Number(detail?.feePct ?? econ.feePct) : (previous?.feePct ?? 0),

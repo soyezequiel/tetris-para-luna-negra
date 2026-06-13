@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { getWebhookSecret, normalizeDepositStatus, refreshRoomBet } from '../../src/online/lunaNegraBets.js';
+import { getWebhookSecret, refreshRoomBet } from '../../src/online/lunaNegraBets.js';
 import { normalizeRoomId } from '../../src/online/roomService.js';
 import { getRoomStore, handleApiError, handleNodeApi, sendJson } from '../../src/online/vercelApi.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -21,34 +21,19 @@ function verifySignature(rawBody: string, signature: string, secret: string): bo
   }
 }
 
+// El envelope de Luna Negra es estable: `{ id, type, created, data }`, y todo
+// evento de apuesta lleva `data.roomId` (con `data.metadata.roomId` de respaldo).
 function roomIdFromPayload(payload: unknown): string | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as Record<string, unknown>;
-  const directRoot = typeof p.roomId === 'string' ? p.roomId : null;
-  const metaRoot = typeof p.metadata === 'object' && p.metadata !== null
-    ? (p.metadata as Record<string, unknown>).roomId
+  const data = (payload as Record<string, unknown>).data;
+  if (typeof data !== 'object' || data === null) return null;
+  const d = data as Record<string, unknown>;
+  const meta = typeof d.metadata === 'object' && d.metadata !== null
+    ? (d.metadata as Record<string, unknown>).roomId
     : null;
-
-  const data = typeof p.data === 'object' && p.data !== null ? p.data as Record<string, unknown> : null;
-  const directData = data && typeof data.roomId === 'string' ? data.roomId : null;
-  const metaData = data && typeof data.metadata === 'object' && data.metadata !== null
-    ? (data.metadata as Record<string, unknown>).roomId
-    : null;
-
-  const value = directRoot ?? (typeof metaRoot === 'string' ? metaRoot : null) ?? directData ?? (typeof metaData === 'string' ? metaData : null);
+  const value = (typeof d.roomId === 'string' ? d.roomId : null)
+    ?? (typeof meta === 'string' ? meta : null);
   return value ? normalizeRoomId(value) : null;
-}
-
-// Decide si un evento `deposit.*` confirma el pago. Luna Negra usa distintos
-// nombres de evento según cómo se pagó (in-app vs. invoice/LNURL/QR desde una
-// billetera externa); en vez de listar tipos exactos, derivamos el "pagado" del
-// estado real del payload (mismo vocabulario que normalizeDepositStatus) y, como
-// respaldo, de un patrón de tipo amplio. Evita marcar 'paid' en eventos de
-// depósito que NO son pago (p. ej. deposit.created/deposit.pending).
-function depositEventIsPaid(type: string, data: Record<string, unknown>): boolean {
-  const status = data.status ?? data.depositStatus ?? data.state;
-  if (status !== undefined) return normalizeDepositStatus(status) === 'paid';
-  return /deposit\.(paid|complete|completed|settled|confirmed|received|deposited|funded|succe)/.test(type);
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -61,37 +46,13 @@ export async function POST(request: Request): Promise<Response> {
     }
     const payload = rawBody ? JSON.parse(rawBody) as { type?: string } : {};
     const type = typeof payload.type === 'string' ? payload.type : '';
+    // Cualquier evento de apuesta/depósito refresca la sala desde la API (sin
+    // caché tras el refactor, el GET ya viene fresco: no hace falta tocar el
+    // estado a mano desde el payload).
     if (type.startsWith('bet.') || type.startsWith('deposit.')) {
       const roomId = roomIdFromPayload(payload);
       if (roomId) {
         try {
-          const store = getRoomStore();
-          // Actualización optimista: Luna Negra puede cachear sus endpoints GET por ~3 minutos.
-          // Usamos el payload del webhook para destrabar la UI inmediatamente.
-          if (typeof (payload as any).data === 'object' && (payload as any).data !== null) {
-            const data = (payload as any).data as Record<string, any>;
-            const { loadRoom, setRoomBet } = await import('../../src/online/roomService.js');
-            const room = await loadRoom(store, roomId);
-            if (room.bet) {
-              const bet = { ...room.bet };
-              const npub = typeof data.npub === 'string' ? data.npub : null;
-
-              if (type.startsWith('deposit.') && npub && depositEventIsPaid(type, data)) {
-                bet.participants = bet.participants.map((p) => 
-                  p.npub === npub ? { ...p, depositStatus: 'paid' } : p
-                );
-                bet.depositsReceived = bet.participants.filter((p) => p.depositStatus === 'paid').length;
-                if (bet.depositsReceived >= bet.depositsTotal) bet.status = 'funded';
-              } else if (type === 'bet.funded') {
-                bet.status = 'funded';
-              } else if (type === 'bet.settled' || type === 'bet.resolved') {
-                bet.status = 'settled';
-              }
-              
-              await setRoomBet(store, roomId, bet, Date.now());
-            }
-          }
-          // Igual intentamos el refresh completo por si la API ya está fresca.
           await refreshRoomBet(getRoomStore(), roomId);
         } catch {
           // Best-effort: la sala puede haber expirado; igual respondemos 200.
