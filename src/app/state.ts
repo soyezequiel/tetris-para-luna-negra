@@ -13,6 +13,7 @@ export type AppMode =
   | 'replayPlayback'
   | 'onlineReplay'
   | 'library'
+  | 'leaderboard'
   | 'onlineMenu'
   | 'roomLobby'
   | 'onlineCountdown'

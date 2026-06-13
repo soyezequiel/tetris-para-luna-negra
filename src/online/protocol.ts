@@ -463,3 +463,28 @@ export interface PublicRoomsResponse {
   rooms: OnlineRoomSummary[];
   serverNowMs: number;
 }
+
+// ───────────────────────── Tabla global (leaderboard) ─────────────────────────
+// Ranking mundial del sprint de 40 líneas: el mejor (menor) tiempo de cada
+// jugador. El rank no se persiste; se deriva del orden de la lista.
+export interface LeaderboardEntry {
+  playerId: string;
+  npub: string | null;
+  name: string;
+  avatarUrl: string | null;
+  elapsedFrames: number;
+  createdAtServerMs: number;
+}
+
+export interface SubmitScoreRequest {
+  playerId: string;
+  name: string;
+  avatarUrl?: string | null;
+  npub?: string | null;
+  elapsedFrames: number;
+}
+
+export interface LeaderboardResponse {
+  entries: LeaderboardEntry[];
+  serverNowMs: number;
+}

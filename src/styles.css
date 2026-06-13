@@ -5640,3 +5640,69 @@ body.online-spectating #game-root {
     gap: 12px;
   }
 }
+
+/* ─────────────────────────── Top mundial (leaderboard) ─────────────────────────── */
+.leaderboard-note {
+  color: var(--dash-text-dim);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px 0;
+}
+
+.leaderboard-note--error {
+  color: #ff6b6b;
+}
+
+.leaderboard-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.028);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.leaderboard-row--me {
+  border-color: var(--dash-accent);
+  background: rgba(0, 229, 255, 0.08);
+}
+
+.leaderboard-rank {
+  min-width: 28px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--dash-text-dim);
+}
+
+.leaderboard-avatar {
+  flex: 0 0 auto;
+}
+
+.leaderboard-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.leaderboard-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--dash-accent);
+}

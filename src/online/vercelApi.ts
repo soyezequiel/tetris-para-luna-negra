@@ -1,5 +1,6 @@
 import { MemoryRoomStore, OnlineRoomError, RoomVersionConflictError, type LunaPresenceRecord, type RoomStore } from './roomService.js';
-import type { OnlineRoom } from './protocol.js';
+import { LEADERBOARD_MAX_ENTRIES, MemoryLeaderboardStore, type LeaderboardStore } from './leaderboard.js';
+import type { LeaderboardEntry, OnlineRoom } from './protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export const config = {
@@ -110,6 +111,89 @@ export function getRoomStore(): RoomStore {
   return globalThis.stack40MemoryRoomStore;
 }
 
+declare global {
+  // eslint-disable-next-line no-var
+  var stack40MemoryLeaderboardStore: MemoryLeaderboardStore | undefined;
+}
+
+/**
+ * Ranking mundial sobre Upstash: un sorted set con el mejor tiempo (menor = más
+ * rápido) de cada jugador, más un hash con los metadatos (nombre, avatar, npub).
+ * El sorted set ordena y acota el top; el hash guarda lo que no entra en el score.
+ */
+class UpstashLeaderboardStore implements LeaderboardStore {
+  constructor(
+    private readonly url: string,
+    private readonly token: string,
+  ) {}
+
+  async topSprint40(limit: number): Promise<LeaderboardEntry[]> {
+    const flat = await upstashCommand<string[] | null>(this.url, this.token, [
+      'ZRANGE', sprint40Key(), '0', String(Math.max(0, limit - 1)), 'WITHSCORES',
+    ]);
+    if (!Array.isArray(flat) || flat.length === 0) return [];
+    const members: string[] = [];
+    const scores = new Map<string, number>();
+    for (let index = 0; index < flat.length; index += 2) {
+      const member = flat[index];
+      members.push(member);
+      scores.set(member, Number(flat[index + 1]));
+    }
+    const metas = await upstashCommand<(string | null)[] | null>(this.url, this.token, [
+      'HMGET', sprint40MetaKey(), ...members,
+    ]);
+    return members.map((member, index) => (
+      parseLeaderboardEntry(member, scores.get(member) ?? 0, metas?.[index] ?? null)
+    ));
+  }
+
+  async submitSprint40(entry: LeaderboardEntry): Promise<void> {
+    await upstashCommand(this.url, this.token, [
+      'EVAL', LEADERBOARD_SUBMIT_SCRIPT, 2,
+      sprint40Key(), sprint40MetaKey(),
+      entry.playerId, String(entry.elapsedFrames), JSON.stringify(entry), String(LEADERBOARD_MAX_ENTRIES),
+    ]);
+  }
+}
+
+export function getLeaderboardStore(): LeaderboardStore {
+  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
+  if (url && token) return new UpstashLeaderboardStore(url, token);
+  globalThis.stack40MemoryLeaderboardStore ??= new MemoryLeaderboardStore();
+  return globalThis.stack40MemoryLeaderboardStore;
+}
+
+async function upstashCommand<T>(url: string, token: string, command: unknown[]): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(command),
+  });
+  const payload = await response.json() as UpstashResponse<T>;
+  if (!response.ok || payload.error) throw new Error(payload.error ?? 'Upstash command failed.');
+  return payload.result as T;
+}
+
+function parseLeaderboardEntry(playerId: string, elapsedFrames: number, metaJson: string | null): LeaderboardEntry {
+  let name = playerId;
+  let avatarUrl: string | null = null;
+  let npub: string | null = null;
+  let createdAtServerMs = 0;
+  if (metaJson) {
+    try {
+      const meta = JSON.parse(metaJson) as Partial<LeaderboardEntry>;
+      if (typeof meta.name === 'string') name = meta.name;
+      if (typeof meta.avatarUrl === 'string') avatarUrl = meta.avatarUrl;
+      if (typeof meta.npub === 'string') npub = meta.npub;
+      if (typeof meta.createdAtServerMs === 'number') createdAtServerMs = meta.createdAtServerMs;
+    } catch {
+      // Metadato corrupto: caemos al playerId como nombre.
+    }
+  }
+  return { playerId, npub, name, avatarUrl, elapsedFrames, createdAtServerMs };
+}
+
 export async function readJsonBody<T = Record<string, unknown>>(request: Request): Promise<T> {
   const text = await request.text();
   if (!text) return {} as T;
@@ -209,6 +293,36 @@ else
 end
 return 1
 `;
+
+// Guarda el resultado solo si mejora el mejor tiempo previo del jugador y poda el
+// sorted set (y su hash de metadatos) al top N, todo de forma atómica.
+const LEADERBOARD_SUBMIT_SCRIPT = `
+local key = KEYS[1]
+local meta = KEYS[2]
+local member = ARGV[1]
+local score = tonumber(ARGV[2])
+local cur = redis.call('ZSCORE', key, member)
+if cur ~= false and score >= tonumber(cur) then return 0 end
+redis.call('ZADD', key, score, member)
+redis.call('HSET', meta, member, ARGV[3])
+local max = tonumber(ARGV[4])
+if redis.call('ZCARD', key) > max then
+  local removed = redis.call('ZRANGE', key, max, -1)
+  for _, m in ipairs(removed) do
+    redis.call('ZREM', key, m)
+    redis.call('HDEL', meta, m)
+  end
+end
+return 1
+`;
+
+function sprint40Key(): string {
+  return 'stack40:leaderboard:sprint40';
+}
+
+function sprint40MetaKey(): string {
+  return 'stack40:leaderboard:sprint40:meta';
+}
 
 function roomKey(id: string): string {
   return `stack40:room:${id}`;

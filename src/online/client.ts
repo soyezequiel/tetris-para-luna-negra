@@ -7,10 +7,12 @@ import type {
   LeaveRoomRequest,
   LeaveRoomResponse,
   CreateBetRequest,
+  LeaderboardResponse,
   LunaNegraEnterRequest,
   LunaNegraEnterResponse,
   RoomBetActionRequest,
   OnlineErrorResponse,
+  SubmitScoreRequest,
   OnlineRoomResponse,
   PeerSignalRequest,
   ProgressRequest,
@@ -123,6 +125,17 @@ export class OnlineClient {
   listPublicRooms(filters: PublicRoomsFilters = {}): Promise<PublicRoomsResponse> {
     const query = filtersToQuery(filters);
     return this.get(`/public${query}`);
+  }
+
+  /** Top mundial del sprint de 40 líneas (mejor tiempo por jugador). */
+  getLeaderboard(limit?: number): Promise<LeaderboardResponse> {
+    const query = limit ? `?limit=${encodeURIComponent(limit)}` : '';
+    return this.get(`/api/leaderboard${query}`);
+  }
+
+  /** Reporta un tiempo de sprint terminado al ranking mundial. */
+  submitScore(request: SubmitScoreRequest): Promise<LeaderboardResponse> {
+    return this.post('/api/leaderboard', request);
   }
 
   private async get<T>(path: string): Promise<T> {
