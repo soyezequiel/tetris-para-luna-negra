@@ -55,7 +55,8 @@ export async function GET(request: Request): Promise<Response> {
       return sendJson(200, { rooms, serverNowMs: Date.now() });
     }
     if (action === 'state') {
-      const room = await getRoomState(getRoomStore(), queryParam(request, 'roomId'));
+      // playerId (opcional) = presencia: marca al que pollea como "sigue en la sala".
+      const room = await getRoomState(getRoomStore(), queryParam(request, 'roomId'), Date.now(), queryParam(request, 'playerId'));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     return sendMethodNotAllowed();

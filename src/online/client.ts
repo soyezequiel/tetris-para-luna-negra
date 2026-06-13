@@ -118,8 +118,9 @@ export class OnlineClient {
     return this.post('/signal', request);
   }
 
-  getRoomState(roomId: string): Promise<OnlineRoomResponse> {
-    return this.get(`/state?roomId=${encodeURIComponent(roomId)}`);
+  getRoomState(roomId: string, playerId?: string): Promise<OnlineRoomResponse> {
+    const presence = playerId ? `&playerId=${encodeURIComponent(playerId)}` : '';
+    return this.get(`/state?roomId=${encodeURIComponent(roomId)}${presence}`);
   }
 
   listPublicRooms(filters: PublicRoomsFilters = {}): Promise<PublicRoomsResponse> {

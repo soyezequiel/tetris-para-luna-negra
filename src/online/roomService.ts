@@ -49,6 +49,19 @@ export const PLAYER_STALE_MS = 10_000;
  * poll/progreso del host, así un host vivo nunca migra por una pausa pasajera.
  */
 export const HOST_STALE_MS = 15_000;
+/**
+ * Una sala se considera abandonada cuando NADIE mostró presencia (poll/heartbeat)
+ * en este lapso. Al leerla en ese estado se elimina, así no quedan salas vacías
+ * dando vueltas (p. ej. todos cerraron la pestaña sin salir). Holgado respecto al
+ * poll del cliente (~1s) para no borrar una sala con gente por una pausa pasajera.
+ */
+export const ROOM_ABANDONED_MS = 30_000;
+/**
+ * Cada cuánto, como mucho, refrescamos la presencia de un jugador que pollea su
+ * sala. Evita reescribir la sala en cada poll (1s) pero mantiene su timestamp muy
+ * por debajo de PLAYER_STALE_MS para que no parpadee como desconectado.
+ */
+const PRESENCE_REFRESH_MS = 6_000;
 export const ROOM_TTL_SECONDS = 2 * 60 * 60;
 export const MAX_PEER_SIGNALS_PER_ROOM = 200;
 export const MAX_ATTACKS_PER_ROOM = 300;
@@ -785,19 +798,54 @@ export async function listPublicRooms(
     const room = await store.getRoom(id);
     return room ? normalizeRoomShape(room) : null;
   }));
+  // Salas públicas abandonadas (nadie mostró presencia): se eliminan acá, que es
+  // el punto natural de GC (los clientes que navegan el lobby refrescan esta lista).
+  const abandoned: string[] = [];
   const visible = rooms
     .filter((room): room is OnlineRoom => room !== null && room.visibility === 'public')
+    .filter((room) => {
+      if (isRoomAbandoned(room, nowMs)) {
+        abandoned.push(room.id);
+        return false;
+      }
+      return true;
+    })
     .map((room) => applyStalePlayers(room, nowMs))
     .filter((room) => room.status === 'lobby' || room.status === 'countdown')
     .filter((room) => roomMatchesPublicFilters(room, filters));
+  for (const id of abandoned) await removeRoomEverywhere(store, id);
   return visible
     .map(roomSummary)
     .sort((a, b) => b.createdAtServerMs - a.createdAtServerMs);
 }
 
-async function getRoomStateOnce(store: RoomStore, roomId: string, nowMs = Date.now()): Promise<OnlineRoom> {
+/** Una sala está abandonada si nadie mostró presencia en ROOM_ABANDONED_MS. */
+function isRoomAbandoned(room: OnlineRoom, nowMs: number): boolean {
+  if (room.players.length === 0) return true;
+  return room.players.every((player) => nowMs - player.updatedAtServerMs > ROOM_ABANDONED_MS);
+}
+
+async function getRoomStateOnce(
+  store: RoomStore,
+  roomId: string,
+  nowMs = Date.now(),
+  presencePlayerId?: string | null,
+): Promise<OnlineRoom> {
   const room = await requireRoom(store, roomId);
   let changed = false;
+  let needsPersist = false;
+  // Presencia: quien pollea su sala "sigue ahí". Refrescamos su timestamp (con
+  // throttle para no reescribir en cada poll) así una sala con gente nunca se da
+  // por abandonada, aunque estén quietos en el lobby. Importante: NO movemos
+  // room.updatedAtServerMs por esto (eso enmascararía a un host caído ante
+  // applyHostFailover); solo persistimos el cambio del jugador.
+  if (presencePlayerId) {
+    const member = room.players.find((player) => player.id === presencePlayerId);
+    if (member && nowMs - member.updatedAtServerMs >= PRESENCE_REFRESH_MS) {
+      member.updatedAtServerMs = nowMs;
+      needsPersist = true;
+    }
+  }
   if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
     room.status = 'playing';
     changed = true;
@@ -805,10 +853,18 @@ async function getRoomStateOnce(store: RoomStore, roomId: string, nowMs = Date.n
   // El failover corre antes de marcar updatedAtServerMs: mide la inactividad del
   // host contra la última escritura real, no contra la transición de countdown.
   if (applyHostFailover(room, nowMs)) changed = true;
+  // Sala abandonada (chequeado tras refrescar la presencia del que pollea, así un
+  // miembro presente nunca borra su propia sala): se elimina y se responde como
+  // inexistente; los clientes manejan el 404 saliendo al menú.
+  if (isRoomAbandoned(room, nowMs)) {
+    await removeRoomEverywhere(store, room.id);
+    throw new OnlineRoomError('Room not found.', 404);
+  }
   if (changed) {
     room.updatedAtServerMs = nowMs;
-    await persistRoom(store, room);
+    needsPersist = true;
   }
+  if (needsPersist) await persistRoom(store, room);
   return applyStalePlayers(room, nowMs);
 }
 

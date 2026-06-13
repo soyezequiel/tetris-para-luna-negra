@@ -1463,7 +1463,7 @@ async function restoreOnlineRoomSession(): Promise<boolean> {
   }
 
   try {
-    const response = await onlineClient.getRoomState(stored.roomId);
+    const response = await onlineClient.getRoomState(stored.roomId, onlinePlayer.id);
     syncOnlineClock(response.serverNowMs);
     if (!response.room.players.some((player) => player.id === onlinePlayer.id)) {
       clearOnlineRoomSession();
@@ -2875,7 +2875,7 @@ async function pollOnlineRoom(): Promise<void> {
   onlinePollInFlight = true;
   onlineLastPollAt = performance.now();
   try {
-    const response = await onlineClient.getRoomState(onlineRoom.id);
+    const response = await onlineClient.getRoomState(onlineRoom.id, onlinePlayer.id);
     syncOnlineClock(response.serverNowMs);
     // Si ya no estoy entre los jugadores y la sala sigue en lobby, me expulsaron.
     if (

@@ -6,7 +6,9 @@ import {
   getRoomState,
   HOST_STALE_MS,
   joinRoom,
+  listPublicRooms,
   MemoryRoomStore,
+  ROOM_ABANDONED_MS,
   ROOM_START_DELAY_MS,
   RoomVersionConflictError,
   setPlayerReady,
@@ -257,6 +259,43 @@ describe('host failover on disconnect', () => {
     expect(recovered.status).toBe('finished');
     expect(recovered.winnerPlayerId).toBeNull();
     expect(recovered.players.find((player) => player.id === HOST_ID)?.status).toBe('eliminated');
+  });
+});
+
+describe('room abandonment cleanup', () => {
+  it('deletes a room that nobody polled within ROOM_ABANDONED_MS', async () => {
+    const store = new MemoryRoomStore();
+    const created = await createRoom(store, { playerId: HOST_ID, name: 'Host', visibility: 'private' }, 1_000_000);
+
+    await expect(
+      getRoomState(store, created.id, 1_000_000 + ROOM_ABANDONED_MS + 1),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(await store.getRoom(created.id)).toBeNull();
+  });
+
+  it('keeps the room alive while a member keeps polling (presence)', async () => {
+    const store = new MemoryRoomStore();
+    const created = await createRoom(store, { playerId: HOST_ID, name: 'Host', visibility: 'private' }, 1_000_000);
+
+    // Poll con presencia justo antes de expirar: refresca al host, sigue conectado.
+    const refreshed = await getRoomState(store, created.id, 1_000_000 + ROOM_ABANDONED_MS - 1, HOST_ID);
+    expect(refreshed.players.find((player) => player.id === HOST_ID)?.status).not.toBe('disconnected');
+
+    // Otro poll dentro de ROOM_ABANDONED_MS desde el anterior: la sala sigue viva.
+    const stillThere = await getRoomState(store, created.id, 1_000_000 + ROOM_ABANDONED_MS + 5, HOST_ID);
+    expect(stillThere.id).toBe(created.id);
+  });
+
+  it('removes abandoned public rooms from the listing', async () => {
+    const store = new MemoryRoomStore();
+    const fresh = await createRoom(store, { playerId: HOST_ID, name: 'Host', visibility: 'public' }, 1_030_000);
+    const stale = await createRoom(store, { playerId: GUEST_ID, name: 'Guest', visibility: 'public' }, 1_000_000);
+
+    const listed = await listPublicRooms(store, 1_000_000 + ROOM_ABANDONED_MS + 1, { matchType: 'custom' });
+
+    expect(listed.map((room) => room.id)).toContain(fresh.id);
+    expect(listed.map((room) => room.id)).not.toContain(stale.id);
+    expect(await store.getRoom(stale.id)).toBeNull();
   });
 });
 
