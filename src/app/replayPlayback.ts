@@ -19,6 +19,7 @@ export class ReplayPlayback {
   private engine: GameEngine;
   private frame = 0;
   private inputIndex = 0;
+  private garbageIndex = 0;
   private paused = false;
   private speed: PlaybackSpeed = 1;
   private validation: PlaybackValidation = 'pending';
@@ -51,6 +52,7 @@ export class ReplayPlayback {
     this.engine = new GameEngine(this.replay.seed, this.replay.rules);
     this.frame = 0;
     this.inputIndex = 0;
+    this.garbageIndex = 0;
     this.paused = false;
     this.validation = 'pending';
   }
@@ -76,7 +78,23 @@ export class ReplayPlayback {
     this.frame += 1;
     const inputs = this.inputsForFrame(this.frame);
     this.engine.tick(this.frame, inputs);
+    // Igual que en vivo: la basura se encola DESPUÉS del tick, en el frame en que
+    // llegó (queuedAtFrame). Su applyFrame = frame + delay la aplicará en un tick
+    // posterior, reproduciendo el mismo momento que la partida real.
+    this.queueGarbageForFrame(this.frame);
     this.validateIfDone();
+  }
+
+  private queueGarbageForFrame(frame: number): void {
+    const garbage = this.replay.garbage;
+    while (this.garbageIndex < garbage.length && garbage[this.garbageIndex].queuedAtFrame < frame) {
+      this.garbageIndex += 1;
+    }
+    while (this.garbageIndex < garbage.length && garbage[this.garbageIndex].queuedAtFrame === frame) {
+      const event = garbage[this.garbageIndex];
+      this.engine.queueGarbage(event.lines, event.holeSeed, event.frame, event.id);
+      this.garbageIndex += 1;
+    }
   }
 
   private inputsForFrame(frame: number): GameInput[] {

@@ -11,6 +11,7 @@ export type AppMode =
   | 'paused'
   | 'settings'
   | 'replayPlayback'
+  | 'onlineReplay'
   | 'library'
   | 'onlineMenu'
   | 'roomLobby'

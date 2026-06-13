@@ -1,6 +1,7 @@
 import type { ExportedReplay } from './replayExport';
 import { createRunSummary, type LineSplit, type RunSummary } from './runStats';
 import { DEFAULT_RULES } from '../game/rules';
+import type { ReplayGarbageEvent } from '../game/replay';
 import type { GameInput, GameRules, InputAction } from '../game/types';
 import { GAME_ACTIONS, normalizeInputSettings } from '../input/settings';
 
@@ -18,7 +19,7 @@ export function importReplayJson(raw: string): ReplayImportResult {
 
 export function importReplayValue(value: unknown): ReplayImportResult {
   if (!isObject(value)) return { ok: false, error: 'Replay file must contain an object.' };
-  if (value.version !== 1) return { ok: false, error: 'Replay version is not supported.' };
+  if (value.version !== 1 && value.version !== 2) return { ok: false, error: 'Replay version is not supported.' };
   if (value.game !== 'stack40') return { ok: false, error: 'Replay belongs to another game.' };
   if (!isUnsignedInteger(value.seed)) return { ok: false, error: 'Replay seed is missing or invalid.' };
 
@@ -30,6 +31,9 @@ export function importReplayValue(value: unknown): ReplayImportResult {
 
   const inputs = parseInputs(value.inputs);
   if (!inputs) return { ok: false, error: 'Replay inputs are missing or invalid.' };
+  // v1 no traía garbage; lo tratamos como partida sin basura entrante.
+  const garbage = parseGarbage(value.garbage);
+  if (!garbage) return { ok: false, error: 'Replay garbage is invalid.' };
   const summary = parseSummary(value.summary, result, inputs);
 
   const createdAt = typeof value.createdAt === 'string' && value.createdAt.length > 0
@@ -39,7 +43,7 @@ export function importReplayValue(value: unknown): ReplayImportResult {
   return {
     ok: true,
     replay: {
-      version: 1,
+      version: 2,
       game: 'stack40',
       createdAt,
       seed: value.seed,
@@ -48,6 +52,7 @@ export function importReplayValue(value: unknown): ReplayImportResult {
       result,
       summary,
       inputs,
+      garbage,
     },
   };
 }
@@ -187,6 +192,29 @@ function parseInputs(value: unknown): GameInput[] | null {
     inputs.push({ frame, action: action as InputAction });
   }
   return inputs.sort((a, b) => a.frame - b.frame);
+}
+
+// v1 carece de garbage (undefined) → []. Una lista presente debe ser válida; si
+// trae basura corrupta devolvemos null para rechazar el replay entero.
+function parseGarbage(value: unknown): ReplayGarbageEvent[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return null;
+  const garbage: ReplayGarbageEvent[] = [];
+  for (const item of value) {
+    if (!isObject(item)) return null;
+    // queuedAtFrame es nuevo; si falta (replay temprano) usamos frame como ancla.
+    const frame = readNonNegativeInteger(item.frame);
+    const queuedAtFrame = item.queuedAtFrame === undefined
+      ? frame
+      : readNonNegativeInteger(item.queuedAtFrame);
+    const lines = readPositiveInteger(item.lines);
+    const holeSeed = readNonNegativeInteger(item.holeSeed);
+    const id = typeof item.id === 'string' && item.id.length > 0 ? item.id : null;
+    if (frame === null || queuedAtFrame === null || lines === null || holeSeed === null || id === null) return null;
+    garbage.push({ queuedAtFrame, frame, lines, holeSeed, id });
+  }
+  // Orden de reaplicación = orden de encolado (queuedAtFrame); estable para mismos frames.
+  return garbage.sort((a, b) => a.queuedAtFrame - b.queuedAtFrame);
 }
 
 function parseSummary(value: unknown, result: ExportedReplay['result'], inputs: GameInput[]): RunSummary {

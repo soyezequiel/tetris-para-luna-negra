@@ -1,4 +1,5 @@
-import type { GameInput } from '../game/types';
+import type { ReplayGarbageEvent } from '../game/replay';
+import type { GameInput, GameRules } from '../game/types';
 import type { AttackRequest, OnlineGameSnapshot, OnlinePeerSignal, OnlinePeerSignalType, OnlineRoom } from './protocol';
 
 type SendSignal = (signal: {
@@ -35,6 +36,18 @@ export interface OnlinePeerInputMessage {
   seed?: number;
   inputs: GameInput[];
 }
+// Log de replay completo de un jugador, emitido una vez cuando su partida termina.
+// Cada cliente acumula los de todos para armar el replay multi-tablero (tetr.io).
+// Es self-contained: seed/rules/inputs/garbage reconstruyen el tablero determinista.
+export interface OnlinePeerReplayMessage {
+  type: 'replay';
+  playerId: string;
+  name: string;
+  seed: number;
+  rules: GameRules;
+  inputs: GameInput[];
+  garbage: ReplayGarbageEvent[];
+}
 export interface OnlinePeerKoMessage {
   type: 'ko';
   playerId: string;
@@ -54,7 +67,8 @@ type OnlinePeerMessage =
   | OnlinePeerAttackMessage
   | OnlinePeerAttackIntentMessage
   | OnlinePeerInputMessage
-  | OnlinePeerKoMessage;
+  | OnlinePeerKoMessage
+  | OnlinePeerReplayMessage;
 
 interface OnlinePeerBroadcasterOptions {
   playerId: string;
@@ -64,6 +78,7 @@ interface OnlinePeerBroadcasterOptions {
   onAttackIntent?: (remoteId: string, intent: OnlinePeerAttackIntentMessage) => void;
   onInput?: (remoteId: string, message: OnlinePeerInputMessage) => void;
   onKo?: (remoteId: string, message: OnlinePeerKoMessage) => void;
+  onReplay?: (remoteId: string, message: OnlinePeerReplayMessage) => void;
   onPeerState?: (playerId: string, state: PeerConnectionState) => void;
 }
 
@@ -137,6 +152,13 @@ export class OnlinePeerBroadcaster {
 
   broadcastKo(report: Omit<OnlinePeerKoMessage, 'type'>): void {
     const message = JSON.stringify({ ...report, type: 'ko' } satisfies OnlinePeerKoMessage);
+    for (const peer of this.peers.values()) {
+      if (peer.channel?.readyState === 'open') peer.channel.send(message);
+    }
+  }
+
+  broadcastReplay(report: Omit<OnlinePeerReplayMessage, 'type'>): void {
+    const message = JSON.stringify({ ...report, type: 'replay' } satisfies OnlinePeerReplayMessage);
     for (const peer of this.peers.values()) {
       if (peer.channel?.readyState === 'open') peer.channel.send(message);
     }
@@ -334,6 +356,17 @@ export class OnlinePeerBroadcaster {
         ) return;
         if (message.playerId !== remoteId) return;
         this.options.onKo?.(remoteId, message);
+      }
+      if (message.type === 'replay') {
+        if (
+          !message.playerId
+          || message.playerId !== remoteId
+          || !Number.isFinite(message.seed)
+          || !message.rules
+          || !Array.isArray(message.inputs)
+          || !Array.isArray(message.garbage)
+        ) return;
+        this.options.onReplay?.(remoteId, message);
       }
     } catch {
       // Ignore malformed peer messages. The server polling fallback remains authoritative for room state.

@@ -4,7 +4,7 @@ import { cloneInputSettings, type InputSettings } from '../input/settings';
 import { createRunSummary, type RunSummary } from './runStats';
 
 export interface ExportedReplay {
-  version: 1;
+  version: 2;
   game: 'stack40';
   createdAt: string;
   seed: number;
@@ -20,6 +20,8 @@ export interface ExportedReplay {
   };
   summary: RunSummary;
   inputs: ReplayLog['inputs'];
+  // v2: basura entrante para reproducir partidas online. En solo va vacío.
+  garbage: ReplayLog['garbage'];
 }
 
 export function createExportedReplay(
@@ -38,8 +40,9 @@ export function createExportedReplay(
     gameOverFrame: state.stats.gameOverFrame,
   };
   const inputs = log.inputs.map((input) => ({ ...input }));
+  const garbage = log.garbage.map((event) => ({ ...event }));
   return {
-    version: 1,
+    version: 2,
     game: 'stack40',
     createdAt,
     seed: log.seed,
@@ -48,6 +51,7 @@ export function createExportedReplay(
     result,
     summary: summary ?? createRunSummary({ result, inputs }),
     inputs,
+    garbage,
   };
 }
 

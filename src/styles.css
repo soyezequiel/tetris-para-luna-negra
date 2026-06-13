@@ -3461,6 +3461,25 @@ canvas {
   padding: 24px;
 }
 
+.online-results.multi-replay {
+  width: min(1180px, 96vw);
+  max-height: 94vh;
+  overflow-y: auto;
+}
+
+.multi-replay-clock {
+  margin-top: 6px;
+  font-family: 'Exo 2', monospace;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: rgba(247, 247, 242, 0.92);
+}
+
+.multi-replay-boards {
+  width: 100%;
+}
+
 .online-results-confetti {
   position: absolute;
   inset: -24px 0 auto 0;

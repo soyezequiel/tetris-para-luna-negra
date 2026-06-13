@@ -39,7 +39,7 @@ import { MUSIC_TRACKS } from './audio/music';
 import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
 import { GameEngine } from './game/engine';
 import { cellsFor } from './game/pieces';
-import { createReplayLog, recordInput } from './game/replay';
+import { createReplayLog, recordGarbage, recordInput } from './game/replay';
 import { BATTLE_RULES, DEFAULT_RULES, softDropCellsPerFrameForFactor } from './game/rules';
 import { resolveGameplayFrame } from './game/frameClock';
 import { displayedElapsedFrames } from './game/timing';
@@ -71,7 +71,9 @@ import { LunaSocialClient } from './online/lunaNegraFriendsClient';
 import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostAuthority';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { decidePeerKoAction } from './online/peerKoAuthority';
-import { OnlinePeerBroadcaster, type OnlinePeerKoMessage } from './online/peerBroadcast';
+import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayMessage } from './online/peerBroadcast';
+import { OnlineReplayCollector } from './app/multiplayerReplay';
+import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlayerSnapshot } from './app/multiReplayPlayback';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
@@ -267,6 +269,15 @@ let onlineServerOffsetMs = 0;
 let onlineResultSubmitted = false;
 let onlineRunStarted = false;
 let onlinePeerBroadcaster: OnlinePeerBroadcaster | null = null;
+// Recolector de replays multi-tablero: junta el log de cada jugador de la ronda
+// (el propio + los que llegan por WebRTC) para reproducir la partida completa.
+const onlineReplayCollector = new OnlineReplayCollector();
+// Mi log se difunde una sola vez por ronda, al terminar mi partida.
+let onlineReplayBroadcast = false;
+// Visor multi-tablero activo (appMode 'onlineReplay'). null fuera del visor.
+let multiReplay: MultiReplayPlayback | null = null;
+// Sala desde la que se abrió el visor, para poder volver a los resultados.
+let multiReplayReturnRoomId: string | null = null;
 let onlinePeerStates = new Map<string, string>();
 let onlinePeerDisplaySnapshots = new Map<string, OnlineGameSnapshot>();
 let onlineAttackSequence = 0;
@@ -400,6 +411,14 @@ function loopBody(): void {
     return;
   }
 
+  if (appMode === 'onlineReplay' && multiReplay) {
+    // Visor multi-tablero: corre N motores y se pinta como overlay DOM (un
+    // mini-tablero por jugador). El canvas queda tapado por el scrim.
+    multiReplay.tick();
+    renderOverlay(engine.getState());
+    return;
+  }
+
   let state = engine.getState();
   // candidateFrame > gameFrame garantiza que advanceGameToFrame ticará al menos un
   // frame: en un rAF sin frame nuevo (skipInputThisLoop) el for de catch-up no
@@ -510,6 +529,25 @@ Object.assign(window, {
     getState: () => engine.getState(),
     getReplay: () => replay,
     getPlayback: () => playback?.snapshot() ?? null,
+    getMultiReplay: () => multiReplay?.snapshot() ?? null,
+    openMultiReplay: () => openMultiReplay(),
+    // Solo test/preview: abre el visor multi-tablero con datos sintéticos para
+    // poder verlo sin una partida online completa.
+    openSampleMultiReplay: () => {
+      const mkInputs = (period: number, count: number) =>
+        Array.from({ length: count }, (_, i) => ({ frame: (i + 1) * period, action: 'hardDrop' as const }));
+      multiReplay = new MultiReplayPlayback({
+        version: 1, game: 'stack40', createdAt: new Date().toISOString(), roomId: 'DEMO', seed: 11,
+        players: [
+          { playerId: 'a', name: 'Ada', seed: 11, rules: gameRules, inputs: mkInputs(14, 8), garbage: [] },
+          { playerId: 'b', name: 'Boris', seed: 22, rules: gameRules, inputs: mkInputs(11, 12), garbage: [] },
+          { playerId: 'c', name: 'Cleo', seed: 33, rules: gameRules, inputs: mkInputs(9, 16), garbage: [] },
+        ],
+      });
+      multiReplayReturnRoomId = 'DEMO';
+      appMode = 'onlineReplay';
+      return multiReplay.snapshot();
+    },
     getAppMode: () => appMode,
     getPendingConfirmAction: () => pendingConfirmAction,
     getInputSettings: () => cloneInputSettings(inputSettings),
@@ -921,6 +959,14 @@ function handleOverlayClick(event: MouseEvent): void {
     const speed = Number(control.dataset.speed);
     if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) playback?.setSpeed(speed as PlaybackSpeed);
   }
+  if (action === 'online-replay-open') openMultiReplay();
+  if (action === 'multi-replay-toggle') multiReplay?.togglePaused();
+  if (action === 'multi-replay-restart') multiReplay?.restart();
+  if (action === 'multi-replay-exit') exitMultiReplay();
+  if (action === 'multi-replay-speed') {
+    const speed = Number(control.dataset.speed);
+    if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) multiReplay?.setSpeed(speed as MultiPlaybackSpeed);
+  }
   if (action === 'main-menu') goToMenu();
   if (action === 'toggle-sound') {
     best = saveSoundMuted(sound.toggleMuted());
@@ -1047,6 +1093,9 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   seed = nextSeed;
   engine = new GameEngine(seed, gameRules);
   replay = createReplayLog(seed, gameRules);
+  // Replay multi-tablero: nueva ronda = nueva semilla; reseteamos la recolección.
+  onlineReplayCollector.reset(seed);
+  onlineReplayBroadcast = false;
   gameFrame = 0;
   gameClockOriginMs = performance.now();
   savedFinish = false;
@@ -2559,6 +2608,7 @@ function syncOnline(): void {
     if (isOnlineHost() && roomStillRunning && shouldPostOnlineProgress(now)) postOnlineProgress(liveState);
     if (liveState.status === 'finished' && !onlineResultSubmitted) postOnlineResult(liveState);
     if (liveState.status === 'gameover') postOnlineElimination(liveState);
+    maybeBroadcastOwnReplay(liveState);
   }
 }
 
@@ -3019,6 +3069,7 @@ function syncOnlinePeers(room: OnlineRoom): void {
       applyPeerKo(message);
       if (action === 'commit') void commitOnlineElimination(message);
     },
+    onReplay: (remoteId, message) => collectPeerReplay(remoteId, message),
     onPeerState: (playerId, state) => {
       onlinePeerStates = new Map(onlinePeerStates).set(playerId, state);
     },
@@ -3050,6 +3101,39 @@ function broadcastOnlineSnapshot(state: GameState): void {
       ));
     }
   }
+}
+
+// Difunde mi log de replay una sola vez por ronda, en cuanto mi partida termina
+// (KO o victoria). Los canales peer siguen abiertos mientras la sala no cierra,
+// así que muertos/espectadores también lo reciben. Ver OnlineReplayCollector.
+function maybeBroadcastOwnReplay(state: GameState): void {
+  if (currentRunKind !== 'online' || onlineReplayBroadcast) return;
+  if (state.status !== 'gameover' && state.status !== 'finished') return;
+  onlineReplayBroadcast = true;
+  const report: Omit<OnlinePeerReplayMessage, 'type'> = {
+    playerId: onlinePlayer.id,
+    name: onlinePlayer.name,
+    seed: replay.seed,
+    rules: replay.rules,
+    inputs: replay.inputs,
+    garbage: replay.garbage,
+  };
+  onlinePeerBroadcaster?.broadcastReplay(report);
+  // El propio log se suma localmente; el resto llega por WebRTC.
+  collectPeerReplay(onlinePlayer.id, { type: 'replay', ...report });
+}
+
+function collectPeerReplay(remoteId: string, message: OnlinePeerReplayMessage): void {
+  if (message.playerId !== remoteId) return;
+  if (!isCurrentOnlineSeed(message.seed)) return;
+  onlineReplayCollector.add({
+    playerId: message.playerId,
+    name: message.name,
+    seed: message.seed,
+    rules: message.rules,
+    inputs: message.inputs,
+    garbage: message.garbage,
+  });
 }
 
 function applyAuthoritativeSnapshot(remoteId: string, playerId: string, game: OnlineGameSnapshot): void {
@@ -3204,6 +3288,15 @@ function applyOnlineAttack(attack: OnlineAttack): void {
   // la simulación del host para que el garbage se aplique en el mismo frame en ambos
   // lados y las simulaciones no diverjan. Ver HostAuthoritySimulator.queueGarbage.
   engine.queueGarbage(attack.lines, attack.holeSeed, attack.frame, attack.id);
+  // Registramos el evento para el replay online: queuedAtFrame = gameFrame local en que
+  // llegó (cuándo reaplicar), frame = ancla que fija el applyFrame. Ver ReplayGarbageEvent.
+  recordGarbage(replay, {
+    queuedAtFrame: gameFrame,
+    frame: attack.frame,
+    lines: attack.lines,
+    holeSeed: attack.holeSeed,
+    id: attack.id,
+  });
 }
 
 function rememberOnlineAttack(fromPlayerId: string, toPlayerId: string, lines: number): void {
@@ -3488,6 +3581,7 @@ function renderScreenOverlay(state: GameState): string {
   if (pendingLunaLaunchRequest && !lunaInviteShowsAsToast()) return renderLunaLaunchRequestOverlay(pendingLunaLaunchRequest);
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
+  if (appMode === 'onlineReplay') return renderMultiReplayOverlay();
   if (
     appMode === 'menu'
     || appMode === 'soloMenu'
@@ -3996,11 +4090,90 @@ function renderOnlineResultsOverlay(_state: GameState): string {
         ${renderOnlineBetResult()}
         <div class="online-results-actions">
           ${rematch}
+          ${onlineReplayCollector.size() > 0
+            ? '<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="online-replay-open">Ver repetición</button>'
+            : ''}
           <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="online-results-menu">Volver al menú</button>
           <button class="solo-results-btn solo-results-btn--danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
         </div>
       </div>
     </div>
+  `;
+}
+
+// Abre el visor multi-tablero con los logs recolectados de la ronda. Lo dispara
+// el botón "Ver repetición" de los resultados (solo aparece si hay logs).
+function openMultiReplay(): void {
+  const roomId = onlineRoom?.id ?? 'sala';
+  const pkg = onlineReplayCollector.build(roomId);
+  if (!pkg) {
+    onlineError = 'No hay repeticiones disponibles para esta ronda.';
+    return;
+  }
+  multiReplay = new MultiReplayPlayback(pkg);
+  multiReplayReturnRoomId = roomId;
+  onlineError = null;
+  appMode = 'onlineReplay';
+}
+
+function exitMultiReplay(): void {
+  multiReplay = null;
+  appMode = 'onlineResults';
+}
+
+// Visor multi-tablero estilo tetr.io: una grilla con el tablero de cada jugador
+// reproduciéndose en sincronía, más controles de pausa/velocidad/reinicio. Se
+// repinta cada frame (el contador cambia), igual que la grilla de espectador.
+function renderMultiReplayOverlay(): string {
+  if (!multiReplay) return '';
+  const snapshot = multiReplay.snapshot();
+  const layout = onlinePeerGridLayout(snapshot.players.length, true);
+  const speedButtons = REPLAY_SPEEDS.map((speed) => (
+    `<button class="solo-results-btn solo-results-btn--ghost${snapshot.speed === speed ? ' button-active' : ''}" type="button" data-ui-action="multi-replay-speed" data-speed="${speed}">${speed}x</button>`
+  )).join('');
+  return `
+    <div class="menu-scrim online-results-scrim">
+      <div class="online-results multi-replay">
+        <div class="online-results-head">
+          <div class="online-results-eyebrow">REPETICIÓN · SALA ${escapeHtml(multiReplayReturnRoomId ?? '')}</div>
+          <div class="multi-replay-clock">${formatFrames(snapshot.frame)} / ${formatFrames(snapshot.targetFrame)}</div>
+        </div>
+        <div
+          class="online-peer-boards multi-replay-boards"
+          data-peer-count="${snapshot.players.length}"
+          style="--online-peer-columns: ${layout.columns}; --online-peer-card-width: ${layout.cardWidth}px;"
+        >
+          ${snapshot.players.map((player) => renderMultiReplayBoard(player)).join('')}
+        </div>
+        <div class="online-results-actions">
+          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="multi-replay-toggle">${snapshot.paused ? 'Reanudar' : 'Pausa'}</button>
+          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="multi-replay-restart">Reiniciar</button>
+          ${speedButtons}
+          <button class="solo-results-btn solo-results-btn--danger" type="button" data-ui-action="multi-replay-exit">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderMultiReplayBoard(player: MultiReplayPlayerSnapshot): string {
+  const snapshot = createOnlineGameSnapshotFromState(player.state);
+  const label = `${player.state.stats.lines} L · ${formatFrames(player.state.stats.frame)}`;
+  const dead = player.state.status === 'gameover';
+  const won = player.state.status === 'finished';
+  const tagClass = dead ? ' online-peer-board--ko' : won ? ' online-peer-board--win' : '';
+  return `
+    <section class="online-peer-board${tagClass}" data-player-id="${escapeHtml(player.playerId)}">
+      <div class="online-peer-board-head">
+        <div class="online-player-label"><strong>${escapeHtml(player.name)}</strong></div>
+        <span>${escapeHtml(label)}</span>
+      </div>
+      <div class="online-peer-board-body">
+        ${renderOnlineMiniBoard(snapshot)}
+        ${dead ? '<div class="online-peer-board-tag online-peer-board-tag--ko">K.O.</div>' : ''}
+        ${won ? '<div class="online-peer-board-tag online-peer-board-tag--win">FINISH</div>' : ''}
+      </div>
+    </section>
   `;
 }
 

@@ -1013,12 +1013,13 @@ describe('core stacker engine', () => {
     const state = engine.tick(1, [input]);
     const exported = createExportedReplay(log, state, DEFAULT_INPUT_SETTINGS, '2026-06-04T21:00:00.000Z');
 
-    expect(exported.version).toBe(1);
+    expect(exported.version).toBe(2);
     expect(exported.seed).toBe(314);
     expect(exported.result.pieces).toBe(1);
     expect(exported.summary.inputCount).toBe(1);
     expect(exported.inputs).toEqual([input]);
     expect(exported.inputs).not.toBe(log.inputs);
+    expect(exported.garbage).toEqual([]);
   });
 
   it('calculates advanced run summary metrics over elapsed frames', () => {
