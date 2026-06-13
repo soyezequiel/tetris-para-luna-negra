@@ -362,8 +362,8 @@ export interface LunaIdentity {
 export interface LunaSessionResponse {
   identity: LunaIdentity;
   serverNowMs: number;
-  /** 'luna-negra' cuando vino del proveedor real; 'mock' en fallback de desarrollo. */
-  source: 'luna-negra' | 'mock';
+  /** Siempre 'luna-negra': la identidad viene del proveedor real. */
+  source: 'luna-negra';
 }
 
 export interface LunaFriend {
@@ -380,7 +380,7 @@ export interface LunaFriend {
 export interface LunaFriendsResponse {
   friends: LunaFriend[];
   serverNowMs: number;
-  source: 'luna-negra' | 'mock';
+  source: 'luna-negra';
 }
 
 /** Heartbeat de presencia: avisa que este npub tiene el juego abierto / está en sala. */
@@ -396,7 +396,7 @@ export interface LunaPresenceRequest {
 export interface LunaPresenceResponse {
   ok: boolean;
   serverNowMs: number;
-  source: 'luna-negra' | 'mock';
+  source: 'luna-negra';
 }
 
 export interface LunaInviteRequest {
@@ -417,7 +417,7 @@ export interface LunaInviteResponse {
   /** Link de unión para copiar/compartir como fallback. */
   inviteUrl: string;
   serverNowMs: number;
-  source: 'luna-negra' | 'mock';
+  source: 'luna-negra';
 }
 
 export interface LunaInviteWindowResponse {
@@ -444,7 +444,7 @@ export interface LunaLaunchRequest {
 export interface LunaLaunchRequestResponse {
   request: LunaLaunchRequest | null;
   serverNowMs: number;
-  source: 'luna-negra' | 'mock';
+  source: 'luna-negra';
 }
 
 export interface CreateBetRequest {

@@ -6,7 +6,13 @@ import {
   winnerNpubsFromRoom,
   type RoomStore,
 } from './roomService.js';
-import type { OnlineRoom, RoomBet, RoomBetParticipant } from './protocol';
+import type {
+  OnlineRoom,
+  RoomBet,
+  RoomBetDepositStatus,
+  RoomBetParticipant,
+  RoomBetStatus,
+} from './protocol';
 
 interface LunaConfig {
   baseUrl: string;
@@ -41,24 +47,6 @@ interface LunaBetDetail extends LunaEconomics {
     lnurl?: string | null;
     payUrl?: string | null;
   }>;
-}
-
-interface LunaDepositHandle {
-  npub: string;
-  depositStatus?: string;
-  bolt11?: string | null;
-  lnurl?: string | null;
-  payUrl?: string | null;
-}
-
-interface LunaBetDeposits {
-  status?: string;
-  potSats?: number;
-  potTargetSats?: number;
-  depositsReceived?: number;
-  depositsTotal?: number;
-  depositDeadline?: string | null;
-  deposits?: LunaDepositHandle[];
 }
 
 export const LUNA_NEGRA_MIN_STAKE_SATS = 1;
@@ -100,18 +88,12 @@ async function lunaFetch<T>(
 ): Promise<T> {
   const headers: Record<string, string> = {
     authorization: `Bearer ${config.apiKey}`,
-    'cache-control': 'no-cache',
-    pragma: 'no-cache',
   };
   if (init.body !== undefined) headers['content-type'] = 'application/json';
 
-  let urlPath = path;
-  if (init.method === 'GET') {
-    const separator = path.includes('?') ? '&' : '?';
-    urlPath = `${path}${separator}_cb=${Date.now()}`;
-  }
-
-  const response = await fetch(`${config.baseUrl}${urlPath}`, {
+  // Los GET de apuesta vienen con `Cache-Control: no-store` desde Luna Negra, así
+  // que no hace falta cache-busting ni headers anti-caché del lado del cliente.
+  const response = await fetch(`${config.baseUrl}${path}`, {
     method: init.method,
     headers,
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
@@ -126,86 +108,30 @@ async function lunaFetch<T>(
   return payload as T;
 }
 
-// Reconoce, a partir del error del POST /result, que la apuesta ya estaba resuelta
-// (reporte duplicado). Cubre tanto el código como el mensaje porque el vocabulario
-// exacto del proveedor no está documentado.
-function errorLooksResolved(error: unknown): boolean {
-  const code = error instanceof LunaApiError ? (error.code ?? '') : '';
-  const message = error instanceof Error ? error.message : '';
-  const normalizedCode = code.trim().toUpperCase();
-  if ([
-    'NOT_READY',
-    'TOO_LATE',
-    'CONTRACT_MISMATCH',
-    'ORACLE_NOT_PROVISIONED',
-    'BAD_WINNERS',
-    'FORBIDDEN',
-    'INVALID_API_KEY',
-    'RATE_LIMITED',
-  ].includes(normalizedCode)) return false;
-  if (/ALREADY|DUPLICATE/.test(normalizedCode) && /RESOL|SETTL|PAID|COMPLET|FINALIZ/.test(normalizedCode)) return true;
-  return /ya .*(resuelt|pagad|finaliz|complet)|already .*(resolved|settled|paid|finali[sz]ed|completed)|duplicate|duplicad/i.test(message);
-}
-
 function nonNegInt(value: unknown, fallback = 0): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : fallback;
 }
 
-export function normalizeDepositStatus(value: unknown): RoomBetParticipant['depositStatus'] {
-  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  // Luna Negra puede reportar el depósito confirmado con distintas palabras según
-  // el endpoint; las tratamos todas como 'paid'.
-  if (['paid', 'confirmed', 'completed', 'complete', 'settled', 'received', 'deposited', 'funded', 'success', 'succeeded'].includes(v)) {
-    return 'paid';
-  }
-  if (['refunded', 'returned'].includes(v)) return 'refunded';
-  if (['failed', 'error', 'expired', 'cancelled', 'canceled'].includes(v)) return 'failed';
-  return 'pending';
+const BET_STATUSES: RoomBetStatus[] = [
+  'pending_deposits', 'funded', 'settled', 'cancelled', 'expired', 'refunded',
+];
+const DEPOSIT_STATUSES: RoomBetDepositStatus[] = ['pending', 'paid', 'refunded', 'failed'];
+
+// Luna Negra reporta un único vocabulario canónico (igual a nuestros enums), así
+// que solo estrechamos el tipo: si llegara algo fuera del set, caemos al fallback.
+function asBetStatus(value: unknown, fallback: RoomBetStatus): RoomBetStatus {
+  return BET_STATUSES.includes(value as RoomBetStatus) ? (value as RoomBetStatus) : fallback;
 }
 
-// Traduce el vocabulario de estado de la apuesta de Luna Negra a nuestro enum.
-// Devuelve null si la palabra es desconocida, para poder caer al estado previo.
-function normalizeBetStatus(value: unknown): RoomBet['status'] | null {
-  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (!v) return null;
-  if (['settled', 'resolved', 'paid', 'paid_out', 'paidout', 'payout', 'won', 'win', 'closed'].includes(v)) return 'settled';
-  if (['funded', 'active', 'locked', 'in_progress', 'inprogress', 'ready', 'full', 'started', 'playing'].includes(v)) return 'funded';
-  if (['pending_deposits', 'pending', 'awaiting_deposits', 'awaiting', 'open', 'created', 'new', 'deposits_pending'].includes(v)) return 'pending_deposits';
-  if (['cancelled', 'canceled'].includes(v)) return 'cancelled';
-  if (['expired', 'timeout', 'timedout'].includes(v)) return 'expired';
-  if (['refunded', 'returned', 'reimbursed'].includes(v)) return 'refunded';
-  return null;
+function asDepositStatus(value: unknown): RoomBetDepositStatus {
+  return DEPOSIT_STATUSES.includes(value as RoomBetDepositStatus)
+    ? (value as RoomBetDepositStatus)
+    : 'pending';
 }
 
-function isTerminalBetStatus(status: RoomBet['status'] | undefined | null): boolean {
+function isTerminalBetStatus(status: RoomBetStatus | undefined | null): boolean {
   return status === 'settled' || status === 'cancelled' || status === 'expired' || status === 'refunded';
-}
-
-// Determina, a partir de la respuesta cruda de Luna Negra, si la apuesta ya quedó
-// resuelta (pagada/reembolsada). Sirve para cortar el reintento de reporte cuando
-// el pago ya se hizo aunque el POST /result devuelva error.
-function isResolvedFromLuna(detail: LunaBetDetail | null, deposits: LunaBetDeposits | null): boolean {
-  const status = normalizeBetStatus(detail?.status ?? deposits?.status);
-  if (isTerminalBetStatus(status)) return true;
-  return (detail?.participants ?? []).some((p) => typeof p.payoutSats === 'number' && p.payoutSats > 0);
-}
-
-// Combina el estado de las dos fuentes (detail y deposits) quedándose con el más
-// avanzado, para que un handle que sigue en 'pending' no enmascare un pago real.
-function mergeDepositStatus(...values: unknown[]): RoomBetParticipant['depositStatus'] {
-  const rank: Record<RoomBetParticipant['depositStatus'], number> = {
-    pending: 0,
-    failed: 1,
-    paid: 2,
-    refunded: 3,
-  };
-  let best: RoomBetParticipant['depositStatus'] = 'pending';
-  for (const value of values) {
-    const normalized = normalizeDepositStatus(value);
-    if (rank[normalized] > rank[best]) best = normalized;
-  }
-  return best;
 }
 
 function buildRoomBet(
@@ -213,75 +139,42 @@ function buildRoomBet(
   npubs: string[],
   econ: LunaEconomics & { betId: string; depositDeadline?: string | null },
   detail: LunaBetDetail | null,
-  deposits: LunaBetDeposits | null,
   previous: RoomBet | null,
   createdByPlayerId: string,
   nowMs: number,
 ): RoomBet {
   const detailByNpub = new Map((detail?.participants ?? []).map((p) => [p.npub, p]));
-  const depByNpub = new Map((deposits?.deposits ?? []).map((d) => [d.npub, d]));
-  const previousByNpub = new Map((previous?.participants ?? []).map((p) => [p.npub, p]));
   const participants: RoomBetParticipant[] = npubs.map((npub) => {
     const d = detailByNpub.get(npub);
-    const h = depByNpub.get(npub);
     const player = room.players.find((candidate) => candidate.npub === npub);
     return {
       npub,
       playerId: player?.id ?? null,
-      depositStatus: mergeDepositStatus(h?.depositStatus, d?.depositStatus, previousByNpub.get(npub)?.depositStatus),
-      bolt11: typeof h?.bolt11 === 'string' ? h.bolt11 : null,
-      lnurl: typeof h?.lnurl === 'string' ? h.lnurl : null,
-      payUrl: typeof h?.payUrl === 'string' ? h.payUrl : null,
+      depositStatus: asDepositStatus(d?.depositStatus),
+      bolt11: typeof d?.bolt11 === 'string' ? d.bolt11 : null,
+      lnurl: typeof d?.lnurl === 'string' ? d.lnurl : null,
+      payUrl: typeof d?.payUrl === 'string' ? d.payUrl : null,
       payoutSats: typeof d?.payoutSats === 'number' ? d.payoutSats : null,
     };
   });
-  // No regresamos de un estado terminal; si no, traducimos el vocabulario de Luna
-  // Negra y, como respaldo, marcamos 'settled' cuando ya reportamos el resultado y
-  // el ganador tiene un payout efectivo (la palabra de estado puede no llegarnos).
+  // El detalle viene fresco (Cache-Control: no-store) y es la fuente de verdad:
+  // el estado de la apuesta y los depósitos se toman directo de Luna Negra. Solo
+  // conservamos del estado previo los campos locales de la sala (bookkeeping del
+  // reporte de resultado, marcas de tiempo) que la API no conoce.
+  const status = asBetStatus(detail?.status, previous?.status ?? 'pending_deposits');
   const paidParticipants = participants.filter((p) => p.depositStatus === 'paid').length;
-  // Un depósito ya confirmado (p. ej. por el webhook de Luna) es monótono: si
-  // todos los participantes ya pagaron, la apuesta está fondeada y NO debe volver
-  // a 'pending_deposits' solo porque el GET de Luna llegue cacheado/atrasado (su
-  // cache de ~3 min hacía rebotar la UI a "pendiente" tras un pago ya detectado).
-  const allDepositsIn = participants.length > 0 && paidParticipants === participants.length;
-  let status: RoomBet['status'];
-  if (isTerminalBetStatus(previous?.status)) {
-    status = previous!.status;
-  } else {
-    const normalized = normalizeBetStatus(detail?.status ?? deposits?.status);
-    const paidOut = previous?.resultReported === true
-      && participants.some((p) => typeof p.payoutSats === 'number' && p.payoutSats > 0);
-    if (paidOut) {
-      status = 'settled';
-    } else if (normalized && isTerminalBetStatus(normalized)) {
-      // Cancelación/expiración/reembolso reportado por Luna sí manda sobre el conteo local.
-      status = normalized;
-    } else if (allDepositsIn) {
-      status = 'funded';
-    } else {
-      status = normalized ?? previous?.status ?? 'pending_deposits';
-    }
-  }
-  // El recuento de depósitos también es monótono: el mayor entre lo que dice Luna,
-  // los pagos ya confirmados localmente y el conteo previo, para que un GET
-  // atrasado no muestre "0/N" tras un pago ya detectado.
-  const depositsReceived = Math.max(
-    nonNegInt(deposits?.depositsReceived),
-    paidParticipants,
-    nonNegInt(previous?.depositsReceived),
-  );
   return {
     betId: econ.betId,
     status,
     stakeSats: nonNegInt(detail?.stakeSats ?? econ.stakeSats ?? previous?.stakeSats),
-    potSats: Math.max(nonNegInt(detail?.potSats ?? deposits?.potSats), nonNegInt(previous?.potSats)),
-    potTargetSats: nonNegInt(detail?.potTargetSats ?? econ.potTargetSats ?? deposits?.potTargetSats ?? previous?.potTargetSats),
+    potSats: nonNegInt(detail?.potSats ?? previous?.potSats),
+    potTargetSats: nonNegInt(detail?.potTargetSats ?? econ.potTargetSats ?? previous?.potTargetSats),
     feeSats: nonNegInt(detail?.feeSats ?? econ.feeSats ?? previous?.feeSats),
     feePct: Number.isFinite(Number(detail?.feePct ?? econ.feePct)) ? Number(detail?.feePct ?? econ.feePct) : (previous?.feePct ?? 0),
     netPayoutSats: nonNegInt(detail?.netPayoutSats ?? econ.netPayoutSats ?? previous?.netPayoutSats),
-    depositDeadline: econ.depositDeadline ?? detail?.depositDeadline ?? deposits?.depositDeadline ?? previous?.depositDeadline ?? null,
-    depositsReceived: nonNegInt(depositsReceived),
-    depositsTotal: nonNegInt(deposits?.depositsTotal ?? npubs.length),
+    depositDeadline: econ.depositDeadline ?? detail?.depositDeadline ?? previous?.depositDeadline ?? null,
+    depositsReceived: nonNegInt(detail?.depositsReceived ?? paidParticipants),
+    depositsTotal: nonNegInt(detail?.depositsTotal ?? npubs.length),
     participants,
     winnerNpubs: previous?.winnerNpubs ?? null,
     resultReported: previous?.resultReported ?? false,
@@ -298,34 +191,13 @@ function settlementErrorMessage(error: unknown): string {
   return code ? `${code}: ${message}` : message;
 }
 
-// GET /api/v1/bets/{id} ahora trae todo en una sola llamada: estado, economía y,
-// por participante, los handles de pago (bolt11/lnurl/payUrl). Derivamos la vista
-// `deposits` desde el detalle para no cambiar buildRoomBet.
-async function fetchDetailAndDeposits(
-  config: LunaConfig,
-  betId: string,
-): Promise<{ detail: LunaBetDetail | null; deposits: LunaBetDeposits | null }> {
-  const detail = await lunaFetch<LunaBetDetail>(
+// GET /api/v1/bets/{id} trae todo en una sola llamada: estado, economía y, por
+// participante, su depósito + los handles de pago (bolt11/lnurl/payUrl).
+async function getBetDetail(config: LunaConfig, betId: string): Promise<LunaBetDetail | null> {
+  return lunaFetch<LunaBetDetail>(
     config,
     `/api/v1/bets/${encodeURIComponent(betId)}`,
   ).catch(() => null);
-  if (!detail) return { detail: null, deposits: null };
-  const deposits: LunaBetDeposits = {
-    status: detail.status,
-    potSats: detail.potSats,
-    potTargetSats: detail.potTargetSats,
-    depositsReceived: detail.depositsReceived,
-    depositsTotal: detail.depositsTotal,
-    depositDeadline: detail.depositDeadline,
-    deposits: (detail.participants ?? []).map((p) => ({
-      npub: p.npub,
-      depositStatus: p.depositStatus,
-      bolt11: p.bolt11 ?? null,
-      lnurl: p.lnurl ?? null,
-      payUrl: p.payUrl ?? null,
-    })),
-  };
-  return { detail, deposits };
 }
 
 export async function createBetForRoom(
@@ -364,8 +236,8 @@ export async function createBetForRoom(
       metadata: { roomId: room.id },
     },
   });
-  const { detail, deposits } = await fetchDetailAndDeposits(config, create.betId);
-  const bet = buildRoomBet(room, participants, create, detail, deposits, null, input.playerId, nowMs);
+  const detail = await getBetDetail(config, create.betId);
+  const bet = buildRoomBet(room, participants, create, detail, null, input.playerId, nowMs);
   return setRoomBet(store, room.id, bet, nowMs);
 }
 
@@ -422,15 +294,14 @@ export async function refreshRoomBet(
   const config = readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) return room;
-  const { detail, deposits } = await fetchDetailAndDeposits(config, room.bet.betId);
-  if (!detail && !deposits) return room;
+  const detail = await getBetDetail(config, room.bet.betId);
+  if (!detail) return room;
   const npubs = room.bet.participants.map((p) => p.npub);
   const bet = buildRoomBet(
     room,
     npubs,
     { betId: room.bet.betId, depositDeadline: room.bet.depositDeadline },
     detail,
-    deposits,
     room.bet,
     room.bet.createdByPlayerId,
     nowMs,
@@ -507,24 +378,22 @@ export async function maybeReportRoomBetResult(
       body: { winners },
     });
   } catch (error) {
-    // El reporte falló. Solo lo damos por hecho si Luna Negra ya lo había
-    // aceptado/resuelto; otros rechazos quedan reintentables por polling o botón manual.
-    const probe = await fetchDetailAndDeposits(config, bet.betId).catch(() => ({ detail: null, deposits: null }));
-    const resolved = errorLooksResolved(error) || isResolvedFromLuna(probe.detail, probe.deposits);
-    if (!resolved) {
-      const failedBet: RoomBet = {
-        ...(updatedRoom.bet ?? bet),
-        winnerNpubs: winners,
-        settlementError: settlementErrorMessage(error),
-        updatedAtServerMs: nowMs,
-      };
-      const failedRoom = await setRoomBet(store, updatedRoom.id, failedBet, nowMs);
-      if (options.throwOnFailure) {
-        if (error instanceof OnlineRoomError) throw error;
-        throw new OnlineRoomError(settlementErrorMessage(error), 502);
-      }
-      return failedRoom;
+    // El reporte falló de verdad. El éxito —incluido re-reportar el mismo ganador—
+    // vuelve 200 idempotente (`alreadyResolved`) y no entra acá; lo que llega son
+    // rechazos genuinos (NOT_READY, CONTRACT_MISMATCH, etc.), reintentables por
+    // polling o por el botón manual de liquidación.
+    const failedBet: RoomBet = {
+      ...(updatedRoom.bet ?? bet),
+      winnerNpubs: winners,
+      settlementError: settlementErrorMessage(error),
+      updatedAtServerMs: nowMs,
+    };
+    const failedRoom = await setRoomBet(store, updatedRoom.id, failedBet, nowMs);
+    if (options.throwOnFailure) {
+      if (error instanceof OnlineRoomError) throw error;
+      throw new OnlineRoomError(settlementErrorMessage(error), 502);
     }
+    return failedRoom;
   }
 
   const currentBet = updatedRoom.bet ?? bet;
@@ -536,15 +405,14 @@ export async function maybeReportRoomBetResult(
     updatedAtServerMs: nowMs,
   };
   let updated = await setRoomBet(store, updatedRoom.id, reported, nowMs);
-  const { detail, deposits } = await fetchDetailAndDeposits(config, bet.betId);
-  if (detail || deposits) {
+  const detail = await getBetDetail(config, bet.betId);
+  if (detail) {
     const npubs = reported.participants.map((p) => p.npub);
     const synced = buildRoomBet(
       updated,
       npubs,
       { betId: bet.betId, depositDeadline: reported.depositDeadline },
       detail,
-      deposits,
       reported,
       reported.createdByPlayerId,
       nowMs,

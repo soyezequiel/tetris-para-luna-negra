@@ -1,10 +1,4 @@
-import {
-  listLunaFriendsMock,
-  recordLunaPresence,
-  sortLunaFriends,
-  normalizeNpub,
-  type RoomStore,
-} from './roomService.js';
+import { normalizeNpub, OnlineRoomError, sortLunaFriends } from './roomService.js';
 import type {
   LunaFriend,
   LunaIdentity,
@@ -15,40 +9,33 @@ import type {
 
 // Capa social de Luna Negra (login SSO, amigos, presencia, invitaciones).
 //
-// Los endpoints reales de amigos/presencia/sesión de Luna Negra TODAVÍA NO
-// EXISTEN (ver docs/luna-negra-social-spec.md). Mientras tanto este módulo:
-//   1. Intenta los endpoints propuestos si la API está configurada.
-//   2. Si fallan/no existen, cae a un modo "mock" que funciona end-to-end usando
-//      la presencia que el propio juego registra (otros jugadores con el juego
-//      abierto cuentan como "amigos" hasta que exista el grafo real).
-// La API key nunca sale del servidor: el frontend habla con /api/luna-negra/*.
+// Habla con los endpoints v1 de Luna Negra (/session, /friends, /presence,
+// /invites) usando la API key del proveedor, que nunca sale del servidor: el
+// frontend pega a /api/luna-negra/*. Tetris y Luna Negra se despliegan juntos,
+// así que la API siempre está configurada; sin config, las funciones fallan con
+// un error claro en vez de simular datos.
 
 interface LunaConfig {
   baseUrl: string;
   apiKey: string;
 }
 
-function readConfig(): LunaConfig | null {
+function readConfig(): LunaConfig {
   const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
-  if (!baseUrl || !apiKey) return null;
+  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
+  if (!apiKey) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
   return { baseUrl, apiKey };
 }
 
 async function lunaGet<T>(config: LunaConfig, path: string, bearer = config.apiKey): Promise<T | null> {
   try {
-    const separator = path.includes('?') ? '&' : '?';
-    const urlPath = `${path}${separator}_cb=${Date.now()}`;
-    const response = await fetch(`${config.baseUrl}${urlPath}`, {
+    const response = await fetch(`${config.baseUrl}${path}`, {
       method: 'GET',
-      headers: {
-        authorization: `Bearer ${bearer}`,
-        'cache-control': 'no-cache',
-        pragma: 'no-cache',
-      },
+      headers: { authorization: `Bearer ${bearer}` },
     });
     if (!response.ok) return null;
-    return unwrapEnvelope<T>(await response.json().catch(() => null));
+    return (await response.json().catch(() => null)) as T | null;
   } catch {
     return null;
   }
@@ -62,22 +49,10 @@ async function lunaPost<T>(config: LunaConfig, path: string, body: unknown): Pro
       body: JSON.stringify(body),
     });
     if (!response.ok) return null;
-    return unwrapEnvelope<T>(await response.json().catch(() => null));
+    return (await response.json().catch(() => null)) as T | null;
   } catch {
     return null;
   }
-}
-
-// Luna Negra envuelve estos endpoints sociales en el envelope estándar de
-// src/lib/api.ts (p. ej. { data: {...} } / { success, data }). Los endpoints de
-// apuestas devuelven el objeto crudo. Desenvolvemos `data` cuando está presente
-// para tolerar ambas formas sin romper si en el futuro dejan de envolver.
-function unwrapEnvelope<T>(raw: unknown): T | null {
-  if (raw && typeof raw === 'object' && 'data' in raw) {
-    const data = (raw as { data: unknown }).data;
-    if (data && typeof data === 'object') return data as T;
-  }
-  return raw as T | null;
 }
 
 // ───────────────────────────── Sesión / login SSO ─────────────────────────────
@@ -93,55 +68,23 @@ interface LunaSessionPayload {
 
 export async function resolveLunaSession(
   token: string,
-): Promise<{ identity: LunaIdentity; source: 'luna-negra' | 'mock' }> {
+): Promise<{ identity: LunaIdentity; source: 'luna-negra' }> {
   const config = readConfig();
-  if (config) {
-    // Endpoint propuesto: valida el token de sesión y devuelve la identidad.
-    const payload = await lunaGet<LunaSessionPayload>(config, '/api/v1/session', token);
-    if (payload?.npub) {
-      return {
-        identity: {
-          npub: payload.npub,
-          pubkey: typeof payload.pubkey === 'string' ? payload.pubkey : null,
-          name: (payload.displayName || payload.name || shortNpub(payload.npub)).slice(0, 18),
-          avatarUrl: typeof payload.avatarUrl === 'string' ? payload.avatarUrl : null,
-          gameId: typeof payload.gameId === 'string' ? payload.gameId : null,
-        },
-        source: 'luna-negra',
-      };
-    }
+  // Valida el token de sesión contra Luna Negra y devuelve la identidad.
+  const payload = await lunaGet<LunaSessionPayload>(config, '/api/v1/session', token);
+  if (!payload?.npub) {
+    throw new OnlineRoomError('Sesión de Luna Negra inválida o expirada.', 401);
   }
-  return { identity: mockIdentityFromToken(token), source: 'mock' };
-}
-
-// Identidad determinista derivada del token para desarrollo: dos pestañas con
-// distinto token actúan como dos usuarios distintos y estables entre recargas.
-function mockIdentityFromToken(token: string): LunaIdentity {
-  const seed = token.trim() || 'anon';
-  const hash = hashHex(seed);
   return {
-    npub: `npub1mock${hash}`,
-    pubkey: null,
-    name: friendlyMockName(seed, hash),
-    avatarUrl: null,
-    gameId: null,
+    identity: {
+      npub: payload.npub,
+      pubkey: typeof payload.pubkey === 'string' ? payload.pubkey : null,
+      name: (payload.displayName || payload.name || shortNpub(payload.npub)).slice(0, 18),
+      avatarUrl: typeof payload.avatarUrl === 'string' ? payload.avatarUrl : null,
+      gameId: typeof payload.gameId === 'string' ? payload.gameId : null,
+    },
+    source: 'luna-negra',
   };
-}
-
-function friendlyMockName(seed: string, hash: string): string {
-  // Permite forzar un nombre legible con `?lnDemo=Nombre`.
-  const cleaned = seed.replace(/[^a-zA-Z0-9 _-]/g, '').trim();
-  if (cleaned && cleaned.length <= 18 && /[a-zA-Z]/.test(cleaned)) return cleaned;
-  return `Jugador-${hash.slice(0, 4).toUpperCase()}`;
-}
-
-function hashHex(value: string): string {
-  let hash = 2166136261 >>> 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return hash.toString(16).padStart(8, '0');
 }
 
 function shortNpub(npub: string): string {
@@ -162,28 +105,21 @@ interface LunaFriendPayload {
 }
 
 export async function listLunaFriends(
-  store: RoomStore,
   selfNpub: string,
-  nowMs = Date.now(),
-): Promise<{ friends: LunaFriend[]; source: 'luna-negra' | 'mock' }> {
+): Promise<{ friends: LunaFriend[]; source: 'luna-negra' }> {
   const self = normalizeNpub(selfNpub) ?? '';
   const config = readConfig();
-  if (config && self) {
-    // Endpoint propuesto: amigos del usuario con su presencia en este juego.
-    const payload = await lunaGet<{ friends?: LunaFriendPayload[] } | LunaFriendPayload[]>(
-      config,
-      `/api/v1/friends?npub=${encodeURIComponent(self)}&presence=true`,
-    );
-    // El envelope puede devolver { friends: [...] } o directamente el array.
-    const list = Array.isArray(payload) ? payload : payload?.friends;
-    if (list) {
-      const friends = list
-        .filter((entry): entry is LunaFriendPayload & { npub: string } => typeof entry.npub === 'string')
-        .map((entry) => normalizeFriendPayload(entry));
-      return { friends: sortLunaFriends(friends), source: 'luna-negra' };
-    }
-  }
-  return { friends: await listLunaFriendsMock(store, self, nowMs), source: 'mock' };
+  if (!self) return { friends: [], source: 'luna-negra' };
+  // Amigos del usuario con su presencia en este juego.
+  const payload = await lunaGet<{ friends?: LunaFriendPayload[] }>(
+    config,
+    `/api/v1/friends?npub=${encodeURIComponent(self)}&presence=true`,
+  );
+  const list = payload?.friends ?? [];
+  const friends = list
+    .filter((entry): entry is LunaFriendPayload & { npub: string } => typeof entry.npub === 'string')
+    .map((entry) => normalizeFriendPayload(entry));
+  return { friends: sortLunaFriends(friends), source: 'luna-negra' };
 }
 
 function normalizeFriendPayload(entry: LunaFriendPayload & { npub: string }): LunaFriend {
@@ -206,23 +142,16 @@ function normalizeFriendPayload(entry: LunaFriendPayload & { npub: string }): Lu
 // ──────────────────────────────── Presencia ─────────────────────────────────
 
 export async function heartbeatLunaPresence(
-  store: RoomStore,
   request: LunaPresenceRequest,
-  nowMs = Date.now(),
-): Promise<{ source: 'luna-negra' | 'mock' }> {
-  // Siempre guardamos presencia local (alimenta el modo mock de amigos).
-  await recordLunaPresence(store, request, nowMs);
+): Promise<{ source: 'luna-negra' }> {
   const config = readConfig();
-  if (config) {
-    // Endpoint propuesto: reporta presencia al grafo real de Luna Negra.
-    const ok = await lunaPost(config, '/api/v1/presence', {
-      npub: request.npub,
-      status: request.status,
-      roomId: request.roomId ?? null,
-    });
-    if (ok !== null) return { source: 'luna-negra' };
-  }
-  return { source: 'mock' };
+  // Reporta presencia al grafo real de Luna Negra.
+  await lunaPost(config, '/api/v1/presence', {
+    npub: request.npub,
+    status: request.status,
+    roomId: request.roomId ?? null,
+  });
+  return { source: 'luna-negra' };
 }
 
 // ─────────────────────────────── Invitaciones ───────────────────────────────
@@ -231,39 +160,31 @@ export async function sendLunaInvite(
   request: LunaInviteRequest,
   inviteUrl: string,
   fromNpub: string | null,
-): Promise<{ delivered: boolean; source: 'luna-negra' | 'mock' }> {
+): Promise<{ delivered: boolean; source: 'luna-negra' }> {
   const config = readConfig();
-  if (config) {
-    // Luna Negra es dueña de la entrega: notifica al amigo (toast in-app /
-    // deep-link). fromNpub alimenta el "X te invitó" del toast.
-    const result = await lunaPost<{ delivered?: boolean }>(config, '/api/v1/invites', {
-      fromNpub,
-      toNpub: request.friendNpub,
-      roomId: request.roomId,
-      inviteUrl,
-      gameId: request.gameId ?? null,
-    });
-    if (result !== null) return { delivered: result.delivered !== false, source: 'luna-negra' };
-  }
-  // Mock: no hay canal de notificación; el host comparte el link manualmente.
-  return { delivered: false, source: 'mock' };
+  // Luna Negra es dueña de la entrega: notifica al amigo (toast in-app /
+  // deep-link). fromNpub alimenta el "X te invitó" del toast.
+  const result = await lunaPost<{ delivered?: boolean }>(config, '/api/v1/invites', {
+    fromNpub,
+    toNpub: request.friendNpub,
+    roomId: request.roomId,
+    inviteUrl,
+    gameId: request.gameId ?? null,
+  });
+  return { delivered: result?.delivered === true, source: 'luna-negra' };
 }
 
 export async function consumeLunaLaunchRequest(
   selfNpub: string,
-): Promise<{ request: LunaLaunchRequest | null; source: 'luna-negra' | 'mock' }> {
+): Promise<{ request: LunaLaunchRequest | null; source: 'luna-negra' }> {
   const self = normalizeNpub(selfNpub) ?? '';
   const config = readConfig();
-  if (config && self) {
-    const payload = await lunaGet<{ request?: unknown }>(
-      config,
-      `/api/v1/invites?npub=${encodeURIComponent(self)}`,
-    );
-    if (payload && 'request' in payload) {
-      return { request: normalizeLaunchRequest(payload.request), source: 'luna-negra' };
-    }
-  }
-  return { request: null, source: 'mock' };
+  if (!self) return { request: null, source: 'luna-negra' };
+  const payload = await lunaGet<{ request?: unknown }>(
+    config,
+    `/api/v1/invites?npub=${encodeURIComponent(self)}`,
+  );
+  return { request: normalizeLaunchRequest(payload?.request), source: 'luna-negra' };
 }
 
 function normalizeLaunchRequest(value: unknown): LunaLaunchRequest | null {

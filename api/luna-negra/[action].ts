@@ -39,7 +39,7 @@ export async function GET(request: Request): Promise<Response> {
     if (action === 'friends') {
       const npub = queryParam(request, 'npub');
       if (!npub) throw new OnlineRoomError('Falta el npub.', 400);
-      const { friends, source } = await listLunaFriends(getRoomStore(), npub);
+      const { friends, source } = await listLunaFriends(npub);
       return sendJson(200, { friends, source, serverNowMs: Date.now() });
     }
     if (action === 'invite-window') {
@@ -75,7 +75,7 @@ export async function POST(request: Request): Promise<Response> {
     const action = actionFromRequest(request);
     if (action === 'presence') {
       const body = await readJsonBody<LunaPresenceRequest>(request);
-      const { source } = await heartbeatLunaPresence(getRoomStore(), body);
+      const { source } = await heartbeatLunaPresence(body);
       return sendJson(200, { ok: true, source, serverNowMs: Date.now() });
     }
     if (action === 'invite') {

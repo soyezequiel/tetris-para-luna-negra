@@ -39,9 +39,7 @@ import {
   joinRoom,
   kickPlayer,
   leaveRoom,
-  listLunaFriendsMock,
   listPublicRooms,
-  recordLunaPresence,
   MemoryRoomStore,
   normalizeRoomId,
   rankPlayers,
@@ -1626,44 +1624,20 @@ describe('core stacker engine', () => {
     delete process.env.LUNA_NEGRA_API_KEY;
   });
 
-  it('sorts Luna friends by presence (in-game first) and excludes self', async () => {
-    const store = new MemoryRoomStore();
-    await recordLunaPresence(store, { npub: 'npub-self', name: 'Me', status: 'online' }, 1000);
-    await recordLunaPresence(store, { npub: 'npub-online', name: 'Online', status: 'online' }, 1000);
-    await recordLunaPresence(store, { npub: 'npub-ingame', name: 'InGame', status: 'in-game', roomId: 'ab12' }, 1000);
-
-    const friends = await listLunaFriendsMock(store, 'npub-self', 1500);
-
-    expect(friends.map((friend) => friend.npub)).toEqual(['npub-ingame', 'npub-online']);
-    expect(friends[0].presence).toBe('in-game');
-    expect(friends[0].roomId).toBe('AB12');
-  });
-
-  it('drops stale Luna presence records past the TTL', async () => {
-    const store = new MemoryRoomStore();
-    await recordLunaPresence(store, { npub: 'npub-old', name: 'Old', status: 'online' }, 1000);
-
-    const friends = await listLunaFriendsMock(store, 'npub-self', 1000 + 60_000);
-    expect(friends).toEqual([]);
-  });
-
-  it('parses the Luna Negra enveloped friends response and reports source luna-negra', async () => {
-    const store = new MemoryRoomStore();
+  it('parses the Luna Negra friends response and reports source luna-negra', async () => {
     const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
     const previousApiKey = process.env.LUNA_NEGRA_API_KEY;
     process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
-    // Respuesta envuelta en el envelope estándar { data: { friends: [...] } }.
+    // apiOk devuelve el objeto crudo (sin envelope { data }).
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
-      data: {
-        friends: [
-          { npub: 'npub-online', displayName: 'Online', presence: 'online', roomId: null },
-          { npub: 'npub-ingame', displayName: 'InGame', presence: 'in-game', roomId: 'AB12' },
-        ],
-      },
+      friends: [
+        { npub: 'npub-online', displayName: 'Online', presence: 'online', roomId: null },
+        { npub: 'npub-ingame', displayName: 'InGame', presence: 'in-game', roomId: 'AB12' },
+      ],
     })));
 
-    const { friends, source } = await listLunaFriends(store, 'npub-self');
+    const { friends, source } = await listLunaFriends('npub-self');
 
     expect(source).toBe('luna-negra');
     expect(friends.map((friend) => [friend.npub, friend.presence])).toEqual([

@@ -7,7 +7,6 @@ import type {
   LeaveRoomRequest,
   LunaFriend,
   LunaNegraPlayer,
-  LunaPresenceRequest,
   OnlineAttack,
   OnlineMatchType,
   OnlineGameSnapshot,
@@ -72,30 +71,12 @@ export const ONLINE_RULESET_VERSION = 1;
 export const TARGETING_MODES: TargetingMode[] = ['manual', 'random', 'even', 'ko', 'attackers'];
 export const DEFAULT_ONLINE_REGION = 'gru1';
 
-/** Registro de presencia de un npub respecto a este juego (para amigos Luna Negra). */
-export interface LunaPresenceRecord {
-  npub: string;
-  name: string;
-  avatarUrl: string | null;
-  status: 'in-game' | 'online';
-  roomId: string | null;
-  updatedAtServerMs: number;
-}
-
-// Un jugador deja de figurar "jugando" si no emite heartbeat por más de 20s.
-// El cliente late cada ~10s (la mitad del TTL) solo mientras tiene el juego en
-// primer plano, así un jugador activo nunca expira pero quien se va cae solo.
-export const LUNA_PRESENCE_TTL_MS = 20_000;
-export const LUNA_PRESENCE_TTL_SECONDS = 20;
-
 export interface RoomStore {
   getRoom(id: string): Promise<OnlineRoom | null>;
   saveRoom(room: OnlineRoom, ttlSeconds?: number): Promise<void>;
   deleteRoom(id: string): Promise<void>;
   listPublicRoomIds(): Promise<string[]>;
   savePublicRoomIds(ids: string[], ttlSeconds?: number): Promise<void>;
-  getPresenceRecords(): Promise<LunaPresenceRecord[]>;
-  savePresenceRecords(records: LunaPresenceRecord[], ttlSeconds?: number): Promise<void>;
 }
 
 export class OnlineRoomError extends Error {
@@ -551,53 +532,7 @@ async function removeRoomEverywhere(store: RoomStore, roomId: string): Promise<v
   }
 }
 
-// ───────────────────── Presencia / amigos de Luna Negra ─────────────────────
-
-/** Registra/actualiza la presencia de un npub (tiene el juego abierto / está en sala). */
-export async function recordLunaPresence(
-  store: RoomStore,
-  request: LunaPresenceRequest,
-  nowMs = Date.now(),
-): Promise<void> {
-  const npub = normalizeNpub(request.npub);
-  if (!npub) throw new OnlineRoomError('npub inválido.', 400);
-  const records = prunePresence(await store.getPresenceRecords(), nowMs);
-  const filtered = records.filter((record) => record.npub !== npub);
-  filtered.push({
-    npub,
-    name: normalizePlayerName(request.name),
-    avatarUrl: normalizeAvatarUrl(request.avatarUrl),
-    status: request.status === 'in-game' ? 'in-game' : 'online',
-    roomId: typeof request.roomId === 'string' && request.roomId.trim() ? normalizeRoomId(request.roomId) : null,
-    updatedAtServerMs: nowMs,
-  });
-  await store.savePresenceRecords(filtered, LUNA_PRESENCE_TTL_SECONDS);
-}
-
-/**
- * Devuelve la lista de amigos (mock): todos los npubs con presencia reciente en
- * este juego, excepto uno mismo, ordenados in-game → online. El grafo real de
- * amistades lo provee Luna Negra; hasta entonces "amigos" = jugadores presentes.
- */
-export async function listLunaFriendsMock(
-  store: RoomStore,
-  selfNpub: string,
-  nowMs = Date.now(),
-): Promise<LunaFriend[]> {
-  const self = normalizeNpub(selfNpub);
-  const records = prunePresence(await store.getPresenceRecords(), nowMs);
-  const friends: LunaFriend[] = records
-    .filter((record) => record.npub !== self)
-    .map((record) => ({
-      npub: record.npub,
-      name: record.name,
-      avatarUrl: record.avatarUrl,
-      presence: record.status === 'in-game' ? 'in-game' : 'online',
-      roomId: record.roomId,
-      lastSeenMs: record.updatedAtServerMs,
-    }));
-  return sortLunaFriends(friends);
-}
+// ──────────────────────────── Amigos de Luna Negra ──────────────────────────
 
 /** Ordena: primero los que tienen el juego abierto (in-game), luego online, luego offline. */
 export function sortLunaFriends(friends: LunaFriend[]): LunaFriend[] {
@@ -606,10 +541,6 @@ export function sortLunaFriends(friends: LunaFriend[]): LunaFriend[] {
     if (rank[a.presence] !== rank[b.presence]) return rank[a.presence] - rank[b.presence];
     return a.name.localeCompare(b.name);
   });
-}
-
-function prunePresence(records: LunaPresenceRecord[], nowMs: number): LunaPresenceRecord[] {
-  return records.filter((record) => nowMs - record.updatedAtServerMs <= LUNA_PRESENCE_TTL_MS);
 }
 
 async function setPlayerTargetingOnce(
@@ -962,7 +893,6 @@ function enterExistingLunaNegraRoom(
 export class MemoryRoomStore implements RoomStore {
   private rooms = new Map<string, OnlineRoom>();
   private publicIds: string[] = [];
-  private presence: LunaPresenceRecord[] = [];
 
   async getRoom(id: string): Promise<OnlineRoom | null> {
     return cloneRoom(this.rooms.get(normalizeRoomId(id)) ?? null);
@@ -999,15 +929,6 @@ export class MemoryRoomStore implements RoomStore {
   async savePublicRoomIds(ids: string[]): Promise<void> {
     this.publicIds = [...new Set(ids.map(normalizeRoomId))];
   }
-
-  async getPresenceRecords(): Promise<LunaPresenceRecord[]> {
-    return this.presence.map((record) => ({ ...record }));
-  }
-
-  async savePresenceRecords(records: LunaPresenceRecord[]): Promise<void> {
-    this.presence = records.map((record) => ({ ...record }));
-  }
-
 }
 
 async function persistRoom(store: RoomStore, room: OnlineRoom): Promise<void> {

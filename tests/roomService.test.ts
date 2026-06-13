@@ -77,8 +77,6 @@ describe('room store optimistic locking', () => {
       deleteRoom: (id) => store.deleteRoom(id),
       listPublicRoomIds: () => store.listPublicRoomIds(),
       savePublicRoomIds: (ids) => store.savePublicRoomIds(ids),
-      getPresenceRecords: () => store.getPresenceRecords(),
-      savePresenceRecords: (records) => store.savePresenceRecords(records),
     };
     let interleaved = false;
     slowStore.getRoom = async (id) => {
