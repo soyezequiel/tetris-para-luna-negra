@@ -152,6 +152,10 @@ const ONLINE_BACKGROUND_SYNC_MS = 1000;
 // Al morir en online seguimos dibujando MI tablero esta ventana para que corra la
 // animación de derrota (estilo tetr.io); luego se oculta y paso a espectador.
 const ONLINE_DEATH_ANIM_MS = 2000;
+// Igual que en solo, al perder (top out) congelamos el tablero esta ventana ANTES del
+// colapso para que veas cómo quedó; recién después corre la animación de derrota. Más
+// corto que en solo: en online conviene pasar pronto a ver a los rivales.
+const ONLINE_DEATH_STUDY_MS = 1600;
 // En solo/offline la derrota tiene dos fases antes de mostrar el panel de TOP OUT:
 //  1) ESTUDIO: el tablero queda congelado tal cual quedó al perder, para que puedas
 //     ver POR QUÉ perdiste (sin colapso todavía). Solo se ve un cartel discreto.
@@ -230,9 +234,13 @@ let lastKoOverlayHtml = '';
 // Datos del KO congelados en el instante de morir: así el toast compacto tiene
 // contenido estable y su animación (entra arriba, se va) corre una sola vez.
 let onlineKoBanner: { placement: string; won: boolean } | null = null;
-// Momento en que morí en online; mientras dura ONLINE_DEATH_ANIM_MS sigo
-// dibujando mi tablero para la animación de derrota antes de pasar a espectador.
+// Momento en que morí en online; durante la ventana de muerte sigo dibujando mi
+// tablero (estudio + colapso) antes de pasar a espectador.
 let onlineDeathAnimStartedAt: number | null = null;
+// Ya disparé el colapso del tablero online (segunda fase). Evita re-dispararlo.
+let onlineDeathCollapseStarted = false;
+// Morí por top out (no por ganar): solo entonces hay fase de estudio + colapso.
+let onlineDeathLostByTopOut = false;
 // Equivalente para solo/offline: instante en que toqué el techo. Durante la fase de
 // estudio + colapso se difiere el panel de resultados (ver SOLO_DEATH_*_MS).
 let soloDeathStartedAt: number | null = null;
@@ -509,23 +517,39 @@ function syncOnlineDeathPhase(state: GameState): void {
     && (state.status === 'gameover' || state.status === 'finished');
   if (!dead) {
     onlineDeathAnimStartedAt = null;
+    onlineDeathCollapseStarted = false;
+    onlineDeathLostByTopOut = false;
     onlineKoBanner = null;
     return;
   }
   if (onlineDeathAnimStartedAt === null) {
     onlineDeathAnimStartedAt = performance.now();
+    onlineDeathLostByTopOut = state.status === 'gameover';
+    // Ganar (finished) no congela ni colapsa: marcamos el colapso como ya hecho.
+    onlineDeathCollapseStarted = !onlineDeathLostByTopOut;
     onlineKoBanner = {
       placement: onlineLocalPlacementLabel(),
       won: state.status === 'finished',
     };
-    // Perder (top out) dispara el colapso del tablero; ganar (finished) no.
-    if (state.status === 'gameover') renderer.playDeathAnimation();
+  }
+  // Top out: primero la fase de estudio (tablero congelado), luego el colapso.
+  if (onlineDeathLostByTopOut && !onlineDeathCollapseStarted
+    && performance.now() - onlineDeathAnimStartedAt >= ONLINE_DEATH_STUDY_MS) {
+    onlineDeathCollapseStarted = true;
+    renderer.playDeathAnimation();
   }
 }
 
 function isOnlineDeathAnimating(): boolean {
-  return onlineDeathAnimStartedAt !== null
-    && performance.now() - onlineDeathAnimStartedAt < ONLINE_DEATH_ANIM_MS;
+  if (onlineDeathAnimStartedAt === null) return false;
+  // Al perder la ventana cubre estudio + colapso; al ganar solo la animación normal.
+  const windowMs = onlineDeathLostByTopOut ? ONLINE_DEATH_STUDY_MS + ONLINE_DEATH_ANIM_MS : ONLINE_DEATH_ANIM_MS;
+  return performance.now() - onlineDeathAnimStartedAt < windowMs;
+}
+
+// True solo durante la fase de estudio online (tablero congelado, sin colapso aún).
+function isOnlineDeathStudying(): boolean {
+  return onlineDeathAnimStartedAt !== null && onlineDeathLostByTopOut && !onlineDeathCollapseStarted;
 }
 
 // Maneja la secuencia de muerte en solo (no online): primero congela el tablero para
@@ -3776,17 +3800,18 @@ function renderScreenOverlay(state: GameState): string {
   if (appMode === 'soloCountdown') return renderSoloCountdownOverlay();
   if (appMode === 'onlineCountdown') return renderOnlineCountdownOverlay();
   if (appMode === 'onlineResults') {
-    // Mientras corre la ventana de muerte, el tablero local sigue dibujándose con la
-    // animación de derrota ("GAME!" + colapso); recién después aparecen los
-    // resultados. Así la animación se ve también cuando tu muerte cierra la ronda.
-    if (isOnlineDeathAnimating()) return '';
+    // Mientras corre la ventana de muerte, el tablero local sigue dibujándose: primero
+    // congelado (fase de estudio, con cartel) para ver por qué perdiste, luego la
+    // animación de derrota ("GAME!" + colapso); recién después aparecen los resultados.
+    if (isOnlineDeathAnimating()) return isOnlineDeathStudying() ? renderDeathStudyHint() : '';
     return renderOnlineResultsOverlay(state);
   }
   // Online: perder no abre la pantalla de resultados de solo. El banner de KO se
   // dibuja en su propia capa persistente (koOverlayElement) para que no parpadee
-  // con el redibujo por frame de los tableros rivales; aquí no devolvemos nada.
+  // con el redibujo por frame de los tableros rivales. Durante la fase de estudio sí
+  // mostramos el cartel discreto sobre el tablero congelado.
   if (appMode === 'onlinePlaying') {
-    return '';
+    return isOnlineDeathStudying() ? renderDeathStudyHint() : '';
   }
 
   if (appMode === 'paused') {
@@ -3813,14 +3838,14 @@ function renderScreenOverlay(state: GameState): string {
   // corre el colapso ("GAME!") y recién ahí aparecen los resultados. Ganar (finished)
   // no se difiere: la celebración ya es la pantalla.
   if (state.status === 'gameover' && isSoloDeathAnimating()) {
-    return isSoloDeathStudying() ? renderSoloDeathStudyHint() : '';
+    return isSoloDeathStudying() ? renderDeathStudyHint() : '';
   }
   return renderSoloResultsOverlay(state);
 }
 
 // Cartel discreto durante la fase de estudio: no tapa el tablero, solo avisa que
-// quedó congelado a propósito para que veas cómo perdiste.
-function renderSoloDeathStudyHint(): string {
+// quedó congelado a propósito para que veas cómo perdiste. Compartido solo/online.
+function renderDeathStudyHint(): string {
   return `
     <div class="death-study-hint">
       <span class="death-study-hint-tag">TOP OUT</span>
@@ -4237,7 +4262,7 @@ function renderOnlineCountdownOverlay(): string {
   return renderCountdownStage(remainingMs, `SALA ${escapeHtml(onlineRoom.id)} · ÚLTIMO EN PIE GANA`);
 }
 
-function renderOnlineResultsOverlay(_state: GameState): string {
+function renderOnlineResultsOverlay(state: GameState): string {
   const room = onlineRoom;
   const ranked = room ? rankPlayers(room.players) : [];
   const bet = room?.bet;
@@ -4282,6 +4307,9 @@ function renderOnlineResultsOverlay(_state: GameState): string {
           ${rematch}
           ${onlineReplayCollector.size() > 0
             ? '<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="online-replay-open">Ver repetición</button>'
+            : ''}
+          ${roundOver && canReplayLastSeconds(state)
+            ? `<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="replay-last-seconds">Ver mis últimos ${DEATH_REPLAY_SECONDS}s</button>`
             : ''}
           <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="online-results-menu">Volver al menú</button>
           <button class="solo-results-btn solo-results-btn--danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
