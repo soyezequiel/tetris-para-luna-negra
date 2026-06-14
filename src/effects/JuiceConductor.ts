@@ -253,6 +253,11 @@ export class JuiceConductor {
   onHardDropTrail(cols: number[], top: number, bottom: number): void {
     this.fx.spawnDropTrail(cols, top, bottom, P.cyan);
   }
+  /** Estela sutil de caída normal/soft-drop: rastro tenue detrás de la pieza
+   * mientras desciende fila a fila. cols = columnas; top/bottom = filas VISIBLES. */
+  onFallTrail(cols: number[], top: number, bottom: number): void {
+    this.fx.spawnFallTrail(cols, top, bottom, P.cyanSoft);
+  }
   /** Junto a sound.play('lock'). Ilumina el marco (sin flash de tablero, que
    * saturaba la pantalla en cada pieza) + micro-shake. */
   onLock(): void {

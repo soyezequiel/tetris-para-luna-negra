@@ -79,7 +79,7 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, saveSoundMuted, saveTouchControlsHidden } from './storage';
+import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
 import { JuiceConductor } from './effects/JuiceConductor';
@@ -130,6 +130,9 @@ multiReplayOverlayElement.addEventListener('click', handleOverlayClick);
 const gamepadToastElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(gamepadToastElement);
 const VOLUME_WHEEL_STEP = 0.05;
+// Tope de cambio de volumen por evento de rueda: una muesca de mouse puede
+// reportar deltaY enorme; sin tope, un solo notch saltaría medio volumen.
+const VOLUME_WHEEL_MAX_STEP = 0.08;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
@@ -218,10 +221,13 @@ const sound = new SoundEngine(
   loadRecord().sfxVolume,
   loadRecord().musicVolume,
   loadRecord().musicReverb,
+  loadRecord().sfxMuted,
+  loadRecord().musicMuted,
 );
 // Capa de "feel" (partículas, audio rico, danger, KO/win). Es aditiva: AudioContext
 // propio en paralelo al SoundEngine, sincronizando mute/volumen (ver setMuted/setSfxVolume).
-const juiceAudio = new JuiceAudio(loadRecord().soundMuted, loadRecord().sfxVolume);
+// Es 100% efectos, así que también se calla con el mute de canal SFX.
+const juiceAudio = new JuiceAudio(loadRecord().soundMuted || loadRecord().sfxMuted, loadRecord().sfxVolume);
 const juice = new JuiceConductor(renderer.getJuice(), juiceAudio);
 // Desbloquea el AudioContext de la capa juice en el primer gesto del usuario.
 const unlockJuiceAudio = (): void => { void juiceAudio.unlock(); };
@@ -550,6 +556,18 @@ function loopBody(): void {
       const bottom = land.y + Math.max(...cells.map((c) => c.y)) - hidden;
       juice.onHardDropTrail(cols, top, bottom);
     }
+    // Estela sutil de caída normal/soft-drop: misma pieza que descendió fila(s)
+    // sin fijarse ni hacer hard drop. Rastro tenue de neón detrás de la pieza.
+    if (!didHardDrop && !lockedPiece && beforeTickState.active && state.active
+        && state.active.y > beforeTickState.active.y) {
+      const piece = state.active;
+      const cells = cellsFor(piece.type, piece.rotation);
+      const hidden = state.stats.hiddenRows;
+      const cols = [...new Set(cells.map((c) => piece.x + c.x))];
+      const top = beforeTickState.active.y + Math.min(...cells.map((c) => c.y)) - hidden;
+      const bottom = piece.y + Math.max(...cells.map((c) => c.y)) - hidden;
+      juice.onFallTrail(cols, top, bottom);
+    }
   }
 
   syncOnline();
@@ -842,7 +860,7 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
   if (event.code === 'KeyM') {
     event.preventDefault();
     best = saveSoundMuted(sound.toggleMuted());
-    juiceAudio.setMuted(sound.isMuted());
+    syncSfxMuteToJuice();
   }
   if (event.code === 'KeyN') {
     event.preventDefault();
@@ -1019,6 +1037,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-results-menu') {
     closeOnlineResults();
   }
+  if (action === 'online-create') createOnlineRoom('private');
   if (action === 'online-create-public') createOnlineRoom('public');
   if (action === 'online-create-private') createOnlineRoom('private');
   if (action === 'online-join') joinOnlineRoom(onlineJoinCode);
@@ -1114,7 +1133,16 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'main-menu') goToMenu();
   if (action === 'toggle-sound') {
     best = saveSoundMuted(sound.toggleMuted());
-    juiceAudio.setMuted(sound.isMuted());
+    syncSfxMuteToJuice();
+  }
+  if (action === 'toggle-sfx') {
+    sound.toggleSfxMuted();
+    best = saveAudioMutes(sound.isSfxMuted(), sound.isMusicMuted());
+    syncSfxMuteToJuice();
+  }
+  if (action === 'toggle-music') {
+    sound.toggleMusicMuted();
+    best = saveAudioMutes(sound.isSfxMuted(), sound.isMusicMuted());
   }
   if (action === 'next-music') sound.nextMusicTrack();
   if (action === 'cycle-reverb') best = saveMusicReverb(sound.cycleReverbMode());
@@ -3802,27 +3830,21 @@ function renderDevBotPanel(): string {
 function renderOverlay(state: GameState): void {
   if (import.meta.env.DEV) renderDevBotOverlay(); // BOT DEV
   const currentMusicTrack = sound.getCurrentMusicTrack()?.title ?? 'No music';
-  const activeVolumeChannel = getActiveVolumeChannel();
   // Modo solo "relax" (40 líneas): muestra subtítulo + engranaje de ajustes.
   const soloRelax = appMode === 'playing' || appMode === 'paused' || appMode === 'soloCountdown';
   const gearIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>';
   const html = `
     <div class="brand">TETRA${soloRelax ? '<span class="brand-sub">MODO RELAX</span>' : ''}</div>
     ${soloRelax ? `<button class="gear-btn" type="button" data-ui-action="settings" aria-label="Ajustes" title="Ajustes">${gearIcon}</button>` : ''}
+    ${soloRelax ? renderRelaxAudio() : ''}
     ${autoPlayAccessGranted ? renderAutoPlayToggle() : ''}
     <div class="help">${escapeHtml(helpText())}</div>
     ${soloRelax ? '' : `<div class="best">Best ${best.best40LineFrames === null ? '--:--.---' : formatFrames(best.best40LineFrames)}</div>`}
     ${soloRelax ? '' : `<div class="audio-panel">
       <button class="hud-action sound" type="button" data-ui-action="toggle-sound">${sound.isMuted() ? 'Sound off' : 'Sound on'}</button>
-      <div class="volume-control ${activeVolumeChannel === 'sfx' ? 'volume-control-active' : ''}" data-volume-channel="sfx">
-        <span>SFX</span>
-        <span>${formatPercent(sound.getSfxVolume())}%</span>
-      </div>
-      <div class="volume-control ${activeVolumeChannel === 'music' ? 'volume-control-active' : ''}" data-volume-channel="music">
-        <span>BGM</span>
-        <span>${formatPercent(sound.getMusicVolume())}%</span>
-      </div>
-      <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
+      ${renderVolumeChannelRow('sfx')}
+      ${renderVolumeChannelRow('music')}
+      <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.isMusicMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
       <button class="hud-action reverb" type="button" data-ui-action="cycle-reverb" title="Cola de reverb al apagar la música">Reverb: ${reverbLabel(sound.getReverbMode())}</button>
     </div>`}
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
@@ -6139,8 +6161,7 @@ function renderDashboardRoomPanel(): string {
         <div class="dash-field-group">
           <label>Crear Sala</label>
           <div class="dash-buttons-row">
-            <button class="dash-action-btn accent" type="button" data-ui-action="online-create-private"${onlineBusy ? ' disabled' : ''}>Privada</button>
-            <button class="dash-action-btn" type="button" data-ui-action="online-create-public"${onlineBusy ? ' disabled' : ''}>Pública</button>
+            <button class="dash-action-btn accent" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
           </div>
           ${import.meta.env.DEV ? `<div class="dash-buttons-row" style="margin-top: 6px;">
             <button class="dash-action-btn" type="button" data-ui-action="dev-bot-match"${onlineBusy ? ' disabled' : ''}>Partida vs bot (dev)</button>
@@ -6411,14 +6432,35 @@ function formatActionBinding(action: ControlAction): string {
   return bindings.length > 0 ? bindings.map(keyLabel).join('/') : 'Unbound';
 }
 
+// La capa Juice es 100% efectos: se calla con el mute maestro o con el mute de SFX.
+function syncSfxMuteToJuice(): void {
+  juiceAudio.setMuted(sound.isMuted() || sound.isSfxMuted());
+}
+
+// Normaliza el delta de la rueda a píxeles. deltaMode 1 = líneas (algunos mouse),
+// 2 = páginas; los convertimos para que mouse y touchpad se comporten parecido.
+function wheelDeltaToPixels(event: WheelEvent): number {
+  if (event.deltaMode === 1) return event.deltaY * 16;
+  if (event.deltaMode === 2) return event.deltaY * window.innerHeight;
+  return event.deltaY;
+}
+
 function handleVolumeWheel(event: WheelEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
   const control = target.closest<HTMLElement>('[data-volume-channel]');
   if (!control) return;
-  const channel = control.dataset.volumeChannel === 'music' ? 'music' : 'sfx';
-  const direction = event.deltaY < 0 ? 1 : -1;
-  sound.adjustVolume(channel, direction * VOLUME_WHEEL_STEP);
+  const channel: VolumeChannel = control.dataset.volumeChannel === 'music' ? 'music' : 'sfx';
+  const pixels = wheelDeltaToPixels(event);
+  if (pixels === 0) return;
+  // Cambio proporcional al desplazamiento (estilo tetr.io). El mouse manda
+  // "muescas" grandes (~100px ⇒ un paso completo); el touchpad manda muchos
+  // eventos chiquitos que suman de a poco, en vez de saltar un paso fijo por
+  // evento. El tope por evento evita brincos con muescas enormes. Scroll
+  // arriba (deltaY < 0) sube el volumen.
+  let change = -pixels * (VOLUME_WHEEL_STEP / 100);
+  change = Math.max(-VOLUME_WHEEL_MAX_STEP, Math.min(VOLUME_WHEEL_MAX_STEP, change));
+  sound.adjustVolume(channel, change);
   best = saveAudioVolumes(sound.getSfxVolume(), sound.getMusicVolume());
   if (channel === 'sfx') juiceAudio.setSfxVolume(sound.getSfxVolume());
   volumeFeedback = { channel, expiresAt: performance.now() + 900 };
@@ -6432,6 +6474,46 @@ function getActiveVolumeChannel(): VolumeChannel | null {
     return null;
   }
   return volumeFeedback.channel;
+}
+
+// Ícono de altavoz (encendido / silenciado) para los botones de mute por canal.
+function speakerIcon(muted: boolean): string {
+  const extra = muted
+    ? '<line x1="16" y1="9.5" x2="21" y2="14.5"></line><line x1="21" y1="9.5" x2="16" y2="14.5"></line>'
+    : '<path d="M15.5 9.2a3.6 3.6 0 0 1 0 5.6"></path><path d="M18 7a6.8 6.8 0 0 1 0 10"></path>';
+  return `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 9.5h3L11 6v12l-4.5-3.5h-3z"></path>${extra}</svg>`;
+}
+
+// Fila de un canal de audio (SFX o BGM): botón de mute + etiqueta + porcentaje.
+// El contenedor lleva data-volume-channel para que la rueda del mouse/touchpad
+// lo ajuste (ver handleVolumeWheel). Compartida por el HUD y la tarjeta relax.
+function renderVolumeChannelRow(channel: VolumeChannel): string {
+  const isMusic = channel === 'music';
+  const label = isMusic ? 'BGM' : 'SFX';
+  const muted = isMusic ? sound.isMusicMuted() : sound.isSfxMuted();
+  const volume = isMusic ? sound.getMusicVolume() : sound.getSfxVolume();
+  const toggleAction = isMusic ? 'toggle-music' : 'toggle-sfx';
+  const classes = [
+    'volume-control',
+    getActiveVolumeChannel() === channel ? 'volume-control-active' : '',
+    muted ? 'volume-control-muted' : '',
+  ].filter(Boolean).join(' ');
+  return `
+    <div class="${classes}" data-volume-channel="${channel}" title="Rueda del mouse o touchpad para ajustar">
+      <button class="volume-mute" type="button" data-ui-action="${toggleAction}" aria-pressed="${muted}" aria-label="${muted ? 'Activar' : 'Silenciar'} ${label}" title="${muted ? 'Activar' : 'Silenciar'} ${label}">${speakerIcon(muted)}</button>
+      <span class="volume-label">${label}</span>
+      <span class="volume-value">${formatPercent(volume)}%</span>
+    </div>`;
+}
+
+// Tarjeta compacta de volumen para el modo relax (arriba a la derecha, bajo el
+// engranaje): muteo y ajuste por canal sin pausar la partida.
+function renderRelaxAudio(): string {
+  return `
+    <div class="relax-audio" aria-label="Volumen">
+      ${renderVolumeChannelRow('sfx')}
+      ${renderVolumeChannelRow('music')}
+    </div>`;
 }
 
 function playImmediateInputSounds(actions: InputAction[]): void {

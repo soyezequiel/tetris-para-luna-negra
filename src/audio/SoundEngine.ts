@@ -49,6 +49,11 @@ export class SoundEngine {
   private readonly music: HTMLAudioElement;
   private readonly musicTracks: MusicTrack[];
   private muted: boolean;
+  // Silenciado por canal (independiente del mute maestro `muted`): permite apagar
+  // sólo la música o sólo los efectos sin tocar el otro canal. El volumen guardado
+  // se conserva mientras el canal está silenciado.
+  private sfxMuted: boolean;
+  private musicMuted: boolean;
   private sfxVolume: number;
   private musicVolume: number;
   private currentMusicTrackIndex = 0;
@@ -72,8 +77,12 @@ export class SoundEngine {
     sfxVolume = DEFAULT_SFX_VOLUME,
     musicVolume = DEFAULT_MUSIC_VOLUME,
     reverbMode: ReverbMode = DEFAULT_REVERB_MODE,
+    sfxMuted = false,
+    musicMuted = false,
   ) {
     this.muted = muted;
+    this.sfxMuted = sfxMuted;
+    this.musicMuted = musicMuted;
     this.musicTracks = musicTracks;
     this.sfxVolume = this.clampVolume(sfxVolume);
     this.musicVolume = this.clampVolume(musicVolume);
@@ -97,6 +106,45 @@ export class SoundEngine {
     if (this.muted) this.fadeOutMusicWithReverb();
     else void this.unlock();
     return this.muted;
+  }
+
+  isSfxMuted(): boolean {
+    return this.sfxMuted;
+  }
+
+  isMusicMuted(): boolean {
+    return this.musicMuted;
+  }
+
+  setSfxMuted(muted: boolean): boolean {
+    this.sfxMuted = muted;
+    return this.sfxMuted;
+  }
+
+  toggleSfxMuted(): boolean {
+    return this.setSfxMuted(!this.sfxMuted);
+  }
+
+  setMusicMuted(muted: boolean): boolean {
+    if (this.musicMuted === muted) return this.musicMuted;
+    this.musicMuted = muted;
+    if (muted) {
+      this.fadeOutMusicWithReverb();
+      this.musicStarted = false;
+    } else if (this.musicEnabled()) {
+      void this.startMusic();
+    }
+    return this.musicMuted;
+  }
+
+  toggleMusicMuted(): boolean {
+    return this.setMusicMuted(!this.musicMuted);
+  }
+
+  // ¿La música debería estar sonando ahora mismo? Compone el permiso de contexto
+  // (menú vs partida), el mute maestro, el mute de canal y el volumen.
+  private musicEnabled(): boolean {
+    return this.musicAllowed && !this.muted && !this.musicMuted && this.musicVolume > 0;
   }
 
   getReverbMode(): ReverbMode {
@@ -127,7 +175,7 @@ export class SoundEngine {
     if (!allowed) {
       this.fadeOutMusicWithReverb();
       this.musicStarted = false;
-    } else if (!this.muted) {
+    } else if (this.musicEnabled()) {
       void this.startMusic();
     }
   }
@@ -158,17 +206,17 @@ export class SoundEngine {
 
     this.musicVolume = nextVolume;
     this.applyMusicVolume();
-    if (this.musicVolume === 0) this.music.pause();
-    else if (!this.muted) void this.unlock();
+    if (!this.musicEnabled()) this.music.pause();
+    else void this.unlock();
     return this.musicVolume;
   }
 
   nextMusicTrack(): MusicTrack | null {
-    return this.advanceMusicTrack(!this.muted && this.musicStarted);
+    return this.advanceMusicTrack(this.musicEnabled() && this.musicStarted);
   }
 
   play(cue: SoundCue): void {
-    if (this.muted || this.sfxVolume === 0) return;
+    if (this.muted || this.sfxMuted || this.sfxVolume === 0) return;
     const context = this.getContext();
     if (!context) return;
     const now = context.currentTime;
@@ -229,7 +277,7 @@ export class SoundEngine {
   private unlock = async (): Promise<void> => {
     const context = this.getContext();
     if (context?.state === 'suspended') await context.resume();
-    if (!this.muted) await this.startMusic();
+    if (this.musicEnabled()) await this.startMusic();
     if (context?.state !== 'suspended') {
       window.removeEventListener('pointerdown', this.unlock);
       window.removeEventListener('keydown', this.unlock);
@@ -276,7 +324,7 @@ export class SoundEngine {
   }
 
   private async startMusic(): Promise<void> {
-    if (!this.musicAllowed || !this.musicTracks.length || this.musicVolume === 0) return;
+    if (!this.musicTracks.length || !this.musicEnabled()) return;
     this.ensureMusicGraph();
     this.resetMusicMix();
     try {
@@ -426,7 +474,7 @@ export class SoundEngine {
   };
 
   private handleMusicError = (): void => {
-    this.advanceMusicTrack(!this.muted);
+    this.advanceMusicTrack(this.musicEnabled());
   };
 
   private noise(duration: number, volume: number, cutoff: number): void {

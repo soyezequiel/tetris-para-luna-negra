@@ -121,7 +121,7 @@ export class JuiceFX {
   private rowFlashes: { rows: number[]; t: number; dur: number; color: number; peak: number }[] = [];
   // Estela vertical de neón del hard drop: por cada columna ocupada, una barra que
   // va desde donde estaba la pieza hasta donde aterriza, y se desvanece.
-  private dropTrails: { cols: number[]; top: number; bottom: number; t: number; dur: number; color: number }[] = [];
+  private dropTrails: { cols: number[]; top: number; bottom: number; t: number; dur: number; color: number; subtle?: boolean }[] = [];
   private pendingGarbage = 0; // líneas de garbage entrante (telegraph en el borde)
   private garbagePhase = 0;
   // Countdown de top-out (pila sobre el techo): texto propio, separado del popup
@@ -273,6 +273,13 @@ export class JuiceFX {
   spawnDropTrail(cols: number[], top: number, bottom: number, color: number): void {
     if (cols.length === 0 || bottom < top) return;
     this.dropTrails.push({ cols: [...cols], top, bottom, t: 0, dur: 0.5, color });
+  }
+
+  /** Estela sutil de caída normal/soft-drop: una micro-cola tenue detrás de la
+   * pieza mientras desciende. Mucho más suave y corta que la del hard drop. */
+  spawnFallTrail(cols: number[], top: number, bottom: number, color: number): void {
+    if (cols.length === 0 || bottom < top) return;
+    this.dropTrails.push({ cols: [...cols], top, bottom, t: 0, dur: 0.28, color, subtle: true });
   }
 
   setDanger(level: number): void {
@@ -488,18 +495,20 @@ export class JuiceFX {
       const fade = Math.pow(1 - k, 1.7) * (this.reducedMotion ? 0.45 : 1);
       const yTop = this.geo.boardY + tr.top * this.geo.cell;
       const h = (tr.bottom - tr.top + 1) * this.geo.cell;
-      const coreW = Math.max(1.5, this.geo.cell * 0.1);
-      const glowW = this.geo.cell * 0.6;
+      // La estela sutil (caída normal/soft) es más fina, tenue y sin cabeza blanca.
+      const mul = tr.subtle ? 0.32 : 1;
+      const coreW = Math.max(1.5, this.geo.cell * (tr.subtle ? 0.07 : 0.1));
+      const glowW = this.geo.cell * (tr.subtle ? 0.5 : 0.6);
       // Degradado vertical tipo cola de cometa: brillante abajo (donde aterrizó
       // la pieza) y desvaneciéndose hacia arriba. Se segmenta para el gradiente.
-      const segs = Math.max(6, Math.round(h / (this.geo.cell * 0.45)));
+      const segs = Math.max(4, Math.round(h / (this.geo.cell * 0.45)));
       const segH = h / segs;
       for (const col of tr.cols) {
         const cx = this.geo.boardX + (col + 0.5) * this.geo.cell;
         for (let s = 0; s < segs; s += 1) {
           const f = (s + 0.5) / segs; // 0 arriba, 1 abajo
           const grad = f * f; // cae rápido hacia arriba → cola fina
-          const a = fade * grad;
+          const a = fade * grad * mul;
           if (a < 0.004) continue;
           const y = yTop + s * segH;
           g.beginFill(tr.color, a * 0.12);
@@ -509,10 +518,13 @@ export class JuiceFX {
           g.drawRect(cx - coreW, y, coreW * 2, segH + 0.6);
           g.endFill();
         }
-        // Cabeza suave de la cola: un punto de luz tenue en el aterrizaje.
-        g.beginFill(0xffffff, fade * 0.45);
-        g.drawRect(cx - coreW, yTop + h - segH, coreW * 2, segH);
-        g.endFill();
+        // Cabeza suave de la cola: un punto de luz tenue en el aterrizaje. Solo
+        // en el hard drop; la caída normal queda como un simple rastro de neón.
+        if (!tr.subtle) {
+          g.beginFill(0xffffff, fade * 0.45);
+          g.drawRect(cx - coreW, yTop + h - segH, coreW * 2, segH);
+          g.endFill();
+        }
       }
     }
   }

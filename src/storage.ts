@@ -3,6 +3,8 @@ import type { ReverbMode } from './audio/SoundEngine';
 export interface LocalRecord {
   best40LineFrames: number | null;
   soundMuted: boolean;
+  sfxMuted: boolean;
+  musicMuted: boolean;
   sfxVolume: number;
   musicVolume: number;
   musicReverb: ReverbMode;
@@ -39,6 +41,12 @@ export function saveSoundMuted(soundMuted: boolean): LocalRecord {
   return record;
 }
 
+export function saveAudioMutes(sfxMuted: boolean, musicMuted: boolean): LocalRecord {
+  const record = { ...loadRecord(), sfxMuted, musicMuted };
+  localStorage.setItem(KEY, JSON.stringify(record));
+  return record;
+}
+
 export function saveAudioVolumes(sfxVolume: number, musicVolume: number): LocalRecord {
   const record = {
     ...loadRecord(),
@@ -65,6 +73,8 @@ function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
   return {
     best40LineFrames: record.best40LineFrames ?? null,
     soundMuted: record.soundMuted ?? false,
+    sfxMuted: record.sfxMuted ?? false,
+    musicMuted: record.musicMuted ?? false,
     sfxVolume: normalizeVolume(record.sfxVolume, DEFAULT_SFX_VOLUME),
     musicVolume: normalizeVolume(record.musicVolume, DEFAULT_MUSIC_VOLUME),
     musicReverb: normalizeReverb(record.musicReverb),
