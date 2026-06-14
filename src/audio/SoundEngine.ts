@@ -353,15 +353,19 @@ export class SoundEngine {
     }
 
     const now = context.currentTime;
+    const tail = this.reverbDuration();
     const dry = this.musicDryGain.gain;
     const wet = this.musicWetGain.gain;
     dry.cancelScheduledValues(now);
     wet.cancelScheduledValues(now);
-    // Sube el envío al reverb y desvanece la señal directa.
+    // Sube el envío al reverb y desvanece la señal directa…
     wet.setValueAtTime(Math.max(wet.value, 0.0001), now);
     wet.linearRampToValueAtTime(REVERB_WET_LEVEL, now + 0.04);
     dry.setValueAtTime(Math.max(dry.value, 0.0001), now);
     dry.exponentialRampToValueAtTime(0.0001, now + MUSIC_FADE_TIME);
+    // …y baja el propio envío a silencio a lo largo de la cola, así no queda
+    // ese zumbido bajo y largo arrastrándose hasta cero (la "meseta" del piso).
+    wet.exponentialRampToValueAtTime(0.0001, now + 0.04 + tail);
 
     if (this.musicTailTimer) window.clearTimeout(this.musicTailTimer);
     // Pausa el audio tras el fundido (deja de alimentar al convolver), pero la
