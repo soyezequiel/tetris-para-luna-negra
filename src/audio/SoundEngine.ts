@@ -30,9 +30,9 @@ export const REVERB_MODES: ReverbMode[] = ['off', 'short', 'medium', 'long'];
 // Segundos de la respuesta al impulso (largo de la cola) por modo.
 const REVERB_DURATIONS: Record<ReverbMode, number> = {
   off: 0,
-  short: 1.4,
-  medium: 2.4,
-  long: 4,
+  short: 0.7,
+  medium: 1.2,
+  long: 2,
 };
 
 const DEFAULT_SFX_VOLUME = 1;
@@ -40,9 +40,9 @@ const DEFAULT_MUSIC_VOLUME = 1;
 const DEFAULT_REVERB_MODE: ReverbMode = 'medium';
 const MUSIC_OUTPUT_GAIN = 0.34;
 
-const REVERB_DECAY = 2.6; // curva de caída exponencial del impulso
-const MUSIC_FADE_TIME = 0.32; // segundos en los que el dry baja a 0
-const REVERB_WET_LEVEL = 0.95; // nivel del envío al reverb durante el apagado
+const REVERB_DECAY = 4; // curva de caída exponencial del impulso (más alto = se va más rápido)
+const MUSIC_FADE_TIME = 0.18; // segundos en los que el dry baja a 0
+const REVERB_WET_LEVEL = 0.8; // nivel del envío al reverb durante el apagado
 
 export class SoundEngine {
   private context: AudioContext | null = null;
