@@ -1,3 +1,5 @@
+import { NeoSynth } from './NeoSynth';
+
 export type SoundCue =
   | 'move'
   | 'rotate'
@@ -46,6 +48,9 @@ const REVERB_WET_LEVEL = 0.8; // nivel del envío al reverb durante el apagado
 
 export class SoundEngine {
   private context: AudioContext | null = null;
+  // Síntesis de efectos: paleta "Neo" (modelado modal + crunch). Reemplaza los
+  // osciladores crudos de antes; la música sigue por el grafo WebAudio de abajo.
+  private readonly neo: NeoSynth;
   private readonly music: HTMLAudioElement;
   private readonly musicTracks: MusicTrack[];
   private muted: boolean;
@@ -59,7 +64,6 @@ export class SoundEngine {
   private currentMusicTrackIndex = 0;
   private musicStarted = false;
   private musicAllowed = true;
-  private lastSoftDropAt = 0;
 
   // Grafo WebAudio de la música (creado de forma perezosa una sola vez): permite
   // aplicar la cola de reverb al apagar. Si no hay AudioContext, la música suena
@@ -87,6 +91,7 @@ export class SoundEngine {
     this.sfxVolume = this.clampVolume(sfxVolume);
     this.musicVolume = this.clampVolume(musicVolume);
     this.reverbMode = reverbMode;
+    this.neo = new NeoSynth(this.muted || this.sfxMuted, this.sfxVolume);
     this.music = new Audio();
     this.music.preload = 'metadata';
     this.applyMusicVolume();
@@ -103,6 +108,7 @@ export class SoundEngine {
 
   toggleMuted(): boolean {
     this.muted = !this.muted;
+    this.syncSfx();
     if (this.muted) this.fadeOutMusicWithReverb();
     else void this.unlock();
     return this.muted;
@@ -118,6 +124,7 @@ export class SoundEngine {
 
   setSfxMuted(muted: boolean): boolean {
     this.sfxMuted = muted;
+    this.syncSfx();
     return this.sfxMuted;
   }
 
@@ -201,6 +208,7 @@ export class SoundEngine {
     const nextVolume = this.clampVolume(volume);
     if (channel === 'sfx') {
       this.sfxVolume = nextVolume;
+      this.syncSfx();
       return this.sfxVolume;
     }
 
@@ -215,67 +223,23 @@ export class SoundEngine {
     return this.advanceMusicTrack(this.musicEnabled() && this.musicStarted);
   }
 
+  // Los efectos los sintetiza NeoSynth (paleta Neo: modelado modal + crunch). El
+  // gate de mute/volumen se mantiene aquí y se refleja en `neo` con syncSfx().
   play(cue: SoundCue): void {
     if (this.muted || this.sfxMuted || this.sfxVolume === 0) return;
-    const context = this.getContext();
-    if (!context) return;
-    const now = context.currentTime;
-    if (cue === 'softDrop') {
-      if (now - this.lastSoftDropAt < 0.045) return;
-      this.lastSoftDropAt = now;
-    }
+    this.neo.play(cue);
+  }
 
-    switch (cue) {
-      case 'move':
-        // Tick crujiente: chasquido de ruido filtrado + cuerpo corto cuadrado.
-        this.noise(0.024, 0.05, 3200);
-        this.tone(190, 0.003, 0.026, 'square', 0.05);
-        break;
-      case 'rotate':
-        this.tone(480, 0.022, 0.04, 'triangle', 0.09);
-        break;
-      case 'softDrop':
-        this.tone(120, 0.01, 0.018, 'sine', 0.045);
-        break;
-      case 'hardDrop':
-        this.noise(0.08, 0.12, 900);
-        this.tone(90, 0.04, 0.08, 'sawtooth', 0.12);
-        break;
-      case 'hold':
-        this.chord([330, 415], 0.045, 0.08);
-        break;
-      case 'lock':
-        this.tone(150, 0.025, 0.05, 'square', 0.08);
-        break;
-      case 'lineClear':
-        this.arpeggio([420, 560, 760, 980], 0.035, 0.09);
-        break;
-      case 'tSpin':
-        this.noise(0.035, 0.045, 1800);
-        this.arpeggio([740, 932, 1175, 1480], 0.03, 0.13);
-        break;
-      case 'finish':
-        this.arpeggio([523, 659, 784, 1046], 0.08, 0.12);
-        break;
-      case 'gameOver':
-        this.arpeggio([240, 180, 130], 0.11, 0.12);
-        break;
-      case 'retry':
-        this.chord([220, 440], 0.035, 0.07);
-        break;
-      case 'countdownTick':
-        // Beep arcade nítido por cada segundo (3, 2, 1).
-        this.tone(680, 0.006, 0.16, 'square', 0.11);
-        break;
-      case 'countdownGo':
-        // Acorde ascendente de arranque (¡YA!).
-        this.arpeggio([784, 1046, 1568], 0.05, 0.16);
-        break;
-    }
+  // Refleja el estado de mute (maestro o de canal SFX) y el volumen SFX en el
+  // motor Neo. Llamar tras cualquier cambio de muted/sfxMuted/sfxVolume.
+  private syncSfx(): void {
+    this.neo.setMuted(this.muted || this.sfxMuted);
+    this.neo.setSfxVolume(this.sfxVolume);
   }
 
   private unlock = async (): Promise<void> => {
     const context = this.getContext();
+    void this.neo.unlock();
     if (context?.state === 'suspended') await context.resume();
     if (this.musicEnabled()) await this.startMusic();
     if (context?.state !== 'suspended') {
@@ -290,37 +254,6 @@ export class SoundEngine {
     if (!AudioCtor) return null;
     this.context = new AudioCtor();
     return this.context;
-  }
-
-  private tone(frequency: number, attack: number, release: number, type: OscillatorType, volume: number): void {
-    const context = this.getContext();
-    if (!context) return;
-    const adjustedVolume = volume * this.sfxVolume;
-    if (adjustedVolume <= 0) return;
-    const osc = context.createOscillator();
-    const gain = context.createGain();
-    const now = context.currentTime;
-    osc.type = type;
-    osc.frequency.setValueAtTime(frequency, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(adjustedVolume, now + attack);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + attack + release);
-    osc.connect(gain);
-    gain.connect(context.destination);
-    osc.start(now);
-    osc.stop(now + attack + release + 0.02);
-  }
-
-  private chord(frequencies: number[], duration: number, volume: number): void {
-    frequencies.forEach((frequency, index) => {
-      window.setTimeout(() => this.tone(frequency, 0.015, duration, 'triangle', volume), index * 10);
-    });
-  }
-
-  private arpeggio(frequencies: number[], step: number, volume: number): void {
-    frequencies.forEach((frequency, index) => {
-      window.setTimeout(() => this.tone(frequency, 0.012, step, 'triangle', volume), index * step * 1000);
-    });
   }
 
   private async startMusic(): Promise<void> {
@@ -476,29 +409,6 @@ export class SoundEngine {
   private handleMusicError = (): void => {
     this.advanceMusicTrack(this.musicEnabled());
   };
-
-  private noise(duration: number, volume: number, cutoff: number): void {
-    const context = this.getContext();
-    if (!context) return;
-    const adjustedVolume = volume * this.sfxVolume;
-    if (adjustedVolume <= 0) return;
-    const buffer = context.createBuffer(1, Math.max(1, context.sampleRate * duration), context.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
-    const source = context.createBufferSource();
-    const filter = context.createBiquadFilter();
-    const gain = context.createGain();
-    const now = context.currentTime;
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(cutoff, now);
-    gain.gain.setValueAtTime(adjustedVolume, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    source.buffer = buffer;
-    source.connect(filter);
-    filter.connect(gain);
-    gain.connect(context.destination);
-    source.start(now);
-  }
 
   private applyMusicVolume(): void {
     this.music.volume = this.clampVolume(this.musicVolume * MUSIC_OUTPUT_GAIN);
