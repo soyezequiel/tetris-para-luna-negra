@@ -9,8 +9,6 @@ import { DEFAULT_RULES } from '../game/rules';
 import { displayedElapsedFrames } from '../game/timing';
 import type { GameState, PieceType } from '../game/types';
 
-const PANEL_LINE = 0xf7f7f2;
-const PANEL_FILL = 0x040507;
 const GRID_LINE = 0x2f3338;
 const GHOST_FILL = 0x07090b;
 const GHOST_LINE = 0x525a60;
@@ -21,6 +19,17 @@ const DEATH_TOTAL_FRAMES = 104;
 const DEATH_BLOCK = 0x5b626b;
 const DEATH_BLOCK_LIGHT = 0x868d96;
 const DEATH_BLOCK_DARK = 0x2c3036;
+
+// Paleta del rediseño "Modo Relax": tarjetas redondeadas oscuras, acento turquesa
+// y tipografía clara/gris. Sustituye a los paneles angulares de borde blanco.
+const CARD_FILL = 0x0c121c;       // relleno translúcido de las tarjetas
+const CARD_BORDER = 0x9fb2c6;     // borde fino (se dibuja con alpha bajo)
+const CARD_ACCENT = 0x35d6c6;     // turquesa de los puntitos y la barra de progreso
+const CARD_LABEL = 0x8c98a6;      // etiquetas en gris (HOLD, NEXT, LINES…)
+const CARD_VALUE = 0xf2f5f8;      // valores principales en blanco hueso
+const CARD_TRACK = 0x1b2533;      // fondo de la barra de progreso
+const BOARD_FRAME = 0xaebccb;     // marco fino del tablero
+const FONT_UI = 'Exo 2, Arial, Helvetica, sans-serif';
 
 type BlockPalette = {
   outerLine: number;
@@ -49,6 +58,23 @@ export class PixiGameRenderer {
   private readonly hudText: Text;
   private readonly holdLabel: Text;
   private readonly nextLabel: Text;
+  // Tarjeta de estadísticas (estilo "Modo Relax"): cada dato es su propio Text
+  // porque Pixi no mezcla tamaños/colores dentro de un mismo bloque.
+  private readonly linesLabel: Text;
+  private readonly linesValue: Text;
+  private readonly pcsLabel: Text;
+  private readonly pcsValue: Text;
+  private readonly pcsSub: Text;
+  private readonly timeLabel: Text;
+  private readonly timeValue: Text;
+  private readonly timeSub: Text;
+  private readonly bannerText: Text; // CLEAR / TOP OUT centrado sobre el tablero
+  // Geometría de las tarjetas izquierda (HOLD + stats), recalculada en layout().
+  private statsY = 0;
+  private statsH = 0;
+  private holdH = 0;
+  // PIECES/TIME en dos columnas si la tarjeta es ancha; si no, apiladas.
+  private statsTwoCol = true;
   private width = 1;
   private height = 1;
   private cell = 24;
@@ -97,15 +123,51 @@ export class PixiGameRenderer {
       dropShadowAlpha: 0.4,
       dropShadowDistance: 2,
     }));
-    const sideLabelStyle = new TextStyle({
-      fill: PANEL_LINE,
-      fontFamily: 'Arial Black, Arial, sans-serif',
-      fontSize: 18,
-      fontWeight: '900',
+    // El bloque de texto antiguo (PIECES/LINES/TIME en una columna) se reemplaza
+    // por la tarjeta de stats; se conserva el objeto pero oculto.
+    this.hudText.visible = false;
+
+    const cardLabelStyle = new TextStyle({
+      fill: CARD_LABEL,
+      fontFamily: FONT_UI,
+      fontSize: 13,
+      fontWeight: '700',
+      letterSpacing: 2,
     });
-    this.holdLabel = new Text('HOLD', sideLabelStyle);
-    this.nextLabel = new Text('NEXT', sideLabelStyle);
-    this.labelLayer.addChild(this.holdLabel, this.nextLabel);
+    this.holdLabel = new Text('HOLD', cardLabelStyle.clone());
+    this.nextLabel = new Text('NEXT', cardLabelStyle.clone());
+    this.linesLabel = new Text('LINES', cardLabelStyle.clone());
+    this.pcsLabel = new Text('PIECES', cardLabelStyle.clone());
+    this.timeLabel = new Text('TIME', cardLabelStyle.clone());
+
+    this.linesValue = new Text('0', new TextStyle({
+      fill: CARD_VALUE, fontFamily: FONT_UI, fontSize: 30, fontWeight: '800', letterSpacing: 1,
+    }));
+    const valueStyle = new TextStyle({
+      fill: CARD_VALUE, fontFamily: FONT_UI, fontSize: 22, fontWeight: '800',
+    });
+    this.pcsValue = new Text('0', valueStyle.clone());
+    this.timeValue = new Text('0:00', valueStyle.clone());
+    const subStyle = new TextStyle({
+      fill: CARD_LABEL, fontFamily: FONT_UI, fontSize: 11, fontWeight: '700', letterSpacing: 1,
+    });
+    this.pcsSub = new Text('0.00 PPS', subStyle.clone());
+    this.pcsSub.style.fill = CARD_ACCENT;
+    this.timeSub = new Text('.000', subStyle.clone());
+
+    this.bannerText = new Text('', new TextStyle({
+      fill: CARD_VALUE, fontFamily: FONT_UI, fontSize: 22, fontWeight: '900', letterSpacing: 2,
+      align: 'center', dropShadow: true, dropShadowAlpha: 0.6, dropShadowDistance: 2,
+    }));
+    this.bannerText.anchor.set(0.5, 0.5);
+
+    this.labelLayer.addChild(
+      this.holdLabel, this.nextLabel,
+      this.linesLabel, this.linesValue,
+      this.pcsLabel, this.pcsValue, this.pcsSub,
+      this.timeLabel, this.timeValue, this.timeSub,
+      this.bannerText,
+    );
     this.stage.addChild(this.bg, this.sideLayer, this.boardLayer, this.pieceLayer, this.effectLayer, this.juiceLayer, this.labelLayer, this.hudText);
     this.app.stage.addChild(this.stage);
     window.addEventListener('resize', () => this.layout());
@@ -252,6 +314,12 @@ export class PixiGameRenderer {
     this.boardY = Math.round(availableHeight / 2 - boardH / 2 + 8);
     this.holdX = this.boardX - this.sideW - this.cell * this.gapUnits;
     this.nextX = this.boardX + boardW + this.cell * this.gapUnits;
+
+    // Columna izquierda apilada: tarjeta HOLD arriba, tarjeta de stats debajo.
+    this.statsTwoCol = this.sideW > this.cell * 4.3;
+    this.holdH = this.cell * 3.6;
+    this.statsY = this.boardY + this.holdH + this.cell * 0.55;
+    this.statsH = this.cell * (this.statsTwoCol ? 5.1 : 6.7);
   }
 
   private drawBackground(): void {
@@ -263,20 +331,55 @@ export class PixiGameRenderer {
     this.boardLayer.clear();
     this.sideLayer.clear();
     this.effectLayer.clear();
-    this.drawAngledPanel(this.boardLayer, this.boardX, this.boardY, this.cell * this.boardColumns, this.cell * this.visibleRows, 0);
+    const radius = Math.max(6, this.cell * 0.42);
+    const boardW = this.cell * this.boardColumns;
+    const boardH = this.cell * this.visibleRows;
+
+    // Marco del tablero: relleno oscuro translúcido + borde fino redondeado.
+    this.boardLayer.lineStyle(Math.max(1.5, this.cell * 0.055), BOARD_FRAME, 0.5);
+    this.boardLayer.beginFill(0x070b12, 0.5);
+    this.boardLayer.drawRoundedRect(this.boardX, this.boardY, boardW, boardH, radius * 0.6);
+    this.boardLayer.endFill();
+    this.boardLayer.lineStyle(0, 0, 0);
     this.drawGrid();
 
-    const sideW = this.sideW;
-    const holdX = this.holdX;
-    const nextX = this.nextX;
-    this.drawLabelPanel(this.sideLayer, 'HOLD', holdX, this.boardY, sideW, this.cell * 3.8);
-    this.drawLabelPanel(this.sideLayer, 'NEXT', nextX, this.boardY, sideW, this.cell * Math.max(3.8, 1.55 + Math.max(1, DEFAULT_RULES.nextPreview) * 2.45));
-    this.positionLabel(this.holdLabel, holdX, this.boardY);
-    this.positionLabel(this.nextLabel, nextX, this.boardY);
+    // Columna izquierda: tarjeta HOLD arriba, tarjeta de stats debajo.
+    this.drawCard(this.sideLayer, this.holdX, this.boardY, this.sideW, this.holdH, radius);
+    this.drawCard(this.sideLayer, this.holdX, this.statsY, this.sideW, this.statsH, radius);
+    // Columna derecha: tarjeta NEXT.
+    const nextH = this.cell * Math.max(3.8, 1.7 + Math.max(1, DEFAULT_RULES.nextPreview) * 2.3);
+    this.drawCard(this.sideLayer, this.nextX, this.boardY, this.sideW, nextH, radius);
+
+    // Cabeceras con puntito turquesa (HOLD / NEXT / LINES).
+    this.drawCardHeader(this.holdLabel, this.holdX, this.boardY);
+    this.drawCardHeader(this.nextLabel, this.nextX, this.boardY);
+    this.drawCardHeader(this.linesLabel, this.holdX, this.statsY);
+  }
+
+  // Tarjeta redondeada del estilo "Modo Relax": relleno oscuro + borde fino claro.
+  private drawCard(g: Graphics, x: number, y: number, w: number, h: number, radius: number): void {
+    g.lineStyle(Math.max(1, this.cell * 0.04), CARD_BORDER, 0.16);
+    g.beginFill(CARD_FILL, 0.72);
+    g.drawRoundedRect(x, y, w, h, radius);
+    g.endFill();
+    g.lineStyle(0, 0, 0);
+  }
+
+  // Punto turquesa + etiqueta de la cabecera de una tarjeta.
+  private drawCardHeader(label: Text, cardX: number, cardY: number): void {
+    const pad = this.cell * 0.5;
+    const dotR = Math.max(2.5, this.cell * 0.11);
+    const cy = cardY + pad + dotR;
+    this.sideLayer.beginFill(CARD_ACCENT, 0.95);
+    this.sideLayer.drawCircle(cardX + pad + dotR, cy, dotR);
+    this.sideLayer.endFill();
+    label.style.fontSize = Math.max(11, this.cell * 0.46);
+    label.anchor.set(0, 0.5);
+    label.position.set(cardX + pad + dotR * 2 + this.cell * 0.28, cy);
   }
 
   private drawGrid(): void {
-    this.boardLayer.lineStyle(1, GRID_LINE, 0.58);
+    this.boardLayer.lineStyle(1, GRID_LINE, 0.4);
     for (let x = 1; x < this.boardColumns; x += 1) {
       this.boardLayer.moveTo(this.boardX + x * this.cell, this.boardY);
       this.boardLayer.lineTo(this.boardX + x * this.cell, this.boardY + this.cell * this.visibleRows);
@@ -285,6 +388,7 @@ export class PixiGameRenderer {
       this.boardLayer.moveTo(this.boardX, this.boardY + y * this.cell);
       this.boardLayer.lineTo(this.boardX + this.cell * this.boardColumns, this.boardY + y * this.cell);
     }
+    this.boardLayer.lineStyle(0, 0, 0);
   }
 
   private drawBoard(state: GameState): void {
@@ -310,29 +414,130 @@ export class PixiGameRenderer {
   }
 
   private drawSidePieces(state: GameState): void {
-    const holdX = this.holdX;
-    const nextX = this.nextX;
-    // Centrado horizontal de la mini-pieza dentro del panel (ancho ~2.5 celdas a escala).
-    const holdInset = Math.max(0.5, (this.sideUnits - 2.5) / 2);
-    if (state.status !== 'playing') return;
-    if (state.hold) this.drawMiniPiece(this.sideLayer, state.hold, holdX + this.cell * holdInset, this.boardY + this.cell * 1.25, 0.62);
+    const playing = state.status === 'playing';
+    const scale = this.sideUnits < 4 ? 0.5 : 0.58;
+    const size = this.cell * scale;
+    // HOLD centrado en su tarjeta.
+    if (playing && state.hold) {
+      this.drawCenteredPiece(state.hold, this.holdX, this.sideW, this.boardY + this.holdH * 0.62, size);
+    }
+    // NEXT: la primera pieza va resaltada en una sub-celda turquesa; el resto, apiladas.
+    if (!playing) return;
     state.next.forEach((piece, index) => {
-      this.drawMiniPiece(this.sideLayer, piece, nextX + this.cell * holdInset, this.boardY + this.cell * (1.3 + index * 2.45), 0.58);
+      const cy = this.boardY + this.cell * (1.95 + index * 2.25);
+      if (index === 0) {
+        const r = Math.max(5, this.cell * 0.32);
+        const hx = this.nextX + this.cell * 0.4;
+        const hw = this.sideW - this.cell * 0.8;
+        const hy = this.boardY + this.cell * 1.0;
+        const hh = this.cell * 1.95;
+        this.sideLayer.lineStyle(Math.max(1, this.cell * 0.04), CARD_ACCENT, 0.45);
+        this.sideLayer.beginFill(CARD_ACCENT, 0.08);
+        this.sideLayer.drawRoundedRect(hx, hy, hw, hh, r);
+        this.sideLayer.endFill();
+        this.sideLayer.lineStyle(0, 0, 0);
+      }
+      this.drawCenteredPiece(piece, this.nextX, this.sideW, cy, size);
     });
   }
 
+  // Dibuja una pieza centrada (horizontal y vertical) alrededor de (cardX+cardW/2, centerY).
+  private drawCenteredPiece(piece: PieceType, cardX: number, cardW: number, centerY: number, size: number): void {
+    const cells = cellsFor(piece, 0);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const c of cells) {
+      minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x);
+      minY = Math.min(minY, c.y); maxY = Math.max(maxY, c.y);
+    }
+    const wCells = maxX - minX + 1, hCells = maxY - minY + 1;
+    const ox = cardX + cardW / 2 - (wCells * size) / 2 - minX * size;
+    const oy = centerY - (hCells * size) / 2 - minY * size;
+    for (const c of cells) this.drawBlockAt(this.sideLayer, ox + c.x * size, oy + c.y * size, size, piece, 0.95);
+  }
+
+  // Tarjeta de stats (estilo "Modo Relax"): valor grande de LINES con barra de
+  // progreso, y fila inferior con PIECES (+ PPS) y TIME (+ milisegundos).
   private drawHud(state: GameState): void {
     const elapsedFrames = displayedElapsedFrames(state.stats);
     const seconds = elapsedFrames / 60;
     const pps = seconds > 0 ? state.stats.pieces / seconds : 0;
-    const finish = state.status === 'finished' ? '\nCLEAR - R TO RETRY' : state.status === 'gameover' ? '\nTOP OUT - R TO RETRY' : '';
-    const lines = state.stats.targetLines === null ? `${state.stats.lines}` : `${state.stats.lines}/${state.stats.targetLines}`;
-    const garbage = state.stats.targetLines === null ? `\n\nGARBAGE\n${state.stats.pendingGarbage} IN  ${state.stats.sentGarbage} OUT` : '';
-    this.hudText.text = `PIECES\n${state.stats.pieces}  ${pps.toFixed(2)}/S\n\nLINES\n${lines}${garbage}\n\nTIME\n${formatTime(seconds)}${finish}`;
-    this.hudText.style.fontSize = Math.max(14, Math.min(22, this.cell * 0.68));
-    this.hudText.style.align = 'right';
-    this.hudText.anchor.set(1, 1);
-    this.hudText.position.set(this.boardX - this.cell * 0.35, this.boardY + this.cell * (this.visibleRows - 0.2));
+    const hasTarget = state.stats.targetLines !== null;
+    const px = this.holdX + this.cell * 0.55;
+    const rightX = this.statsTwoCol ? this.holdX + this.sideW * 0.54 : px;
+    const labelSize = Math.max(10, this.cell * 0.42);
+    const subSize = Math.max(9, this.cell * 0.38);
+
+    // Valor grande: LINES (con objetivo) o GARBAGE (online sin objetivo).
+    this.linesLabel.text = hasTarget ? 'LINES' : 'GARBAGE';
+    this.linesValue.style.fontSize = Math.max(20, this.cell * 0.98);
+    this.linesValue.anchor.set(0, 0);
+    this.linesValue.position.set(px, this.statsY + this.cell * 1.05);
+    this.linesValue.text = hasTarget
+      ? `${state.stats.lines} / ${state.stats.targetLines}`
+      : `${state.stats.pendingGarbage}▾ ${state.stats.sentGarbage}▴`;
+
+    // Barra de progreso (solo en modo con objetivo de líneas).
+    if (hasTarget) {
+      const target = state.stats.targetLines ?? 1;
+      const frac = clamp01(state.stats.lines / Math.max(1, target));
+      const barX = px;
+      const barY = this.statsY + this.cell * 2.18;
+      const barW = this.sideW - this.cell * 1.1;
+      const barH = Math.max(4, this.cell * 0.26);
+      const barR = barH / 2;
+      this.sideLayer.beginFill(CARD_TRACK, 1);
+      this.sideLayer.drawRoundedRect(barX, barY, barW, barH, barR);
+      this.sideLayer.endFill();
+      if (frac > 0) {
+        this.sideLayer.beginFill(CARD_ACCENT, 0.95);
+        this.sideLayer.drawRoundedRect(barX, barY, Math.max(barH, barW * frac), barH, barR);
+        this.sideLayer.endFill();
+      }
+    }
+
+    // Fila inferior: PIECES y TIME. En dos columnas si la tarjeta es ancha; si no,
+    // TIME se apila debajo de PIECES para no solaparse en pantallas angostas.
+    const valueSize = Math.max(16, this.cell * 0.72);
+    const pcsLabelY = this.statsY + this.cell * 2.95;
+    const pcsValueY = this.statsY + this.cell * 3.45;
+    const pcsSubY = this.statsY + this.cell * 4.2;
+    const rowGap = this.cell * 1.75;
+    const timeLabelY = this.statsTwoCol ? pcsLabelY : pcsLabelY + rowGap;
+    const timeValueY = this.statsTwoCol ? pcsValueY : pcsValueY + rowGap;
+    const timeSubY = this.statsTwoCol ? pcsSubY : pcsSubY + rowGap;
+    this.placeStat(this.pcsLabel, px, pcsLabelY, labelSize);
+    this.placeStat(this.pcsValue, px, pcsValueY, valueSize);
+    this.placeStat(this.pcsSub, px, pcsSubY, subSize);
+    this.placeStat(this.timeLabel, rightX, timeLabelY, labelSize);
+    this.placeStat(this.timeValue, rightX, timeValueY, valueSize);
+    this.placeStat(this.timeSub, rightX, timeSubY, subSize);
+
+    this.pcsValue.text = `${state.stats.pieces}`;
+    this.pcsSub.text = `${pps.toFixed(2)} PPS`;
+    const total = formatTime(seconds);
+    const dot = total.indexOf('.');
+    this.timeValue.text = dot >= 0 ? total.slice(0, dot) : total;
+    this.timeSub.text = dot >= 0 ? total.slice(dot) : '';
+
+    // Banner central de fin de partida.
+    const banner = state.status === 'finished'
+      ? 'CLEAR · R PARA REINTENTAR'
+      : state.status === 'gameover' ? 'TOP OUT · R PARA REINTENTAR' : '';
+    this.bannerText.text = banner;
+    this.bannerText.visible = banner !== '';
+    if (banner) {
+      this.bannerText.style.fontSize = Math.max(15, this.cell * 0.62);
+      this.bannerText.position.set(
+        this.boardX + this.cell * this.boardColumns / 2,
+        this.boardY + this.cell * this.visibleRows / 2,
+      );
+    }
+  }
+
+  private placeStat(t: Text, x: number, y: number, fontSize: number): void {
+    t.style.fontSize = fontSize;
+    t.anchor.set(0, 0);
+    t.position.set(x, y);
   }
 
   private drawVisibleBlock(boardX: number, boardY: number, piece: PieceType, alpha: number): void {
@@ -349,36 +554,6 @@ export class PixiGameRenderer {
     return boardX >= 0 && boardX < this.boardColumns && boardY >= -this.hiddenRows && boardY < this.visibleRows;
   }
 
-  private drawAngledPanel(g: Graphics, x: number, y: number, w: number, h: number, labelHeight: number): void {
-    g.beginFill(PANEL_FILL, 0.78);
-    g.lineStyle(Math.max(3, this.cell * 0.1), PANEL_LINE, 1);
-    g.moveTo(x, y + labelHeight);
-    g.lineTo(x + w, y + labelHeight);
-    g.lineTo(x + w, y + h);
-    g.lineTo(x, y + h);
-    g.closePath();
-    g.endFill();
-  }
-
-  private drawLabelPanel(g: Graphics, _label: string, x: number, y: number, w: number, h: number): void {
-    const cut = this.cell * 0.55;
-    g.beginFill(PANEL_FILL, 0.74);
-    g.lineStyle(Math.max(3, this.cell * 0.09), PANEL_LINE, 1);
-    g.moveTo(x, y);
-    g.lineTo(x + w, y);
-    g.lineTo(x + w, y + h - cut);
-    g.lineTo(x + w - cut, y + h);
-    g.lineTo(x + cut, y + h);
-    g.lineTo(x, y + h - cut);
-    g.closePath();
-    g.endFill();
-
-  }
-
-  private positionLabel(label: Text, x: number, y: number): void {
-    label.style.fontSize = Math.max(14, this.cell * 0.72);
-    label.position.set(x + this.cell * 0.16, y - this.cell * 0.95);
-  }
 
   private drawBlock(g: Graphics, boardX: number, boardY: number, piece: PieceType, alpha: number): void {
     if (boardY < -this.hiddenRows) return;
@@ -405,13 +580,6 @@ export class PixiGameRenderer {
     g.lineStyle(Math.max(1, lineWidth * 0.72), GHOST_INSET_LINE, 0.78);
     g.drawRect(x + inset, y + inset, this.cell - inset * 2, this.cell - inset * 2);
     g.endFill();
-  }
-
-  private drawMiniPiece(g: Graphics, piece: PieceType, x: number, y: number, scale: number): void {
-    const size = this.cell * scale;
-    for (const cell of cellsFor(piece, 0)) {
-      this.drawBlockAt(g, x + cell.x * size, y + cell.y * size, size, piece, 0.95);
-    }
   }
 
   private drawBlockAt(g: Graphics, x: number, y: number, size: number, piece: PieceType, alpha: number): void {

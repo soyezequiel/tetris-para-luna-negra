@@ -56,6 +56,43 @@ canvas {
   text-shadow: 0 3px 18px rgba(0, 0, 0, 0.55);
 }
 
+/* Subtítulo "MODO RELAX" del modo solo, bajo la marca TETRA. */
+.brand-sub {
+  display: block;
+  margin-top: 6px;
+  font-family: "Exo 2", Arial, sans-serif;
+  font-size: clamp(9px, 1vw, 12px);
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: rgba(53, 214, 198, 0.85);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+
+/* Botón de engranaje (ajustes) arriba a la derecha, estilo tarjeta. */
+.gear-btn {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid rgba(159, 178, 198, 0.18);
+  border-radius: 14px;
+  background: rgba(12, 18, 28, 0.72);
+  color: rgba(220, 230, 238, 0.82);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.gear-btn:hover {
+  border-color: rgba(53, 214, 198, 0.55);
+  color: #f2f5f8;
+  transform: rotate(35deg);
+}
+
 .help {
   position: absolute;
   right: 28px;
