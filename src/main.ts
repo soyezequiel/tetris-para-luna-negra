@@ -3967,20 +3967,7 @@ function renderScreenOverlay(state: GameState): string {
   }
 
   if (appMode === 'paused') {
-    const actions: [string, string][] = [
-      ['resume', 'Resume'],
-      ...(canRetryCurrentRun() ? [['restart', 'Restart'] as [string, string]] : []),
-      ['settings', 'Input settings'],
-      ['import-replay', 'Import replay'],
-      ['export-replay', 'Export replay'],
-      ['main-menu', 'Main menu'],
-    ];
-    return renderPanel({
-      eyebrow: 'PAUSED',
-      title: formatRunSummary(state),
-      meta: 'Run is frozen. Resume keeps the exact board and timer.',
-      actions,
-    });
+    return renderPausePanel(state);
   }
 
   const terminal = terminalLabel(state.status);
@@ -5716,39 +5703,81 @@ function renderHandlingPresets(): string {
   return `<span class="handling-presets-label">Preset</span>${buttons}`;
 }
 
-function renderPanel(options: {
-  eyebrow: string;
-  title: string;
-  meta: string;
-  details?: string;
-  actions: [string, string][];
-  actionsClass?: string;
-}): string {
-  const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
-  const importError = replayImportError ? `<div class="panel-note panel-error">${escapeHtml(replayImportError)}</div>` : '';
-  const runError = localRunError ? `<div class="panel-note panel-error">${escapeHtml(localRunError)}</div>` : '';
-  const actions = options.actions.map(([action, label]) => {
-    const isPrimary = action === 'resume' || action === 'restart';
-    const isDanger = action === 'main-menu' || action === 'online-leave';
-    const btnClass = isPrimary ? 'dash-action-btn accent' : isDanger ? 'dash-action-btn danger' : 'dash-action-btn';
-    return `<button class="${btnClass}" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="${action}">${label}</button>`;
-  }).join('');
+function renderPausePanel(state: GameState): string {
+  const lines = state.stats.lines;
+  const time = formatFrames(displayedElapsedFrames(state.stats));
+  const pieces = state.stats.pieces;
+  const canRetry = canRetryCurrentRun();
+
+  const exported = lastExportName
+    ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
+  const importError = replayImportError
+    ? `<div class="panel-note panel-error">${escapeHtml(replayImportError)}</div>` : '';
+  const runError = localRunError
+    ? `<div class="panel-note panel-error">${escapeHtml(localRunError)}</div>` : '';
+
+  const restartBtn = canRetry
+    ? `<button class="pause-btn pause-btn--ghost" type="button" data-ui-action="restart">
+         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+         <span>Restart</span>
+       </button>`
+    : '';
+
   const panel = `
-    <section class="menu-panel" aria-label="${escapeHtml(options.eyebrow)}">
-        <div class="panel-eyebrow">${escapeHtml(options.eyebrow)}</div>
-        <h1>${escapeHtml(options.title)}</h1>
-        <p>${escapeHtml(options.meta)}</p>
-        ${options.details ?? ''}
-        ${exported}
-        ${importError}
-        ${runError}
-        <div class="panel-actions ${options.actionsClass ?? ''}">${actions}</div>
-      </section>
+    <section class="menu-panel pause-panel" aria-label="Paused">
+      <div class="pause-aura" aria-hidden="true"></div>
+      <header class="pause-head">
+        <div class="pause-badge">
+          <span class="pause-badge-glyph" aria-hidden="true"><i></i><i></i></span>
+          <span class="pause-badge-text">Paused</span>
+        </div>
+        <p class="pause-sub">Run frozen — Resume keeps the exact board and timer.</p>
+      </header>
+      <div class="pause-stats" role="group" aria-label="Run progress">
+        <div class="pause-stat">
+          <span class="pause-stat-label">Lines</span>
+          <strong class="pause-stat-value">${lines}<small>/40</small></strong>
+        </div>
+        <div class="pause-stat">
+          <span class="pause-stat-label">Time</span>
+          <strong class="pause-stat-value">${escapeHtml(time)}</strong>
+        </div>
+        <div class="pause-stat">
+          <span class="pause-stat-label">Pieces</span>
+          <strong class="pause-stat-value">${pieces}</strong>
+        </div>
+      </div>
+      <div class="pause-actions">
+        <button class="pause-btn pause-btn--resume" type="button" data-ui-action="resume" autofocus>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          <span>Resume</span>
+        </button>
+        <div class="pause-grid">
+          ${restartBtn}
+          <button class="pause-btn pause-btn--ghost" type="button" data-ui-action="settings">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+            <span>Controls</span>
+          </button>
+          <button class="pause-btn pause-btn--ghost" type="button" data-ui-action="import-replay">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+            <span>Import replay</span>
+          </button>
+          <button class="pause-btn pause-btn--ghost" type="button" data-ui-action="export-replay">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+            <span>Export replay</span>
+          </button>
+        </div>
+        <button class="pause-btn pause-btn--danger" type="button" data-ui-action="main-menu">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+          <span>Main menu</span>
+        </button>
+      </div>
+      ${exported}
+      ${importError}
+      ${runError}
+    </section>
   `;
-  if (!isPersistentRoomPanelMode(appMode)) {
-    return `<div class="menu-scrim">${panel}</div>`;
-  }
-  return renderPersistentMenuShell(panel);
+  return `<div class="menu-scrim pause-scrim">${panel}</div>`;
 }
 
 function renderPersistentMenuShell(panel: string, extraClass = ''): string {
@@ -6352,14 +6381,6 @@ function helpText(): string {
 function formatActionBinding(action: ControlAction): string {
   const bindings = inputSettings.bindings[action];
   return bindings.length > 0 ? bindings.map(keyLabel).join('/') : 'Unbound';
-}
-
-function formatRunSummary(state: GameState, battle = false): string {
-  const elapsedFrames = displayedElapsedFrames(state.stats);
-  if (battle) {
-    return `${formatFrames(elapsedFrames)} survived - ${state.stats.lines} lines - ${state.stats.sentGarbage} sent`;
-  }
-  return `${state.stats.lines}/40 - ${formatFrames(elapsedFrames)} - ${state.stats.pieces} pieces`;
 }
 
 function handleVolumeWheel(event: WheelEvent): void {
