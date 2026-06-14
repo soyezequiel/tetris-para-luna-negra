@@ -273,13 +273,49 @@ export class NeoSynth {
     this.crunch({ filter: 'highpass', freq: 2500, q: 0.6, dur: 0.14, gain: 0.12 * CRUNCH, drive: DRIVE });
   }
 
+  // Fanfarria de victoria (~4s). Cuatro fases que escalan dopamina: barrido de
+  // apertura → arpegio mayor que trepa → acorde de coronación → cascada de
+  // brillos con cola larga de reverb. Pensada para "ganaste" en solo y online.
   win(): void {
     if (!this.open()) return;
-    this.sub({ freq: 120, freqEnd: 80, dur: 0.60, gain: 0.52, reverb: REVERB * 0.15 });
-    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => this.noteP(f, 0.32, 0.16, i * 0.08, REVERB * 0.6));
-    this.voice({ type: 'sine', freq: 1046.5, freqEnd: 1568, dur: 0.50, gain: 0.12, when: 0.32, reverb: REVERB * 0.8 });
-    this.crunch({ filter: 'highpass', freq: 5000, q: 0.5, dur: 0.50, gain: 0.11 * BRIGHT * CRUNCH, when: 0.10, drive: DRIVE * 0.6 });
-    [1568, 2093].forEach((f, i) => this.noteP(f, 0.5, 0.08, 0.40 + i * 0.06, REVERB * 0.8));
+    const R = REVERB;
+
+    // ── Fase 1 · golpe de apertura + barrido ascendente (0.0s) ──────────────
+    // Cuerpo grande que arranca y un sweep que sube prometiendo algo enorme.
+    this.sub({ freq: 130, freqEnd: 65, dur: 0.70, gain: 0.50, reverb: R * 0.12 });
+    this.voice({ type: 'sawtooth', freq: 180, freqEnd: 1040, dur: 0.50, gain: 0.10, glide: 'lin', reverb: R * 0.3, drive: DRIVE * 0.7 });
+    this.crunch({ filter: 'highpass', freq: 3000, freqEnd: 9000, q: 0.5, dur: 0.45, gain: 0.10 * BRIGHT * CRUNCH, drive: DRIVE * 0.6, reverb: R * 0.3 });
+
+    // ── Fase 2 · fanfarria que trepa (0.18 → 0.84s) ─────────────────────────
+    // Arpegio mayor brillante y heroico; cada nota es un escalón hacia arriba.
+    const fanfare: Array<[number, number]> = [
+      [523.25, 0.18], [659.25, 0.30], [783.99, 0.42],   // C  E  G
+      [1046.5, 0.56], [1318.5, 0.70], [1568.0, 0.84],   // C  E  G (octava arriba)
+    ];
+    fanfare.forEach(([f, t]) => {
+      this.noteP(f, 0.34, 0.17, t, R * 0.55);
+      this.voice({ type: 'triangle', freq: f, dur: 0.22, gain: 0.07, when: t, reverb: R * 0.4, drive: DRIVE * 0.5 });
+    });
+    this.sub({ freq: 98, dur: 0.18, gain: 0.22, when: 0.42 });   // empuje por compás
+    this.sub({ freq: 131, dur: 0.18, gain: 0.24, when: 0.84 });
+
+    // ── Fase 3 · acorde de coronación (1.05s) ───────────────────────────────
+    // La llegada: Do mayor completo, ancho y sostenido. El clímax.
+    this.sub({ freq: 65.4, dur: 1.20, gain: 0.50, reverb: R * 0.15, when: 1.05 });   // C2
+    [523.25, 659.25, 783.99, 1046.5].forEach((f) =>
+      this.voice({ type: 'sawtooth', freq: f, dur: 1.10, gain: 0.075, when: 1.05, attack: 0.02, hold: 0.30, reverb: R * 0.7, drive: DRIVE * 0.5, unison: 1, spread: 6 }));
+    [1046.5, 1318.5, 1568.0].forEach((f, i) => this.noteP(f, 0.90, 0.13, 1.05 + i * 0.02, R * 0.85));
+    this.crunch({ filter: 'highpass', freq: 6000, q: 0.5, dur: 0.80, gain: 0.10 * BRIGHT * CRUNCH, when: 1.08, drive: DRIVE * 0.5, reverb: R * 0.5 });
+
+    // ── Fase 4 · cascada de brillos + estocada final (1.7 → 3.6s) ───────────
+    // Chispas que caen como confeti y un campanazo final con cola larga (el glow).
+    const sparkle = [2093, 2349.3, 2637, 3136, 2637, 2093, 1568, 2093];
+    sparkle.forEach((f, i) => this.noteP(f, 0.50, 0.07, 1.70 + i * 0.085, R * 0.9));
+    this.noteP(1046.5, 1.40, 0.16, 2.55, R);
+    this.noteP(1568.0, 1.40, 0.12, 2.55, R);
+    this.noteP(2093.0, 1.60, 0.10, 2.58, R);
+    this.sub({ freq: 65.4, freqEnd: 49, dur: 1.60, gain: 0.42, when: 2.55, reverb: R * 0.2 });
+    this.crunch({ filter: 'highpass', freq: 7000, q: 0.5, dur: 1.20, gain: 0.09 * BRIGHT * CRUNCH, when: 2.55, drive: DRIVE * 0.4, reverb: R * 0.6 });
   }
 
   destroy(): void {
