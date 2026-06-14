@@ -472,6 +472,7 @@ export class GameEngine {
       type: 'lineClear',
       frame: this.frame,
       cleared,
+      clearedRows: result.rows,
       difficult: attack.difficult,
       spin,
       piece,

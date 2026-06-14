@@ -4,12 +4,17 @@ export function createBoard(width: number, height: number): Cell[][] {
   return Array.from({ length: height }, () => Array<Cell>(width).fill(null));
 }
 
-export function clearCompletedLines(board: Cell[][], width: number): { board: Cell[][]; cleared: number } {
-  const kept = board.filter((row) => row.some((cell) => cell === null));
-  const cleared = board.length - kept.length;
+export function clearCompletedLines(board: Cell[][], width: number): { board: Cell[][]; cleared: number; rows: number[] } {
+  const kept: Cell[][] = [];
+  const rows: number[] = [];
+  for (let y = 0; y < board.length; y += 1) {
+    if (board[y].some((cell) => cell === null)) kept.push(board[y]);
+    else rows.push(y); // fila completa: índice en el tablero (incluye filas ocultas)
+  }
   return {
-    board: [...createBoard(width, cleared), ...kept],
-    cleared,
+    board: [...createBoard(width, rows.length), ...kept],
+    cleared: rows.length,
+    rows,
   };
 }
 

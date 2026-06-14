@@ -96,6 +96,9 @@ export interface LineClearEvent {
   b2b: number;
   attackLines: number;
   outgoingLines: number;
+  // Índices (en el tablero completo, incluyendo filas ocultas) de las filas que se
+  // limpiaron. Solo para feedback visual (flash acotado); no afecta la simulación.
+  clearedRows?: number[];
 }
 
 export interface IncomingGarbageEvent {

@@ -53,11 +53,11 @@ export class JuiceConductor {
   }
 
   /** Eventos drenados del motor en un tick (line clears, garbage entrante/aplicada). */
-  handleEvents(_state: GameState, events: readonly GameEvent[]): void {
+  handleEvents(state: GameState, events: readonly GameEvent[]): void {
     for (const event of events) {
       switch (event.type) {
         case 'lineClear':
-          this.onLineClear(event);
+          this.onLineClear(state, event);
           break;
         case 'incomingGarbage':
           this.onIncomingGarbage(event.lines);
@@ -107,7 +107,7 @@ export class JuiceConductor {
   }
 
   // ---------- line clears ----------
-  private onLineClear(e: LineClearEvent): void {
+  private onLineClear(state: GameState, e: LineClearEvent): void {
     const n = e.cleared;
     if (n <= 0) {
       // pieza colocada sin limpiar: rompe combo si lo había
@@ -131,6 +131,16 @@ export class JuiceConductor {
 
     this.fx.addShake(tier.shake);
     this.fx.boardGlow(tier.col, n / 4);
+
+    // Flash acotado a las filas borradas: convierte índices de tablero completo a
+    // filas visibles y destella solo esas bandas (no todo el tablero).
+    if (e.clearedRows && e.clearedRows.length > 0) {
+      const hidden = state.stats.hiddenRows;
+      const visibleRows = e.clearedRows
+        .map((row) => row - hidden)
+        .filter((row) => row >= 0 && row < this.fx.rows);
+      if (visibleRows.length > 0) this.fx.flashRows(visibleRows);
+    }
 
     // partículas en cada fila limpiada (las n inferiores, espacio visible)
     const bottom = this.fx.rows;
@@ -235,6 +245,11 @@ export class JuiceConductor {
     this.fx.boardGlow(P.cyanSoft, 0.55);
     this.fx.addShake(6);
     this.fx.spawnBurst(r.x, this.boardBottom(), 16, P.cyanSoft, { spd: 200, life: 0.4, up: -40, grav: 200 });
+  }
+  /** Estela vertical de neón del hard drop. cols = columnas ocupadas; top/bottom =
+   * filas VISIBLES de inicio (donde estaba la pieza) y aterrizaje. */
+  onHardDropTrail(cols: number[], top: number, bottom: number): void {
+    this.fx.spawnDropTrail(cols, top, bottom, P.cyan);
   }
   /** Junto a sound.play('lock'). Ilumina el marco (sin flash de tablero, que
    * saturaba la pantalla en cada pieza) + micro-shake. */

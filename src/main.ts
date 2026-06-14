@@ -36,7 +36,7 @@ import {
   type CustomTab,
 } from './app/customSettings';
 import { MUSIC_TRACKS } from './audio/music';
-import { SoundEngine, type VolumeChannel } from './audio/SoundEngine';
+import { SoundEngine, type ReverbMode, type VolumeChannel } from './audio/SoundEngine';
 import { GameEngine } from './game/engine';
 import { cellsFor } from './game/pieces';
 import { createReplayLog, recordGarbage, recordInput } from './game/replay';
@@ -79,7 +79,7 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveSoundMuted, saveTouchControlsHidden } from './storage';
+import { loadRecord, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
 import { JuiceConductor } from './effects/JuiceConductor';
@@ -212,7 +212,13 @@ const gamepad = new GamepadController(input, {
 });
 const renderer = new PixiGameRenderer(root);
 renderer.setColorBlind(customSettings.colorBlindMode);
-const sound = new SoundEngine(loadRecord().soundMuted, MUSIC_TRACKS, loadRecord().sfxVolume, loadRecord().musicVolume);
+const sound = new SoundEngine(
+  loadRecord().soundMuted,
+  MUSIC_TRACKS,
+  loadRecord().sfxVolume,
+  loadRecord().musicVolume,
+  loadRecord().musicReverb,
+);
 // Capa de "feel" (partículas, audio rico, danger, KO/win). Es aditiva: AudioContext
 // propio en paralelo al SoundEngine, sincronizando mute/volumen (ver setMuted/setSfxVolume).
 const juiceAudio = new JuiceAudio(loadRecord().soundMuted, loadRecord().sfxVolume);
@@ -532,6 +538,18 @@ function loopBody(): void {
     const lockedPiece = state.stats.pieces > beforeTickState.stats.pieces;
     const didHardDrop = gameInputs.some((event) => event.action === 'hardDrop');
     if (lockedPiece && !didHardDrop) juice.onLock();
+    // Estela vertical de neón del hard drop: de donde estaba la pieza (active) a
+    // donde aterriza (su ghost, en la misma columna/rotación), por cada columna.
+    if (didHardDrop && beforeTickState.active && beforeTickState.ghost) {
+      const piece = beforeTickState.active;
+      const land = beforeTickState.ghost;
+      const cells = cellsFor(piece.type, piece.rotation);
+      const hidden = beforeTickState.stats.hiddenRows;
+      const cols = [...new Set(cells.map((c) => piece.x + c.x))];
+      const top = piece.y + Math.min(...cells.map((c) => c.y)) - hidden;
+      const bottom = land.y + Math.max(...cells.map((c) => c.y)) - hidden;
+      juice.onHardDropTrail(cols, top, bottom);
+    }
   }
 
   syncOnline();
@@ -1099,6 +1117,7 @@ function handleOverlayClick(event: MouseEvent): void {
     juiceAudio.setMuted(sound.isMuted());
   }
   if (action === 'next-music') sound.nextMusicTrack();
+  if (action === 'cycle-reverb') best = saveMusicReverb(sound.cycleReverbMode());
   if (action === 'capture-binding') {
     const controlAction = parseControlAction(control.dataset.controlAction);
     if (controlAction) bindingCapture = controlAction;
@@ -3800,6 +3819,7 @@ function renderOverlay(state: GameState): void {
         <span>${formatPercent(sound.getMusicVolume())}%</span>
       </div>
       <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
+      <button class="hud-action reverb" type="button" data-ui-action="cycle-reverb" title="Cola de reverb al apagar la música">Reverb: ${reverbLabel(sound.getReverbMode())}</button>
     </div>
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
@@ -6598,6 +6618,16 @@ function replayProgressPercent(snapshot: ReplayPlaybackSnapshot): string {
 
 function formatPercent(volume: number): string {
   return Math.round(volume * 100).toString().padStart(3, ' ');
+}
+
+function reverbLabel(mode: ReverbMode): string {
+  const labels: Record<ReverbMode, string> = {
+    off: 'Off',
+    short: 'Corto',
+    medium: 'Medio',
+    long: 'Largo',
+  };
+  return labels[mode];
 }
 
 function formatDateTime(value: string): string {

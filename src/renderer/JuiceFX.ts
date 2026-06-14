@@ -116,6 +116,12 @@ export class JuiceFX {
   private glow: { color: number; t: number; dur: number; intensity: number } | null = null;
   private dangerLevel = 0;
   private dangerPhase = 0;
+  // Flash acotado a las filas limpiadas: bandas horizontales a lo ancho del tablero,
+  // en la posición exacta de cada fila borrada, que suben y bajan rápido.
+  private rowFlashes: { rows: number[]; t: number; dur: number; color: number; peak: number }[] = [];
+  // Estela vertical de neón del hard drop: por cada columna ocupada, una barra que
+  // va desde donde estaba la pieza hasta donde aterriza, y se desvanece.
+  private dropTrails: { cols: number[]; top: number; bottom: number; t: number; dur: number; color: number }[] = [];
   private pendingGarbage = 0; // líneas de garbage entrante (telegraph en el borde)
   private garbagePhase = 0;
   // Countdown de top-out (pila sobre el techo): texto propio, separado del popup
@@ -255,6 +261,20 @@ export class JuiceFX {
     this.glow = { color, t: 0, dur: 0.6, intensity };
   }
 
+  /** Flash acotado a las filas limpiadas (índices en filas VISIBLES). Una banda
+   * blanca a lo ancho del tablero en cada fila, que sube y baja rápido. */
+  flashRows(rows: number[], color = 0xffffff, peak = 0.9): void {
+    if (rows.length === 0) return;
+    this.rowFlashes.push({ rows: [...rows], t: 0, dur: 0.26, color, peak: peak * (this.reducedMotion ? 0.5 : 1) });
+  }
+
+  /** Estela vertical de neón del hard drop: por cada columna ocupada, una barra
+   * desde la fila VISIBLE `top` (donde estaba la pieza) hasta `bottom` (aterrizaje). */
+  spawnDropTrail(cols: number[], top: number, bottom: number, color: number): void {
+    if (cols.length === 0 || bottom < top) return;
+    this.dropTrails.push({ cols: [...cols], top, bottom, t: 0, dur: 0.3, color });
+  }
+
   setDanger(level: number): void {
     this.dangerLevel = Math.max(0, Math.min(1, level));
   }
@@ -385,6 +405,8 @@ export class JuiceFX {
     this.popup.active = false;
     this.popup.text.alpha = 0;
     this.popup.sub.alpha = 0;
+    this.rowFlashes = [];
+    this.dropTrails = [];
     this.particleG.clear();
     this.overlayG.clear();
   }
@@ -417,10 +439,69 @@ export class JuiceFX {
     this.overlayG.clear();
 
     this.drawOverlays(dt);
+    this.drawRowFlashes(dt);
+    this.updateDropTrails(dt);
     this.updateProjectiles(dt);
     this.updateParticles(dt);
     this.updatePopup(dt);
     this.updateTopOutCountdown(dt);
+  }
+
+  // Bandas blancas a lo ancho del tablero sobre cada fila limpiada (sube y baja
+  // rápido). Acotado a las filas, no a todo el tablero.
+  private drawRowFlashes(dt: number): void {
+    if (this.rowFlashes.length === 0) return;
+    const r = this.boardRect();
+    const g = this.overlayG;
+    for (let i = this.rowFlashes.length - 1; i >= 0; i -= 1) {
+      const f = this.rowFlashes[i];
+      f.t += dt;
+      const k = f.t / f.dur;
+      if (k >= 1) {
+        this.rowFlashes.splice(i, 1);
+        continue;
+      }
+      const a = (k < 0.18 ? k / 0.18 : 1 - (k - 0.18) / 0.82) * f.peak;
+      g.beginFill(f.color, Math.max(0, a));
+      for (const row of f.rows) {
+        const y = this.geo.boardY + row * this.geo.cell;
+        g.drawRect(r.x, y, r.w, this.geo.cell);
+      }
+      g.endFill();
+    }
+  }
+
+  // Estela vertical de neón del hard drop: barra por columna con halo + núcleo
+  // blanco, desvaneciéndose. Se dibuja en particleG (se limpia cada frame).
+  private updateDropTrails(dt: number): void {
+    if (this.dropTrails.length === 0) return;
+    const g = this.particleG;
+    for (let i = this.dropTrails.length - 1; i >= 0; i -= 1) {
+      const tr = this.dropTrails[i];
+      tr.t += dt;
+      const k = tr.t / tr.dur;
+      if (k >= 1) {
+        this.dropTrails.splice(i, 1);
+        continue;
+      }
+      const a = (1 - k) * (this.reducedMotion ? 0.5 : 1);
+      const yTop = this.geo.boardY + tr.top * this.geo.cell;
+      const h = (tr.bottom - tr.top + 1) * this.geo.cell;
+      const coreW = Math.max(2, this.geo.cell * 0.16);
+      const glowW = this.geo.cell * 0.72;
+      for (const col of tr.cols) {
+        const cx = this.geo.boardX + (col + 0.5) * this.geo.cell;
+        g.beginFill(tr.color, a * 0.16);
+        g.drawRect(cx - glowW / 2, yTop, glowW, h);
+        g.endFill();
+        g.beginFill(tr.color, a * 0.55);
+        g.drawRect(cx - coreW, yTop, coreW * 2, h);
+        g.endFill();
+        g.beginFill(0xffffff, a * 0.9);
+        g.drawRect(cx - coreW / 2, yTop, coreW, h);
+        g.endFill();
+      }
+    }
   }
 
   // Número rojo latiente sobre la parte alta del tablero mientras corre el timer
