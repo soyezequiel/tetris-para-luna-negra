@@ -71,6 +71,7 @@ export function requiresRunConfirmation(
     || mode === 'custom'
     || mode === 'replayPlayback'
     || mode === 'library'
+    || mode === 'leaderboard'
     || mode === 'onlineMenu'
     || mode === 'roomLobby'
     || mode === 'onlineCountdown'
