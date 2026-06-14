@@ -5415,6 +5415,56 @@ canvas {
   100% { transform: translate(-50%, -16px); opacity: 0; }
 }
 
+/* Aviso de conexión/desconexión de mandos: píldora abajo-centro, no invasiva, se
+   desvanece sola. Abajo para no chocar con el toast de KO (arriba) ni la invitación
+   de Luna (esquina superior derecha). */
+.gamepad-toast {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  z-index: 7;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 16px;
+  border: 1px solid rgba(57, 212, 154, 0.55);
+  border-radius: 999px;
+  background: rgba(6, 10, 12, 0.9);
+  box-shadow: 0 0 24px rgba(57, 212, 154, 0.28);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: gamepad-toast 3.2s cubic-bezier(0.2, 0.9, 0.25, 1) forwards;
+}
+
+.gamepad-toast--disconnected {
+  border-color: rgba(245, 158, 11, 0.55);
+  box-shadow: 0 0 24px rgba(245, 158, 11, 0.26);
+}
+
+.gamepad-toast-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.gamepad-toast-text {
+  color: #e6fff5;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.gamepad-toast--disconnected .gamepad-toast-text {
+  color: #ffe9c7;
+}
+
+/* Sube desde abajo, se sostiene, y baja desvaneciéndose. */
+@keyframes gamepad-toast {
+  0% { transform: translate(-50%, 24px); opacity: 0; }
+  10% { transform: translate(-50%, 0); opacity: 1; }
+  80% { transform: translate(-50%, 0); opacity: 1; }
+  100% { transform: translate(-50%, 14px); opacity: 0; }
+}
+
 /* Invitación de Luna durante una partida: toast no invasivo en la esquina
    superior derecha. El contenedor no roba clicks; solo los botones son
    interactivos. El teclado sigue siendo del juego (aceptar/ignorar es con

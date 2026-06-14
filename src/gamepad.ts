@@ -62,7 +62,11 @@ export interface GamepadControllerOptions {
   // Permite inyectar un navigator de prueba (tests / SSR). Por defecto, el global.
   getGamepads?: () => Array<Gamepad | null>;
   eventTarget?: Pick<Window, 'addEventListener' | 'removeEventListener'> | null;
-  onConnectionChange?: (connectedCount: number, lastName: string | null) => void;
+  onConnectionChange?: (
+    connectedCount: number,
+    lastName: string | null,
+    change: 'connected' | 'disconnected',
+  ) => void;
 }
 
 export class GamepadController {
@@ -157,7 +161,7 @@ export class GamepadController {
 
   private onConnected = (event: GamepadEvent): void => {
     this.connectedCount += 1;
-    this.onConnectionChange?.(this.connectedCount, event.gamepad?.id ?? null);
+    this.onConnectionChange?.(this.connectedCount, event.gamepad?.id ?? null, 'connected');
   };
 
   private onDisconnected = (event: GamepadEvent): void => {
@@ -165,6 +169,6 @@ export class GamepadController {
     // Al desconectar, soltamos todo lo que tuviera pulsado ese mando para que la
     // pieza no quede "deslizándose" sola.
     this.releaseAll();
-    this.onConnectionChange?.(this.connectedCount, event.gamepad?.id ?? null);
+    this.onConnectionChange?.(this.connectedCount, event.gamepad?.id ?? null, 'disconnected');
   };
 }

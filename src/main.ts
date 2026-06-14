@@ -125,6 +125,10 @@ if (devBotOverlayElement) {
 const multiReplayOverlayElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(multiReplayOverlayElement);
 multiReplayOverlayElement.addEventListener('click', handleOverlayClick);
+// Capa propia para el aviso de conexión/desconexión de mandos. Vive fuera del
+// overlay general (que se reescribe por frame) para que su animación no se reinicie.
+const gamepadToastElement = document.createElement('div');
+(overlay.parentElement ?? document.body).appendChild(gamepadToastElement);
 const VOLUME_WHEEL_STEP = 0.05;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
 const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
@@ -195,9 +199,15 @@ const input = new InputController(inputSettings);
 // Mandos (PlayStation / Xbox / Steam Controller / Switch) alimentan el mismo
 // InputController que el teclado vía la Gamepad API; ver src/gamepad.ts.
 const gamepad = new GamepadController(input, {
-  onConnectionChange: (count, name) => {
-    if (count > 0) console.info(`[gamepad] mando conectado (${count}): ${name ?? 'desconocido'}`);
-    else console.info('[gamepad] sin mandos conectados');
+  onConnectionChange: (count, name, change) => {
+    const friendly = friendlyGamepadName(name);
+    if (change === 'connected') {
+      console.info(`[gamepad] mando conectado (${count}): ${name ?? 'desconocido'}`);
+      showGamepadToast(`${friendly} conectado`, 'connected');
+    } else {
+      console.info(`[gamepad] mando desconectado (${count} restantes)`);
+      showGamepadToast(`${friendly} desconectado`, 'disconnected');
+    }
   },
 });
 const renderer = new PixiGameRenderer(root);
@@ -4648,6 +4658,38 @@ function renderOnlineKoToast(banner: { placement: string; won: boolean }): strin
       ${banner.placement ? `<span class="online-ko-toast-place">${escapeHtml(banner.placement)}</span>` : ''}
     </div>
   `;
+}
+
+// Aviso de conexión/desconexión de mandos. Vive en su propia capa persistente
+// (gamepadToastElement) y se desvanece solo por CSS; el setTimeout limpia el nodo
+// al terminar para que un mando reconectado vuelva a animar desde cero.
+let gamepadToastTimer: ReturnType<typeof setTimeout> | null = null;
+function showGamepadToast(message: string, change: 'connected' | 'disconnected'): void {
+  if (gamepadToastTimer) clearTimeout(gamepadToastTimer);
+  const icon = change === 'connected' ? '🎮' : '⚠️';
+  gamepadToastElement.innerHTML = `
+    <div class="gamepad-toast gamepad-toast--${change}" role="status" aria-live="polite">
+      <span class="gamepad-toast-icon" aria-hidden="true">${icon}</span>
+      <span class="gamepad-toast-text">${escapeHtml(message)}</span>
+    </div>
+  `;
+  gamepadToastTimer = setTimeout(() => {
+    gamepadToastElement.innerHTML = '';
+    gamepadToastTimer = null;
+  }, 3200);
+}
+
+// El id del Gamepad API es ruidoso ("Xbox 360 Controller (XInput STANDARD GAMEPAD)",
+// pares vendor/product en hex, etc.). Detectamos la familia por palabras clave para
+// un aviso amable; si no reconocemos nada, caemos a un genérico.
+function friendlyGamepadName(id: string | null): string {
+  const text = (id ?? '').toLowerCase();
+  if (/dualsense|0ce6|playstation 5|ps5/.test(text)) return 'Mando de PlayStation 5';
+  if (/dualshock|0[59]c4|playstation|ps[34]|054c/.test(text)) return 'Mando de PlayStation';
+  if (/xbox|xinput|045e/.test(text)) return 'Mando de Xbox';
+  if (/switch|joy-con|pro controller|057e|nintendo/.test(text)) return 'Mando de Nintendo Switch';
+  if (/steam|valve|28de/.test(text)) return 'Steam Controller';
+  return 'Mando';
 }
 
 // Solo los tableros rivales viven en el overlay general (se redibujan cada frame
