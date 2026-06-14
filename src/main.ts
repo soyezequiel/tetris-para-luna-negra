@@ -45,6 +45,7 @@ import { resolveGameplayFrame } from './game/frameClock';
 import { displayedElapsedFrames } from './game/timing';
 import type { GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
+import { GamepadController } from './gamepad';
 import {
   applyHandlingPreset,
   CONTROL_ACTION_LABELS,
@@ -191,6 +192,14 @@ let seed = randomSeed();
 let engine = new GameEngine(seed, gameRules);
 let replay = createReplayLog(seed, gameRules);
 const input = new InputController(inputSettings);
+// Mandos (PlayStation / Xbox / Steam Controller / Switch) alimentan el mismo
+// InputController que el teclado vía la Gamepad API; ver src/gamepad.ts.
+const gamepad = new GamepadController(input, {
+  onConnectionChange: (count, name) => {
+    if (count > 0) console.info(`[gamepad] mando conectado (${count}): ${name ?? 'desconocido'}`);
+    else console.info('[gamepad] sin mandos conectados');
+  },
+});
 const renderer = new PixiGameRenderer(root);
 renderer.setColorBlind(customSettings.colorBlindMode);
 const sound = new SoundEngine(loadRecord().soundMuted, MUSIC_TRACKS, loadRecord().sfxVolume, loadRecord().musicVolume);
@@ -453,6 +462,9 @@ function loopBody(): void {
   // false y candidateFrame también queda en gameFrame, pero ahí SÍ seguimos
   // recolectando para que la navegación responda en cada rAF.
   const skipInputThisLoop = canAdvanceThisLoop && candidateFrame === gameFrame;
+  // Leemos los mandos cada rAF (la Gamepad API se sondea, no emite eventos por botón).
+  // pressControl sólo encola; los repeats DAS/ARR los gobierna input.collect() abajo.
+  gamepad.poll();
   if (!skipInputThisLoop) input.advanceFrame(candidateFrame);
   const controlInputs = skipInputThisLoop ? [] : input.collect(candidateFrame);
   const consumedByApp = handleControlInputs(controlInputs);
