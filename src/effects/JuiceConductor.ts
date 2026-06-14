@@ -242,9 +242,11 @@ export class JuiceConductor {
    * que resultaba molesto) + ráfaga de impacto en el piso + shake corto. */
   onHardDrop(): void {
     const r = this.boardCenterRow();
-    this.fx.boardGlow(P.cyanSoft, 0.55);
-    this.fx.addShake(6);
-    this.fx.spawnBurst(r.x, this.boardBottom(), 16, P.cyanSoft, { spd: 200, life: 0.4, up: -40, grav: 200 });
+    // Suave: un destello tenue de marco + micro-shake + una ráfaga corta y baja
+    // en el piso. El protagonismo se lo lleva la estela (cola), no el golpe.
+    this.fx.boardGlow(P.cyanSoft, 0.3);
+    this.fx.addShake(2.5);
+    this.fx.spawnBurst(r.x, this.boardBottom(), 9, P.cyanSoft, { spd: 120, life: 0.35, up: -20, grav: 240 });
   }
   /** Estela vertical de neón del hard drop. cols = columnas ocupadas; top/bottom =
    * filas VISIBLES de inicio (donde estaba la pieza) y aterrizaje. */

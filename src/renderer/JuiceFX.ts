@@ -272,7 +272,7 @@ export class JuiceFX {
    * desde la fila VISIBLE `top` (donde estaba la pieza) hasta `bottom` (aterrizaje). */
   spawnDropTrail(cols: number[], top: number, bottom: number, color: number): void {
     if (cols.length === 0 || bottom < top) return;
-    this.dropTrails.push({ cols: [...cols], top, bottom, t: 0, dur: 0.3, color });
+    this.dropTrails.push({ cols: [...cols], top, bottom, t: 0, dur: 0.5, color });
   }
 
   setDanger(level: number): void {
@@ -484,21 +484,34 @@ export class JuiceFX {
         this.dropTrails.splice(i, 1);
         continue;
       }
-      const a = (1 - k) * (this.reducedMotion ? 0.5 : 1);
+      // Fade temporal con ease-out: arranca y se apaga despacio, sin corte seco.
+      const fade = Math.pow(1 - k, 1.7) * (this.reducedMotion ? 0.45 : 1);
       const yTop = this.geo.boardY + tr.top * this.geo.cell;
       const h = (tr.bottom - tr.top + 1) * this.geo.cell;
-      const coreW = Math.max(2, this.geo.cell * 0.16);
-      const glowW = this.geo.cell * 0.72;
+      const coreW = Math.max(1.5, this.geo.cell * 0.1);
+      const glowW = this.geo.cell * 0.6;
+      // Degradado vertical tipo cola de cometa: brillante abajo (donde aterrizó
+      // la pieza) y desvaneciéndose hacia arriba. Se segmenta para el gradiente.
+      const segs = Math.max(6, Math.round(h / (this.geo.cell * 0.45)));
+      const segH = h / segs;
       for (const col of tr.cols) {
         const cx = this.geo.boardX + (col + 0.5) * this.geo.cell;
-        g.beginFill(tr.color, a * 0.16);
-        g.drawRect(cx - glowW / 2, yTop, glowW, h);
-        g.endFill();
-        g.beginFill(tr.color, a * 0.55);
-        g.drawRect(cx - coreW, yTop, coreW * 2, h);
-        g.endFill();
-        g.beginFill(0xffffff, a * 0.9);
-        g.drawRect(cx - coreW / 2, yTop, coreW, h);
+        for (let s = 0; s < segs; s += 1) {
+          const f = (s + 0.5) / segs; // 0 arriba, 1 abajo
+          const grad = f * f; // cae rápido hacia arriba → cola fina
+          const a = fade * grad;
+          if (a < 0.004) continue;
+          const y = yTop + s * segH;
+          g.beginFill(tr.color, a * 0.12);
+          g.drawRect(cx - glowW / 2, y, glowW, segH + 0.6);
+          g.endFill();
+          g.beginFill(tr.color, a * 0.42);
+          g.drawRect(cx - coreW, y, coreW * 2, segH + 0.6);
+          g.endFill();
+        }
+        // Cabeza suave de la cola: un punto de luz tenue en el aterrizaje.
+        g.beginFill(0xffffff, fade * 0.45);
+        g.drawRect(cx - coreW, yTop + h - segH, coreW * 2, segH);
         g.endFill();
       }
     }
