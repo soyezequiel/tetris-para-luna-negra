@@ -5522,6 +5522,90 @@ canvas {
   border-color: var(--dash-accent) !important;
 }
 
+/* Fila de volumen del panel de Configuración: pill estilo .custom-row con mute,
+   etiqueta y controles −/valor/+ (ver renderVolumeSettingRow). */
+.menu-panel .settings-audio {
+  margin-top: 18px;
+}
+
+/* La fila de volumen necesita el ancho completo (mute + etiqueta + −/valor/+),
+   así que rompe la grilla de 2 columnas de .custom-rows. */
+.menu-panel .settings-audio .custom-rows {
+  grid-template-columns: 1fr;
+}
+
+.menu-panel .volume-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.menu-panel .volume-setting-row .volume-mute {
+  color: rgba(247, 247, 242, 0.82);
+}
+
+.menu-panel .volume-setting-row .volume-mute:hover {
+  color: #f7f7f2;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.menu-panel .volume-setting-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(247, 247, 242, 0.82);
+  font-family: 'Exo 2', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-panel .volume-setting-value {
+  min-width: 42px;
+  color: var(--dash-text);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.menu-panel .volume-setting-row button[data-ui-action="volume-adjust"] {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--dash-border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--dash-text-dim);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.menu-panel .volume-setting-row button[data-ui-action="volume-adjust"]:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--dash-text);
+  border-color: var(--dash-accent);
+}
+
+.menu-panel .volume-setting-row.is-muted {
+  opacity: 0.55;
+}
+
+.menu-panel .volume-setting-row.is-muted .volume-setting-value {
+  text-decoration: line-through;
+}
+
 .handling-presets {
   display: flex;
   flex-wrap: wrap;

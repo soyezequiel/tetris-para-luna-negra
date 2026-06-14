@@ -290,6 +290,12 @@ let soloDeathSequenceDone = false;
 let lastHudOverlayHtml = '';
 let lastInviteOverlayHtml = '';
 let playback: ReplayPlayback | null = null;
+// Reloj del visor de repeticiones. El motor debe avanzar a 60 fps anclado al
+// tiempo real, NO una vez por rAF: en un monitor >60 Hz el rAF dispara más de 60
+// veces por segundo y la repetición corría a 2x/2.4x ("anda muy rápido"). Contamos
+// los frames de 60 Hz transcurridos y llamamos tick() esa cantidad de veces.
+let replayClockOriginMs = performance.now();
+let replayFramesAdvanced = 0;
 // A dónde volver al salir de la reproducción. null = al menú (replays importados/
 // del historial). Lo setea la repetición de "últimos 5s" para volver a resultados.
 let replayReturnMode: AppMode | null = null;
@@ -344,6 +350,9 @@ const onlineReplayCollector = new OnlineReplayCollector();
 let onlineReplayBroadcast = false;
 // Visor multi-tablero activo (appMode 'onlineReplay'). null fuera del visor.
 let multiReplay: MultiReplayPlayback | null = null;
+// Mientras miro una repetición dentro de una sala me marco NO listo para que el
+// host no arranque sin mí; el poll re-afirma el no-listo si el reopen me readyea.
+let holdNotReadyForReplay = false;
 // Sala desde la que se abrió el visor, para poder volver a los resultados.
 let multiReplayReturnRoomId: string | null = null;
 // Referencias persistentes a cada tarjeta/canvas del visor (creadas al abrir).
@@ -500,7 +509,8 @@ function loopBody(): void {
   }
 
   if (appMode === 'replayPlayback' && playback) {
-    const snapshot = playback.tick();
+    let snapshot = playback.snapshot();
+    for (let i = replayFramesDueThisLoop(); i > 0; i -= 1) snapshot = playback.tick();
     renderer.render(snapshot.state);
     renderOverlay(snapshot.state);
     return;
@@ -509,7 +519,8 @@ function loopBody(): void {
   if (appMode === 'onlineReplay' && multiReplay) {
     // Visor multi-tablero: corre N motores y dibuja cada GameState en su canvas
     // (look real del juego). Vive en su capa persistente, no en el overlay general.
-    const snapshot = multiReplay.tick();
+    let snapshot = multiReplay.snapshot();
+    for (let i = replayFramesDueThisLoop(); i > 0; i -= 1) snapshot = multiReplay.tick();
     drawMultiReplayFrame(snapshot);
     return;
   }
@@ -697,6 +708,7 @@ Object.assign(window, {
         ],
       });
       multiReplayReturnRoomId = 'DEMO';
+      resetReplayClock();
       buildMultiReplayDom(multiReplay.snapshot());
       appMode = 'onlineReplay';
       return multiReplay.snapshot();
@@ -794,6 +806,31 @@ function targetGameplayFrame(now = performance.now()): number {
 
 function syncGameplayClockToCurrentFrame(): void {
   gameClockOriginMs = performance.now() - gameFrame * GAME_FRAME_MS;
+}
+
+// Reancla el reloj del visor de repeticiones. Se llama al abrir cualquier visor
+// (single o multi) para que el primer loop no avance de golpe el tiempo previo.
+function resetReplayClock(): void {
+  replayClockOriginMs = performance.now();
+  replayFramesAdvanced = 0;
+}
+
+// Cuántas veces hay que llamar a tick() del visor en este loop, según el tiempo
+// real transcurrido a 60 fps (cada tick avanza `speed` frames del motor). En la
+// mayoría de los rAF de un monitor >60 Hz devuelve 0 y solo se redibuja el frame
+// actual; así la repetición corre a velocidad real en lugar de acelerarse.
+function replayFramesDueThisLoop(): number {
+  const targetFrames = Math.floor((performance.now() - replayClockOriginMs) / GAME_FRAME_MS);
+  const due = targetFrames - replayFramesAdvanced;
+  if (due <= 0) return 0;
+  // Tope de catch-up: tras una pausa o la pestaña en segundo plano (rAF congelado)
+  // no descargamos cientos de frames de golpe; reanclamos y seguimos suave.
+  if (due > 4) {
+    replayFramesAdvanced = targetFrames;
+    return 1;
+  }
+  replayFramesAdvanced = targetFrames;
+  return due;
 }
 
 // Diagnóstico de partidas multijugador. Imprime en consola con prefijo [MP] para
@@ -1159,6 +1196,14 @@ function handleOverlayClick(event: MouseEvent): void {
     const preset = parseHandlingPreset(control.dataset.preset);
     if (preset) applyInputSettings(applyHandlingPreset(inputSettings, preset));
   }
+  if (action === 'volume-adjust') {
+    const channel: VolumeChannel = control.dataset.volumeChannel === 'music' ? 'music' : 'sfx';
+    const delta = Number(control.dataset.delta ?? 0);
+    sound.adjustVolume(channel, delta);
+    best = saveAudioVolumes(sound.getSfxVolume(), sound.getMusicVolume());
+    if (channel === 'sfx') juiceAudio.setSfxVolume(sound.getSfxVolume());
+    volumeFeedback = { channel, expiresAt: performance.now() + 900 };
+  }
 }
 
 function parseTimingKey(value: string | undefined): InputTimingKey {
@@ -1393,7 +1438,11 @@ function openOnlineMenu(): void {
   appMode = 'onlineMenu';
   settingsReturnMode = 'menu';
   input.releaseAll();
-  refreshPublicRooms();
+  // Refresco silencioso: NO tomar el lock onlineBusy. Si lo tomara, un join
+  // inmediato (p. ej. bootstrapJoinLink al abrir un ?join=) abortaría con "Enter a
+  // room ID…" porque joinOnlineRoom corta cuando onlineBusy está en true, y el que
+  // abre el link nunca entraría a la sala.
+  void refreshPublicRooms({ silent: true });
 }
 
 async function bootstrapLunaNegraEntry(): Promise<void> {
@@ -2075,6 +2124,38 @@ async function setOnlineReady(ready: boolean): Promise<void> {
   }
 }
 
+// Marca ready/no-ready en el servidor SIN tocar appMode ni el lock onlineBusy: lo
+// usa el visor de repeticiones para "frenar" la sala mientras alguien mira el replay
+// (no listo) y volver a listo al salir, sin sacarlo del visor. Best-effort: si la
+// sala todavía no está en lobby (status finished/countdown) el server lo rechaza y
+// lo ignoramos; el poll de la repetición lo reintenta cuando la sala reabre.
+async function setOnlineReadyQuiet(ready: boolean): Promise<void> {
+  if (!onlineRoom) return;
+  try {
+    const response = await onlineClient.setReady({ roomId: onlineRoom.id, playerId: onlinePlayer.id, ready });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+  } catch {
+    // La sala puede no estar en lobby todavía; el reintento vive en el poll.
+  }
+}
+
+// Al abrir una repetición dentro de una sala online me marco NO listo, para que el
+// host no arranque la próxima ronda mientras la estoy viendo. Fuera de una sala no
+// hace nada (setOnlineReadyQuiet corta si no hay onlineRoom).
+function beginReplayReadyHold(): void {
+  if (!onlineRoom) return;
+  holdNotReadyForReplay = true;
+  void setOnlineReadyQuiet(false);
+}
+
+// Al salir de la repetición vuelvo a listo (solo si lo había puesto en no-listo).
+function endReplayReadyHold(): void {
+  if (!holdNotReadyForReplay) return;
+  holdNotReadyForReplay = false;
+  void setOnlineReadyQuiet(true);
+}
+
 async function startOnlineRoom(): Promise<void> {
   if (!onlineRoom || onlineBusy) return;
   if (!onlineRoomHasOtherPlayers()) {
@@ -2137,6 +2218,12 @@ function maybeSubmitOnlineWin(room: OnlineRoom): void {
   const roundId = onlineRoundKey(room);
   if (onlineWinSubmittedRoundId === roundId) return;
   onlineWinSubmittedRoundId = roundId;
+  // Sonido de victoria: el ganador online sobrevive (último en pie), así que su
+  // motor local sigue en 'playing' y nunca pasa a 'finished' — la transición que
+  // dispara juice.onWin() en solo. Lo gatillamos acá, donde la SALA me corona,
+  // para que suene igual que ganar en solo (una sola vez por ronda).
+  juiceAudio.win();
+  sound.play('finish');
   void submitLeaderboardWin();
 }
 
@@ -2614,6 +2701,7 @@ function startReplayPlayback(importedReplay: ExportedReplay, fileName: string): 
   replayReturnMode = null; // replay importado/historial: al salir vuelvo al menú
   importedReplayName = fileName;
   playback = new ReplayPlayback(importedReplay);
+  resetReplayClock();
   appMode = 'replayPlayback';
   settingsReturnMode = 'menu';
 }
@@ -2645,14 +2733,17 @@ function startDeathReplay(): void {
   replayImportError = null;
   importedReplayName = `Últimos ${DEATH_REPLAY_SECONDS} segundos`;
   playback = new ReplayPlayback(exported, { startFrame });
+  resetReplayClock();
   replayReturnMode = appMode; // vuelvo a la pantalla de resultados de esta partida
   appMode = 'replayPlayback';
   settingsReturnMode = 'menu';
+  beginReplayReadyHold();
 }
 
 // Salida de la reproducción. Si vino de "ver últimos 5s" vuelve a los resultados de
 // la partida (el motor principal sigue intacto en gameover); si no, va al menú.
 function exitReplayPlayback(): void {
+  endReplayReadyHold();
   if (replayReturnMode === null) {
     goToMenu();
     return;
@@ -2993,7 +3084,7 @@ function onlineAuthorityTargetFrame(state: GameState): number {
 
 function shouldPollOnline(now: number): boolean {
   if (onlinePollInFlight) return false;
-  if (!['menu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'leaderboard', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return false;
+  if (!['menu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'leaderboard', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults', 'onlineReplay', 'replayPlayback'].includes(appMode)) return false;
   return now - onlineLastPollAt >= ONLINE_POLL_MS;
 }
 
@@ -3029,6 +3120,12 @@ async function pollOnlineRoom(): Promise<void> {
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
     applyRoomAttacks(response.room);
+    // Estoy mirando una repetición y la sala reabrió al lobby readyeando a todos:
+    // re-afirmo el NO listo para que el host no arranque sin mí mientras la veo.
+    if (holdNotReadyForReplay && response.room.status === 'lobby'
+      && response.room.players.find((player) => player.id === onlinePlayer.id)?.ready) {
+      void setOnlineReadyQuiet(false);
+    }
     if (
       response.room.status === 'finished'
       && (appMode === 'roomLobby' || appMode === 'onlineCountdown' || appMode === 'onlinePlaying' || appMode === 'onlineResults')
@@ -4518,13 +4615,16 @@ function openMultiReplay(): void {
     return;
   }
   multiReplay = new MultiReplayPlayback(pkg);
+  resetReplayClock();
   multiReplayReturnRoomId = roomId;
   onlineError = null;
   buildMultiReplayDom(multiReplay.snapshot());
   appMode = 'onlineReplay';
+  beginReplayReadyHold();
 }
 
 function exitMultiReplay(): void {
+  endReplayReadyHold();
   multiReplay = null;
   multiReplayCards = [];
   multiReplayOverlayElement.innerHTML = '';
@@ -5705,6 +5805,13 @@ function renderSettingsPanelContent(): string {
         ${renderCustomSection('Accesibilidad', [
           renderCustomToggle('Modo daltónico', 'colorBlindMode'),
         ])}
+        <section class="custom-section settings-audio" aria-label="Volumen">
+          <h2>Volumen</h2>
+          <div class="custom-rows">
+            ${renderVolumeSettingRow('sfx')}
+            ${renderVolumeSettingRow('music')}
+          </div>
+        </section>
         <div class="panel-actions" style="display: flex; gap: 12px; margin-top: 24px;">
           <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="settings-back">Volver</button>
           <button class="dash-action-btn danger" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="settings-reset">Restablecer</button>
@@ -6423,8 +6530,39 @@ function renderSplitList(splits: LineSplit[]): string {
 }
 
 function helpText(): string {
-  if (appMode === 'replayPlayback') return `${formatActionBinding('pause')} pause replay - ${formatActionBinding('retry')} restart replay - M sound - N music`;
-  return `Move ${formatActionBinding('moveLeft')}/${formatActionBinding('moveRight')} - Rotate ${formatActionBinding('rotateCW')}/${formatActionBinding('rotateCCW')}/${formatActionBinding('rotate180')} - Drop ${formatActionBinding('softDrop')}/${formatActionBinding('hardDrop')} - Hold ${formatActionBinding('hold')} - Pause ${formatActionBinding('pause')} - Retry ${formatActionBinding('retry')} - M sound - N music`;
+  if (appMode === 'replayPlayback') {
+    return `${primaryKey('pause')} Pausa · ${primaryKey('retry')} Reiniciar · M Sonido · N Música`;
+  }
+  return [
+    `Mover ${primaryKey('moveLeft')} ${primaryKey('moveRight')}`,
+    `Rotar ${primaryKey('rotateCW')}`,
+    `Bajar ${primaryKey('softDrop')}`,
+    `Soltar ${primaryKey('hardDrop')}`,
+    `Guardar ${primaryKey('hold')}`,
+    `Pausa ${primaryKey('pause')}`,
+    `Reiniciar ${primaryKey('retry')}`,
+    `Sonido M`,
+    `Música N`,
+  ].join('  ·  ');
+}
+
+// Para bajar la carga cognitiva mostramos sólo la tecla principal de cada acción
+// (no todas las alternativas) y usamos flechas en vez de "Left/Right/Up/Down".
+function primaryKey(action: ControlAction): string {
+  const bindings = inputSettings.bindings[action];
+  if (bindings.length === 0) return '—';
+  return helpKeyGlyph(bindings[0]);
+}
+
+function helpKeyGlyph(code: string): string {
+  switch (code) {
+    case 'ArrowLeft': return '←';
+    case 'ArrowRight': return '→';
+    case 'ArrowUp': return '↑';
+    case 'ArrowDown': return '↓';
+    case 'Space': return 'Espacio';
+    default: return keyLabel(code);
+  }
 }
 
 function formatActionBinding(action: ControlAction): string {
@@ -6503,6 +6641,25 @@ function renderVolumeChannelRow(channel: VolumeChannel): string {
       <button class="volume-mute" type="button" data-ui-action="${toggleAction}" aria-pressed="${muted}" aria-label="${muted ? 'Activar' : 'Silenciar'} ${label}" title="${muted ? 'Activar' : 'Silenciar'} ${label}">${speakerIcon(muted)}</button>
       <span class="volume-label">${label}</span>
       <span class="volume-value">${formatPercent(volume)}%</span>
+    </div>`;
+}
+
+// Fila de volumen para el panel de Configuración: botón de mute + etiqueta +
+// botones −/+ (paso de 10%) + porcentaje. El contenedor lleva data-volume-channel
+// para que también responda a la rueda del mouse/touchpad (ver handleVolumeWheel).
+function renderVolumeSettingRow(channel: VolumeChannel): string {
+  const isMusic = channel === 'music';
+  const label = isMusic ? 'Música' : 'Efectos';
+  const muted = isMusic ? sound.isMusicMuted() : sound.isSfxMuted();
+  const volume = isMusic ? sound.getMusicVolume() : sound.getSfxVolume();
+  const toggleAction = isMusic ? 'toggle-music' : 'toggle-sfx';
+  return `
+    <div class="volume-setting-row${muted ? ' is-muted' : ''}" data-volume-channel="${channel}" title="También podés usar la rueda del mouse">
+      <button class="volume-mute" type="button" data-ui-action="${toggleAction}" aria-pressed="${muted}" aria-label="${muted ? 'Activar' : 'Silenciar'} ${label}" title="${muted ? 'Activar' : 'Silenciar'} ${label}">${speakerIcon(muted)}</button>
+      <span class="volume-setting-label">${label}</span>
+      <button type="button" data-ui-action="volume-adjust" data-volume-channel="${channel}" data-delta="-0.1" aria-label="Bajar ${label}">−</button>
+      <span class="volume-setting-value">${Math.round(volume * 100)}%</span>
+      <button type="button" data-ui-action="volume-adjust" data-volume-channel="${channel}" data-delta="0.1" aria-label="Subir ${label}">+</button>
     </div>`;
 }
 
