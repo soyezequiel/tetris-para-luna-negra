@@ -3,6 +3,7 @@ import { Container } from '@pixi/display';
 import { Graphics } from '@pixi/graphics';
 import { Text, TextStyle } from '@pixi/text';
 import { JuiceFX, type BoardGeometry } from './JuiceFX';
+import { BackgroundFX } from './BackgroundFX';
 import { cellsFor, PIECE_COLORS, PIECE_COLORS_COLORBLIND } from '../game/pieces';
 import { DEFAULT_RULES } from '../game/rules';
 import { displayedElapsedFrames } from '../game/timing';
@@ -43,6 +44,7 @@ export class PixiGameRenderer {
   private readonly effectLayer = new Graphics();
   private readonly juiceLayer = new Container();
   private readonly juice = new JuiceFX(this.juiceLayer);
+  private readonly backgroundFX: BackgroundFX;
   private readonly labelLayer = new Container();
   private readonly hudText: Text;
   private readonly holdLabel: Text;
@@ -81,6 +83,10 @@ export class PixiGameRenderer {
       powerPreference: 'high-performance',
     });
     root.appendChild(this.app.view as HTMLCanvasElement);
+    const view = this.app.view as HTMLCanvasElement;
+    view.style.position = 'relative';
+    view.style.zIndex = '1';
+    this.backgroundFX = new BackgroundFX(root);
     this.hudText = new Text('', new TextStyle({
       fill: 0xf7f7f2,
       fontFamily: 'Arial, Helvetica, sans-serif',
@@ -107,6 +113,7 @@ export class PixiGameRenderer {
   }
 
   destroy(): void {
+    this.backgroundFX.destroy();
     this.app.destroy(true, true);
   }
 
@@ -121,6 +128,10 @@ export class PixiGameRenderer {
   setColorBlind(enabled: boolean): void {
     this.colorBlind = enabled;
   }
+
+  setBackgroundMotion(enabled: boolean): void { this.backgroundFX.setMotion(enabled); }
+
+  setBackgroundEnabled(enabled: boolean): void { this.backgroundFX.setEnabled(enabled); }
 
   getJuice(): JuiceFX {
     return this.juice;
@@ -148,6 +159,7 @@ export class PixiGameRenderer {
     this.stage.position.set(legacy + js.x, js.y);
     this.shakeFrames = Math.max(0, this.shakeFrames - 1);
 
+    this.backgroundFX.setSeed(state.seed);
     this.drawBackground();
     this.drawPanels();
     if (this.deathFrame >= 0) {
@@ -243,28 +255,8 @@ export class PixiGameRenderer {
   }
 
   private drawBackground(): void {
+    // El fondo de ventana ahora lo dibuja BackgroundFX (Canvas2D, detrás de Pixi).
     this.bg.clear();
-    this.bg.beginFill(0x0b1015, 1);
-    this.bg.drawRect(0, 0, this.width, this.height);
-    this.bg.endFill();
-
-    for (let i = 0; i < 7; i += 1) {
-      const y = this.height * (0.15 + i * 0.11);
-      const alpha = 0.08 + i * 0.015;
-      this.bg.beginFill(i % 2 ? 0x9b6b46 : 0x20374a, alpha);
-      this.bg.drawEllipse(this.width * (0.15 + i * 0.13), y, this.width * 0.22, this.height * 0.16);
-      this.bg.endFill();
-    }
-
-    this.bg.beginFill(0xc9d2d7, 0.17);
-    this.bg.drawRect(0, this.height * 0.67, this.width, this.height * 0.18);
-    this.bg.endFill();
-    this.bg.beginFill(0xf8f8f5, 0.92);
-    this.bg.drawRect(0, this.height * 0.88, this.width, this.height * 0.12);
-    this.bg.endFill();
-    this.bg.beginFill(0x020509, 0.42);
-    this.bg.drawRect(0, 0, this.width, this.height);
-    this.bg.endFill();
   }
 
   private drawPanels(): void {
