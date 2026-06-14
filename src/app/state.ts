@@ -26,6 +26,24 @@ export function canAdvanceGame(mode: AppMode, status: GameState['status']): bool
   return (mode === 'playing' || mode === 'onlinePlaying') && status === 'playing';
 }
 
+// Modos donde suena la música de fondo. Los menús (menu principal, solo,
+// multijugador, config, custom, librería, leaderboard, lobby online, settings)
+// quedan en silencio; la música arranca al entrar en una partida o repetición.
+const MUSIC_MODES: readonly AppMode[] = [
+  'playing',
+  'paused',
+  'soloCountdown',
+  'onlineCountdown',
+  'onlinePlaying',
+  'onlineResults',
+  'onlineReplay',
+  'replayPlayback',
+];
+
+export function shouldPlayMusic(mode: AppMode): boolean {
+  return MUSIC_MODES.includes(mode);
+}
+
 export function canCommitLocalOnlineTerminal(isHostAuthority: boolean): boolean {
   return isHostAuthority;
 }

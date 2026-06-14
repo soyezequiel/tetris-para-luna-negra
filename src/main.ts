@@ -14,7 +14,7 @@ import {
 import { soundCueForRunProgress } from './app/runEffects';
 import { nextAutoPlayInput } from './app/autoPlay'; // TRUCO AUTOPLAY
 import { createRunSummary, RunSplitTracker, type LineSplit, type RunSummary } from './app/runStats';
-import { canAdvanceGame, canCommitLocalOnlineTerminal, gameOverReasonMessage, requiresRunConfirmation, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
+import { canAdvanceGame, canCommitLocalOnlineTerminal, gameOverReasonMessage, requiresRunConfirmation, shouldPlayMusic, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import {
   CUSTOM_NUMBER_SETTING_META,
   CUSTOM_TABS,
@@ -460,6 +460,10 @@ function loop(): void {
 }
 
 function loopBody(): void {
+  // La música sólo suena en partida/repetición; los menús (incluido el principal)
+  // quedan en silencio. setMusicAllowed es idempotente, así que llamarlo cada frame
+  // sólo dispara play/pause en la transición real de modo.
+  sound.setMusicAllowed(shouldPlayMusic(appMode));
   const beforeState = engine.getState();
   const canAdvanceThisLoop = !hasBlockingModal() && canAdvanceGame(appMode, beforeState.status);
   if (!canAdvanceThisLoop) syncGameplayClockToCurrentFrame();

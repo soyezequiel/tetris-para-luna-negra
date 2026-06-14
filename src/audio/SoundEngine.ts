@@ -33,6 +33,7 @@ export class SoundEngine {
   private musicVolume: number;
   private currentMusicTrackIndex = 0;
   private musicStarted = false;
+  private musicAllowed = true;
   private lastSoftDropAt = 0;
 
   constructor(
@@ -64,6 +65,20 @@ export class SoundEngine {
     if (this.muted) this.music.pause();
     else void this.unlock();
     return this.muted;
+  }
+
+  // Permite/silencia la música de fondo según el contexto (p. ej. apagada en el
+  // menú principal, encendida durante la partida). Idempotente: sólo actúa al
+  // cambiar de estado para no relanzar la pista en cada frame del loop.
+  setMusicAllowed(allowed: boolean): void {
+    if (this.musicAllowed === allowed) return;
+    this.musicAllowed = allowed;
+    if (!allowed) {
+      this.music.pause();
+      this.musicStarted = false;
+    } else if (!this.muted) {
+      void this.startMusic();
+    }
   }
 
   getCurrentMusicTrack(): MusicTrack | null {
@@ -210,7 +225,7 @@ export class SoundEngine {
   }
 
   private async startMusic(): Promise<void> {
-    if (!this.musicTracks.length || this.musicVolume === 0) return;
+    if (!this.musicAllowed || !this.musicTracks.length || this.musicVolume === 0) return;
     try {
       await this.music.play();
       this.musicStarted = true;
