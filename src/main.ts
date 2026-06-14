@@ -3803,12 +3803,16 @@ function renderOverlay(state: GameState): void {
   if (import.meta.env.DEV) renderDevBotOverlay(); // BOT DEV
   const currentMusicTrack = sound.getCurrentMusicTrack()?.title ?? 'No music';
   const activeVolumeChannel = getActiveVolumeChannel();
+  // Modo solo "relax" (40 líneas): muestra subtítulo + engranaje de ajustes.
+  const soloRelax = appMode === 'playing' || appMode === 'paused' || appMode === 'soloCountdown';
+  const gearIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>';
   const html = `
-    <div class="brand">TETRA</div>
+    <div class="brand">TETRA${soloRelax ? '<span class="brand-sub">MODO RELAX</span>' : ''}</div>
+    ${soloRelax ? `<button class="gear-btn" type="button" data-ui-action="settings" aria-label="Ajustes" title="Ajustes">${gearIcon}</button>` : ''}
     ${autoPlayAccessGranted ? renderAutoPlayToggle() : ''}
     <div class="help">${escapeHtml(helpText())}</div>
-    <div class="best">Best ${best.best40LineFrames === null ? '--:--.---' : formatFrames(best.best40LineFrames)}</div>
-    <div class="audio-panel">
+    ${soloRelax ? '' : `<div class="best">Best ${best.best40LineFrames === null ? '--:--.---' : formatFrames(best.best40LineFrames)}</div>`}
+    ${soloRelax ? '' : `<div class="audio-panel">
       <button class="hud-action sound" type="button" data-ui-action="toggle-sound">${sound.isMuted() ? 'Sound off' : 'Sound on'}</button>
       <div class="volume-control ${activeVolumeChannel === 'sfx' ? 'volume-control-active' : ''}" data-volume-channel="sfx">
         <span>SFX</span>
@@ -3820,7 +3824,7 @@ function renderOverlay(state: GameState): void {
       </div>
       <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
       <button class="hud-action reverb" type="button" data-ui-action="cycle-reverb" title="Cola de reverb al apagar la música">Reverb: ${reverbLabel(sound.getReverbMode())}</button>
-    </div>
+    </div>`}
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
     ${renderTouchControls()}
