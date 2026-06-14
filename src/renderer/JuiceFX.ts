@@ -107,6 +107,11 @@ export class JuiceFX {
 
   private last = performance.now();
   private shake = 0;
+  // Bump direccional: cuando una pieza choca contra la pared izq/der, el tablero
+  // se desplaza un poco hacia ese lado y vuelve (resorte amortiguado), como en
+  // tetr.io. bumpX es el desplazamiento horizontal actual; bumpVel su velocidad.
+  private bumpX = 0;
+  private bumpVel = 0;
   private flash: { color: number; t: number; dur: number } | null = null;
   private glow: { color: number; t: number; dur: number; intensity: number } | null = null;
   private dangerLevel = 0;
@@ -189,11 +194,13 @@ export class JuiceFX {
     this.reducedMotion = value;
   }
 
-  /** Desplazamiento de shake que el renderer aplica a stage.position cada frame. */
+  /** Desplazamiento que el renderer aplica a stage.position cada frame: combina el
+   * shake aleatorio (line clears, KO…) con el bump direccional del impacto de pared. */
   shakeOffset(): Point {
-    if (this.reducedMotion || this.shake < 0.4) return { x: 0, y: 0 };
-    const s = this.shake;
-    return { x: (Math.random() * 2 - 1) * s, y: (Math.random() * 2 - 1) * s };
+    const s = this.reducedMotion ? 0 : this.shake;
+    const sx = s >= 0.4 ? (Math.random() * 2 - 1) * s : 0;
+    const sy = s >= 0.4 ? (Math.random() * 2 - 1) * s : 0;
+    return { x: sx + this.bumpX, y: sy };
   }
 
   // ---------- lectores de geometría (para el conductor) ----------
@@ -229,6 +236,13 @@ export class JuiceFX {
   addShake(magnitude: number): void {
     if (this.reducedMotion) return;
     this.shake = Math.min(40, Math.max(this.shake, magnitude * this.intensity));
+  }
+
+  /** Impulso de bump direccional contra la pared. dir = -1 (izq) | 1 (der).
+   * Inyecta velocidad en el resorte; el desplazamiento se integra en update(). */
+  addBump(dir: -1 | 1, velocity = 90): void {
+    if (this.reducedMotion) return;
+    this.bumpVel += dir * velocity * this.intensity * this.scale;
   }
 
   flashBoard(color: number, peak = 0.85, durSec = 0.36): void {
@@ -358,6 +372,8 @@ export class JuiceFX {
     this.particles = [];
     this.projectiles = [];
     this.shake = 0;
+    this.bumpX = 0;
+    this.bumpVel = 0;
     this.flash = null;
     this.glow = null;
     this.dangerLevel = 0;
@@ -383,6 +399,19 @@ export class JuiceFX {
     if (dt < 0) dt = 0;
 
     this.shake *= Math.exp(-dt * 9);
+
+    // Resorte amortiguado del bump de pared: empuja hacia el lado del impacto y
+    // vuelve con un leve rebote (subamortiguado). Se detiene al asentarse.
+    if (this.bumpX !== 0 || this.bumpVel !== 0) {
+      const stiffness = 220;
+      const damping = 22;
+      this.bumpVel += (-stiffness * this.bumpX - damping * this.bumpVel) * dt;
+      this.bumpX += this.bumpVel * dt;
+      if (Math.abs(this.bumpX) < 0.05 && Math.abs(this.bumpVel) < 0.05) {
+        this.bumpX = 0;
+        this.bumpVel = 0;
+      }
+    }
 
     this.particleG.clear();
     this.overlayG.clear();

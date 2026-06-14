@@ -43,7 +43,7 @@ import { createReplayLog, recordGarbage, recordInput } from './game/replay';
 import { BATTLE_RULES, DEFAULT_RULES, softDropCellsPerFrameForFactor } from './game/rules';
 import { resolveGameplayFrame } from './game/frameClock';
 import { displayedElapsedFrames } from './game/timing';
-import type { GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
+import type { ActivePiece, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
 import { GamepadController } from './gamepad';
 import {
@@ -520,7 +520,9 @@ function loopBody(): void {
     playImmediateInputSounds(gameInputs.map((event) => event.action));
     for (const event of gameInputs) recordInput(replay, event);
     state = advanceGameToFrame(candidateFrame, gameInputs);
-    playAcceptedMoveSound(beforeTickState.active, state.active, gameInputs.map((event) => event.action));
+    const tickActions = gameInputs.map((event) => event.action);
+    playAcceptedMoveSound(beforeTickState.active, state.active, tickActions);
+    triggerWallImpact(beforeTickState.active, state.active, tickActions, state.board[0]?.length ?? 10);
     // Micro-feel al fijar pieza: el hard drop ya dispara su propio efecto en
     // playImmediateInputSounds, así que aquí solo el lock "natural".
     const lockedPiece = state.stats.pieces > beforeTickState.stats.pieces;
@@ -6399,6 +6401,42 @@ function playAcceptedMoveSound(before: { type: string; x: number } | null, after
   const requestedHorizontalMove = actions.some((action) => action === 'moveLeft' || action === 'moveRight');
   if (!requestedHorizontalMove || !before || !after) return;
   if (before.type === after.type && before.x !== after.x) sound.play('move');
+}
+
+// Disparo por flanco del bump de pared: 0 = sin contacto, -1/1 = pared ya tocada
+// de ese lado. Evita que el tablero rebote en cada frame mientras se mantiene la
+// tecla contra la pared (DAS/ARR); solo en el frame del impacto.
+let lastWallImpactDir: -1 | 0 | 1 = 0;
+
+/** Empuja el tablero hacia la pared cuando la pieza choca contra el borde izq/der
+ * (estilo tetr.io). Solo cuenta el borde del tablero, no la pila. */
+function triggerWallImpact(
+  before: ActivePiece | null,
+  after: ActivePiece | null,
+  actions: InputAction[],
+  boardWidth: number,
+): void {
+  // Pieza nueva/cambiada, o se movió de columna: el flanco se rearma para que el
+  // próximo bloqueo contra la pared dispare el bump. Importante: NO rearmar en los
+  // huecos de ARR (ticks sin acción horizontal mientras se mantiene la tecla), o el
+  // tablero rebotaría en cada repetición en vez de una sola vez por contacto.
+  if (!after || !before || before.type !== after.type || before.x !== after.x) {
+    lastWallImpactDir = 0;
+    return;
+  }
+  const wantsLeft = actions.includes('moveLeft');
+  const wantsRight = actions.includes('moveRight');
+  // Dirección inequívoca: si se pidieron ambos lados en el mismo tick, se ignora.
+  const dir: -1 | 1 | 0 = wantsLeft && !wantsRight ? -1 : wantsRight && !wantsLeft ? 1 : 0;
+  if (dir === 0) return; // tick sin intento horizontal claro: preserva el flanco
+  // El movimiento se bloqueó (x no cambió). ¿Es contra la PARED (no contra la pila)?
+  const cols = cellsFor(after.type, after.rotation).map((c) => after.x + c.x);
+  const atWall = dir === -1 ? Math.min(...cols) === 0 : Math.max(...cols) === boardWidth - 1;
+  if (!atWall) return;
+  if (lastWallImpactDir !== dir) {
+    juice.onWallHit(dir);
+    lastWallImpactDir = dir;
+  }
 }
 
 function rulesFromSettings(settings: InputSettings): GameRules {

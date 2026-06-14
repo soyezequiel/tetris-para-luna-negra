@@ -243,6 +243,13 @@ export class JuiceConductor {
     this.fx.addShake(2.2);
   }
 
+  /** La pieza chocó contra la pared izq (-1) o der (1): el tablero rebota hacia
+   * ese lado, como el impacto de tetr.io. Lo dispara main.ts por flanco (un bump
+   * por contacto, no continuo mientras se mantiene la tecla contra la pared). */
+  onWallHit(dir: -1 | 1): void {
+    this.fx.addBump(dir, 260);
+  }
+
   // ---------- KO / Win / reset ----------
   private onTopOut(_state: GameState): void {
     this.alive = false;
