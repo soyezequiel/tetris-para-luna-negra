@@ -4560,12 +4560,23 @@ function renderOnlineResultsOverlay(state: GameState): string {
   // sobreviviendo menos que su víctima. El ganador sobrevivió hasta este frame.
   const survivalFrameOf = (p: OnlinePlayer) => p.eliminatedAtFrame ?? p.elapsedFrames;
   const matchEndFrame = ranked.reduce((max, p) => Math.max(max, survivalFrameOf(p)), 0);
+  const survivedFramesByIndex = ranked.map((player, index) =>
+    index === 0
+      ? Math.max(matchEndFrame, player.elapsedFrames)
+      : survivalFrameOf(player),
+  );
+  // Los ms solo aportan cuando dos jugadores caen en el mismo segundo (mismo mm:ss):
+  // ahí distinguen quién sobrevivió más. Si cada uno tiene su propio segundo, son ruido.
+  const countBySecond = new Map<number, number>();
+  for (const frames of survivedFramesByIndex) {
+    const whole = Math.floor(frames / 60);
+    countBySecond.set(whole, (countBySecond.get(whole) ?? 0) + 1);
+  }
   const rows = ranked
     .map((player, index) => {
-      const survivedFrames = index === 0
-        ? Math.max(matchEndFrame, player.elapsedFrames)
-        : survivalFrameOf(player);
-      return renderOnlineRankingRow(player, index, winnerSats, survivedFrames);
+      const survivedFrames = survivedFramesByIndex[index];
+      const showMillis = (countBySecond.get(Math.floor(survivedFrames / 60)) ?? 0) > 1;
+      return renderOnlineRankingRow(player, index, winnerSats, survivedFrames, showMillis);
     })
     .join('');
   // La ronda puede seguir corriendo (p. ej. quedé eliminado y el server aún no
@@ -4741,10 +4752,11 @@ function renderOnlineRankingRow(
   index: number,
   winnerSats: number | null,
   survivedFrames: number,
+  showMillis: boolean,
 ): string {
   const isWinner = index === 0;
   const isSelf = player.id === onlinePlayer.id;
-  const time = formatFrames(survivedFrames);
+  const time = formatFrames(survivedFrames, showMillis);
   const status = isWinner
     ? `Última en pie · sobrevivió ${time}`
     : `Eliminado · sobrevivió ${time}`;
@@ -4766,10 +4778,10 @@ function renderOnlineRankingRow(
         <em>${escapeHtml(status)}</em>
       </div>
       <div class="online-results-metrics">
-        <div class="online-results-metric"><span>KO</span><strong class="is-amber">${player.koCount}</strong></div>
-        <div class="online-results-metric"><span>LÍNEAS</span><strong>${player.lines}</strong></div>
-        <div class="online-results-metric"><span>ENVIÓ</span><strong>${player.sentGarbage}</strong></div>
-        <div class="online-results-metric"><span>SATS</span><strong class="${isWinner && winnerSats ? 'is-green' : 'is-muted'}">${sats}</strong></div>
+        <div class="online-results-metric" title="Rivales que eliminaste"><span>KO</span><strong class="is-amber">${player.koCount}</strong></div>
+        <div class="online-results-metric" title="Líneas que completaste"><span>LÍNEAS</span><strong>${player.lines}</strong></div>
+        <div class="online-results-metric" title="Líneas de basura que enviaste a tus rivales"><span>ATAQUE</span><strong>${player.sentGarbage}</strong></div>
+        <div class="online-results-metric" title="Sats que ganaste"><span>SATS</span><strong class="${isWinner && winnerSats ? 'is-green' : 'is-muted'}">${sats}</strong></div>
       </div>
     </div>
   `;
@@ -6846,10 +6858,11 @@ function randomSeed(): number {
   return Math.floor(Math.random() * 0xffffffff);
 }
 
-function formatFrames(frames: number): string {
+function formatFrames(frames: number, showMillis = true): string {
   const seconds = frames / 60;
   const minutes = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
+  if (!showMillis) return `${minutes}:${secs}`;
   const millis = Math.floor((seconds % 1) * 1000).toString().padStart(3, '0');
   return `${minutes}:${secs}.${millis}`;
 }

@@ -2259,6 +2259,42 @@ canvas {
   }
 }
 
+@media (orientation: portrait) and (max-width: 760px) {
+  .touch-controls {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "system system"
+      "move actions";
+    gap: 10px;
+    align-items: end;
+  }
+
+  .touch-cluster-system {
+    grid-area: system;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .touch-cluster-move {
+    grid-area: move;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .touch-cluster-actions {
+    grid-area: actions;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .touch-button,
+  .touch-controls-toggle {
+    min-width: 0;
+    width: 100%;
+    padding: 0 4px;
+  }
+}
+
 @media (max-height: 520px) {
   .help {
     display: none;
