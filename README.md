@@ -105,3 +105,17 @@ refresca el estado de la apuesta por polling.
 ## Replays
 
 El juego guarda localmente las partidas terminadas y top outs con sus replays. Tambien permite exportar una repeticion en formato JSON. El archivo incluye semilla, reglas, configuracion de controles, resultado y entradas registradas por frame. Esto permite auditar una corrida y deja una base preparada para ranking, validacion o reproduccion futura.
+
+## Musica
+
+El catalogo de pistas se arma de forma automatica a partir de los archivos en `src/audio/music/`.
+
+- **Agregar una pista:** copia el archivo (`.m4a`, `.mp3` u `.ogg`) a `src/audio/music/`. Aparece sola.
+- **Quitar una pista:** borra el archivo de `src/audio/music/`. Desaparece sola.
+
+No hace falta editar codigo ni correr comandos: Vite descubre los archivos con `import.meta.glob` en build y dev. En dev, si el watcher no toma el archivo nuevo al instante, reinicia el servidor.
+
+Opcionalmente, en `src/audio/music.ts` podes ajustar dos cosas (ambas usan el nombre del archivo sin extension como clave):
+
+- `TITLE_OVERRIDES`: titulo que se ve en la UI. Lo que no este listado se genera del nombre del archivo (`tetris-theme-reworked` -> `Tetris Theme Reworked`).
+- `ORDER`: orden de la playlist. Lo listado va primero; cualquier archivo nuevo cae al final, alfabetico.
