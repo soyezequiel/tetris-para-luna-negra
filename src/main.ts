@@ -5387,7 +5387,11 @@ function spectatorFocusState(): GameState | null {
   if (!engineSnapshot) return null;
   try {
     if (!spectatorEngine || spectatorEngineSeed !== engineSnapshot.seed) {
-      spectatorEngine = new GameEngine(engineSnapshot.seed, { ...BATTLE_RULES });
+      // Las dimensiones (boardWidth/visibleRows/hiddenRows) y opciones (ghost/hold/
+      // next) las define la sala, no BATTLE_RULES: usar las reglas de la sala —igual
+      // que mi propio motor online— para que el piso del tablero quede a la altura
+      // correcta. Con BATTLE_RULES (hiddenRows 20 vs 10 de la sala) el piso subía.
+      spectatorEngine = new GameEngine(engineSnapshot.seed, onlineRulesFromRoom());
       spectatorEngineSeed = engineSnapshot.seed;
     }
     spectatorEngine.restoreSnapshot(engineSnapshot);
