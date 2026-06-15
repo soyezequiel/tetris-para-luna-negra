@@ -5993,284 +5993,49 @@ canvas {
   100% { transform: translateX(0); opacity: 1; }
 }
 
-/* Ya morí: mi tablero (canvas Pixi) se oculta para no superponerse con los
-   tableros rivales. El fondo oscuro del documento queda detrás del espectador. */
-body.online-spectating #game-root {
-  visibility: hidden;
-}
+/* ===== Modo espectador =====
+   Ya no es una vista aparte: el rival enfocado se dibuja en el canvas principal
+   (#game-root sigue visible) como si jugara yo, y la grilla lateral conserva su
+   posición y estilo de la partida en vivo, listando solo a los demás. */
 
-/* ===== Modo espectador estilo tetr.io ===== */
-/* Pantalla completa: fondo oscuro con viñeta, tableros centrados en grilla,
-   contador grande de jugadores en pie arriba. */
-.online-versus-grid--spectator {
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  max-width: none;
-  padding: 56px 24px 28px;
-  transform: none;
-  justify-items: center;
-  align-content: center;
-  gap: 18px;
-  background:
-    radial-gradient(ellipse at 50% 36%, rgba(22, 30, 46, 0.6), rgba(2, 4, 8, 0.94) 72%),
-    rgba(2, 4, 8, 0.9);
-}
-
-.online-spec-header {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  color: rgba(247, 247, 242, 0.55);
-  font-family: "Arial Black", Arial, sans-serif;
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-}
-
-.online-spec-header strong {
+/* Encabezado lateral: "Viendo · NOMBRE" + cuántos siguen en pie. */
+.online-versus-title--spectating strong {
   color: #f7f7f2;
-  font-size: 34px;
-  letter-spacing: 0;
-  line-height: 1;
-  text-shadow: 0 0 20px rgba(0, 245, 255, 0.4);
-}
-
-.online-versus-grid--spectator .online-peer-boards {
-  justify-content: center;
-  align-content: center;
-  gap: 20px;
-}
-
-/* La tarjeta apila tablero + placa con nombre (la placa va DEBAJO, como tetr.io). */
-.online-spec-board {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.online-spec-stage {
-  position: relative;
-  display: flex;
-  gap: 4px;
-}
-
-.online-spec-stage-board {
-  position: relative;
-  min-width: 0;
-  flex: 1;
-}
-
-/* Medidor de garbage entrante al costado izquierdo del tablero: se llena de
-   abajo hacia arriba y pasa de naranja a rojo, como la barra de tetr.io. */
-.online-spec-garbage {
-  position: relative;
-  flex: 0 0 5px;
   overflow: hidden;
-  border-radius: 3px;
-  background: rgba(247, 247, 242, 0.07);
-}
-
-.online-spec-garbage i {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  background: linear-gradient(180deg, #ff8d4b, #ff3b3b);
-  transition: height 0.25s ease;
-}
-
-/* Mismo look que jugando: fondo casi negro (#05070b como BOARD_BG del canvas) y
-   grilla tenue dibujada con un gradiente repetido sobre el tablero. */
-.online-versus-grid--spectator .online-mini-board {
-  border: 1px solid rgba(247, 247, 242, 0.2);
-  border-radius: 3px 3px 0 0;
-  background-color: #05070b;
-  background-image:
-    linear-gradient(to right, rgba(47, 51, 56, 0.4) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(47, 51, 56, 0.4) 1px, transparent 1px);
-  background-size: calc(100% / 10) calc(100% / 20);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
-}
-
-.online-versus-grid--spectator .online-mini-cell {
-  border: none;
-}
-
-.online-versus-grid--spectator .online-mini-cell-empty {
-  background: transparent;
-}
-
-/* Bloque con relieve igual al del juego (ver drawBlock en boardCanvas.ts):
-   bevel claro arriba/izquierda, oscuro abajo/derecha, y un núcleo interior. */
-.online-versus-grid--spectator .online-mini-cell:not(.online-mini-cell-empty) {
-  background-image:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 42%, rgba(0, 0, 0, 0.3) 100%);
-  box-shadow:
-    inset 1.2px 1.2px 0 rgba(255, 255, 255, 0.34),
-    inset -1.2px -1.2px 0 rgba(0, 0, 0, 0.4),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
-}
-
-/* Placa con nombre y stats debajo del tablero. */
-.online-spec-plate {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 5px 7px 6px;
-  border: 1px solid rgba(247, 247, 242, 0.12);
-  border-top: none;
-  border-radius: 0 0 4px 4px;
-  margin-left: 9px;
-  background: linear-gradient(180deg, rgba(18, 22, 33, 0.94), rgba(8, 10, 16, 0.94));
-}
-
-.online-spec-name {
-  display: flex;
-  min-width: 0;
-  gap: 6px;
-  align-items: center;
-}
-
-.online-spec-name strong {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  color: #f7f7f2;
-  font-family: "Arial Black", Arial, sans-serif;
-  font-size: 11px;
-  font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.online-spec-kos {
-  color: #ffb84b;
+.online-spec-alive {
+  color: rgba(247, 247, 242, 0.5);
   font-size: 9px;
   font-weight: 900;
 }
 
-.online-spec-stats {
-  display: flex;
-  gap: 10px;
-  color: rgba(247, 247, 242, 0.45);
-  font-size: 8px;
-  font-weight: 900;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+/* Cada mini-tablero lateral es clickeable para cambiar el foco. La grilla en sí
+   tiene pointer-events:none, así que lo reactivamos solo en estas tarjetas. */
+.online-spec-pick {
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: transform 0.12s ease, filter 0.12s ease;
 }
 
-.online-spec-stats b {
-  color: rgba(247, 247, 242, 0.88);
-  font-size: 10px;
+.online-spec-pick:hover,
+.online-spec-pick:focus-visible {
+  transform: translateY(-2px);
+  filter: brightness(1.12);
+  outline: none;
 }
 
-/* Overlay de desenlace sobre el tablero: K.O. con el puesto grande (el primero
-   en caer queda último), o WINNER en verde para el ganador. */
-.online-spec-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 3px 3px 0 0;
-  pointer-events: none;
+.online-spec-pick:focus-visible .online-mini-board {
+  border-color: rgba(0, 245, 255, 0.7);
+  box-shadow: 0 0 0 1px rgba(0, 245, 255, 0.5);
 }
 
-.online-spec-overlay--ko {
-  background: linear-gradient(180deg, rgba(44, 5, 9, 0.55), rgba(12, 1, 3, 0.82));
-}
-
-.online-spec-overlay--win {
-  background: linear-gradient(180deg, rgba(8, 40, 28, 0.42), rgba(2, 14, 9, 0.74));
-}
-
-.online-spec-overlay-tag {
-  color: #ff6b6b;
-  font-family: "Arial Black", Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 3px;
-}
-
-.online-spec-overlay--win .online-spec-overlay-tag {
-  color: #4be3a6;
-}
-
-.online-spec-overlay-place {
-  color: #ffffff;
-  font-family: "Arial Black", Arial, sans-serif;
-  font-size: 32px;
-  font-weight: 900;
-  line-height: 1;
-  text-shadow: 0 0 22px rgba(255, 75, 92, 0.8);
-}
-
-.online-spec-overlay--win .online-spec-overlay-place {
-  text-shadow: 0 0 22px rgba(57, 212, 154, 0.8);
-}
-
-.online-spec-board--ko .online-mini-board {
-  filter: grayscale(0.85) brightness(0.45);
-}
-
-.online-spec-board--ko .online-spec-plate strong {
-  color: rgba(255, 122, 122, 0.9);
-}
-
-.online-spec-board--win .online-mini-board {
-  border-color: rgba(57, 212, 154, 0.55);
-}
-
-/* Terminó (sprint completado) pero la sala aún no lo coronó: azul neutro,
-   ni festejo verde ni K.O. gris. */
-.online-spec-overlay--done {
-  background: linear-gradient(180deg, rgba(10, 28, 44, 0.42), rgba(3, 10, 16, 0.74));
-}
-
-.online-spec-overlay--done .online-spec-overlay-tag {
-  color: #5ec8f5;
-}
-
-.online-spec-board--done .online-mini-board,
+/* Terminó (sprint completado) pero la sala aún no lo coronó: borde azul neutro. */
 .online-peer-board--done .online-mini-board {
   border-color: rgba(94, 200, 245, 0.55);
-}
-
-/* Tablero en peligro (pila alta o mucho garbage): pulso rojo, como el flash de
-   peligro de tetr.io. */
-.online-spec-board.is-danger .online-mini-board {
-  border-color: rgba(255, 75, 92, 0.7);
-  animation: online-spec-danger 0.8s ease-in-out infinite alternate;
-}
-
-@keyframes online-spec-danger {
-  from {
-    box-shadow: 0 0 8px rgba(255, 75, 92, 0.25);
-  }
-
-  to {
-    box-shadow: 0 0 24px rgba(255, 75, 92, 0.6);
-  }
-}
-
-@media (max-width: 760px) {
-  .online-versus-grid--spectator {
-    padding: 48px 10px 16px;
-    gap: 12px;
-  }
-
-  .online-spec-header strong {
-    font-size: 26px;
-  }
-
-  .online-versus-grid--spectator .online-peer-boards {
-    gap: 12px;
-  }
 }
 
 /* ─────────────────────────── Top mundial (leaderboard) ─────────────────────────── */

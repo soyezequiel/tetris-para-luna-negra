@@ -374,6 +374,13 @@ interface MultiReplayCard {
 let multiReplayCards: MultiReplayCard[] = [];
 let onlinePeerStates = new Map<string, string>();
 let onlinePeerDisplaySnapshots = new Map<string, OnlineGameSnapshot>();
+// Espectador: a qué rival estoy mirando en el tablero principal. null = automático
+// (sigo al líder de la ronda). El motor de espectador reconstruye su GameState a
+// partir del engine snapshot que difunde por WebRTC, para dibujarlo en el canvas
+// como si estuviera jugando esa partida.
+let spectatorFocusId: string | null = null;
+let spectatorEngine: GameEngine | null = null;
+let spectatorEngineSeed: number | null = null;
 let onlineAttackSequence = 0;
 let onlineAppliedAttackIds = new Set<string>();
 let onlineHostAuthority: HostAuthoritySimulator | null = null;
@@ -593,11 +600,19 @@ function loopBody(): void {
   if (import.meta.env.DEV) devBotMatch?.frame(); // BOT DEV: avanza al oponente simulado
   syncOnlineDeathPhase(state);
   syncSoloDeathPhase(state);
-  // Ya morí y terminó la animación de derrota: dejo de dibujar MI tablero (queda
-  // oculto por CSS) y solo se ven los tableros rivales centrados (espectador).
-  // Durante la animación de derrota sigo dibujando para que se vea morir.
-  if (!isOnlineSpectating()) renderer.render(state);
-  juice.frame(state); // peligro por altura de pila + transiciones KO/Win
+  // Ya morí y terminó la animación de derrota: paso a espectador. En vez de ocultar
+  // el canvas dibujo en él la partida del rival enfocado (líder o el que elija), así
+  // se ve como si siguiera jugando una partida normal en vez de una vista aparte.
+  // Durante la animación de derrota sigo dibujando MI tablero para que se vea morir.
+  if (isOnlineSpectating()) {
+    const focusState = spectatorFocusState();
+    // Sin juice: las partículas/danger son de mi tablero, no del rival; el FX
+    // residual de mi muerte se desvanece solo dentro de renderer.render().
+    if (focusState) renderer.render(focusState);
+  } else {
+    renderer.render(state);
+    juice.frame(state); // peligro por altura de pila + transiciones KO/Win
+  }
   renderOverlay(state);
 }
 
@@ -911,6 +926,13 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
     event.preventDefault();
     sound.nextMusicTrack();
   }
+  // Espectador: cambiar de tablero enfocado con las flechas izquierda/derecha
+  // (ya no estoy jugando, así que no interfieren con el control de la pieza).
+  if (isOnlineSpectating() && (event.code === 'ArrowLeft' || event.code === 'ArrowRight')) {
+    event.preventDefault();
+    cycleSpectatorFocus(event.code === 'ArrowLeft' ? -1 : 1);
+    return;
+  }
   // Teclas 1–5 (fila numérica o numpad) eligen la estrategia de objetivo
   // durante una batalla online de 3+ jugadores, al estilo tetr.io.
   if (appMode === 'onlinePlaying' && onlineRoom && onlineRoom.players.length > 2) {
@@ -997,6 +1019,11 @@ function handleOverlayClick(event: MouseEvent): void {
   }
   if (action === 'luna-launch-cancel') {
     cancelPendingLunaLaunchRequest();
+    return;
+  }
+  if (action === 'spectate-focus') {
+    const id = control.dataset.playerId;
+    if (id) spectatorFocusId = id;
     return;
   }
   if (hasBlockingModal()) return;
@@ -2548,6 +2575,7 @@ function resetOnlineRoomState(): void {
   onlinePeerBroadcaster = null;
   onlinePeerStates = new Map();
   onlinePeerDisplaySnapshots = new Map();
+  resetSpectatorFocus();
   onlineRoom = null;
   onlineError = null;
   onlineStakeInput = '';
@@ -2567,6 +2595,7 @@ function resetOnlineRoomState(): void {
   onlineHostCommittedResults = new Set();
   onlineLastAuthoritativeFrame = 0;
   onlinePeerDisplaySnapshots = new Map();
+  resetSpectatorFocus();
   onlineInputOutbox = [];
   onlineLastPollAt = 0;
   onlineLastProgressAt = 0;
@@ -2621,6 +2650,7 @@ function resetOnlineRuntimeForNextRound(): void {
   onlineHostCommittedResults = new Set();
   onlineLastAuthoritativeFrame = 0;
   onlinePeerDisplaySnapshots = new Map();
+  resetSpectatorFocus();
   onlineInputOutbox = [];
   onlineLastProgressAt = 0;
   onlineLastSelfReportAt = 0;
@@ -5242,39 +5272,59 @@ function renderOnlinePeerBoards(): string {
       </aside>
     `;
   }
-  const spectating = isOnlineSpectating();
-  const layout = onlinePeerGridLayout(remotePlayers.length, spectating);
-  // En espectador el encabezado es estilo tetr.io: cuántos siguen en pie, grande
-  // y centrado, en vez del contador chico de rivales.
   const aliveCount = onlineRoom.players.filter((candidate) => (
     candidate.alive
     && candidate.status !== 'eliminated'
     && candidate.status !== 'lost'
     && candidate.status !== 'disconnected'
   )).length;
-  const title = spectating
-    ? `
-      <div class="online-spec-header">
-        <span class="online-spec-eyebrow">Espectador</span>
-        <strong>${aliveCount}</strong>
-        <span class="online-spec-sub">en pie</span>
-      </div>
-    `
-    : `
+  // Espectador: el rival enfocado ya ocupa el canvas principal (como si jugara yo),
+  // así que la grilla lateral conserva la posición y el estilo de la partida en vivo
+  // y solo lista a los DEMÁS, en mini. Cada tarjeta es clickeable para cambiar el
+  // foco. Sin overlay a pantalla completa ni encabezado aparte.
+  if (isOnlineSpectating()) {
+    const focus = spectatorFocusPlayer();
+    const sidePlayers = remotePlayers.filter((player) => player.id !== focus?.id);
+    const layout = onlinePeerGridLayout(Math.max(1, sidePlayers.length));
+    const sideHtml = sidePlayers.length > 0
+      ? sidePlayers
+          .map((player) => `
+            <div class="online-spec-pick" data-ui-action="spectate-focus" data-player-id="${escapeHtml(player.id)}" role="button" tabindex="0" title="Ver a ${escapeHtml(player.name)}">
+              ${renderOnlinePeerBoard(player)}
+            </div>
+          `)
+          .join('')
+      : '<div class="online-empty">Sin otros rivales.</div>';
+    return `
+      <aside class="online-versus-grid" aria-label="Remote player boards">
+        <div class="online-versus-title online-versus-title--spectating">
+          <span>Viendo</span>
+          <strong>${escapeHtml(focus?.name ?? '—')}</strong>
+          <span class="online-spec-alive">${aliveCount} en pie</span>
+        </div>
+        <div
+          class="online-peer-boards"
+          data-peer-count="${sidePlayers.length}"
+          style="--online-peer-columns: ${layout.columns}; --online-peer-card-width: ${layout.cardWidth}px;"
+        >
+          ${sideHtml}
+        </div>
+      </aside>
+    `;
+  }
+  const layout = onlinePeerGridLayout(remotePlayers.length);
+  return `
+    <aside class="online-versus-grid" aria-label="Remote player boards">
       <div class="online-versus-title">
         <span>Opponents</span>
         <strong>${remotePlayers.length}</strong>
       </div>
-    `;
-  return `
-    <aside class="online-versus-grid ${spectating ? 'online-versus-grid--spectator' : ''}" aria-label="Remote player boards">
-      ${title}
       <div
         class="online-peer-boards"
         data-peer-count="${remotePlayers.length}"
         style="--online-peer-columns: ${layout.columns}; --online-peer-card-width: ${layout.cardWidth}px;"
       >
-        ${remotePlayers.map((player) => renderOnlinePeerBoard(player, spectating)).join('')}
+        ${remotePlayers.map((player) => renderOnlinePeerBoard(player)).join('')}
       </div>
     </aside>
   `;
@@ -5287,39 +5337,93 @@ function isOnlineSpectating(): boolean {
   return appMode === 'onlinePlaying' && lastStatus !== 'playing' && !isOnlineDeathAnimating();
 }
 
-// Tamaño automático de los tableros rivales: con pocos enemigos se agrandan,
-// con muchos se achican hasta que entren todos. En modo espectador (ya perdí)
-// ocupan mucho más ancho de pantalla.
-function onlinePeerGridLayout(playerCount: number, spectating = false): { columns: number; cardWidth: number } {
+// Rivales que puedo mirar como espectador (todos menos yo). El orden es el de
+// rankPlayers: los que siguen en pie/mejor posicionados primero, así el foco
+// automático arranca en el líder.
+function spectatorPeers(): OnlinePlayer[] {
+  if (!onlineRoom) return [];
+  return rankPlayers(onlineRoom.players).filter((player) => player.id !== onlinePlayer.id);
+}
+
+// Rival enfocado en el tablero principal. Respeta la elección manual mientras
+// ese jugador siga en la sala; si no, sigue al líder (primer ranking).
+function spectatorFocusPlayer(): OnlinePlayer | null {
+  const peers = spectatorPeers();
+  if (peers.length === 0) return null;
+  if (spectatorFocusId) {
+    const manual = peers.find((player) => player.id === spectatorFocusId);
+    if (manual) return manual;
+  }
+  return peers[0];
+}
+
+// Cambia el foco al siguiente/anterior rival (flechas o click). Fija el id manual
+// para que deje de auto-seguir al líder hasta que ese jugador se vaya.
+function cycleSpectatorFocus(direction: 1 | -1): void {
+  const peers = spectatorPeers();
+  if (peers.length <= 1) return;
+  const current = spectatorFocusPlayer();
+  const index = current ? peers.findIndex((player) => player.id === current.id) : -1;
+  const base = index >= 0 ? index : 0;
+  const next = peers[(base + direction + peers.length) % peers.length];
+  spectatorFocusId = next.id;
+}
+
+// Olvida la elección manual de foco y el motor de reconstrucción al cerrar/reabrir
+// la ronda, para no arrastrar a un jugador de la ronda anterior.
+function resetSpectatorFocus(): void {
+  spectatorFocusId = null;
+  spectatorEngine = null;
+  spectatorEngineSeed = null;
+}
+
+// Reconstruye el GameState del rival enfocado a partir de su engine snapshot, para
+// dibujarlo en el canvas principal igual que una partida en vivo (tablero, hold,
+// next, ghost y stats). Devuelve null si todavía no llegó un snapshot con motor.
+function spectatorFocusState(): GameState | null {
+  const player = spectatorFocusPlayer();
+  if (!player) return null;
+  const engineSnapshot = displaySnapshotForPlayer(player)?.engine;
+  if (!engineSnapshot) return null;
+  try {
+    if (!spectatorEngine || spectatorEngineSeed !== engineSnapshot.seed) {
+      spectatorEngine = new GameEngine(engineSnapshot.seed, { ...BATTLE_RULES });
+      spectatorEngineSeed = engineSnapshot.seed;
+    }
+    spectatorEngine.restoreSnapshot(engineSnapshot);
+    return spectatorEngine.getState();
+  } catch {
+    return null;
+  }
+}
+
+// Tamaño automático de los tableros rivales (grilla lateral): con pocos enemigos se
+// agrandan, con muchos se achican hasta que entren todos. El mismo cálculo sirve
+// jugando y como espectador, porque la grilla conserva su posición lateral.
+function onlinePeerGridLayout(playerCount: number): { columns: number; cardWidth: number } {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const columns = onlinePeerGridColumns(playerCount, width);
   const rows = Math.ceil(playerCount / columns);
   const gap = width < 760 ? 6 : 8;
-  const panelWidth = spectating
-    ? Math.max(240, width * (width < 760 ? 0.92 : 0.55))
-    : width < 760
-      ? Math.max(240, width - 28)
-      : width < 1120
-        ? Math.max(176, width * 0.22)
-        : Math.min(420, width * 0.32);
+  const panelWidth = width < 760
+    ? Math.max(240, width - 28)
+    : width < 1120
+      ? Math.max(176, width * 0.22)
+      : Math.min(420, width * 0.32);
   const availableHeight = Math.max(240, height - (width < 760 ? 168 : 118));
   const widthBound = (panelWidth - gap * (columns - 1)) / columns;
   const heightBound = (availableHeight - gap * (rows - 1)) / rows / 2.42;
   const minWidth = width < 760 ? 44 : 54;
-  const maxWidth = onlinePeerMaxCardWidth(playerCount, width, spectating);
+  const maxWidth = onlinePeerMaxCardWidth(playerCount, width);
   return {
     columns,
     cardWidth: Math.floor(Math.max(minWidth, Math.min(maxWidth, widthBound, heightBound))),
   };
 }
 
-function onlinePeerMaxCardWidth(playerCount: number, width: number, spectating: boolean): number {
-  if (width < 760) {
-    if (spectating) return playerCount <= 2 ? 160 : 110;
-    return playerCount <= 2 ? 110 : 82;
-  }
-  if (spectating) return playerCount <= 2 ? 240 : playerCount <= 4 ? 200 : 160;
+function onlinePeerMaxCardWidth(playerCount: number, width: number): number {
+  if (width < 760) return playerCount <= 2 ? 110 : 82;
   if (playerCount <= 1) return 190;
   if (playerCount <= 2) return 165;
   if (playerCount <= 4) return 145;
@@ -5336,8 +5440,7 @@ function onlinePeerGridColumns(playerCount: number, width: number): number {
   return 6;
 }
 
-function renderOnlinePeerBoard(player: OnlinePlayer, spectating = false): string {
-  if (spectating) return renderOnlineSpectatorBoard(player);
+function renderOnlinePeerBoard(player: OnlinePlayer): string {
   const peerState = onlinePeerStates.get(player.id) ?? 'server';
   const displayGame = displaySnapshotForPlayer(player);
   const outcome = onlinePeerOutcome(player, displayGame);
@@ -5366,90 +5469,6 @@ function renderOnlinePeerBoard(player: OnlinePlayer, spectating = false): string
       </div>
     </section>
   `;
-}
-
-// Tarjeta de rival en modo espectador, estilo tetr.io: medidor de garbage al
-// costado del tablero, placa con nombre y stats (PPS/APM/líneas) debajo, y
-// overlay con el puesto final cuando el jugador queda eliminado o gana.
-function renderOnlineSpectatorBoard(player: OnlinePlayer): string {
-  const displayGame = displaySnapshotForPlayer(player);
-  const outcome = onlinePeerOutcome(player, displayGame);
-  const stats = onlinePeerStats(player, displayGame);
-  const pending = Math.max(0, displayGame?.pendingGarbage ?? player.pendingGarbage ?? 0);
-  // 12 líneas de garbage pendiente ya es sentencia de muerte: barra llena.
-  const garbagePct = Math.min(100, Math.round((pending / 12) * 100));
-  const danger = !outcome && player.dangerLevel >= 7;
-  const placement = outcome ? onlinePeerPlacement(player, outcome.kind) : null;
-  const boardHtml = displayGame
-    ? renderOnlineMiniBoard(displayGame)
-    : '<div class="online-mini-board online-mini-board-empty">Sin señal</div>';
-  const overlay = outcome
-    ? `
-      <div class="online-spec-overlay online-spec-overlay--${outcome.kind}">
-        <span class="online-spec-overlay-tag">${outcome.kind === 'win' ? 'WINNER' : outcome.kind === 'done' ? 'FINISH' : 'K.O.'}</span>
-        ${placement ? `<span class="online-spec-overlay-place">${placement}º</span>` : ''}
-      </div>
-    `
-    : '';
-  const lines = displayGame?.lines ?? player.lines ?? 0;
-  return `
-    <section class="online-peer-board online-spec-board${outcome ? ` online-spec-board--${outcome.kind}` : ''}${danger ? ' is-danger' : ''}">
-      <div class="online-spec-stage">
-        <div class="online-spec-garbage" aria-hidden="true"><i style="height:${garbagePct}%"></i></div>
-        <div class="online-spec-stage-board">
-          ${boardHtml}
-          ${overlay}
-        </div>
-      </div>
-      <div class="online-spec-plate">
-        <div class="online-spec-name">
-          ${renderOnlineAvatar(player, 'small')}
-          <strong>${escapeHtml(player.name)}</strong>
-          ${player.koCount > 0 ? `<span class="online-spec-kos">${player.koCount}&nbsp;KO</span>` : ''}
-        </div>
-        <div class="online-spec-stats">
-          <span><b>${stats.pps.toFixed(1)}</b> PPS</span>
-          <span><b>${Math.round(stats.apm)}</b> APM</span>
-          <span><b>${lines}</b> líneas</span>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-// PPS y APM (garbage enviado por minuto, como tetr.io) a partir del snapshot en
-// vivo o, si no llegó, del estado de la sala. Bajo un segundo de juego devuelve
-// ceros para no mostrar números absurdos.
-function onlinePeerStats(player: OnlinePlayer, snapshot: OnlineGameSnapshot | null): { pps: number; apm: number } {
-  const frames = Math.max(0, snapshot?.elapsedFrames ?? player.elapsedFrames ?? 0);
-  if (frames < 60) return { pps: 0, apm: 0 };
-  const seconds = frames / 60;
-  const pieces = snapshot?.pieces ?? player.pieces ?? 0;
-  const sent = snapshot?.sentGarbage ?? player.sentGarbage ?? 0;
-  return { pps: pieces / seconds, apm: (sent * 60) / seconds };
-}
-
-// Puesto final estilo tetr.io: el primero en caer queda último; el ganador es 1º.
-// Se deriva del orden de eliminación que reporta el servidor.
-function onlinePeerPlacement(player: OnlinePlayer, kind: 'ko' | 'win' | 'done'): number | null {
-  if (!onlineRoom) return null;
-  if (kind === 'win') return 1;
-  // 'done' (terminó pero la sala no lo coronó): el puesto sale del ranking.
-  if (kind === 'done') {
-    const ranked = rankPlayers(onlineRoom.players);
-    const index = ranked.findIndex((candidate) => candidate.id === player.id);
-    return index >= 0 ? index + 1 : null;
-  }
-  const total = onlineRoom.players.length;
-  const myTime = player.eliminatedAtServerMs;
-  if (myTime === null || myTime === undefined) return null;
-  const eliminatedBefore = onlineRoom.players.filter((candidate) => (
-    candidate.id !== player.id
-    && candidate.eliminatedAtServerMs !== null
-    && candidate.eliminatedAtServerMs !== undefined
-    && candidate.eliminatedAtServerMs < myTime
-  )).length;
-  return total - eliminatedBefore;
 }
 
 // Desenlace de un rival según el estado autoritativo de la sala (y, como señal
