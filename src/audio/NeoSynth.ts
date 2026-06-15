@@ -44,7 +44,7 @@ const REVERB_DECAY = 3.0;
 interface VoiceOpts {
   type?: OscillatorType; freq: number; freqEnd?: number; glide?: 'exp' | 'lin'; glideDur?: number;
   dur: number; attack?: number; hold?: number; gain?: number; when?: number; detune?: number;
-  pan?: number; reverb?: number; drive?: number; unison?: number; spread?: number;
+  pan?: number; reverb?: number; drive?: number; unison?: number; spread?: number; lp?: number;
 }
 interface NoiseOpts {
   filter?: BiquadFilterType; freq?: number; freqEnd?: number; q?: number; dur: number;
@@ -298,9 +298,11 @@ export class NeoSynth {
   alarm(pan = 0): void {
     if (!this.open()) return;
     this.emitPan = clampPan(pan);
-    this.voice({ type: 'sawtooth', freq: 1380, freqEnd: 980, dur: 0.13, gain: 0.16, glide: 'lin', drive: DRIVE });
-    this.voice({ type: 'square', freq: 920, freqEnd: 1320, dur: 0.12, gain: 0.10, glide: 'lin', when: 0.14, drive: DRIVE * 0.8 });
-    this.crunch({ filter: 'highpass', freq: 2600, q: 0.7, dur: 0.10, gain: 0.10 * CRUNCH, drive: DRIVE });
+    // Pasa-bajo en ambos beeps + crunch atenuado: la alarma sigue presente pero
+    // suena apagada/lejana en vez de morder, para no quebrar la concentración.
+    this.voice({ type: 'sawtooth', freq: 1380, freqEnd: 980, dur: 0.13, gain: 0.16, glide: 'lin', drive: DRIVE, lp: 900 });
+    this.voice({ type: 'square', freq: 920, freqEnd: 1320, dur: 0.12, gain: 0.10, glide: 'lin', when: 0.14, drive: DRIVE * 0.8, lp: 900 });
+    this.crunch({ filter: 'lowpass', freq: 1200, q: 0.7, dur: 0.10, gain: 0.05 * CRUNCH, drive: DRIVE * 0.6 });
   }
 
   /** "Tu rival se está por morir": barrido predador que sube y un campanazo
@@ -425,7 +427,16 @@ export class NeoSynth {
       osc.connect(node);
       osc.start(t0); osc.stop(t0 + atk + hold + o.dur + 0.06);
     }
-    const out = this.applyPan(g, o.pan);
+    let tail: AudioNode = g;
+    if (o.lp) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(o.lp, t0);
+      lp.Q.value = 0.7;
+      g.connect(lp);
+      tail = lp;
+    }
+    const out = this.applyPan(tail, o.pan);
     out.connect(this.master);
     if (o.reverb && this.reverb) { const s = ctx.createGain(); s.gain.value = o.reverb; out.connect(s); s.connect(this.reverb); }
   }

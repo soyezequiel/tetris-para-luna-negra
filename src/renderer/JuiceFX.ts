@@ -593,10 +593,11 @@ export class JuiceFX {
       const speed = crit ? 4.2 : 1.0 + this.dangerLevel * 2.0;
       this.dangerPhase += dt * speed;
       const beat = Math.pow(Math.max(0, Math.sin(this.dangerPhase * Math.PI * 2)), 1.6);
-      // Base mucho más presente que antes (0.50 + 0.70*beat vs 0.32 + 0.52*beat),
-      // y al máximo permanente cuando es crítico para que no dependa de la altura.
+      // Aviso claro pero más sobrio para no estorbar la concentración: base atenuada
+      // (0.32 + 0.48*beat), y al máximo permanente cuando es crítico para que no
+      // dependa de la altura.
       const lvl = crit ? 1 : this.dangerLevel;
-      const a = lvl * 0.5 + lvl * 0.7 * beat;
+      const a = lvl * 0.32 + lvl * 0.48 * beat;
       // Bandas rojas desde el borde hacia adentro (más bandas y más anchas en crítico).
       const bands = crit ? 8 : 6;
       const band = this.geo.cell * (crit ? 2.4 : 1.7);
@@ -613,7 +614,7 @@ export class JuiceFX {
       g.lineStyle(0, 0, 0);
       // Crítico: velo rojo latiendo sobre TODO el tablero — imposible no verlo.
       if (crit) {
-        g.beginFill(PALETTE.danger, 0.1 + 0.22 * beat);
+        g.beginFill(PALETTE.danger, 0.07 + 0.15 * beat);
         g.drawRect(r.x, r.y, r.w, r.h);
         g.endFill();
       }
