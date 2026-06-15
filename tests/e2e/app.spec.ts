@@ -1177,6 +1177,7 @@ function createMockBet(room: MockRoom, now: number): RoomBet {
       bolt11: `lnbc${player.id}`,
       lnurl: null,
       payUrl: `https://pay.example/${player.id}`,
+      depositError: null,
       payoutSats: null,
     }));
   const stakeSats = 10;

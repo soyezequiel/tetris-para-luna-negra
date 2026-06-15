@@ -1548,6 +1548,7 @@ describe('core stacker engine', () => {
           bolt11: null,
           lnurl: null,
           payUrl: null,
+          depositError: null,
           payoutSats: null,
         },
         {
@@ -1557,6 +1558,7 @@ describe('core stacker engine', () => {
           bolt11: null,
           lnurl: null,
           payUrl: null,
+          depositError: null,
           payoutSats: null,
         },
       ],
@@ -1629,6 +1631,7 @@ describe('core stacker engine', () => {
           bolt11: null,
           lnurl: null,
           payUrl: null,
+          depositError: null,
           payoutSats: null,
         },
         {
@@ -1638,6 +1641,7 @@ describe('core stacker engine', () => {
           bolt11: null,
           lnurl: null,
           payUrl: null,
+          depositError: null,
           payoutSats: null,
         },
       ],

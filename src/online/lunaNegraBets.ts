@@ -46,6 +46,7 @@ interface LunaBetDetail extends LunaEconomics {
     bolt11?: string | null;
     lnurl?: string | null;
     payUrl?: string | null;
+    depositError?: string | null;
   }>;
 }
 
@@ -154,6 +155,7 @@ function buildRoomBet(
       bolt11: typeof d?.bolt11 === 'string' ? d.bolt11 : null,
       lnurl: typeof d?.lnurl === 'string' ? d.lnurl : null,
       payUrl: typeof d?.payUrl === 'string' ? d.payUrl : null,
+      depositError: typeof d?.depositError === 'string' ? d.depositError : null,
       payoutSats: typeof d?.payoutSats === 'number' ? d.payoutSats : null,
     };
   });

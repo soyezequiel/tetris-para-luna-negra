@@ -5108,20 +5108,39 @@ function renderOnlineBetPanel(host: boolean): string {
     </div>
   `).join('');
 
-  const myDeposit = myEntry && myEntry.depositStatus === 'pending' && (myEntry.bolt11 || myEntry.payUrl)
+  const myDepositPending = !!myEntry && myEntry.depositStatus === 'pending';
+  const myHasPayHandles = !!(myEntry && (myEntry.bolt11 || myEntry.payUrl));
+  const myDeposit = myDepositPending && myHasPayHandles
     ? `
       <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
-        ${myEntry.bolt11 ? renderBetInvoiceQr(myEntry.bolt11) : ''}
+        ${myEntry!.bolt11 ? renderBetInvoiceQr(myEntry!.bolt11) : ''}
         <div class="online-bet-deposit-actions">
-          ${myEntry.bolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myEntry.bolt11)}"${onlineBetBusy ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : ''}
-          ${myEntry.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
-          ${myEntry.bolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.bolt11)}">Copiar invoice</button>` : ''}
-          ${myEntry.lnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry.lnurl)}">Copiar LNURL</button>` : ''}
+          ${myEntry!.bolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myEntry!.bolt11)}"${onlineBetBusy ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : ''}
+          ${myEntry!.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry!.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
+          ${myEntry!.bolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry!.bolt11)}">Copiar invoice</button>` : ''}
+          ${myEntry!.lnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry!.lnurl)}">Copiar LNURL</button>` : ''}
         </div>
       </div>
     `
-    : '';
+    : myDepositPending
+      // Depósito pendiente pero Luna Negra todavía no devolvió los handles de pago
+      // (bolt11/payUrl). Si vino `depositError`, mostramos el motivo real (NWC sin
+      // permiso make-invoice, budget agotado, relay caído); si no, asumimos que se
+      // está generando. En ambos casos el polling reintenta solo y ofrecemos un
+      // reintento manual, en vez de un panel mudo sin forma de pagar.
+      ? `
+      <div class="online-bet-deposit" data-bet-deposit>
+        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        ${myEntry!.depositError
+          ? `<p class="online-bet-note online-bet-warning">⚠️ No se pudo generar el invoice de pago: ${escapeHtml(myEntry!.depositError)}. Reintentando…</p>`
+          : `<p class="online-bet-note">⏳ Generando el invoice de pago… Si tarda, tocá «Actualizar».</p>`}
+        <div class="online-bet-deposit-actions">
+          <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
+        </div>
+      </div>
+    `
+      : '';
 
   const terminal = ['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status);
   return `

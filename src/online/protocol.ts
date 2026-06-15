@@ -110,6 +110,13 @@ export interface RoomBetParticipant {
   bolt11: string | null;
   lnurl: string | null;
   payUrl: string | null;
+  /**
+   * Motivo por el que Luna Negra no pudo generar el invoice de depósito (p. ej.
+   * NWC sin permiso make-invoice, budget agotado o relay caído). `null` cuando no
+   * hubo error (handles presentes o depósito cerrado). Sirve para mostrar la causa
+   * real en vez de un panel mudo sin métodos de pago.
+   */
+  depositError: string | null;
   /** Pago recibido por este participante (si ganó), en sats. */
   payoutSats: number | null;
 }

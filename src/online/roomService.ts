@@ -1523,6 +1523,7 @@ function normalizeBet(value: unknown): RoomBet | null {
         bolt11: normalizeNullableString(entry.bolt11),
         lnurl: normalizeNullableString(entry.lnurl),
         payUrl: normalizeNullableString(entry.payUrl),
+        depositError: normalizeNullableString(entry.depositError),
         payoutSats: normalizeNullableSats(entry.payoutSats),
       }))
     : [];
