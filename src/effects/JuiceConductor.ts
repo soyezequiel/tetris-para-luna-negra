@@ -52,6 +52,17 @@ export class JuiceConductor {
     this.attackRouting = mode;
   }
 
+  /** Sincroniza el estado interno con un tablero SIN disparar efectos. Lo usa el
+   * espectador al cambiar de tablero observado para no soltar un KO/new-run/combo
+   * falso por el salto de estado entre un jugador y otro. */
+  prime(state: GameState): void {
+    this.lastStatus = state.status;
+    this.alive = state.status !== 'gameover' && state.status !== 'finished';
+    this.lastCombo = Math.max(0, state.stats.combo);
+    this.fx.setDanger(0);
+    this.audio.setDanger(0);
+  }
+
   /** Eventos drenados del motor en un tick (line clears, garbage entrante/aplicada). */
   handleEvents(state: GameState, events: readonly GameEvent[]): void {
     for (const event of events) {

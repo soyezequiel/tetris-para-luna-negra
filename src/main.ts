@@ -381,6 +381,13 @@ let onlinePeerDisplaySnapshots = new Map<string, OnlineGameSnapshot>();
 let spectatorFocusId: string | null = null;
 let spectatorEngine: GameEngine | null = null;
 let spectatorEngineSeed: number | null = null;
+// Juice (partículas/flashes/sonido) del tablero que estoy mirando como espectador.
+// Es un conductor aparte sobre el MISMO JuiceFX del canvas + el mismo audio: como
+// los snapshots del rival no traen eventos, los deduzco por diff entre snapshots
+// (líneas → line-clear, pending → garbage entrante, piezas → lock, status → KO/Win).
+let spectatorJuice: JuiceConductor | null = null;
+let spectatorJuiceId: string | null = null;
+let spectatorJuicePrev: { lines: number; pieces: number; pending: number; sent: number } | null = null;
 let onlineAttackSequence = 0;
 let onlineAppliedAttackIds = new Set<string>();
 let onlineHostAuthority: HostAuthoritySimulator | null = null;
@@ -605,10 +612,14 @@ function loopBody(): void {
   // se ve como si siguiera jugando una partida normal en vez de una vista aparte.
   // Durante la animación de derrota sigo dibujando MI tablero para que se vea morir.
   if (isOnlineSpectating()) {
-    const focusState = spectatorFocusState();
-    // Sin juice: las partículas/danger son de mi tablero, no del rival; el FX
-    // residual de mi muerte se desvanece solo dentro de renderer.render().
-    if (focusState) renderer.render(focusState);
+    const focus = spectatorFocusPlayer();
+    const focusState = focus ? spectatorFocusState(focus) : null;
+    if (focus && focusState) {
+      // Render primero (refresca la geometría del tablero), luego el juice del rival
+      // observado: partículas/flashes/popups/sonido como si fuera su propia partida.
+      renderer.render(focusState);
+      driveSpectatorJuice(focusState, focus.id);
+    }
   } else {
     renderer.render(state);
     juice.frame(state); // peligro por altura de pila + transiciones KO/Win
@@ -5380,14 +5391,15 @@ function resetSpectatorFocus(): void {
   spectatorFocusId = null;
   spectatorEngine = null;
   spectatorEngineSeed = null;
+  spectatorJuice = null;
+  spectatorJuiceId = null;
+  spectatorJuicePrev = null;
 }
 
 // Reconstruye el GameState del rival enfocado a partir de su engine snapshot, para
 // dibujarlo en el canvas principal igual que una partida en vivo (tablero, hold,
 // next, ghost y stats). Devuelve null si todavía no llegó un snapshot con motor.
-function spectatorFocusState(): GameState | null {
-  const player = spectatorFocusPlayer();
-  if (!player) return null;
+function spectatorFocusState(player: OnlinePlayer): GameState | null {
   const engineSnapshot = displaySnapshotForPlayer(player)?.engine;
   if (!engineSnapshot) return null;
   try {
@@ -5404,6 +5416,57 @@ function spectatorFocusState(): GameState | null {
   } catch {
     return null;
   }
+}
+
+// Reproduce el juice (partículas, flashes, popups, sonido) del tablero observado.
+// Los snapshots del rival NO traen eventos, así que se infieren por diff contra el
+// snapshot anterior: líneas borradas → line-clear (con TETRIS/combo/ataque según
+// stats), pieza nueva → lock, garbage pendiente que sube → telegrafía entrante;
+// el peligro por altura y las transiciones KO/Win las saca frame() del estado.
+// Entre snapshots el estado no cambia (mismo snapshot reconstruido), así que no se
+// generan eventos falsos; solo el peligro se actualiza suave cada frame.
+function driveSpectatorJuice(focusState: GameState, focusId: string): void {
+  if (!spectatorJuice) {
+    spectatorJuice = new JuiceConductor(renderer.getJuice(), juiceAudio);
+    spectatorJuice.setAttackRouting('auto');
+  }
+  const stats = focusState.stats;
+  // Cambié de tablero (o primer frame): re-sincronizo sin disparar efectos.
+  if (focusId !== spectatorJuiceId) {
+    spectatorJuiceId = focusId;
+    spectatorJuice.prime(focusState);
+    spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage };
+    spectatorJuice.frame(focusState);
+    return;
+  }
+  const prev = spectatorJuicePrev ?? { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage };
+  const events: GameEvent[] = [];
+  const clearedDelta = stats.lines - prev.lines;
+  if (clearedDelta > 0) {
+    const cleared = Math.max(1, Math.min(4, clearedDelta));
+    const outgoing = Math.max(0, stats.sentGarbage - prev.sent);
+    const filled = focusState.board.reduce((total, row) => total + row.reduce((n, cell) => n + (cell ? 1 : 0), 0), 0);
+    const lineClear: LineClearEvent = {
+      type: 'lineClear',
+      frame: stats.frame,
+      cleared,
+      difficult: stats.b2b > 0 || cleared >= 4,
+      spin: 'none',
+      piece: focusState.active?.type ?? 'I',
+      perfectClear: filled === 0,
+      combo: Math.max(0, stats.combo),
+      b2b: Math.max(0, stats.b2b),
+      attackLines: outgoing,
+      outgoingLines: outgoing,
+    };
+    events.push(lineClear);
+  }
+  const pendingDelta = stats.pendingGarbage - prev.pending;
+  if (pendingDelta > 0) events.push({ type: 'incomingGarbage', frame: stats.frame, lines: pendingDelta });
+  spectatorJuice.handleEvents(focusState, events);
+  if (stats.pieces > prev.pieces) spectatorJuice.onLock();
+  spectatorJuice.frame(focusState);
+  spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage };
 }
 
 // Tamaño automático de los tableros rivales (grilla lateral): con pocos enemigos se
