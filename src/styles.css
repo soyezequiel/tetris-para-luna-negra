@@ -6024,21 +6024,20 @@ canvas {
 }
 
 /* Cada mini-tablero lateral es clickeable para cambiar el foco. La grilla en sí
-   tiene pointer-events:none, así que lo reactivamos solo en estas tarjetas. */
+   tiene pointer-events:none, así que lo reactivamos solo en estas tarjetas.
+   El realce de hover NO mueve layout ni anima (nada de transform/transition): la
+   grilla se reconstruye cada snapshot (~10 Hz) y un translateY animado titilaría. */
 .online-spec-pick {
   pointer-events: auto;
   cursor: pointer;
   border-radius: 4px;
-  transition: transform 0.12s ease, filter 0.12s ease;
 }
 
-.online-spec-pick:hover,
 .online-spec-pick:focus-visible {
-  transform: translateY(-2px);
-  filter: brightness(1.12);
   outline: none;
 }
 
+.online-spec-pick:hover .online-mini-board,
 .online-spec-pick:focus-visible .online-mini-board {
   border-color: rgba(0, 245, 255, 0.7);
   box-shadow: 0 0 0 1px rgba(0, 245, 255, 0.5);

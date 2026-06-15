@@ -975,6 +975,16 @@ function toggleAutoPlay(): void { // TRUCO AUTOPLAY
 function handleOverlayPointerDown(event: PointerEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  // Cambiar de tablero en espectador: se resuelve en pointerdown, no en click,
+  // porque la grilla lateral se reconstruye cada snapshot (~10 Hz) y el nodo se
+  // reemplaza entre el mousedown y el mouseup, así que el 'click' casi nunca llega.
+  const spectate = target.closest<HTMLElement>('[data-ui-action="spectate-focus"]');
+  if (spectate) {
+    const id = spectate.dataset.playerId;
+    if (id) spectatorFocusId = id;
+    event.preventDefault();
+    return;
+  }
   const control = target.closest<HTMLElement>('[data-ui-action="toggle-autoplay"]');
   if (!control) return;
   toggleAutoPlay();
@@ -1019,11 +1029,6 @@ function handleOverlayClick(event: MouseEvent): void {
   }
   if (action === 'luna-launch-cancel') {
     cancelPendingLunaLaunchRequest();
-    return;
-  }
-  if (action === 'spectate-focus') {
-    const id = control.dataset.playerId;
-    if (id) spectatorFocusId = id;
     return;
   }
   if (hasBlockingModal()) return;
