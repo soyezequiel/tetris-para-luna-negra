@@ -72,6 +72,12 @@ export class NeoSynth {
   // de forma síncrona dentro de la llamada (aunque el audio suene con `when`), una
   // variable transitoria basta y no se pisa entre llamadas (JS es de un solo hilo).
   private emitPan = 0;
+  // Ganancia relativa de la emisión en curso (1 = normal). Misma mecánica transitoria
+  // que emitPan: la fija play() y la aplican todas las primitivas de esa emisión.
+  // Sirve para atenuar (sonidos de rivales, <1) o reforzar (muerte de rival, >1) sin
+  // tocar el volumen maestro. Sólo play() la cambia; el resto de métodos públicos la
+  // dejan en 1, así que nunca arrastra entre emisiones.
+  private emitGain = 1;
 
   constructor(muted = false, sfxVolume = 1, bass = 0.75) {
     this.muted = muted;
@@ -103,10 +109,13 @@ export class NeoSynth {
 
   // ---------- API de cues de input ----------
   // `pan` (-1..1) posiciona el sonido en el estéreo según dónde ocurre en pantalla.
-  play(cue: SfxCue, pan = 0): void {
+  // `gain` escala el volumen de ESTA emisión (1 = normal; <1 atenúa, p. ej. los
+  // sonidos de pieza de los rivales; >1 refuerza, p. ej. la muerte de un rival).
+  play(cue: SfxCue, pan = 0, gain = 1): void {
     if (!this.open()) return;
     const ctx = this.ensure(); if (!ctx) return;
     this.emitPan = clampPan(pan);
+    this.emitGain = clampGain(gain);
     if (cue === 'softDrop') {
       if (ctx.currentTime - this.lastSoftDropAt < 0.045) return;
       this.lastSoftDropAt = ctx.currentTime;
@@ -529,14 +538,23 @@ export class NeoSynth {
     src.start(t0); src.stop(t0 + burst + 0.02);
   }
 
-  // Inserta un StereoPanner si la emisión actual (o la voz) tiene paneo. Combina el
-  // paneo posicional de la emisión con el paneo local de la primitiva y lo acota.
+  // Inserta el escalado de ganancia de la emisión y un StereoPanner si hace falta.
+  // Combina el paneo posicional de la emisión con el paneo local de la primitiva y lo
+  // acota; aplica emitGain (1 = normal) con un GainNode sólo cuando difiere de 1.
   private applyPan(source: AudioNode, localPan = 0): AudioNode {
+    const ctx = this.ctx;
+    let node = source;
+    if (ctx && this.emitGain !== 1) {
+      const g = ctx.createGain();
+      g.gain.value = this.emitGain;
+      node.connect(g);
+      node = g;
+    }
     const pan = clampPan((this.emitPan || 0) + (localPan || 0));
-    if (pan === 0 || !this.ctx) return source;
-    const p = this.ctx.createStereoPanner();
+    if (pan === 0 || !ctx) return node;
+    const p = ctx.createStereoPanner();
     p.pan.value = pan;
-    source.connect(p);
+    node.connect(p);
     return p;
   }
 
@@ -604,6 +622,13 @@ function clamp01(v: number): number {
 function clampPan(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Math.min(1, Math.max(-1, v));
+}
+
+// Ganancia por emisión: permite atenuar (<1) o reforzar (>1) acotado a un techo
+// razonable para no saturar de golpe (el bus maestro ya comprime/satura).
+function clampGain(v: number): number {
+  if (!Number.isFinite(v)) return 1;
+  return Math.min(4, Math.max(0, v));
 }
 
 /** Pan estéreo aleatorio y sutil (random pan) para los ticks de movimiento. */

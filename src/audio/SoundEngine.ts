@@ -226,9 +226,10 @@ export class SoundEngine {
 
   // Los efectos los sintetiza NeoSynth (paleta Neo: modelado modal + crunch). El
   // gate de mute/volumen se mantiene aquí y se refleja en `neo` con syncSfx().
-  play(cue: SoundCue, pan = 0): void {
+  // `gain` escala el volumen de esta emisión (1 = normal; <1 atenúa, >1 refuerza).
+  play(cue: SoundCue, pan = 0, gain = 1): void {
     if (this.muted || this.sfxMuted || this.sfxVolume === 0) return;
-    this.neo.play(cue, pan);
+    this.neo.play(cue, pan, gain);
   }
 
   // Refleja el estado de mute (maestro o de canal SFX) y el volumen SFX en el

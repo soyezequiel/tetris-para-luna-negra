@@ -416,6 +416,18 @@ let spectatorJuicePrev: {
 // Rivales cuya derrota ya sonó. Evita repetir el jingle si vuelvo a enfocar a un
 // muerto; se limpia al revivir (reopen de ronda) en syncRivalDeathSounds.
 const spectatorDeathAnnounced = new Set<string>();
+// Estado previo de la pieza activa de cada rival (mientras JUEGO), para deducir
+// mover/girar/fijar por diff entre sus snapshots y reproducir esos sonidos atenuados
+// y paneados desde su mini-tablero (syncRivalPieceSounds). Se olvida cuando un rival
+// muere o desaparece para que su próxima pieza re-sincronice sin sonar.
+const rivalPieceSnapshots = new Map<string, { pieces: number; type: string; x: number; rotation: number }>();
+// Volumen relativo de los sonidos de pieza de los rivales (mover/girar/fijar) mientras
+// jugás: se oyen para sentir su actividad pero muy por debajo de los tuyos, sin tapar
+// tu propio juego.
+const RIVAL_PIECE_GAIN = 0.26;
+// Refuerzo del jingle de derrota de un rival: a volumen normal quedaba demasiado bajo
+// y se perdía bajo el resto de la mezcla.
+const RIVAL_DEATH_GAIN = 1.7;
 let onlineAttackSequence = 0;
 let onlineAppliedAttackIds = new Set<string>();
 let onlineHostAuthority: HostAuthoritySimulator | null = null;
@@ -635,6 +647,7 @@ function loopBody(): void {
   if (import.meta.env.DEV) devBotMatch?.frame(); // BOT DEV: avanza al oponente simulado
   syncRivalDangerCues(); // sonido cuando un rival vivo entra en peligro crítico
   syncRivalDeathSounds(); // sonido de derrota de un rival (espectador y en juego)
+  syncRivalPieceSounds(); // sonidos atenuados de pieza de los rivales mientras juego
   syncOnlineDeathPhase(state);
   syncSoloDeathPhase(state);
   // Ya morí y terminó la animación de derrota: paso a espectador. En vez de ocultar
@@ -5455,8 +5468,62 @@ function syncRivalDeathSounds(): void {
     spectatorDeathAnnounced.add(player.id);
     // Jugando: la muerte del rival suena desde su mini-tablero en la grilla. Como
     // espectador solo suena el rival ENFOCADO, que está centrado → paneo neutro.
-    if (!spectating) sound.play('gameOver', panForPlayerBoard(player.id));
-    else if (focus && player.id === focus.id) sound.play('gameOver');
+    // Reforzado (RIVAL_DEATH_GAIN) para que no se pierda bajo el resto de la mezcla.
+    if (!spectating) sound.play('gameOver', panForPlayerBoard(player.id), RIVAL_DEATH_GAIN);
+    else if (focus && player.id === focus.id) sound.play('gameOver', 0, RIVAL_DEATH_GAIN);
+  }
+}
+
+// Sonidos de pieza de los rivales mientras JUEGO (no como espectador): mover/girar/
+// fijar deducidos por diff entre los snapshots de cada rival vivo, reproducidos
+// atenuados (RIVAL_PIECE_GAIN) y paneados desde su mini-tablero, para sentir su
+// actividad sin tapar mi propio juego. Como espectador no corre: el rival enfocado ya
+// suena a volumen pleno vía driveSpectatorJuice. Los snapshots llegan espaciados, así
+// que cada cue suena una vez por actualización (más esporádico que el propio, justo lo
+// buscado). Mismo criterio de diff que el espectador: lock por aumento de piezas, y
+// si la pieza es la misma, giro con prioridad sobre desplazamiento.
+function syncRivalPieceSounds(): void {
+  if (!onlineRoom || appMode !== 'onlinePlaying' || isOnlineSpectating()) {
+    if (rivalPieceSnapshots.size) rivalPieceSnapshots.clear();
+    return;
+  }
+  const live = new Set<string>();
+  for (const player of onlineRoom.players) {
+    if (player.id === onlinePlayer.id) continue;
+    const alive = player.alive
+      && player.status !== 'eliminated'
+      && player.status !== 'lost'
+      && player.status !== 'disconnected'
+      && player.status !== 'winner'
+      && player.status !== 'won';
+    if (!alive) continue;
+    const snapshot = displaySnapshotForPlayer(player);
+    const active = snapshot?.active;
+    if (!snapshot || !active) continue;
+    live.add(player.id);
+    const curr = {
+      pieces: snapshot.pieces ?? 0,
+      type: active.type as string,
+      x: active.x,
+      rotation: active.rotation as number,
+    };
+    const prev = rivalPieceSnapshots.get(player.id);
+    rivalPieceSnapshots.set(player.id, curr);
+    if (!prev) continue; // primer snapshot del rival: sólo re-sincroniza, sin sonar
+    const pan = panForPlayerBoard(player.id);
+    if (curr.pieces > prev.pieces) {
+      // Pieza fijada: golpe de colocación. 'lock' (no 'hardDrop') porque desde el
+      // snapshot no sabemos si fue hard drop, igual que en driveSpectatorJuice.
+      sound.play('lock', pan, RIVAL_PIECE_GAIN);
+    } else if (curr.type === prev.type) {
+      if (curr.rotation !== prev.rotation) sound.play('rotate', pan, RIVAL_PIECE_GAIN);
+      else if (curr.x !== prev.x) sound.play('move', pan, RIVAL_PIECE_GAIN);
+    }
+  }
+  // Olvido a los rivales que ya no están vivos/visibles para que su próxima pieza
+  // re-sincronice sin disparar un sonido viejo al reaparecer.
+  for (const id of [...rivalPieceSnapshots.keys()]) {
+    if (!live.has(id)) rivalPieceSnapshots.delete(id);
   }
 }
 
