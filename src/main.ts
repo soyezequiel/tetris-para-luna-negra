@@ -402,8 +402,8 @@ let spectatorJuicePrev: {
   // Pieza activa del último snapshot, para deducir mover/girar por diff (x/rotation).
   active: { type: string; x: number; rotation: number } | null;
 } | null = null;
-// Rivales cuya derrota ya sonó como espectador. Evita repetir el jingle si vuelvo a
-// enfocar a un muerto; se limpia al revivir (reopen de ronda) en syncSpectatorDeathSounds.
+// Rivales cuya derrota ya sonó. Evita repetir el jingle si vuelvo a enfocar a un
+// muerto; se limpia al revivir (reopen de ronda) en syncRivalDeathSounds.
 const spectatorDeathAnnounced = new Set<string>();
 let onlineAttackSequence = 0;
 let onlineAppliedAttackIds = new Set<string>();
@@ -623,6 +623,7 @@ function loopBody(): void {
   syncOnline();
   if (import.meta.env.DEV) devBotMatch?.frame(); // BOT DEV: avanza al oponente simulado
   syncRivalDangerCues(); // sonido cuando un rival vivo entra en peligro crítico
+  syncRivalDeathSounds(); // sonido de derrota de un rival (espectador y en juego)
   syncOnlineDeathPhase(state);
   syncSoloDeathPhase(state);
   // Ya morí y terminó la animación de derrota: paso a espectador. En vez de ocultar
@@ -631,11 +632,6 @@ function loopBody(): void {
   // Durante la animación de derrota sigo dibujando MI tablero para que se vea morir.
   if (isOnlineSpectating()) {
     const focus = spectatorFocusPlayer();
-    // Sonido de derrota del rival observado. Se basa en el estado autoritativo de la
-    // sala (player.alive), no en el snapshot reconstruido: el que muere deja de mandar
-    // snapshots y el foco salta a otro, así que la transición a 'gameover' del motor
-    // del rival casi nunca se observa y el KO de spectatorJuice.frame no dispara.
-    syncSpectatorDeathSounds(focus);
     const focusState = focus ? spectatorFocusState(focus) : null;
     if (focus && focusState) {
       // Render primero (refresca la geometría del tablero), luego el juice del rival
@@ -5420,13 +5416,18 @@ function resetSpectatorFocus(): void {
   spectatorDeathAnnounced.clear();
 }
 
-// Dispara el sonido de derrota del rival ENFOCADO cuando cae, usando el estado
-// autoritativo de la sala (alive/status), no el snapshot reconstruido. Marca a todos
-// los muertos como "anunciados" aunque no estén enfocados, así nunca suena una muerte
-// que ocurrió mientras mirabas a otro (ni al re-enfocar a un muerto). Al revivir un
-// jugador (reopen de ronda) se borra su marca para que su próxima caída vuelva a sonar.
-function syncSpectatorDeathSounds(focus: OnlinePlayer | null): void {
-  if (!onlineRoom) return;
+// Dispara el sonido de derrota de un rival al caer, usando el estado autoritativo de
+// la sala (alive/status), no el snapshot reconstruido: el que muere deja de mandar
+// snapshots y el foco salta a otro, así que la transición a 'gameover' del motor del
+// rival casi nunca se observa y el KO de spectatorJuice.frame no dispara. Suena tanto
+// mientras juego (cualquier rival que caiga) como mirando como espectador (solo el
+// rival ENFOCADO: el foco salta y no queremos sonar una muerte vieja al re-enfocar).
+// Marca a todos los muertos como "anunciados" aunque no suenen, para no repetir; al
+// revivir un jugador (reopen de ronda) se borra su marca para que su próxima caída suene.
+function syncRivalDeathSounds(): void {
+  if (!onlineRoom || appMode !== 'onlinePlaying') return;
+  const spectating = isOnlineSpectating();
+  const focus = spectating ? spectatorFocusPlayer() : null;
   for (const player of onlineRoom.players) {
     if (player.id === onlinePlayer.id) continue;
     const dead = !player.alive || player.status === 'eliminated' || player.status === 'lost';
@@ -5436,8 +5437,7 @@ function syncSpectatorDeathSounds(focus: OnlinePlayer | null): void {
     }
     if (spectatorDeathAnnounced.has(player.id)) continue;
     spectatorDeathAnnounced.add(player.id);
-    // Solo suena la derrota del que estoy mirando; el resto se marca en silencio.
-    if (focus && player.id === focus.id) sound.play('gameOver');
+    if (!spectating || (focus && player.id === focus.id)) sound.play('gameOver');
   }
 }
 
