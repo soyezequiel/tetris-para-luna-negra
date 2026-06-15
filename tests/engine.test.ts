@@ -643,6 +643,40 @@ describe('core stacker engine', () => {
     }]);
   });
 
+  it('detects a T-Spin Double from a real rotation kicking into the notch', () => {
+    const engine = new GameEngine(15, {
+      ...BATTLE_RULES,
+      attackTable: 'modern',
+      boardWidth: 4,
+      visibleRows: 4,
+      hiddenRows: 0,
+      nextPreview: 1,
+    });
+    const unsafe = engine as unknown as {
+      board: Cell[][];
+      active: { type: 'T'; x: number; y: number; rotation: number };
+      rotate: (dir: 1 | -1 | 2) => void;
+      lockPiece: () => void;
+    };
+    // T-Spin Double notch: vertical T (state 1) sits above the slot and a CW
+    // rotation must drop its flat side into the gap. This exercises the SRS
+    // floor/notch kick that was inverted and made T-Spins impossible.
+    unsafe.board = [
+      [null, null, null, null],
+      ['Z', null, 'Z', null],
+      [null, null, null, 'Z'],
+      ['Z', null, 'Z', 'Z'],
+    ];
+    unsafe.active = { type: 'T', x: 0, y: 1, rotation: 1 };
+
+    unsafe.rotate(1);
+    unsafe.lockPiece();
+
+    const events = engine.drainEvents();
+    const clear = events.find((event) => event.type === 'lineClear');
+    expect(clear).toMatchObject({ spin: 'full', cleared: 2, piece: 'T' });
+  });
+
   it('uses a distinct sound cue for T-Spin line clears', () => {
     const state = createSplitState(1, 30);
     const spinEvent: GameEvent = {

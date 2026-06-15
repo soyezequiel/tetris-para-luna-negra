@@ -306,7 +306,7 @@ export class GameEngine {
         ...this.active,
         rotation: to,
         x: this.active.x + kick.x,
-        y: this.active.y - kick.y,
+        y: this.active.y + kick.y,
       };
       if (!this.collides(rotated)) {
         this.active = rotated;
