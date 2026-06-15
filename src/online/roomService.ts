@@ -1464,9 +1464,12 @@ function normalizeRoomRules(value: unknown, mode: OnlineRoomMode, ruleset: Onlin
     hiddenRows: normalizeFiniteRuleNumber(value.hiddenRows, base.hiddenRows, { min: 0, max: 10, integer: true }),
     nextPreview: normalizeFiniteRuleNumber(value.nextPreview, base.nextPreview, { min: 0, max: 7, integer: true }),
     targetLines: base.targetLines,
-    // Las salas custom usan el modelo lineal configurable; solo las batallas
-    // estándar heredan la curva guideline de BATTLE_RULES.
-    gravityCurve: 'linear',
+    // La sala custom honra el modelo de gravedad elegido en los ajustes Custom
+    // ('guideline' estilo TETR.IO o 'linear' manual); si no llega, cae al de
+    // BATTLE_RULES ('guideline').
+    gravityCurve: value.gravityCurve === 'linear' || value.gravityCurve === 'guideline'
+      ? value.gravityCurve
+      : base.gravityCurve,
     gravityCellsPerFrame: normalizeFiniteRuleNumber(value.gravityCellsPerFrame, base.gravityCellsPerFrame, { min: 0.001, max: 5 }),
     gravityIncreaseCellsPerLevel: normalizeFiniteRuleNumber(value.gravityIncreaseCellsPerLevel, base.gravityIncreaseCellsPerLevel, { min: 0, max: 2 }),
     gravityLevelLines: normalizeFiniteRuleNumber(value.gravityLevelLines, base.gravityLevelLines, { min: 0, max: 60, integer: true }),
