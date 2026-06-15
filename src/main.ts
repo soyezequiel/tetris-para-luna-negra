@@ -6256,11 +6256,12 @@ function renderSettingsPanelContent(): string {
         ${renderCustomSection('Accesibilidad', [
           renderCustomToggle('Modo daltónico', 'colorBlindMode'),
         ])}
-        <section class="custom-section settings-audio" aria-label="Volumen">
-          <h2>Volumen</h2>
+        <section class="custom-section settings-audio" aria-label="Audio">
+          <h2>Audio</h2>
           <div class="custom-rows">
             ${renderVolumeSettingRow('sfx')}
             ${renderVolumeSettingRow('music')}
+            ${renderRoyaltyFreeToggleRow()}
           </div>
         </section>
         <div class="panel-actions" style="display: flex; gap: 12px; margin-top: 24px;">
@@ -7114,6 +7115,21 @@ function renderVolumeSettingRow(channel: VolumeChannel): string {
       <span class="volume-setting-value">${Math.round(volume * 100)}%</span>
       <button type="button" data-ui-action="volume-adjust" data-volume-channel="${channel}" data-delta="0.1" aria-label="Subir ${label}">+</button>
     </div>`;
+}
+
+// Fila de ajuste "sólo música libre de derechos" (temas cuyo archivo empieza con
+// 'ncc'). Siempre visible para que se pueda encontrar; si no hay ninguno cargado,
+// el título avisa que activarlo deja la música en silencio.
+function renderRoyaltyFreeToggleRow(): string {
+  const on = loadRecord().royaltyFreeOnly;
+  const hint = HAS_ROYALTY_FREE_TRACKS
+    ? 'Reproducí sólo temas cuyo archivo empieza con ncc.'
+    : 'No hay temas libres de derechos cargados (archivos con prefijo ncc). Activarlo dejará la música en silencio.';
+  return renderCustomRow('Sólo música libre de derechos', `
+    <button class="custom-toggle ${on ? 'custom-toggle-on' : 'custom-toggle-off'}" type="button" role="switch" aria-checked="${on}" aria-label="Sólo música libre de derechos" title="${hint}" data-ui-action="toggle-royalty-free">
+      <span class="custom-toggle-knob"></span>
+    </button>
+  `);
 }
 
 // Tarjeta compacta de volumen para el modo relax (arriba a la derecha, bajo el
