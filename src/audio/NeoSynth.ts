@@ -278,10 +278,11 @@ export class NeoSynth {
    * brillante. Es buena noticia para vos (rematalo), así que suena afilado y dulce. */
   rivalCrit(): void {
     if (!this.open()) return;
-    this.voice({ type: 'sawtooth', freq: 420, freqEnd: 1560, dur: 0.22, gain: 0.12, glide: 'exp', drive: DRIVE * 0.6, reverb: REVERB * 0.2 });
-    this.noteP(1568.0, 0.34, 0.13, 0.10, REVERB * 0.5);
-    this.noteP(2093.0, 0.30, 0.10, 0.14, REVERB * 0.6);
-    this.crunch({ filter: 'highpass', freq: 4200, q: 0.6, dur: 0.10, gain: 0.08 * BRIGHT * CRUNCH, when: 0.10, drive: DRIVE * 0.6 });
+    this.voice({ type: 'sawtooth', freq: 420, freqEnd: 1560, dur: 0.26, gain: 0.22, glide: 'exp', drive: DRIVE * 0.6, reverb: REVERB * 0.2 });
+    this.noteP(1568.0, 0.40, 0.24, 0.10, REVERB * 0.5);
+    this.noteP(2093.0, 0.36, 0.20, 0.15, REVERB * 0.6);
+    this.noteP(2637.0, 0.30, 0.14, 0.20, REVERB * 0.6);
+    this.crunch({ filter: 'highpass', freq: 4200, q: 0.6, dur: 0.12, gain: 0.14 * BRIGHT * CRUNCH, when: 0.10, drive: DRIVE * 0.6 });
   }
 
   ko(): void {

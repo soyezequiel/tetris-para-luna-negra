@@ -237,8 +237,8 @@ const juiceAudio = new JuiceAudio(loadRecord().soundMuted || loadRecord().sfxMut
 const juice = new JuiceConductor(renderer.getJuice(), juiceAudio);
 // Umbrales (sobre dangerLevel 0..10 de la sala) para los efectos de "rival al borde
 // de perder": WARN enciende el aviso suave, CRITICAL los efectos fuertes + sonido.
-const RIVAL_DANGER_WARN = 6;
-const RIVAL_DANGER_CRITICAL = 8;
+const RIVAL_DANGER_WARN = 5;
+const RIVAL_DANGER_CRITICAL = 7;
 // Rivales que ya estaban en peligro crítico el frame anterior, para sonar la señal
 // una sola vez al cruzar el umbral (flanco de subida), no en loop.
 const rivalsInPeril = new Set<string>();
@@ -5456,7 +5456,7 @@ function syncRivalDangerCues(): void {
       && player.status !== 'lost'
       && player.status !== 'disconnected'
       && player.status !== 'winner';
-    const inPeril = alive && (player.dangerLevel ?? 0) >= RIVAL_DANGER_CRITICAL;
+    const inPeril = alive && rivalDangerLevel(player) >= RIVAL_DANGER_CRITICAL;
     if (!inPeril) {
       rivalsInPeril.delete(player.id);
       continue;
@@ -5618,10 +5618,11 @@ function renderOnlinePeerBoard(player: OnlinePlayer): string {
     : '<div class="online-mini-board online-mini-board-empty">No board yet</div>';
   // Rival vivo al borde de la derrota: clases que disparan los efectos especiales
   // (borde rojo latiendo + sacudida + destello), sin texto. dangerLevel es 0..10.
+  const dangerLevel = rivalDangerLevel(player);
   const dangerClass = !outcome
-    ? player.dangerLevel >= RIVAL_DANGER_CRITICAL
+    ? dangerLevel >= RIVAL_DANGER_CRITICAL
       ? ' online-peer-board--peril'
-      : player.dangerLevel >= RIVAL_DANGER_WARN
+      : dangerLevel >= RIVAL_DANGER_WARN
         ? ' online-peer-board--warn'
         : ''
     : '';
@@ -5667,6 +5668,28 @@ function displaySnapshotForPlayer(player: OnlinePlayer): OnlineGameSnapshot | nu
   const displayGame = onlinePeerDisplaySnapshots.get(player.id);
   if (displayGame && isCurrentOnlineGame(displayGame)) return displayGame;
   return player.game ?? null;
+}
+
+// Peligro de un rival (0..10) derivado del MISMO snapshot que se dibuja en su
+// mini-tablero, recalculado por frame. No usamos solo player.dangerLevel porque en
+// cliente-autoritativo ese campo llega por polling de getRoomState y casi nunca
+// capta la ventana de peligro alto (el rival "salta" de medio a eliminado entre
+// dos polls). Tomamos el máximo entre lo derivado y el valor sincronizado (que ya
+// incorpora el garbage pendiente). Misma fórmula que calculateDangerLevel.
+function rivalDangerLevel(player: OnlinePlayer): number {
+  const synced = Math.max(0, Math.floor(player.dangerLevel ?? 0));
+  const snapshot = displaySnapshotForPlayer(player);
+  const field = snapshot?.board;
+  if (!Array.isArray(field) || field.length === 0) return synced;
+  const visibleRows = Math.max(1, Math.min(snapshot!.visibleRows, field.length));
+  const visibleBoard = field.slice(field.length - visibleRows);
+  const firstOccupiedRow = visibleBoard.findIndex(
+    (row) => Array.isArray(row) && row.some((cell) => cell !== null),
+  );
+  const heightDanger = firstOccupiedRow === -1
+    ? 0
+    : Math.ceil(((visibleRows - firstOccupiedRow) / visibleRows) * 10);
+  return Math.min(10, Math.max(heightDanger, synced));
 }
 
 function renderOnlineMiniBoard(snapshot: OnlineGameSnapshot): string {
