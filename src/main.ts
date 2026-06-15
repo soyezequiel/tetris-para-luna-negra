@@ -5463,7 +5463,7 @@ function syncRivalDangerCues(): void {
     }
     if (rivalsInPeril.has(player.id)) continue;
     rivalsInPeril.add(player.id);
-    juiceAudio.rivalDanger();
+    juiceAudio.alarm(); // misma sirena de "danger" que suena en tu propio top-out
   }
 }
 
