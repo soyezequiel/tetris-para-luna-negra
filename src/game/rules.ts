@@ -58,4 +58,8 @@ export const BATTLE_RULES: GameRules = {
   targetLines: null,
   // En batallas online los combos, B2B y spins suman ataque (tabla moderna).
   attackTable: 'modern',
+  // La gravedad acelera como en TETR.IO: sube un nivel de la curva guideline cada
+  // 10 líneas, así las partidas largas se vuelven más rápidas.
+  gravityCurve: 'guideline',
+  gravityLevelLines: 10,
 };

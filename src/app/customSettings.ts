@@ -308,6 +308,9 @@ export function customRulesFromSettings(settings: CustomSettings, inputSettings:
     targetLines: normalized.objectiveMode === 'lines' && normalized.objectiveLineTarget > 0
       ? normalized.objectiveLineTarget
       : null,
+    // Custom usa el modelo lineal configurable por sus sliders (base + incremento),
+    // no la curva guideline de Sprint/online.
+    gravityCurve: 'linear',
     gravityCellsPerFrame: usesLevelling ? normalized.baseGravity : normalized.gravity,
     gravityIncreaseCellsPerLevel: usesLevelling ? normalized.gravityIncrease : 0,
     gravityLevelLines: usesLevelling && normalized.useStaticLevelling ? normalized.levelStaticSpeed : 0,

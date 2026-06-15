@@ -6,6 +6,8 @@ export type Rotation = 0 | 1 | 2 | 3;
 
 export type AttackTableId = 'simple' | 'modern';
 
+export type GravityCurve = 'linear' | 'guideline';
+
 export type SpinType = 'none' | 'mini' | 'full';
 
 export type GameOverReason =
@@ -57,6 +59,11 @@ export interface GameRules {
   gravityLevelLines: number;
   gravityLevelPieces: number;
   gravityStartingLevel: number;
+  // 'linear': base + nivel * incremento (modelo configurable de custom).
+  // 'guideline': curva exponencial estilo Tetris Guideline / TETR.IO, donde la
+  // gravedad depende solo del nivel alcanzado (ignora base/incremento). Opcional:
+  // ausente equivale a 'linear' para mantener compatibilidad con reglas viejas.
+  gravityCurve?: GravityCurve;
   softDropCellsPerFrame: number;
   lockDelayFrames: number;
   dasFrames: number;

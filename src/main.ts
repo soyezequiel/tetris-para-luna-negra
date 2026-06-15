@@ -6797,6 +6797,10 @@ function triggerWallImpact(
 function rulesFromSettings(settings: InputSettings): GameRules {
   return {
     ...DEFAULT_RULES,
+    // La gravedad acelera como en TETR.IO: curva guideline subiendo de nivel cada
+    // 10 líneas a medida que avanza la partida.
+    gravityCurve: 'guideline',
+    gravityLevelLines: 10,
     dasFrames: settings.dasFrames,
     arrFrames: settings.arrFrames,
     softDropCellsPerFrame: softDropCellsPerFrameForFactor(settings.softDropFactor),

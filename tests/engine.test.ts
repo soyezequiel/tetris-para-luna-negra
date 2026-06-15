@@ -177,6 +177,44 @@ describe('core stacker engine', () => {
     expect(currentGravityCellsPerFrame(rules, { lines: 0, pieces: 6 })).toBeCloseTo(0.08);
   });
 
+  it('accelerates with the guideline curve as lines clear (TETR.IO style)', () => {
+    const rules = {
+      ...BATTLE_RULES,
+      gravityCurve: 'guideline' as const,
+      gravityLevelLines: 10,
+      gravityStartingLevel: 1,
+    };
+    const level1 = currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0 });
+    const level2 = currentGravityCellsPerFrame(rules, { lines: 10, pieces: 0 });
+    const level5 = currentGravityCellsPerFrame(rules, { lines: 40, pieces: 0 });
+    // Nivel 1 = 1 segundo por celda = 1/60 celdas por frame.
+    expect(level1).toBeCloseTo(1 / 60, 5);
+    // La gravedad sube de forma estrictamente monótona al avanzar de nivel.
+    expect(level2).toBeGreaterThan(level1);
+    expect(level5).toBeGreaterThan(level2);
+    // Valores concretos de la curva guideline (segundos/celda = (0.8-(n-1)*0.007)^(n-1)).
+    expect(level2).toBeCloseTo(1 / (0.793 * 60), 4);
+    expect(level5).toBeCloseTo(1 / (Math.pow(0.772, 4) * 60), 4);
+  });
+
+  it('respects the starting level and caps guideline gravity at 20G', () => {
+    const rules = {
+      ...BATTLE_RULES,
+      gravityCurve: 'guideline' as const,
+      gravityLevelLines: 10,
+      gravityStartingLevel: 3,
+    };
+    // Empezar en nivel 3 equivale a haber avanzado 2 niveles desde el arranque.
+    const fromStart = currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0 });
+    const fromLines = currentGravityCellsPerFrame(
+      { ...rules, gravityStartingLevel: 1 },
+      { lines: 20, pieces: 0 },
+    );
+    expect(fromStart).toBeCloseTo(fromLines, 6);
+    // En niveles altos la curva satura en el tope de 20G.
+    expect(currentGravityCellsPerFrame(rules, { lines: 1000, pieces: 0 })).toBe(20);
+  });
+
   it('applies gravity increases during engine ticks', () => {
     const engine = new GameEngine(123, {
       ...DEFAULT_RULES,

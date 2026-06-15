@@ -78,6 +78,11 @@ function parseRules(value: unknown): GameRules | null {
   const gravityStartingLevel = value.gravityStartingLevel === undefined
     ? DEFAULT_RULES.gravityStartingLevel
     : readPositiveInteger(value.gravityStartingLevel);
+  // Conserva el valor original (incluida su ausencia) para que el round-trip de
+  // exportar/importar no agregue campos: ausente equivale a 'linear' en el motor.
+  const gravityCurve = value.gravityCurve === undefined
+    ? undefined
+    : value.gravityCurve === 'guideline' ? 'guideline' : 'linear';
   const softDropCellsPerFrame = readPositiveNumber(value.softDropCellsPerFrame);
   const lockDelayFrames = readPositiveInteger(value.lockDelayFrames);
   const dasFrames = readNonNegativeInteger(value.dasFrames);
@@ -148,6 +153,7 @@ function parseRules(value: unknown): GameRules | null {
     gravityLevelLines,
     gravityLevelPieces,
     gravityStartingLevel,
+    gravityCurve,
     softDropCellsPerFrame,
     lockDelayFrames,
     dasFrames,
