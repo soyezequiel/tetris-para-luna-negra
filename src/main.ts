@@ -2820,13 +2820,11 @@ function sendOnlineAttack(event: LineClearEvent, state: GameState): void {
     holeSeed: (onlineRoom.seed + gameFrame + onlineAttackSequence * 97) >>> 0,
     frame: displayedElapsedFrames(state.stats),
   };
-  // El host rutea sus propios ataques directo (es el único escritor del servidor). El
-  // invitado manda una "intención" al host por peer y el host elige objetivo y la rutea.
-  if (isOnlineHost()) {
-    commitOnlineAttack(attack);
-  } else {
-    onlinePeerBroadcaster?.sendAttackIntent(onlineRoom.hostPlayerId, { ...attack, seed: onlineRoom.seed });
-  }
+  // Autoridad descentralizada: cada jugador rutea su PROPIO ataque (elige objetivo
+  // con el targeting de la sala, lo manda al peer víctima y lo registra en el
+  // servidor firmándolo como propio). Antes solo el host podía y su caída cortaba
+  // el flujo de ataques de todos.
+  commitOnlineAttack(attack);
   // Efecto visual: el proyectil vuela hacia el tablero del rival objetivo. El host
   // ya conoce el objetivo; el invitado lo predice localmente con su mismo modo de
   // targeting (el host puede decidir distinto, pero para el FX la predicción basta).
@@ -2862,7 +2860,10 @@ function commitOnlineAttack(request: {
   holeSeed: number;
   frame: number;
 }): void {
-  if (!onlineRoom || !isOnlineHost()) return;
+  // Solo ruteo ataques que yo origino (o, si soy host, también los que me llegan
+  // como intención de un peer por compatibilidad). authorityPlayerId queda como yo.
+  if (!onlineRoom) return;
+  if (!isOnlineHost() && request.fromPlayerId !== onlinePlayer.id) return;
   const target = selectAttackTarget(request.fromPlayerId, request.attackId);
   if (!target) return;
   const attack: AttackRequest = {
@@ -3312,7 +3313,10 @@ async function commitOnlineResult(
   game: OnlineGameSnapshot,
   onFailure?: () => void,
 ): Promise<void> {
-  if (!onlineRoom || !isOnlineHost()) return;
+  // Cada cliente reporta su propio resultado ('won' del sobreviviente/sprint); el
+  // host queda como respaldo. Ya no es el único escritor del servidor.
+  if (!onlineRoom) return;
+  if (!isOnlineHost() && playerId !== onlinePlayer.id) return;
   onlineHostCommittedResults.add(playerId);
   const requestSeed = game.seed;
   try {
@@ -3367,7 +3371,10 @@ async function postOnlineElimination(state: GameState): Promise<void> {
 }
 
 async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>, onFailure?: () => void): Promise<void> {
-  if (!onlineRoom || !isOnlineHost()) return;
+  // Cada quien commitea SU PROPIA muerte; el host además puede commitear la de un
+  // peer que se cayó justo después de anunciar su KO (respaldo idempotente).
+  if (!onlineRoom) return;
+  if (!isOnlineHost() && report.playerId !== onlinePlayer.id) return;
   // Los KOs llegan repetidos (broadcast por peer con retry + simulación local):
   // un solo commit por jugador y por ronda.
   if (onlineHostCommittedEliminations.has(report.playerId)) return;
@@ -3496,7 +3503,9 @@ function syncOnlinePeers(room: OnlineRoom): void {
     },
     onSnapshot: (remoteId, playerId, game) => applyAuthoritativeSnapshot(remoteId, playerId, game),
     onAttack: (remoteId, attack) => {
-      if (!onlineRoom || remoteId !== onlineRoom.hostPlayerId || attack.authorityPlayerId !== onlineRoom.hostPlayerId) return;
+      // Acepto el ataque de cualquier peer que lo firme como propio (el emisor es el
+      // autor y la fuente). Antes solo se aceptaban los del host.
+      if (!onlineRoom || attack.authorityPlayerId !== remoteId || attack.fromPlayerId !== remoteId) return;
       if (!isCurrentOnlineSeed(attack.seed)) return;
       applyOnlineAttack({
         id: attack.attackId,
@@ -3751,7 +3760,9 @@ function applyRoomAttacks(room: OnlineRoom): void {
 }
 
 function applyOnlineAttack(attack: OnlineAttack): void {
-  if (!onlineRoom || attack.authorityPlayerId !== onlineRoom.hostPlayerId) return;
+  // Cada ataque va firmado por su fuente (authorityPlayerId === fromPlayerId), tanto
+  // si llega por peer como del fallback por servidor (applyRoomAttacks).
+  if (!onlineRoom || attack.authorityPlayerId !== attack.fromPlayerId) return;
   if (!isCurrentOnlineSeed(attack.seed)) return;
   if (attack.toPlayerId !== onlinePlayer.id || onlineAppliedAttackIds.has(attack.id)) return;
   onlineAppliedAttackIds.add(attack.id);

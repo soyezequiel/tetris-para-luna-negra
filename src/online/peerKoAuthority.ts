@@ -14,11 +14,13 @@ export function decidePeerKoAction(input: PeerKoDecisionInput): PeerKoAction {
   if (!input.seedMatches) return 'ignore';
   if (!input.playerIsInRoom) return 'ignore';
   if (input.remotePlayerId !== input.messagePlayerId) return 'ignore';
+  // El eco de mi propio KO no me interesa (yo ya lo commiteé localmente).
+  if (input.remotePlayerId === input.localPlayerId) return 'ignore';
 
-  if (input.isHostAuthority) {
-    if (input.remotePlayerId === input.localPlayerId) return 'ignore';
-    return 'commit';
-  }
-
-  return input.remotePlayerId === input.hostPlayerId ? 'apply' : 'ignore';
+  // Autoridad descentralizada: cada quien commitea su propia muerte. El host
+  // commitea como respaldo idempotente la muerte de cualquier peer; el resto de
+  // los clientes la aplican para mostrar al caído al instante (espectador), sin
+  // depender de que el KO venga del host. Antes un KO de un no-host se ignoraba.
+  return input.isHostAuthority ? 'commit' : 'apply';
 }
+

@@ -44,8 +44,12 @@ export function shouldPlayMusic(mode: AppMode): boolean {
   return MUSIC_MODES.includes(mode);
 }
 
-export function canCommitLocalOnlineTerminal(isHostAuthority: boolean): boolean {
-  return isHostAuthority;
+// Autoridad descentralizada: cada cliente es dueño de su propio tablero y muerte,
+// así que cualquiera puede commitear SU PROPIO estado terminal (KO/resultado)
+// directo al servidor, sin pasar por el host. Antes solo el host podía, y su
+// caída a mitad de ronda dejaba las muertes sin registrar hasta el failover.
+export function canCommitLocalOnlineTerminal(_isHostAuthority: boolean): boolean {
+  return true;
 }
 
 export function togglePauseMode(mode: AppMode, status: GameState['status'], settingsReturnMode: AppMode): AppMode {

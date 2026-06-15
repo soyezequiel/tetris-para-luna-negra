@@ -930,9 +930,11 @@ describe('core stacker engine', () => {
     expect(togglePauseMode('settings', 'playing', 'paused')).toBe('paused');
   });
 
-  it('only lets the host commit local terminal states in online play', () => {
+  it('lets any client commit its own local terminal state in online play', () => {
+    // Autoridad descentralizada: cada quien commitea su propia muerte/resultado,
+    // sea host o no, así una caída del host no congela el registro de muertes.
     expect(canCommitLocalOnlineTerminal(true)).toBe(true);
-    expect(canCommitLocalOnlineTerminal(false)).toBe(false);
+    expect(canCommitLocalOnlineTerminal(false)).toBe(true);
   });
 
   it('lets the host commit a remote player self-KO', () => {
@@ -969,7 +971,9 @@ describe('core stacker engine', () => {
     })).toBe('ignore');
   });
 
-  it('only applies host KO messages on non-host clients', () => {
+  it('applies any peer KO on non-host clients for instant spectator display', () => {
+    // Decentralized authority: a non-host shows ANY peer's KO at once (host's or
+    // another guest's), instead of only the host's. Each player commits its own.
     expect(decidePeerKoAction({
       isHostAuthority: false,
       localPlayerId: 'guest-a',
@@ -986,6 +990,17 @@ describe('core stacker engine', () => {
       hostPlayerId: 'host',
       remotePlayerId: 'guest-b',
       messagePlayerId: 'guest-b',
+      playerIsInRoom: true,
+      seedMatches: true,
+    })).toBe('apply');
+
+    // But never act on the echo of my own KO broadcast.
+    expect(decidePeerKoAction({
+      isHostAuthority: false,
+      localPlayerId: 'guest-a',
+      hostPlayerId: 'host',
+      remotePlayerId: 'guest-a',
+      messagePlayerId: 'guest-a',
       playerIsInRoom: true,
       seedMatches: true,
     })).toBe('ignore');
@@ -2282,7 +2297,7 @@ describe('core stacker engine', () => {
     });
   });
 
-  it('requires host authority for competitive online room updates', async () => {
+  it('lets each client author its own updates but blocks impersonation', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, {
       playerId: 'player-host-auth',
@@ -2325,7 +2340,10 @@ describe('core stacker engine', () => {
       elapsedFrames: 100,
     }, 7150)).rejects.toThrow('Only the host');
 
-    await expect(addAttack(store, {
+    // Autoridad descentralizada: un invitado SÍ puede firmar su PROPIO ataque
+    // (lo enruta él mismo eligiendo objetivo), pero NO puede suplantar a otro
+    // como fuente del ataque.
+    const ownAttack = await addAttack(store, {
       roomId: room.id,
       attackId: 'guest-attack-1',
       authorityPlayerId: 'player-guest-auth',
@@ -2335,8 +2353,26 @@ describe('core stacker engine', () => {
       lines: 2,
       holeSeed: 99,
       frame: 600,
-    }, 7200)).rejects.toThrow('Only the host');
+    }, 7200);
+    expect(ownAttack.attacks).toHaveLength(1);
+    expect(ownAttack.attacks?.[0]).toMatchObject({
+      fromPlayerId: 'player-guest-auth',
+      authorityPlayerId: 'player-guest-auth',
+    });
 
+    await expect(addAttack(store, {
+      roomId: room.id,
+      attackId: 'guest-impersonates-host',
+      authorityPlayerId: 'player-guest-auth',
+      fromPlayerId: 'player-host-auth',
+      toPlayerId: 'player-guest-auth',
+      seed: playing.seed,
+      lines: 2,
+      holeSeed: 99,
+      frame: 610,
+    }, 7250)).rejects.toThrow('Not authorized');
+
+    // Tampoco puede eliminar a OTRO jugador (solo a sí mismo).
     await expect(eliminatePlayer(store, {
       roomId: room.id,
       authorityPlayerId: 'player-guest-auth',
@@ -2346,7 +2382,7 @@ describe('core stacker engine', () => {
       lines: 9,
       pieces: 26,
       elapsedFrames: 620,
-    }, 7300)).rejects.toThrow('Only the host');
+    }, 7300)).rejects.toThrow('Not authorized');
 
     const updated = await updateProgress(store, {
       roomId: room.id,
@@ -2359,6 +2395,39 @@ describe('core stacker engine', () => {
     }, 7400);
 
     expect(updated.players.find((player) => player.id === 'player-guest-auth')?.lines).toBe(8);
+  });
+
+  it('lets a non-host player commit its own elimination (decentralized KO)', async () => {
+    // Caso central del fix "host se va": un invitado registra SU PROPIA muerte
+    // directo al servidor sin pasar por el host, y eso corona al sobreviviente
+    // vía finishRoomIfOnlyOneAlive — sin esperar al failover.
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'host-koA',
+      name: 'Host',
+      visibility: 'private',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'guest-koA', name: 'Guest' }, 1100);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'host-koA', ready: true }, 1200);
+    await setPlayerReady(store, { roomId: room.id, playerId: 'guest-koA', ready: true }, 1200);
+    await startRoom(store, { roomId: room.id, playerId: 'host-koA' }, 1300);
+    const playing = await getRoomState(store, room.id, 7000);
+
+    const afterKo = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'guest-koA',
+      playerId: 'guest-koA',
+      seed: playing.seed,
+      frame: 620,
+      lines: 9,
+      pieces: 26,
+      elapsedFrames: 620,
+    }, 7300);
+
+    expect(afterKo.players.find((player) => player.id === 'guest-koA')?.status).toBe('eliminated');
+    // Quedó un solo vivo: la sala termina y corona al host, sin failover.
+    expect(afterKo.status).toBe('finished');
+    expect(afterKo.winnerPlayerId).toBe('host-koA');
   });
 
   it('stores attacks once and ignores duplicate attack ids', async () => {

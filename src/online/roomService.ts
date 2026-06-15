@@ -612,7 +612,7 @@ async function submitResultOnce(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
-  requireHostAuthority(room, request.authorityPlayerId);
+  requireSelfOrHostAuthority(room, request.authorityPlayerId, request.playerId);
   if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const player = requirePlayer(room, request.playerId);
   if (isTerminalPlayer(player)) return room;
@@ -650,7 +650,10 @@ async function addAttackOnce(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
-  const authority = requireHostAuthority(room, request.authorityPlayerId);
+  // Cada jugador firma sus propios ataques (elige su objetivo en el cliente con el
+  // mismo targeting de la sala). El host ya no rutea por todos: era el único
+  // escritor y su caída congelaba los ataques de los demás.
+  requireSelfOrHostAuthority(room, request.authorityPlayerId, request.fromPlayerId);
   if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const from = requirePlayer(room, request.fromPlayerId);
   const to = requirePlayer(room, request.toPlayerId);
@@ -660,7 +663,9 @@ async function addAttackOnce(
   const attack: OnlineAttack = {
     id,
     roomId: room.id,
-    authorityPlayerId: authority.id,
+    // El autor de registro es siempre la fuente (no el host que pudiera relayar):
+    // los clientes validan el garbage entrante con authorityPlayerId === fromPlayerId.
+    authorityPlayerId: from.id,
     fromPlayerId: from.id,
     toPlayerId: to.id,
     seed: request.seed,
@@ -685,7 +690,7 @@ async function eliminatePlayerOnce(
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
   const room = await requireRoom(store, request.roomId);
-  requireHostAuthority(room, request.authorityPlayerId);
+  requireSelfOrHostAuthority(room, request.authorityPlayerId, request.playerId);
   if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const player = requirePlayer(room, request.playerId);
   if (player.status === 'winner' || room.winnerPlayerId === player.id) return room;
@@ -956,6 +961,27 @@ function requireHostAuthority(room: OnlineRoom, authorityPlayerId: string): Onli
   const authority = requirePlayer(room, authorityPlayerId);
   if (authority.id !== room.hostPlayerId) {
     throw new OnlineRoomError('Only the host can authoritatively update the room.', 403);
+  }
+  return authority;
+}
+
+/**
+ * Autoridad descentralizada: cada cliente es dueño de su propio tablero, así que
+ * puede escribir SU PROPIA eliminación/resultado/ataque (authorityPlayerId ===
+ * subjectPlayerId). El host se acepta igual como autoridad de respaldo (commitea
+ * el KO de un peer que se cae justo después de anunciarlo). Esto evita que la
+ * sala dependa del host como único escritor: si el host se va a mitad de ronda,
+ * los demás siguen registrando muertes/ataques al instante en vez de quedar
+ * congelados hasta el failover (HOST_STALE_MS). Ver [[online-host-failover]].
+ */
+function requireSelfOrHostAuthority(
+  room: OnlineRoom,
+  authorityPlayerId: string,
+  subjectPlayerId: string,
+): OnlinePlayer {
+  const authority = requirePlayer(room, authorityPlayerId);
+  if (authority.id !== room.hostPlayerId && authority.id !== subjectPlayerId) {
+    throw new OnlineRoomError('Not authorized to update this player.', 403);
   }
   return authority;
 }
