@@ -393,8 +393,10 @@ export class PixiGameRenderer {
 
   private drawBoard(state: GameState): void {
     this.pieceLayer.clear();
+    // No saltamos las filas ocultas: las celdas bloqueadas que quedan por encima del
+    // área visible (al apilar alto) deben verse igual que la pieza activa. El recorte
+    // lo hace drawVisibleBlock vía isVisibleCell (boardY >= -hiddenRows).
     state.board.forEach((row, y) => {
-      if (y < this.hiddenRows) return;
       row.forEach((cell, x) => {
         if (cell) this.drawVisibleBlock(x, y - this.hiddenRows, cell, 1);
       });
