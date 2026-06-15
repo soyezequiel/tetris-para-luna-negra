@@ -340,38 +340,42 @@ const I_KICKS: Record<string, Vec2[]> = {
 // 180-degree rotation kicks (TETR.IO / SRS+ style). Same convention as the
 // tables above: y is board-down-positive and offsets are applied additively
 // (`y + kick.y`), so a positive kick.y nudges the piece downward.
+// OJO: las referencias SRS/TETR.IO publican estas tablas con y hacia ARRIBA.
+// Al copiarlas hay que NEGAR la componente y (igual que en las tablas de 90°),
+// si no las patadas de escape empujan la pieza hacia adentro de la pila y el
+// giro 180 falla al apoyarse sobre el stack (pieza "sobresaliendo" del tablero).
 const JLSTZ_180_KICKS: Record<string, Vec2[]> = {
   '0>2': [
     { x: 0, y: 0 },
-    { x: 0, y: 1 },
-    { x: 1, y: 1 },
-    { x: -1, y: 1 },
+    { x: 0, y: -1 },
+    { x: 1, y: -1 },
+    { x: -1, y: -1 },
     { x: 1, y: 0 },
     { x: -1, y: 0 },
   ],
   '2>0': [
     { x: 0, y: 0 },
-    { x: 0, y: -1 },
-    { x: -1, y: -1 },
-    { x: 1, y: -1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 1 },
+    { x: 1, y: 1 },
     { x: -1, y: 0 },
     { x: 1, y: 0 },
   ],
   '1>3': [
     { x: 0, y: 0 },
     { x: 1, y: 0 },
-    { x: 1, y: 2 },
-    { x: 1, y: 1 },
-    { x: 0, y: 2 },
-    { x: 0, y: 1 },
+    { x: 1, y: -2 },
+    { x: 1, y: -1 },
+    { x: 0, y: -2 },
+    { x: 0, y: -1 },
   ],
   '3>1': [
     { x: 0, y: 0 },
     { x: -1, y: 0 },
-    { x: -1, y: 2 },
-    { x: -1, y: 1 },
-    { x: 0, y: 2 },
-    { x: 0, y: 1 },
+    { x: -1, y: -2 },
+    { x: -1, y: -1 },
+    { x: 0, y: -2 },
+    { x: 0, y: -1 },
   ],
 };
 
@@ -382,7 +386,7 @@ const I_180_KICKS: Record<string, Vec2[]> = {
     { x: -2, y: 0 },
     { x: 1, y: 0 },
     { x: 2, y: 0 },
-    { x: 0, y: 1 },
+    { x: 0, y: -1 },
   ],
   '2>0': [
     { x: 0, y: 0 },
@@ -390,22 +394,22 @@ const I_180_KICKS: Record<string, Vec2[]> = {
     { x: 2, y: 0 },
     { x: -1, y: 0 },
     { x: -2, y: 0 },
-    { x: 0, y: -1 },
+    { x: 0, y: 1 },
   ],
   '1>3': [
     { x: 0, y: 0 },
-    { x: 0, y: 1 },
-    { x: 0, y: 2 },
     { x: 0, y: -1 },
     { x: 0, y: -2 },
+    { x: 0, y: 1 },
+    { x: 0, y: 2 },
     { x: -1, y: 0 },
   ],
   '3>1': [
     { x: 0, y: 0 },
-    { x: 0, y: 1 },
-    { x: 0, y: 2 },
     { x: 0, y: -1 },
     { x: 0, y: -2 },
+    { x: 0, y: 1 },
+    { x: 0, y: 2 },
     { x: 1, y: 0 },
   ],
 };
