@@ -76,6 +76,33 @@ describe('InputController DAS/ARR', () => {
     expect(countAction(tick(controller, 9), 'moveRight')).toBeGreaterThanOrEqual(10);
   });
 
+  it('un keydown duplicado de hard drop fija una sola pieza (anti rebote/doble evento)', () => {
+    const controller = makeController();
+    // Una sola pulsación física que emite dos keydown (rebote de tecla o evento de
+    // puntero duplicado): ambos taps caen en el mismo collect y deben colapsar a uno.
+    controller.pressControl('key:Space', 'hardDrop');
+    controller.pressControl('key:Space', 'hardDrop');
+    expect(countAction(tick(controller, 1), 'hardDrop')).toBe(1);
+  });
+
+  it('dos hard drops en frames distintos sí cuentan como dos (pulsaciones reales)', () => {
+    const controller = makeController();
+    controller.pressControl('key:Space', 'hardDrop');
+    expect(countAction(tick(controller, 1), 'hardDrop')).toBe(1);
+    controller.releaseControl('key:Space');
+    controller.pressControl('key:Space', 'hardDrop');
+    expect(countAction(tick(controller, 2), 'hardDrop')).toBe(1);
+  });
+
+  it('dos taps horizontales en el mismo frame NO se colapsan (dos celdas)', () => {
+    const controller = makeController();
+    controller.pressControl('key:ArrowRight', 'moveRight');
+    controller.releaseControl('key:ArrowRight');
+    controller.pressControl('key:ArrowRight', 'moveRight');
+    // El movimiento por tap sí debe contar doble: dos toques = dos celdas.
+    expect(countAction(tick(controller, 1), 'moveRight')).toBe(2);
+  });
+
   it('soft drop repite cada frame mientras se mantiene', () => {
     const controller = makeController();
     controller.pressControl('key:ArrowDown', 'softDrop');

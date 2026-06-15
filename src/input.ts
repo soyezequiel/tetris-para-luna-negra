@@ -73,8 +73,14 @@ export class InputController {
   }
 
   collect(frame: number): ControlInput[] {
-    // Taps inmediatos (el primer movimiento al pulsar, sin esperar DAS).
-    const inputs = this.queue.splice(0);
+    // Taps inmediatos (el primer movimiento al pulsar, sin esperar DAS). Las acciones
+    // instantáneas (hard drop, rotación, hold...) se colapsan a una por frame: si una
+    // sola pulsación física emite dos keydown —rebote de tecla, evento de puntero
+    // duplicado— ambos caen en este mismo lote y, sin deduplicar, un hard drop fijaría
+    // la pieza Y soltaría de golpe la recién aparecida (el bug "se mandaron 2 fichas").
+    // Los taps de movimiento horizontal y soft drop NO se deduplican: dos toques
+    // rápidos valen dos celdas y sus repeticiones DAS/ARR se generan aparte, abajo.
+    const inputs = dedupeInstantTaps(this.queue.splice(0));
     const das = this.settings.dasFrames;
     const arr = this.settings.arrFrames;
 
@@ -181,6 +187,22 @@ export function isBrowserShortcutKeyDown(event: KeyboardEvent): boolean {
 
 function isRepeatableAction(action: ControlAction): boolean {
   return isHorizontalRepeatAction(action) || action === 'softDrop';
+}
+
+// Colapsa a una sola aparición por frame los taps de acciones instantáneas (todo lo
+// que NO repite por tap: hard drop, rotaciones, hold, pausa, retry). Conserva el orden
+// y deja intactos los taps repetibles (mover/soft drop), donde dos toques = dos celdas.
+function dedupeInstantTaps(taps: ControlInput[]): ControlInput[] {
+  const seenInstant = new Set<ControlAction>();
+  const out: ControlInput[] = [];
+  for (const tap of taps) {
+    if (!isRepeatableAction(tap.action)) {
+      if (seenInstant.has(tap.action)) continue;
+      seenInstant.add(tap.action);
+    }
+    out.push(tap);
+  }
+  return out;
 }
 
 function isHorizontalRepeatAction(action: ControlAction): boolean {
