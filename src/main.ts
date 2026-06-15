@@ -235,15 +235,22 @@ const sound = new SoundEngine(
 // Es 100% efectos, así que también se calla con el mute de canal SFX.
 const juiceAudio = new JuiceAudio(loadRecord().soundMuted || loadRecord().sfxMuted, loadRecord().sfxVolume);
 const juice = new JuiceConductor(renderer.getJuice(), juiceAudio);
+// Capa de audio dedicada al "latido de peligro" (Danger / latido que acelera) de los
+// rivales en la vista de enemigos. Va aparte de juiceAudio porque el latido es un
+// único loop por instancia y juice.frame ya usa el de juiceAudio para TU tablero;
+// compartirlo lo pisaría cada frame. Como espectador no se usa (el latido del rival
+// enfocado lo dispara driveSpectatorJuice sobre juiceAudio).
+const rivalDangerAudio = new JuiceAudio(loadRecord().soundMuted || loadRecord().sfxMuted, loadRecord().sfxVolume);
+// Mantiene las dos capas juice en el mismo estado de mute/volumen.
+const juiceLayers = [juiceAudio, rivalDangerAudio];
+const setJuiceMuted = (muted: boolean): void => { for (const layer of juiceLayers) layer.setMuted(muted); };
+const setJuiceSfxVolume = (volume: number): void => { for (const layer of juiceLayers) layer.setSfxVolume(volume); };
 // Umbrales (sobre dangerLevel 0..10 de la sala) para los efectos de "rival al borde
-// de perder": WARN enciende el aviso suave, CRITICAL los efectos fuertes + sonido.
+// de perder": WARN enciende el aviso suave + latido, CRITICAL los efectos fuertes.
 const RIVAL_DANGER_WARN = 5;
 const RIVAL_DANGER_CRITICAL = 7;
-// Rivales que ya estaban en peligro crítico el frame anterior, para sonar la señal
-// una sola vez al cruzar el umbral (flanco de subida), no en loop.
-const rivalsInPeril = new Set<string>();
-// Desbloquea el AudioContext de la capa juice en el primer gesto del usuario.
-const unlockJuiceAudio = (): void => { void juiceAudio.unlock(); };
+// Desbloquea el AudioContext de las capas juice en el primer gesto del usuario.
+const unlockJuiceAudio = (): void => { void juiceAudio.unlock(); void rivalDangerAudio.unlock(); };
 window.addEventListener('pointerdown', unlockJuiceAudio, { once: true });
 window.addEventListener('keydown', unlockJuiceAudio, { once: true });
 const onlineClient = new OnlineClient();
@@ -785,7 +792,7 @@ Object.assign(window, {
     isSoundMuted: () => sound.isMuted(),
     toggleSound: () => {
       best = saveSoundMuted(sound.toggleMuted());
-      juiceAudio.setMuted(sound.isMuted());
+      setJuiceMuted(sound.isMuted());
       return sound.isMuted();
     },
     getCurrentMusicTrack: () => sound.getCurrentMusicTrack(),
@@ -797,7 +804,7 @@ Object.assign(window, {
     setAudioVolume: (channel: VolumeChannel, volume: number) => {
       const nextVolume = sound.setVolume(channel, volume);
       best = saveAudioVolumes(sound.getSfxVolume(), sound.getMusicVolume());
-      if (channel === 'sfx') juiceAudio.setSfxVolume(sound.getSfxVolume());
+      if (channel === 'sfx') setJuiceSfxVolume(sound.getSfxVolume());
       return nextVolume;
     },
     startNewRun,
@@ -1271,7 +1278,7 @@ function handleOverlayClick(event: MouseEvent): void {
     const delta = Number(control.dataset.delta ?? 0);
     sound.adjustVolume(channel, delta);
     best = saveAudioVolumes(sound.getSfxVolume(), sound.getMusicVolume());
-    if (channel === 'sfx') juiceAudio.setSfxVolume(sound.getSfxVolume());
+    if (channel === 'sfx') setJuiceSfxVolume(sound.getSfxVolume());
     volumeFeedback = { channel, expiresAt: performance.now() + 900 };
   }
 }
@@ -5441,14 +5448,18 @@ function syncRivalDeathSounds(): void {
   }
 }
 
-// Suena la señal de "rival al borde de la derrota" una vez, al cruzar el umbral
-// crítico (flanco de subida). El efecto VISUAL lo dibuja el CSS del mini-tablero
-// (clases --warn/--peril en renderOnlinePeerBoard); esto solo aporta el audio.
+// Latido de peligro (Danger / latido que acelera) de los rivales. En la VISTA DE
+// ENEMIGOS late por el rival más al borde de la derrota, en su capa de audio aparte
+// (rivalDangerAudio) para no pisar el latido de TU propio tablero. Como ESPECTADOR no
+// hace nada: el latido del rival enfocado ya lo dispara driveSpectatorJuice sobre
+// juiceAudio. El efecto VISUAL lo dibuja el CSS del mini-tablero (clases --warn/--peril
+// en renderOnlinePeerBoard); esto solo aporta el audio.
 function syncRivalDangerCues(): void {
-  if (!onlineRoom || appMode !== 'onlinePlaying') {
-    rivalsInPeril.clear();
+  if (!onlineRoom || appMode !== 'onlinePlaying' || isOnlineSpectating()) {
+    rivalDangerAudio.setDanger(0);
     return;
   }
+  let level = 0;
   for (const player of onlineRoom.players) {
     if (player.id === onlinePlayer.id) continue;
     const alive = player.alive
@@ -5456,15 +5467,16 @@ function syncRivalDangerCues(): void {
       && player.status !== 'lost'
       && player.status !== 'disconnected'
       && player.status !== 'winner';
-    const inPeril = alive && rivalDangerLevel(player) >= RIVAL_DANGER_CRITICAL;
-    if (!inPeril) {
-      rivalsInPeril.delete(player.id);
-      continue;
-    }
-    if (rivalsInPeril.has(player.id)) continue;
-    rivalsInPeril.add(player.id);
-    juiceAudio.alarm(); // misma sirena de "danger" que suena en tu propio top-out
+    if (!alive) continue;
+    const dl = rivalDangerLevel(player); // 0..10, misma escala que el panel
+    if (dl <= RIVAL_DANGER_WARN) continue;
+    // Mapeo el tramo WARN..10 a 0..1: el latido arranca recién en lo alto (igual que
+    // el propio) y acelera al máximo al borde del top-out. Sin `critical` para que sea
+    // solo el latido, sin la sirena de alarma.
+    const mapped = (dl - RIVAL_DANGER_WARN) / (10 - RIVAL_DANGER_WARN);
+    if (mapped > level) level = mapped;
   }
+  rivalDangerAudio.setDanger(level);
 }
 
 // Reconstruye el GameState del rival enfocado a partir de su engine snapshot, para
@@ -6871,7 +6883,7 @@ function formatActionBinding(action: ControlAction): string {
 
 // La capa Juice es 100% efectos: se calla con el mute maestro o con el mute de SFX.
 function syncSfxMuteToJuice(): void {
-  juiceAudio.setMuted(sound.isMuted() || sound.isSfxMuted());
+  setJuiceMuted(sound.isMuted() || sound.isSfxMuted());
 }
 
 // Normaliza el delta de la rueda a píxeles. deltaMode 1 = líneas (algunos mouse),
@@ -6899,7 +6911,7 @@ function handleVolumeWheel(event: WheelEvent): void {
   change = Math.max(-VOLUME_WHEEL_MAX_STEP, Math.min(VOLUME_WHEEL_MAX_STEP, change));
   sound.adjustVolume(channel, change);
   best = saveAudioVolumes(sound.getSfxVolume(), sound.getMusicVolume());
-  if (channel === 'sfx') juiceAudio.setSfxVolume(sound.getSfxVolume());
+  if (channel === 'sfx') setJuiceSfxVolume(sound.getSfxVolume());
   volumeFeedback = { channel, expiresAt: performance.now() + 900 };
   event.preventDefault();
 }
