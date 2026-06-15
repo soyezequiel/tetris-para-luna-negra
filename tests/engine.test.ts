@@ -2774,6 +2774,9 @@ describe('core stacker engine', () => {
     const state = engine.tick(1, [{ frame: 1, action: 'hardDrop' }]);
     expect(state.status).toBe('gameover');
     expect(state.stats.gameOverReason).toBe('blockOut');
+    // La pieza que no pudo entrar no queda como activa: el tablero congelado debe
+    // mostrar solo la pila real, sin una ficha fantasma superpuesta en el spawn.
+    expect(state.active).toBeNull();
   });
 
   it('lifts the active piece when incoming garbage rises into it instead of killing', () => {

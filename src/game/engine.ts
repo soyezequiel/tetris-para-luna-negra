@@ -269,6 +269,10 @@ export class GameEngine {
       this.status = 'gameover';
       this.gameOverFrame = this.frame;
       this.gameOverReason = 'blockOut';
+      // La pieza nueva no entró: no la dejamos como activa o el tablero congelado
+      // ("así quedó al perder") mostraría una ficha fantasma superpuesta sobre la
+      // pila, en el lugar donde el jugador no puso nada.
+      this.active = null;
     }
   }
 
@@ -341,6 +345,9 @@ export class GameEngine {
         this.status = 'gameover';
         this.gameOverFrame = this.frame;
         this.gameOverReason = 'holdBlockOut';
+        // Misma razón que en spawn(): la pieza intercambiada no entró, así que no
+        // debe quedar dibujada superpuesta sobre la pila al congelar el tablero.
+        this.active = null;
       }
     } else {
       this.hold = current;
@@ -424,13 +431,22 @@ export class GameEngine {
   private lockPiece(): void {
     if (!this.active) return;
     const lockedPiece = this.active;
-    for (const cell of this.occupied(this.active)) {
-      if (cell.y < 0) {
-        this.status = 'gameover';
-        this.gameOverFrame = this.frame;
-        this.gameOverReason = 'lockOut';
-        return;
+    const cells = this.occupied(this.active);
+    if (cells.some((cell) => cell.y < 0)) {
+      // Lock-out: la pieza se fijó sobresaliendo del techo del buffer. Congelamos
+      // solo las celdas que caen dentro del tablero (las de y<0 quedan fuera) y
+      // soltamos la activa: antes hacíamos un return a mitad del bucle, dejando un
+      // escritura parcial de la pieza en el tablero MÁS la activa completa encima.
+      for (const cell of cells) {
+        if (cell.y >= 0) this.board[cell.y][cell.x] = cell.type;
       }
+      this.status = 'gameover';
+      this.gameOverFrame = this.frame;
+      this.gameOverReason = 'lockOut';
+      this.active = null;
+      return;
+    }
+    for (const cell of cells) {
       this.board[cell.y][cell.x] = cell.type;
     }
     this.pieces += 1;
