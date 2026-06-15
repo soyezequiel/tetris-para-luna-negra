@@ -387,7 +387,14 @@ let spectatorEngineSeed: number | null = null;
 // (líneas → line-clear, pending → garbage entrante, piezas → lock, status → KO/Win).
 let spectatorJuice: JuiceConductor | null = null;
 let spectatorJuiceId: string | null = null;
-let spectatorJuicePrev: { lines: number; pieces: number; pending: number; sent: number } | null = null;
+let spectatorJuicePrev: {
+  lines: number;
+  pieces: number;
+  pending: number;
+  sent: number;
+  // Pieza activa del último snapshot, para deducir mover/girar por diff (x/rotation).
+  active: { type: string; x: number; rotation: number } | null;
+} | null = null;
 let onlineAttackSequence = 0;
 let onlineAppliedAttackIds = new Set<string>();
 let onlineHostAuthority: HostAuthoritySimulator | null = null;
@@ -5431,15 +5438,18 @@ function driveSpectatorJuice(focusState: GameState, focusId: string): void {
     spectatorJuice.setAttackRouting('auto');
   }
   const stats = focusState.stats;
+  const activeNow = focusState.active
+    ? { type: focusState.active.type as string, x: focusState.active.x, rotation: focusState.active.rotation as number }
+    : null;
   // Cambié de tablero (o primer frame): re-sincronizo sin disparar efectos.
   if (focusId !== spectatorJuiceId) {
     spectatorJuiceId = focusId;
     spectatorJuice.prime(focusState);
-    spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage };
+    spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
     spectatorJuice.frame(focusState);
     return;
   }
-  const prev = spectatorJuicePrev ?? { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage };
+  const prev = spectatorJuicePrev ?? { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
   const events: GameEvent[] = [];
   const clearedDelta = stats.lines - prev.lines;
   if (clearedDelta > 0) {
@@ -5472,9 +5482,17 @@ function driveSpectatorJuice(focusState: GameState, focusId: string): void {
     // el tablero se sentiría mudo pieza a pieza. Usamos 'lock' (no 'hardDrop') porque
     // desde snapshots no sabemos si fue hard drop y es un golpe de colocación neutro.
     sound.play('lock');
+  } else if (activeNow && prev.active && activeNow.type === prev.active.type) {
+    // Misma pieza entre snapshots (no se fijó ninguna): deduzco mover/girar por diff
+    // contra el snapshot anterior, igual que en la partida propia. Los snapshots
+    // llegan espaciados, así que esto suena una vez por actualización (no por input),
+    // pero da el feedback de que la pieza se está moviendo. El giro tiene prioridad
+    // sobre el desplazamiento si ambos cambiaron en el mismo salto de snapshot.
+    if (activeNow.rotation !== prev.active.rotation) sound.play('rotate');
+    else if (activeNow.x !== prev.active.x) sound.play('move');
   }
   spectatorJuice.frame(focusState);
-  spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage };
+  spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
 }
 
 // Tamaño automático de los tableros rivales (grilla lateral): con pocos enemigos se
