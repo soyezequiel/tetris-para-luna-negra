@@ -228,6 +228,18 @@ export interface RestartRoomRequest {
   playerId: string;
 }
 
+/**
+ * Un jugador vivo pide que el servidor migre la autoridad porque detectó al host
+ * inalcanzable (su canal WebRTC al host lleva caído un rato). El servidor solo lo
+ * honra si el host realmente dejó de escribir hace HOST_UNREACHABLE_MS, así un
+ * cliente no puede dar de baja a un host presente. Acorta la recuperación 1v1
+ * (no hace falta esperar HOST_STALE_MS).
+ */
+export interface RequestHostFailoverRequest {
+  roomId: string;
+  playerId: string;
+}
+
 export interface UpdateRoomSettingsRequest {
   roomId: string;
   playerId: string;

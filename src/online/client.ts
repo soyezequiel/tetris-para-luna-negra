@@ -19,6 +19,7 @@ import type {
   PublicRoomsFilters,
   PublicRoomsResponse,
   ReadyRequest,
+  RequestHostFailoverRequest,
   RestartRoomRequest,
   ResultRequest,
   SetTargetingRequest,
@@ -108,6 +109,11 @@ export class OnlineClient {
 
   eliminatePlayer(request: EliminateRequest): Promise<OnlineRoomResponse> {
     return this.post('/eliminate', request);
+  }
+
+  /** Pide al servidor que migre la autoridad porque el host parece inalcanzable. */
+  requestHostFailover(request: RequestHostFailoverRequest): Promise<OnlineRoomResponse> {
+    return this.post('/failover', request);
   }
 
   submitResult(request: ResultRequest): Promise<OnlineRoomResponse> {

@@ -5,9 +5,11 @@ import {
   eliminatePlayer,
   getRoomState,
   HOST_STALE_MS,
+  HOST_UNREACHABLE_MS,
   joinRoom,
   listPublicRooms,
   MemoryRoomStore,
+  requestHostFailover,
   ROOM_ABANDONED_MS,
   ROOM_START_DELAY_MS,
   RoomVersionConflictError,
@@ -257,6 +259,58 @@ describe('host failover on disconnect', () => {
     expect(recovered.status).toBe('finished');
     expect(recovered.winnerPlayerId).toBeNull();
     expect(recovered.players.find((player) => player.id === HOST_ID)?.status).toBe('eliminated');
+  });
+});
+
+describe('client-requested host failover', () => {
+  it('migrates on demand once the host is unreachable, well before HOST_STALE_MS', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 7_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID], startedAtMs);
+
+    // El sobreviviente pide la migración apenas pasa HOST_UNREACHABLE_MS (muy por
+    // debajo de HOST_STALE_MS): en 1v1 la ronda termina coronándolo de inmediato.
+    const requestedAtMs = startedAtMs + HOST_UNREACHABLE_MS + 1;
+    expect(requestedAtMs).toBeLessThan(startedAtMs + HOST_STALE_MS);
+    const recovered = await requestHostFailover(store, { roomId: room.id, playerId: GUEST_ID }, requestedAtMs);
+
+    expect(recovered.status).toBe('finished');
+    expect(recovered.winnerPlayerId).toBe(GUEST_ID);
+    expect(recovered.players.find((player) => player.id === HOST_ID)?.status).toBe('eliminated');
+  });
+
+  it('does not migrate while the host is still fresh', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 8_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID, THIRD_ID], startedAtMs);
+
+    const stillFresh = await requestHostFailover(
+      store,
+      { roomId: room.id, playerId: GUEST_ID },
+      startedAtMs + HOST_UNREACHABLE_MS - 1,
+    );
+
+    expect(stillFresh.hostPlayerId).toBe(HOST_ID);
+    expect(stillFresh.status).toBe('playing');
+    expect(stillFresh.players.find((player) => player.id === HOST_ID)?.alive).toBe(true);
+  });
+
+  it('ignores requests from the host or from a terminal player', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 9_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID, THIRD_ID], startedAtMs);
+    const lateMs = startedAtMs + HOST_UNREACHABLE_MS + 1;
+
+    // El propio host no puede pedir su baja.
+    const fromHost = await requestHostFailover(store, { roomId: room.id, playerId: HOST_ID }, lateMs);
+    expect(fromHost.hostPlayerId).toBe(HOST_ID);
+    expect(fromHost.status).toBe('playing');
+
+    // Un jugador terminal (ya eliminado) tampoco.
+    await eliminatePlayer(store, eliminateRequest(room, GUEST_ID), startedAtMs + 500);
+    const fromDead = await requestHostFailover(store, { roomId: room.id, playerId: GUEST_ID }, lateMs);
+    expect(fromDead.hostPlayerId).toBe(HOST_ID);
+    expect(fromDead.players.find((player) => player.id === HOST_ID)?.alive).toBe(true);
   });
 });
 

@@ -151,6 +151,12 @@ const ONLINE_PEER_BROADCAST_MS = 100;
 // el invitado postea su propio progreso al servidor (self-report) para que el
 // resto lo vea igual vía player.game. Rompe el Catch-22 del relay del host.
 const ONLINE_SELF_REPORT_GRACE_MS = 3000;
+// Si mi canal al host lleva caído al menos esto durante una ronda activa y sigo
+// vivo, le pido al servidor que migre la autoridad (requestHostFailover) en vez de
+// esperar el failover pasivo (HOST_STALE_MS, 15s). Clave en 1v1: el sobreviviente
+// no puede eliminar al host ausente por su cuenta. El servidor igual confirma que
+// el host dejó de escribir (HOST_UNREACHABLE_MS) antes de migrar.
+const ONLINE_HOST_FAILOVER_REQUEST_GRACE_MS = 4000;
 // Contenedores con scroll propio que se reconstruyen al regenerar el overlay.
 // Sin esto, cada re-render (p. ej. polling de salas/apuestas) reinicia el scroll al tope.
 // Debe declararse antes del primer render (loop() al final del módulo) para evitar TDZ.
@@ -337,6 +343,8 @@ let onlineLastProgressAt = 0;
 let onlineSelfReportInFlight = false;
 let onlineLastSelfReportAt = 0;
 let onlineHostChannelDownSince = 0;
+let onlineFailoverRequestInFlight = false;
+let onlineLastFailoverRequestAt = 0;
 let onlineLastPeerBroadcastAt = 0;
 let onlineLastKoBroadcastAt = 0;
 let onlineServerOffsetMs = 0;
@@ -3052,7 +3060,7 @@ function syncOnline(): void {
       });
     }
     if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(liveState));
-    else { flushOnlineInputOutbox(); maybePostSelfProgressFallback(now, liveState); }
+    else { flushOnlineInputOutbox(); maybePostSelfProgressFallback(now, liveState); maybeRequestHostFailover(now, liveState); }
     applyRoomAttacks(onlineRoom);
     if (shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(liveState);
     if (isOnlineHost()) relayPeerProgressToServer();
@@ -3262,6 +3270,42 @@ function maybePostSelfProgressFallback(now: number, state: GameState): void {
   if (now - onlineHostChannelDownSince < ONLINE_SELF_REPORT_GRACE_MS) return;
   if (onlineSelfReportInFlight || now - onlineLastSelfReportAt < ONLINE_POLL_MS) return;
   void postSelfProgress(state);
+}
+
+// Si sigo vivo y mi canal al host lleva caído un rato, le pido al servidor que
+// migre la autoridad en vez de esperar el failover pasivo (HOST_STALE_MS, 15s).
+// El servidor confirma que el host realmente dejó de escribir antes de migrar, así
+// que llamarlo de más es inocuo (devuelve la sala sin cambios). Resuelve el 1v1:
+// el sobreviviente no puede eliminar al host ausente por su cuenta.
+function maybeRequestHostFailover(now: number, state: GameState): void {
+  if (!onlineRoom || isOnlineHost()) return;
+  if (onlineRoom.status !== 'playing' && onlineRoom.status !== 'countdown') return;
+  if (state.status !== 'playing') return; // solo un jugador vivo lo pide
+  if (isHostChannelOpen()) return;
+  if (onlineHostChannelDownSince === 0) return; // aún sin medir el corte (lo setea el self-report)
+  if (now - onlineHostChannelDownSince < ONLINE_HOST_FAILOVER_REQUEST_GRACE_MS) return;
+  if (onlineFailoverRequestInFlight || now - onlineLastFailoverRequestAt < ONLINE_POLL_MS) return;
+  void requestHostFailover();
+}
+
+async function requestHostFailover(): Promise<void> {
+  if (!onlineRoom) return;
+  onlineFailoverRequestInFlight = true;
+  onlineLastFailoverRequestAt = performance.now();
+  const requestSeed = onlineRoom.seed;
+  try {
+    const response = await onlineClient.requestHostFailover({
+      roomId: onlineRoom.id,
+      playerId: onlinePlayer.id,
+    });
+    if (!isCurrentOnlineSeed(requestSeed)) return;
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+  } catch {
+    // Best-effort: si falla, el failover pasivo del servidor sigue como red de seguridad.
+  } finally {
+    onlineFailoverRequestInFlight = false;
+  }
 }
 
 async function postSelfProgress(state: GameState): Promise<void> {

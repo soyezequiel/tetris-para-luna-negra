@@ -24,6 +24,7 @@ import type {
   RoomBet,
   RoomBetParticipant,
   RoomBetStatus,
+  RequestHostFailoverRequest,
   RestartRoomRequest,
   ResultRequest,
   RoomVisibility,
@@ -48,6 +49,16 @@ export const PLAYER_STALE_MS = 10_000;
  * poll/progreso del host, así un host vivo nunca migra por una pausa pasajera.
  */
 export const HOST_STALE_MS = 15_000;
+/**
+ * Umbral más corto para la migración a pedido de un cliente (`requestHostFailover`):
+ * cuando un jugador vivo reporta que su canal WebRTC al host está caído, no hace
+ * falta esperar los HOST_STALE_MS pasivos. El servidor igual confirma que el host
+ * dejó de escribir hace al menos esto (bastante más que el ritmo de progreso del
+ * host ~1s y que la gracia de self-report del cliente, 3s), así un host presente
+ * pero con lag pasajero nunca se migra a pedido. Clave para el caso 1v1, donde el
+ * sobreviviente no puede eliminar al host ausente por su cuenta.
+ */
+export const HOST_UNREACHABLE_MS = 6_000;
 /**
  * Una sala se considera abandonada cuando NADIE mostró presencia (poll/heartbeat)
  * en este lapso. Al leerla en ese estado se elimina, así no quedan salas vacías
@@ -139,6 +150,7 @@ export const submitResult = retryRoomConflicts(submitResultOnce);
 export const addAttack = retryRoomConflicts(addAttackOnce);
 export const eliminatePlayer = retryRoomConflicts(eliminatePlayerOnce);
 export const getRoomState = retryRoomConflicts(getRoomStateOnce);
+export const requestHostFailover = retryRoomConflicts(requestHostFailoverOnce);
 export const addPeerSignal = retryRoomConflicts(addPeerSignalOnce);
 export const setRoomBet = retryRoomConflicts(setRoomBetOnce);
 
@@ -804,6 +816,36 @@ async function getRoomStateOnce(
   return applyStalePlayers(room, nowMs);
 }
 
+/**
+ * Migración de host a pedido de un cliente. La dispara un jugador vivo y no-host
+ * cuyo canal WebRTC al host lleva caído un rato (evidencia de que el host se fue).
+ * El servidor NO confía a ciegas: solo migra si el host efectivamente dejó de
+ * escribir hace al menos HOST_UNREACHABLE_MS (mucho más corto que HOST_STALE_MS,
+ * pero suficiente para descartar un lag pasajero de un host presente). Reutiliza
+ * applyHostFailover con ese umbral. Sin esto, en 1v1 el sobreviviente esperaba los
+ * 15s pasivos para ser coronado, porque no puede eliminar al host ausente por su
+ * cuenta. Ver [[online-host-failover]].
+ */
+async function requestHostFailoverOnce(
+  store: RoomStore,
+  request: RequestHostFailoverRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const room = await requireRoom(store, request.roomId);
+  const requester = room.players.find((player) => player.id === request.playerId);
+  // Solo un jugador presente, vivo y que NO sea el host puede pedir su migración.
+  if (
+    requester
+    && requester.id !== room.hostPlayerId
+    && requester.alive
+    && !isTerminalPlayer(requester)
+    && applyHostFailover(room, nowMs, HOST_UNREACHABLE_MS)
+  ) {
+    await persistRoom(store, room);
+  }
+  return applyStalePlayers(room, nowMs);
+}
+
 async function addPeerSignalOnce(
   store: RoomStore,
   request: PeerSignalRequest,
@@ -1098,9 +1140,9 @@ function finishRoomIfOnlyOneAlive(room: OnlineRoom, nowMs: number): void {
  * al sucesor su propia ventana antes de que la falta de actividad lo migre de
  * nuevo en cascada. Devuelve true si mutó la sala.
  */
-function applyHostFailover(room: OnlineRoom, nowMs: number): boolean {
+function applyHostFailover(room: OnlineRoom, nowMs: number, staleMs: number = HOST_STALE_MS): boolean {
   if (room.status !== 'playing' && room.status !== 'countdown') return false;
-  if (nowMs - room.updatedAtServerMs <= HOST_STALE_MS) return false;
+  if (nowMs - room.updatedAtServerMs <= staleMs) return false;
 
   let changed = false;
   const host = room.players.find((player) => player.id === room.hostPlayerId);

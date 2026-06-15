@@ -11,6 +11,7 @@ import type {
   ProgressRequest,
   PublicRoomsFilters,
   ReadyRequest,
+  RequestHostFailoverRequest,
   RestartRoomRequest,
   ResultRequest,
   SetTargetingRequest,
@@ -28,6 +29,7 @@ import {
   leaveRoom,
   listPublicRooms,
   reopenRoom,
+  requestHostFailover,
   restartRoom,
   setPlayerReady,
   setPlayerTargeting,
@@ -78,6 +80,10 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (action === 'eliminate') {
       const room = await settleBetIfFinished(await eliminatePlayer(getRoomStore(), await readJsonBody<EliminateRequest>(request)));
+      return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'failover') {
+      const room = await settleBetIfFinished(await requestHostFailover(getRoomStore(), await readJsonBody<RequestHostFailoverRequest>(request)));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'join') {
