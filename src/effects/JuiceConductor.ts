@@ -245,7 +245,7 @@ export class JuiceConductor {
     // Suave: un destello tenue de marco + micro-shake + una ráfaga corta y baja
     // en el piso. El protagonismo se lo lleva la estela (cola), no el golpe.
     this.fx.boardGlow(P.cyanSoft, 0.3);
-    this.fx.addShake(2.5);
+    this.fx.addShake(10);
     this.fx.spawnBurst(r.x, this.boardBottom(), 9, P.cyanSoft, { spd: 120, life: 0.35, up: -20, grav: 240 });
   }
   /** Estela vertical de neón del hard drop. cols = columnas ocupadas; top/bottom =
