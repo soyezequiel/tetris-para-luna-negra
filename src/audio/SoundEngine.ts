@@ -38,12 +38,13 @@ const REVERB_DURATIONS: Record<ReverbMode, number> = {
 };
 
 const DEFAULT_SFX_VOLUME = 1;
-const DEFAULT_MUSIC_VOLUME = 1;
+const DEFAULT_MUSIC_VOLUME = 0.3;
 const DEFAULT_REVERB_MODE: ReverbMode = 'medium';
 const MUSIC_OUTPUT_GAIN = 0.34;
 
 const REVERB_DECAY = 4; // curva de caída exponencial del impulso (más alto = se va más rápido)
 const MUSIC_FADE_TIME = 0.18; // segundos en los que el dry baja a 0
+const MUSIC_FADE_IN_TIME = 1.4; // efecto de entrada: segundos en los que el dry sube de silencio a pleno
 const REVERB_WET_LEVEL = 0.8; // nivel del envío al reverb durante el apagado
 
 export class SoundEngine {
@@ -258,14 +259,33 @@ export class SoundEngine {
 
   private async startMusic(): Promise<void> {
     if (!this.musicTracks.length || !this.musicEnabled()) return;
+    // Sólo aplicamos el efecto de entrada cuando la música realmente arranca (estaba
+    // pausada). Si ya está sonando —p. ej. startMusic llamado de nuevo al ajustar el
+    // volumen— no re-disparamos el fundido para no provocar un bajón audible.
+    const wasPaused = this.music.paused;
     this.ensureMusicGraph();
     this.resetMusicMix();
+    if (wasPaused) this.armMusicFadeIn();
     try {
       await this.music.play();
       this.musicStarted = true;
     } catch {
       this.musicStarted = false;
     }
+  }
+
+  // Efecto de entrada: en lugar de arrancar a pleno de golpe, la música entra con
+  // un fundido suave subiendo el dry de silencio a 1 a lo largo de
+  // MUSIC_FADE_IN_TIME. Se arma antes de play() para que no haya un click inicial.
+  // Sin grafo WebAudio (fallback al HTMLAudioElement) no hay fundido posible.
+  private armMusicFadeIn(): void {
+    const context = this.context;
+    if (!context || !this.musicGraphReady || !this.musicDryGain) return;
+    const now = context.currentTime;
+    const dry = this.musicDryGain.gain;
+    dry.cancelScheduledValues(now);
+    dry.setValueAtTime(0.0001, now);
+    dry.exponentialRampToValueAtTime(1, now + MUSIC_FADE_IN_TIME);
   }
 
   // Enruta el <audio> por el grafo WebAudio una sola vez:

@@ -13,7 +13,10 @@ export interface LocalRecord {
 
 const KEY = 'stack40.records';
 const DEFAULT_SFX_VOLUME = 1;
-const DEFAULT_MUSIC_VOLUME = 1;
+// La música arranca al 30% por defecto (mezcla cómoda sobre los efectos). Si el
+// usuario la cambia, ese valor queda guardado en localStorage y este default ya
+// no se usa para esa instalación.
+const DEFAULT_MUSIC_VOLUME = 0.3;
 const DEFAULT_REVERB_MODE: ReverbMode = 'medium';
 const REVERB_MODES: ReverbMode[] = ['off', 'short', 'medium', 'long'];
 
