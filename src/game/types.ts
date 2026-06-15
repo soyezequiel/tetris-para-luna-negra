@@ -150,6 +150,11 @@ export interface GameState {
   board: Cell[][];
   active: ActivePiece | null;
   ghost: ActivePiece | null;
+  /** Pieza que topeó al fijarse sobresaliendo del techo del tablero (lock-out).
+   * Se conserva completa —incluidas las celdas con y<0 que NO caben en el array—
+   * para dibujarla asomando por arriba en la pantalla de derrota en vez de
+   * borrarla. Solo se setea en game over por 'lockOut'; null el resto del tiempo. */
+  lockOutPiece: ActivePiece | null;
   hold: PieceType | null;
   canHold: boolean;
   next: PieceType[];

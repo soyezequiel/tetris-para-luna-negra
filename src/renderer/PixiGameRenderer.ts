@@ -413,6 +413,19 @@ export class PixiGameRenderer {
         this.drawVisibleBlock(state.active.x + cell.x, state.active.y + cell.y - this.hiddenRows, state.active.type, 1);
       }
     }
+
+    // Pieza que topeó al fijarse: la dibujamos completa (incluidas las celdas que
+    // quedan por encima del techo del tablero) para que se vea asomando en la
+    // derrota en vez de borrarse. drawTopOutBlock no recorta por arriba.
+    if (state.lockOutPiece) {
+      for (const cell of cellsFor(state.lockOutPiece.type, state.lockOutPiece.rotation)) {
+        this.drawTopOutBlock(
+          state.lockOutPiece.x + cell.x,
+          state.lockOutPiece.y + cell.y - this.hiddenRows,
+          state.lockOutPiece.type,
+        );
+      }
+    }
   }
 
   private drawSidePieces(state: GameState): void {
@@ -556,6 +569,16 @@ export class PixiGameRenderer {
     return boardX >= 0 && boardX < this.boardColumns && boardY >= -this.hiddenRows && boardY < this.visibleRows;
   }
 
+
+  // Igual que un bloque normal pero SIN recortar por arriba: la pieza topeada
+  // puede asomar por encima del buffer (boardY < -hiddenRows). Solo limita el eje X
+  // al ancho del tablero para no pintar fuera de las columnas.
+  private drawTopOutBlock(boardX: number, boardY: number, piece: PieceType): void {
+    if (boardX < 0 || boardX >= this.boardColumns) return;
+    const x = this.boardX + boardX * this.cell;
+    const y = this.boardY + boardY * this.cell;
+    this.drawBlockAt(this.pieceLayer, x, y, this.cell, piece, 1);
+  }
 
   private drawBlock(g: Graphics, boardX: number, boardY: number, piece: PieceType, alpha: number): void {
     if (boardY < -this.hiddenRows) return;

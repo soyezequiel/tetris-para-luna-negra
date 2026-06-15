@@ -30,6 +30,9 @@ export class GameEngine {
   private finishFrame: number | null = null;
   private gameOverFrame: number | null = null;
   private gameOverReason: GameOverReason | null = null;
+  // Pieza topeada en el último lock-out, conservada completa para mostrarla
+  // asomando del techo en la derrota (ver GameState.lockOutPiece).
+  private lockOutPiece: ActivePiece | null = null;
   private sentGarbage = 0;
   private receivedGarbage = 0;
   private pendingGarbage: PendingGarbage[] = [];
@@ -58,6 +61,7 @@ export class GameEngine {
       board: this.board.map((row) => [...row]),
       active: this.active ? { ...this.active } : null,
       ghost: this.rules.showGhost && this.active ? this.getGhost() : null,
+      lockOutPiece: this.lockOutPiece ? { ...this.lockOutPiece } : null,
       hold: this.rules.allowHold ? this.hold : null,
       canHold: this.rules.allowHold && this.canHold,
       next: this.next.slice(0, this.rules.nextPreview),
@@ -133,6 +137,9 @@ export class GameEngine {
     this.finishFrame = snapshot.finishFrame;
     this.gameOverFrame = snapshot.gameOverFrame;
     this.gameOverReason = snapshot.gameOverReason ?? null;
+    // El snapshot no transporta la pieza topeada (es puramente cosmética del game
+    // over local); al restaurar la limpiamos para no arrastrar una vieja.
+    this.lockOutPiece = null;
     this.sentGarbage = snapshot.sentGarbage;
     this.receivedGarbage = snapshot.receivedGarbage;
     this.pendingGarbage = snapshot.pendingGarbage.map((garbage) => ({ ...garbage }));
@@ -229,6 +236,7 @@ export class GameEngine {
     this.finishFrame = null;
     this.gameOverFrame = null;
     this.gameOverReason = null;
+    this.lockOutPiece = null;
     this.sentGarbage = 0;
     this.receivedGarbage = 0;
     this.pendingGarbage = [];
@@ -443,6 +451,10 @@ export class GameEngine {
       this.status = 'gameover';
       this.gameOverFrame = this.frame;
       this.gameOverReason = 'lockOut';
+      // Guardamos la pieza entera (con sus celdas y<0, que no caben en el tablero)
+      // para que la pantalla de derrota la muestre asomando del techo en lugar de
+      // borrar la parte de arriba.
+      this.lockOutPiece = { ...lockedPiece };
       this.active = null;
       return;
     }
