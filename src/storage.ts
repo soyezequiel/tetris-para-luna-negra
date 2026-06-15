@@ -12,6 +12,8 @@ export interface LocalRecord {
   // Audio posicional: el paneo estéreo de cada sonido sigue la posición en pantalla
   // de su fuente (tu tablero centrado, los mini-tableros rivales de la grilla, etc.).
   positionalAudio: boolean;
+  // Reproducir sólo temas libres de derechos (archivos cuyo nombre empieza con 'ncc').
+  royaltyFreeOnly: boolean;
 }
 
 const KEY = 'stack40.records';
@@ -81,6 +83,12 @@ export function savePositionalAudio(positionalAudio: boolean): LocalRecord {
   return record;
 }
 
+export function saveRoyaltyFreeOnly(royaltyFreeOnly: boolean): LocalRecord {
+  const record = { ...loadRecord(), royaltyFreeOnly };
+  localStorage.setItem(KEY, JSON.stringify(record));
+  return record;
+}
+
 function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
   return {
     best40LineFrames: record.best40LineFrames ?? null,
@@ -92,6 +100,7 @@ function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
     musicReverb: normalizeReverb(record.musicReverb),
     touchControlsHidden: record.touchControlsHidden ?? false,
     positionalAudio: record.positionalAudio ?? true,
+    royaltyFreeOnly: record.royaltyFreeOnly ?? false,
   };
 }
 

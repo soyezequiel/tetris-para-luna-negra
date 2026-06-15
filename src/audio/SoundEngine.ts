@@ -53,7 +53,7 @@ export class SoundEngine {
   // osciladores crudos de antes; la música sigue por el grafo WebAudio de abajo.
   private readonly neo: NeoSynth;
   private readonly music: HTMLAudioElement;
-  private readonly musicTracks: MusicTrack[];
+  private musicTracks: MusicTrack[];
   private muted: boolean;
   // Silenciado por canal (independiente del mute maestro `muted`): permite apagar
   // sólo la música o sólo los efectos sin tocar el otro canal. El volumen guardado
@@ -222,6 +222,27 @@ export class SoundEngine {
 
   nextMusicTrack(): MusicTrack | null {
     return this.advanceMusicTrack(this.musicEnabled() && this.musicStarted);
+  }
+
+  // Reemplaza la playlist en caliente (p. ej. al activar "sólo música libre de
+  // derechos"). Si la pista actual sigue en la nueva lista se mantiene sonando;
+  // si no, salta al primer tema de la lista nueva (y arranca si la música estaba
+  // sonando). Con lista vacía, pausa.
+  setMusicTracks(tracks: MusicTrack[]): void {
+    const current = this.getCurrentMusicTrack();
+    this.musicTracks = tracks;
+    const keepIndex = current ? tracks.findIndex((track) => track.src === current.src) : -1;
+    if (keepIndex >= 0) {
+      this.currentMusicTrackIndex = keepIndex;
+      return;
+    }
+    this.currentMusicTrackIndex = 0;
+    if (!tracks.length) {
+      this.music.pause();
+      return;
+    }
+    this.loadMusicTrack(0);
+    if (this.musicEnabled() && this.musicStarted) void this.startMusic();
   }
 
   // Los efectos los sintetiza NeoSynth (paleta Neo: modelado modal + crunch). El

@@ -13,6 +13,9 @@ export type SurvivalMode = 'none';
 export type KickTable = 'srs-plus';
 export type ObjectiveMode = 'none' | 'lines';
 export type MusicMode = 'random-calm';
+// 'guideline' = curva exponencial estilo TETR.IO (ignora base/incremento, sube de
+// nivel cada N líneas/piezas). 'linear' = modelo manual con base + incremento.
+export type GravityModel = 'guideline' | 'linear';
 
 export interface CustomSettings {
   randomBagType: RandomBagType;
@@ -48,6 +51,7 @@ export interface CustomSettings {
   areFrames: number;
   lineClearAreFrames: number;
   gravity: number;
+  gravityModel: GravityModel;
   useLevelling: boolean;
   useMasterLevels: boolean;
   startingLevel: number;
@@ -118,6 +122,7 @@ export const CUSTOM_DEFAULT_SETTINGS: CustomSettings = {
   areFrames: 0,
   lineClearAreFrames: 0,
   gravity: 0.02,
+  gravityModel: 'guideline',
   useLevelling: true,
   useMasterLevels: false,
   startingLevel: 1,
@@ -237,6 +242,7 @@ export function normalizeCustomSettings(value: unknown): CustomSettings {
     areFrames: normalizeNumber(source.areFrames, 'areFrames'),
     lineClearAreFrames: normalizeNumber(source.lineClearAreFrames, 'lineClearAreFrames'),
     gravity: normalizeNumber(source.gravity, 'gravity'),
+    gravityModel: normalizeLiteral(source.gravityModel, ['guideline', 'linear'], CUSTOM_DEFAULT_SETTINGS.gravityModel),
     useLevelling: normalizeBoolean(source.useLevelling, CUSTOM_DEFAULT_SETTINGS.useLevelling),
     useMasterLevels: normalizeBoolean(source.useMasterLevels, CUSTOM_DEFAULT_SETTINGS.useMasterLevels),
     startingLevel: normalizeNumber(source.startingLevel, 'startingLevel'),
@@ -299,6 +305,10 @@ export function updateCustomSettingByDelta(
 export function customRulesFromSettings(settings: CustomSettings, inputSettings: InputSettings): GameRules {
   const normalized = normalizeCustomSettings(settings);
   const usesLevelling = normalized.useLevelling;
+  // 'guideline' replica la curva exponencial de Sprint/online (estilo TETR.IO): la
+  // gravedad sale del nivel alcanzado e ignora base/incremento. 'linear' usa los
+  // sliders manuales (base + incremento por nivel).
+  const usesGuideline = normalized.gravityModel === 'guideline';
   return {
     ...DEFAULT_RULES,
     boardWidth: normalized.boardWidth,
@@ -308,9 +318,7 @@ export function customRulesFromSettings(settings: CustomSettings, inputSettings:
     targetLines: normalized.objectiveMode === 'lines' && normalized.objectiveLineTarget > 0
       ? normalized.objectiveLineTarget
       : null,
-    // Custom usa el modelo lineal configurable por sus sliders (base + incremento),
-    // no la curva guideline de Sprint/online.
-    gravityCurve: 'linear',
+    gravityCurve: usesGuideline ? 'guideline' : 'linear',
     gravityCellsPerFrame: usesLevelling ? normalized.baseGravity : normalized.gravity,
     gravityIncreaseCellsPerLevel: usesLevelling ? normalized.gravityIncrease : 0,
     gravityLevelLines: usesLevelling && normalized.useStaticLevelling ? normalized.levelStaticSpeed : 0,

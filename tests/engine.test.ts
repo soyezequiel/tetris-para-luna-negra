@@ -135,6 +135,7 @@ describe('core stacker engine', () => {
 
   it('increases custom gravity by cleared-line levels', () => {
     const settings = normalizeCustomSettings({
+      gravityModel: 'linear',
       useLevelling: true,
       useStaticLevelling: true,
       startingLevel: 2,
@@ -157,6 +158,7 @@ describe('core stacker engine', () => {
 
   it('increases custom gravity by placed-piece levels when static levelling is disabled', () => {
     const settings = normalizeCustomSettings({
+      gravityModel: 'linear',
       useLevelling: true,
       useStaticLevelling: false,
       startingLevel: 1,

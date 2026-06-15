@@ -53,6 +53,11 @@ const ORDER: string[] = [
   'the-final-countdown-trailer',
 ];
 
+// Prefijo que marca un tema libre de derechos (royalty-free). Cualquier archivo
+// cuyo nombre empiece con esto se considera reproducible bajo el ajuste "solo
+// música libre de derechos".
+const ROYALTY_FREE_PREFIX = 'ncc';
+
 function baseName(path: string): string {
   const file = path.split('/').pop() ?? path;
   return file.replace(/\.[^.]+$/, '');
@@ -66,19 +71,56 @@ function autoTitle(name: string): string {
     .join(' ');
 }
 
+function isRoyaltyFreeName(name: string): boolean {
+  return name.toLowerCase().startsWith(ROYALTY_FREE_PREFIX);
+}
+
+// El prefijo 'ncc' es un marcador interno, no parte del nombre artístico: lo
+// sacamos antes de auto-generar el título que se muestra en la UI.
+function autoTitleFor(name: string): string {
+  const stripped = isRoyaltyFreeName(name)
+    ? name.slice(ROYALTY_FREE_PREFIX.length).replace(/^[-_]+/, '')
+    : name;
+  return autoTitle(stripped || name);
+}
+
 function orderRank(name: string): number {
   const i = ORDER.indexOf(name);
   return i === -1 ? Number.MAX_SAFE_INTEGER : i;
 }
 
-export const MUSIC_TRACKS: MusicTrack[] = Object.entries(modules)
+export interface CatalogTrack extends MusicTrack {
+  // true si el archivo empieza con 'ncc' (libre de derechos).
+  royaltyFree: boolean;
+}
+
+// Catálogo completo con metadata. La fuente de verdad para filtrar/ordenar.
+export const MUSIC_CATALOG: CatalogTrack[] = Object.entries(modules)
   .map(([path, src]) => {
     const name = baseName(path);
-    return { name, title: TITLE_OVERRIDES[name] ?? autoTitle(name), src };
+    return {
+      name,
+      title: TITLE_OVERRIDES[name] ?? autoTitleFor(name),
+      src,
+      royaltyFree: isRoyaltyFreeName(name),
+    };
   })
   .sort((a, b) => {
     const ra = orderRank(a.name);
     const rb = orderRank(b.name);
     return ra !== rb ? ra - rb : a.title.localeCompare(b.title);
   })
-  .map(({ title, src }) => ({ title, src }));
+  .map(({ title, src, royaltyFree }) => ({ title, src, royaltyFree }));
+
+// Lista completa de pistas (todas, sin filtrar).
+export const MUSIC_TRACKS: MusicTrack[] = MUSIC_CATALOG.map(({ title, src }) => ({ title, src }));
+
+// ¿Hay al menos un tema libre de derechos en el catálogo? Útil para no ofrecer el
+// ajuste si dejaría la playlist vacía.
+export const HAS_ROYALTY_FREE_TRACKS = MUSIC_CATALOG.some((track) => track.royaltyFree);
+
+// Playlist según la preferencia: si royaltyFreeOnly es true, sólo los temas 'ncc'.
+export function musicTracksFor(royaltyFreeOnly: boolean): MusicTrack[] {
+  const source = royaltyFreeOnly ? MUSIC_CATALOG.filter((track) => track.royaltyFree) : MUSIC_CATALOG;
+  return source.map(({ title, src }) => ({ title, src }));
+}

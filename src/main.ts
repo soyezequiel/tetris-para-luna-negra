@@ -35,7 +35,7 @@ import {
   type CustomSettings,
   type CustomTab,
 } from './app/customSettings';
-import { MUSIC_TRACKS } from './audio/music';
+import { HAS_ROYALTY_FREE_TRACKS, musicTracksFor } from './audio/music';
 import { SoundEngine, type ReverbMode, type VolumeChannel } from './audio/SoundEngine';
 import { GameEngine } from './game/engine';
 import { cellsFor } from './game/pieces';
@@ -79,7 +79,7 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { canStartRoom, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, savePositionalAudio, saveSoundMuted, saveTouchControlsHidden } from './storage';
+import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
@@ -224,7 +224,7 @@ const renderer = new PixiGameRenderer(root);
 renderer.setColorBlind(customSettings.colorBlindMode);
 const sound = new SoundEngine(
   loadRecord().soundMuted,
-  MUSIC_TRACKS,
+  musicTracksFor(loadRecord().royaltyFreeOnly),
   loadRecord().sfxVolume,
   loadRecord().musicVolume,
   loadRecord().musicReverb,
@@ -1286,6 +1286,10 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'toggle-positional') {
     setPositionalAudio(!isPositionalAudio());
     best = savePositionalAudio(isPositionalAudio());
+  }
+  if (action === 'toggle-royalty-free') {
+    best = saveRoyaltyFreeOnly(!loadRecord().royaltyFreeOnly);
+    sound.setMusicTracks(musicTracksFor(best.royaltyFreeOnly));
   }
   if (action === 'capture-binding') {
     const controlAction = parseControlAction(control.dataset.controlAction);
@@ -4115,6 +4119,7 @@ function renderOverlay(state: GameState): void {
       <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.isMusicMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
       <button class="hud-action reverb" type="button" data-ui-action="cycle-reverb" title="Cola de reverb al apagar la música">Reverb: ${reverbLabel(sound.getReverbMode())}</button>
       <button class="hud-action positional" type="button" data-ui-action="toggle-positional" title="El paneo estéreo de cada sonido sigue su posición en pantalla">Posicional: ${isPositionalAudio() ? 'on' : 'off'}</button>
+      ${HAS_ROYALTY_FREE_TRACKS ? `<button class="hud-action royalty-free" type="button" data-ui-action="toggle-royalty-free" title="Reproducir sólo temas libres de derechos">Libre de derechos: ${loadRecord().royaltyFreeOnly ? 'on' : 'off'}</button>` : ''}
     </div>`}
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
@@ -6135,19 +6140,35 @@ function renderCustomTabBody(): string {
       renderCustomNumber('ARE (frames)', 'areFrames'),
       renderCustomNumber('ARE de line clear', 'lineClearAreFrames'),
     ]),
-    renderCustomSection('Gravedad y niveles', [
-      renderCustomNumber('Gravedad', 'gravity'),
-      renderCustomToggle('Usar niveles', 'useLevelling'),
-      renderCustomToggle('Niveles master', 'useMasterLevels'),
-      renderCustomNumber('Nivel inicial', 'startingLevel'),
-      renderCustomNumber('Velocidad de nivel', 'levelSpeed'),
-      renderCustomToggle('Niveles estáticos', 'useStaticLevelling'),
-      renderCustomNumber('Velocidad estática', 'levelStaticSpeed'),
-      renderCustomNumber('Gravedad base', 'baseGravity'),
-      renderCustomNumber('Incremento de gravedad', 'gravityIncrease'),
-      renderCustomNumber('Lock delay (frames)', 'lockDelayFrames'),
-    ]),
+    renderCustomSection('Gravedad y niveles', renderGravityRows()),
   ].join('');
+}
+
+function renderGravityRows(): string[] {
+  // En modo 'guideline' (estilo TETR.IO) la gravedad sale de la curva por nivel, así
+  // que los sliders manuales (gravedad fija / base / incremento) no aplican y se ocultan
+  // para no confundir; en 'linear' se muestran todos.
+  const linear = customSettings.gravityModel === 'linear';
+  return [
+    renderCustomSelect('Modelo de gravedad', 'gravityModel', [
+      ['guideline', 'Guideline (TETR.IO)'],
+      ['linear', 'Lineal (manual)'],
+    ]),
+    ...(linear ? [renderCustomNumber('Gravedad', 'gravity')] : []),
+    renderCustomToggle('Usar niveles', 'useLevelling'),
+    renderCustomToggle('Niveles master', 'useMasterLevels'),
+    renderCustomNumber('Nivel inicial', 'startingLevel'),
+    renderCustomToggle('Niveles estáticos', 'useStaticLevelling'),
+    renderCustomNumber('Velocidad estática', 'levelStaticSpeed'),
+    renderCustomNumber('Velocidad de nivel', 'levelSpeed'),
+    ...(linear
+      ? [
+          renderCustomNumber('Gravedad base', 'baseGravity'),
+          renderCustomNumber('Incremento de gravedad', 'gravityIncrease'),
+        ]
+      : []),
+    renderCustomNumber('Lock delay (frames)', 'lockDelayFrames'),
+  ];
 }
 
 function renderCustomSection(title: string, rows: string[]): string {
@@ -6161,7 +6182,7 @@ function renderCustomSection(title: string, rows: string[]): string {
 
 function renderCustomSelect(
   label: string,
-  key: keyof Pick<CustomSettings, 'randomBagType' | 'allowedSpins' | 'comboTable' | 'survivalMode' | 'kickTable' | 'objectiveMode' | 'musicMode'>,
+  key: keyof Pick<CustomSettings, 'randomBagType' | 'allowedSpins' | 'comboTable' | 'survivalMode' | 'kickTable' | 'objectiveMode' | 'musicMode' | 'gravityModel'>,
   options: [string, string][],
 ): string {
   const value = String(customSettings[key]);
