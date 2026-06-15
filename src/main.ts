@@ -4119,7 +4119,7 @@ function renderOverlay(state: GameState): void {
       <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.isMusicMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
       <button class="hud-action reverb" type="button" data-ui-action="cycle-reverb" title="Cola de reverb al apagar la música">Reverb: ${reverbLabel(sound.getReverbMode())}</button>
       <button class="hud-action positional" type="button" data-ui-action="toggle-positional" title="El paneo estéreo de cada sonido sigue su posición en pantalla">Posicional: ${isPositionalAudio() ? 'on' : 'off'}</button>
-      ${HAS_ROYALTY_FREE_TRACKS ? `<button class="hud-action royalty-free" type="button" data-ui-action="toggle-royalty-free" title="Reproducir sólo temas libres de derechos">Libre de derechos: ${loadRecord().royaltyFreeOnly ? 'on' : 'off'}</button>` : ''}
+      <button class="hud-action royalty-free" type="button" data-ui-action="toggle-royalty-free" title="${HAS_ROYALTY_FREE_TRACKS ? 'Reproducir sólo temas libres de derechos (archivos con prefijo ncc)' : 'No hay temas libres de derechos cargados (archivos con prefijo ncc). Activarlo dejará la música en silencio.'}">Libre de derechos: ${loadRecord().royaltyFreeOnly ? 'on' : 'off'}</button>
     </div>`}
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
