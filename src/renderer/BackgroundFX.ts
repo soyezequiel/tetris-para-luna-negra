@@ -38,10 +38,19 @@ export class BackgroundFX {
 
   private t = 0;
   private last = 0;
+  private lastDraw = 0;
   private rafId = 0;
   private enabled = true;
   private motion = true;
   private reducedMotion = false;
+  // El fondo es difuso y "relax": no necesita 60fps. Limitarlo a ~30fps libera el
+  // main thread para el loop de Pixi del juego (clave en Firefox, cuyo Canvas2D con
+  // gradientes radiales + composición 'screen' es mucho más caro que en Chrome).
+  private readonly drawInterval = 1000 / 30;
+  // Gradientes que solo dependen del tamaño del viewport: se construyen una vez por
+  // resize en lugar de recrearse cada frame (crear un CanvasGradient no es gratis).
+  private baseGrad: CanvasGradient | null = null;
+  private vignette: CanvasGradient | null = null;
 
   private blobs: Blob[] = [];
   private particles: Particle[] = [];
@@ -129,13 +138,27 @@ export class BackgroundFX {
   }
 
   private resize(): void {
-    // El fondo es difuso: con dpr 1.25 sobra y va más liviano.
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+    // El fondo es difuso: rendea por debajo de la resolución del viewport y se
+    // estira por CSS. No se nota (son gradientes suaves) y reduce linealmente el
+    // costo de pintado, que es lo que ahoga a Firefox.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.25) * 0.75;
     const w = window.innerWidth, h = window.innerHeight;
     this.width = w; this.height = h;
-    this.canvas.width = Math.round(w * dpr);
-    this.canvas.height = Math.round(h * dpr);
+    this.canvas.width = Math.max(1, Math.round(w * dpr));
+    this.canvas.height = Math.max(1, Math.round(h * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.buildGradients();
+  }
+
+  // Gradientes dependientes solo del tamaño: se cachean por resize.
+  private buildGradients(): void {
+    const ctx = this.ctx, { width: W, height: H } = this;
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#080d16'); g.addColorStop(0.55, '#0a111c'); g.addColorStop(1, '#05090f');
+    this.baseGrad = g;
+    const v = ctx.createRadialGradient(W / 2, H * 0.46, Math.min(W, H) * 0.18, W / 2, H * 0.5, Math.max(W, H) * 0.72);
+    v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(2,4,8,0.62)');
+    this.vignette = v;
   }
 
   private loop(): void {
@@ -147,15 +170,19 @@ export class BackgroundFX {
       this.transP += dt / TRANSITION_SECONDS;
       if (this.transP >= 1) { this.curStyle = this.transStyle; this.transStyle = null; this.transP = 0; }
     }
-    if (this.enabled) this.draw();
+    // Throttle del fondo a ~30fps (ver drawInterval). El loop de rAF sigue a 60 para
+    // mantener this.t suave, pero solo repintamos cada ~33ms.
+    if (this.enabled && now - this.lastDraw >= this.drawInterval - 4) {
+      this.lastDraw = now;
+      this.draw();
+    }
     this.rafId = requestAnimationFrame(() => this.loop());
   }
 
   private draw(): void {
     const ctx = this.ctx, { width: W, height: H } = this;
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#080d16'); g.addColorStop(0.55, '#0a111c'); g.addColorStop(1, '#05090f');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (!this.baseGrad || !this.vignette) this.buildGradients();
+    ctx.fillStyle = this.baseGrad!; ctx.fillRect(0, 0, W, H);
 
     ctx.globalCompositeOperation = 'screen';
     if (this.transStyle) {
@@ -167,10 +194,8 @@ export class BackgroundFX {
     }
     ctx.globalCompositeOperation = 'source-over';
 
-    // Viñeta: concentra la mirada en el tablero.
-    const v = ctx.createRadialGradient(W / 2, H * 0.46, Math.min(W, H) * 0.18, W / 2, H * 0.5, Math.max(W, H) * 0.72);
-    v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(2,4,8,0.62)');
-    ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+    // Viñeta: concentra la mirada en el tablero (gradiente cacheado).
+    ctx.fillStyle = this.vignette!; ctx.fillRect(0, 0, W, H);
   }
 
   private runBg(style: BgStyle, a: number): void {
@@ -194,7 +219,9 @@ export class BackgroundFX {
       rg.addColorStop(0, `rgba(${cr},${cg},${cb},0.20)`);
       rg.addColorStop(0.5, `rgba(${cr},${cg},${cb},0.08)`);
       rg.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-      ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+      // El gradiente es 0 fuera del radio: rellenar solo su bounding box en vez de
+      // toda la pantalla recorta drásticamente el área pintada (clave en Firefox).
+      ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
   }
 
@@ -207,7 +234,7 @@ export class BackgroundFX {
       const x = hx * W + Math.sin(t * 0.12 + hx * 4) * W * 0.05, y = hy * H, r = Math.min(W, H) * 0.6;
       const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
       rg.addColorStop(0, `rgba(${cr},${cg},${cb},${a})`); rg.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-      ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
     for (const p of this.particles) {
       const py = (((p.y - t * p.speed) % 1) + 1) % 1, x = p.x * W, y = py * H;
