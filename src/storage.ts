@@ -9,6 +9,9 @@ export interface LocalRecord {
   musicVolume: number;
   musicReverb: ReverbMode;
   touchControlsHidden: boolean;
+  // Audio posicional: el paneo estéreo de cada sonido sigue la posición en pantalla
+  // de su fuente (tu tablero centrado, los mini-tableros rivales de la grilla, etc.).
+  positionalAudio: boolean;
 }
 
 const KEY = 'stack40.records';
@@ -72,6 +75,12 @@ export function saveTouchControlsHidden(touchControlsHidden: boolean): LocalReco
   return record;
 }
 
+export function savePositionalAudio(positionalAudio: boolean): LocalRecord {
+  const record = { ...loadRecord(), positionalAudio };
+  localStorage.setItem(KEY, JSON.stringify(record));
+  return record;
+}
+
 function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
   return {
     best40LineFrames: record.best40LineFrames ?? null,
@@ -82,6 +91,7 @@ function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
     musicVolume: normalizeVolume(record.musicVolume, DEFAULT_MUSIC_VOLUME),
     musicReverb: normalizeReverb(record.musicReverb),
     touchControlsHidden: record.touchControlsHidden ?? false,
+    positionalAudio: record.positionalAudio ?? true,
   };
 }
 

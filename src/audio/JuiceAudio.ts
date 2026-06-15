@@ -30,6 +30,9 @@ export class JuiceAudio {
   private heartbeatId = 0;
   private dangerLevel = 0;
   private dangerCritical = false;
+  // Paneo posicional del peligro (-1..1): el latido y la sirena suenan desde donde
+  // está la fuente en pantalla (tu tablero centrado ≈ 0; un rival en la grilla, a su lado).
+  private dangerPan = 0;
 
   constructor(muted = false, sfxVolume = 1) {
     this.muted = muted;
@@ -59,58 +62,60 @@ export class JuiceAudio {
   }
 
   // ---------- API de eventos (delegada a la paleta Neo) ----------
-  clear(lines: number): void {
-    this.neo.clear(lines);
+  // El `pan` opcional (-1..1) posiciona cada evento según dónde ocurre en pantalla.
+  clear(lines: number, pan = 0): void {
+    this.neo.clear(lines, pan);
   }
-  tetris(): void {
-    this.neo.tetris();
+  tetris(pan = 0): void {
+    this.neo.tetris(pan);
   }
-  combo(n: number): void {
-    this.neo.combo(n);
+  combo(n: number, pan = 0): void {
+    this.neo.combo(n, pan);
   }
-  comboBreak(): void {
-    this.neo.comboBreak();
+  comboBreak(pan = 0): void {
+    this.neo.comboBreak(pan);
   }
-  b2b(): void {
-    this.neo.b2b();
+  b2b(pan = 0): void {
+    this.neo.b2b(pan);
   }
-  perfectClear(): void {
-    this.neo.perfectClear();
+  perfectClear(pan = 0): void {
+    this.neo.perfectClear(pan);
   }
-  attackLaunch(size: AttackSize): void {
-    this.neo.attackLaunch(size);
+  attackLaunch(size: AttackSize, pan = 0): void {
+    this.neo.attackLaunch(size, pan);
   }
-  attackHit(size: AttackSize): void {
-    this.neo.attackHit(size);
+  attackHit(size: AttackSize, pan = 0): void {
+    this.neo.attackHit(size, pan);
   }
-  garbageTelegraph(level: number): void {
-    this.neo.garbageTelegraph(level);
+  garbageTelegraph(level: number, pan = 0): void {
+    this.neo.garbageTelegraph(level, pan);
   }
-  garbageRise(): void {
-    this.neo.garbageRise();
+  garbageRise(pan = 0): void {
+    this.neo.garbageRise(pan);
   }
-  ko(): void {
-    this.neo.ko();
+  ko(pan = 0): void {
+    this.neo.ko(pan);
   }
   /** Sirena de top-out inminente (tu propia muerte a punto de pasar). */
-  alarm(): void {
-    this.neo.alarm();
+  alarm(pan = 0): void {
+    this.neo.alarm(pan);
   }
   /** Un rival está al borde de la derrota: barrido predador + campanazo. */
-  rivalDanger(): void {
-    this.neo.rivalCrit();
+  rivalDanger(pan = 0): void {
+    this.neo.rivalCrit(pan);
   }
-  win(): void {
+  win(pan = 0): void {
     this.resetMix();
-    this.neo.win();
+    this.neo.win(pan);
   }
 
   // ---------- latido de peligro (loop que acelera con la altura) ----------
   // `critical` = top-out inminente: dispara la sirena al cruzar el umbral (flanco
   // de subida) y, mientras dure, el latido se acelera al máximo.
-  setDanger(level: number, critical = false): void {
+  setDanger(level: number, critical = false, pan = 0): void {
     this.dangerLevel = clamp01(level);
-    if (critical && !this.dangerCritical && !this.muted) this.neo.alarm();
+    this.dangerPan = pan;
+    if (critical && !this.dangerCritical && !this.muted) this.neo.alarm(this.dangerPan);
     this.dangerCritical = critical;
     if (this.dangerLevel > 0.02 && !this.muted) this.startHeartbeat();
     else this.stopHeartbeat();
@@ -123,7 +128,7 @@ export class JuiceAudio {
         this.heartbeatTimer = null;
         return;
       }
-      this.neo.heart(this.dangerCritical ? 1 : this.dangerLevel);
+      this.neo.heart(this.dangerCritical ? 1 : this.dangerLevel, this.dangerPan);
       const eff = this.dangerCritical ? 1 : this.dangerLevel;
       const period = 920 - eff * 540;
       this.heartbeatTimer = setTimeout(tick, period);

@@ -1,6 +1,7 @@
 import type { GameEvent, GameState, LineClearEvent } from '../game/types';
 import { JuiceFX, JUICE_PALETTE as P } from '../renderer/JuiceFX';
 import { JuiceAudio, type AttackSize } from '../audio/JuiceAudio';
+import { panForScreenX } from '../audio/spatial';
 
 /**
  * JuiceConductor — traduce el estado y los eventos del motor real a llamadas de
@@ -135,7 +136,7 @@ export class JuiceConductor {
       if (this.lastCombo >= 2) {
         const c = this.boardCenterRow();
         this.fx.spawnBurst(c.x, c.y, 14, P.ghost, { spd: 120, life: 0.5, grav: 200, size: 2.4 });
-        this.audio.comboBreak();
+        this.audio.comboBreak(this.centerPan());
       }
       this.lastCombo = 0;
       return;
@@ -149,6 +150,7 @@ export class JuiceConductor {
     };
     const tier = tiers[Math.min(4, n)];
     const r = this.boardCenterRow();
+    const pan = this.panAt(r.x);
 
     this.fx.addShake(tier.shake);
     this.fx.boardGlow(tier.col, n / 4);
@@ -171,33 +173,33 @@ export class JuiceConductor {
     }
 
     if (n >= 4) {
-      this.audio.tetris();
+      this.audio.tetris(pan);
       this.fx.flashBoard(P.cyan);
       this.fx.spawnRing(r.x, r.y, P.cyan, 260);
       this.fx.spawnRing(r.x, r.y, P.cyanSoft, 200);
       this.fx.spawnBurst(r.x, r.y + this.fx.cell * 4, 60, P.cyan, { spd: 360, life: 0.9, up: 120, size: 3.6 });
       const b2bActive = e.b2b > 1;
       this.fx.showPopup('TETRIS', { color: P.cyan, sub: b2bActive ? 'BACK-TO-BACK' : '', big: true });
-      if (b2bActive) this.audio.b2b();
+      if (b2bActive) this.audio.b2b(pan);
     } else if (n === 3) {
-      this.audio.clear(3);
+      this.audio.clear(3, pan);
       this.fx.flashBoard(P.gold);
       this.fx.spawnBurst(r.x, r.y + this.fx.cell * 4, 24, P.gold, { spd: 240, life: 0.7 });
       this.fx.showPopup('TRIPLE', { color: P.gold });
     } else {
-      this.audio.clear(n);
+      this.audio.clear(n, pan);
       if (n === 2) this.fx.showPopup('DOUBLE', { color: P.cyanSoft });
     }
 
     // spin (T-spin u otros): subraya con popup + sonido brillante
     if (e.spin !== 'none') {
-      this.audio.b2b();
+      this.audio.b2b(pan);
       this.fx.showPopup(e.spin === 'mini' ? 'T-SPIN MINI' : 'T-SPIN', { color: P.purple, sub: n > 0 ? `${n} LINE${n > 1 ? 'S' : ''}` : '' });
     }
 
     // perfect clear: capa extra de celebración
     if (e.perfectClear) {
-      this.audio.perfectClear();
+      this.audio.perfectClear(pan);
       this.fx.flashBoard(P.green, 0.7);
       this.fx.spawnRing(r.x, r.y, P.green, 300);
       this.fx.showPopup('PERFECT', { color: P.green, sub: 'ALL CLEAR', big: true });
@@ -215,7 +217,7 @@ export class JuiceConductor {
   private onCombo(combo: number): void {
     // combo del motor: 0 en la primera limpieza, sube con limpiezas consecutivas
     if (combo >= 1) {
-      this.audio.combo(combo);
+      this.audio.combo(combo, this.centerPan());
       if (combo >= 3) this.fx.addShake(2 + Math.min(1, (combo - 2) / 8) * 4);
       const col = combo >= 9 ? P.cyan : combo >= 5 ? P.gold : P.pink;
       this.fx.showPopup(`${combo}× COMBO`, { color: col });
@@ -228,9 +230,9 @@ export class JuiceConductor {
    * cuando main.ts no tiene coordenadas del rival (ver onAttackToward). */
   onAttackOutgoing(lines: number): void {
     const size = ATTACK_BY_LINES(lines);
-    this.audio.attackLaunch(size);
-    this.fx.addShake({ S: 6, M: 11, L: 18 }[size] * 0.25);
     const from = this.fx.rightEdgePoint();
+    this.audio.attackLaunch(size, this.panAt(from.x));
+    this.fx.addShake({ S: 6, M: 11, L: 18 }[size] * 0.25);
     const col = { S: P.cyan, M: P.pink, L: P.purple }[size];
     this.fx.spawnBurst(from.x, from.y, 10, col, { spd: 160, life: 0.4 });
   }
@@ -241,21 +243,21 @@ export class JuiceConductor {
     const col = { S: P.cyan, M: P.pink, L: P.purple }[size];
     const r = { S: 7, M: 11, L: 17 }[size];
     const from = this.fx.rightEdgePoint();
-    this.audio.attackLaunch(size);
+    this.audio.attackLaunch(size, this.panAt(from.x));
     this.fx.spawnProjectile(from, point, { r, col }, () => {
-      this.audio.attackHit(size);
+      this.audio.attackHit(size, this.panAt(point.x));
       this.fx.spawnBurst(point.x, point.y, { S: 20, M: 38, L: 70 }[size], col, { spd: 220, life: 0.7 });
     });
   }
 
   // ---------- garbage entrante ----------
   private onIncomingGarbage(lines: number): void {
-    this.audio.garbageTelegraph(Math.min(1, lines / 6));
+    this.audio.garbageTelegraph(Math.min(1, lines / 6), this.centerPan());
   }
   private onAppliedGarbage(lines: number): void {
     this.fx.flashBoard(0xff7a3a, 0.6);
     this.fx.addShake(lines * 1.6);
-    this.audio.garbageRise();
+    this.audio.garbageRise(this.centerPan());
   }
 
   // ---------- hooks de input (disparar desde main.ts) ----------
@@ -296,7 +298,7 @@ export class JuiceConductor {
   // ---------- KO / Win / reset ----------
   private onTopOut(_state: GameState): void {
     this.alive = false;
-    this.audio.ko();
+    this.audio.ko(this.centerPan());
     this.fx.setDanger(0);
     this.fx.addShake(30);
     // Destello cálido + marco dorado encendido: el momento de derrota se celebra
@@ -346,7 +348,7 @@ export class JuiceConductor {
   }
 
   private onWin(): void {
-    this.audio.win();
+    this.audio.win(this.centerPan());
     const r = this.boardCenterRow();
     this.fx.flashBoard(P.green, 0.7);
     this.fx.boardGlow(P.green, 1);
@@ -363,6 +365,18 @@ export class JuiceConductor {
     this.audio.resetMix();
     this.fx.reset();
     this.fx.flashBoard(P.white, 0.4);
+  }
+
+  // ---------- audio posicional ----------
+  // El canvas de JuiceFX ocupa toda la ventana, así que su coordenada X equivale a la
+  // X de pantalla: la pasamos directo al mapeo de paneo. El tablero (propio o el
+  // enfocado como espectador) está centrado, así que centerPan ≈ 0; un ataque hacia el
+  // rival panea hacia su posición real.
+  private panAt(x: number): number {
+    return panForScreenX(x);
+  }
+  private centerPan(): number {
+    return this.panAt(this.boardCenterRow().x);
   }
 
   // ---------- geometría derivada de JuiceFX ----------

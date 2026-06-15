@@ -67,6 +67,11 @@ export class NeoSynth {
   private bass: number;  // 0..1 intensidad de sub-bass
   private duck = 1;      // 0..1 atenuación de mezcla (modo espectador tras KO)
   private lastSoftDropAt = 0;
+  // Paneo posicional de la emisión en curso (-1..1). Lo fija cada método público al
+  // entrar y lo leen TODAS las primitivas de esa emisión: como la síntesis se agenda
+  // de forma síncrona dentro de la llamada (aunque el audio suene con `when`), una
+  // variable transitoria basta y no se pisa entre llamadas (JS es de un solo hilo).
+  private emitPan = 0;
 
   constructor(muted = false, sfxVolume = 1, bass = 0.75) {
     this.muted = muted;
@@ -97,9 +102,11 @@ export class NeoSynth {
   }
 
   // ---------- API de cues de input ----------
-  play(cue: SfxCue): void {
+  // `pan` (-1..1) posiciona el sonido en el estéreo según dónde ocurre en pantalla.
+  play(cue: SfxCue, pan = 0): void {
     if (!this.open()) return;
     const ctx = this.ensure(); if (!ctx) return;
+    this.emitPan = clampPan(pan);
     if (cue === 'softDrop') {
       if (ctx.currentTime - this.lastSoftDropAt < 0.045) return;
       this.lastSoftDropAt = ctx.currentTime;
@@ -140,7 +147,7 @@ export class NeoSynth {
         this.sub({ freq: 120, dur: 0.05, gain: 0.18, harm: false });
         break;
       case 'lineClear': return void this.clearN(1);
-      case 'tSpin': return void this.tSpin();
+      case 'tSpin': return void this.tSpin(this.emitPan);
       case 'finish':
         [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => this.noteP(f, 0.16, 0.14, i * 0.06, REVERB * 0.5));
         this.sub({ freq: 120, dur: 0.20, gain: 0.25 });
@@ -168,14 +175,16 @@ export class NeoSynth {
 
   // ---------- API de eventos grandes (mapea a JuiceAudio) ----------
   /** 1..3 líneas; 4+ dispara tetris(). */
-  clear(lines: number): void {
+  clear(lines: number, pan = 0): void {
+    this.emitPan = clampPan(pan);
     const n = Math.max(1, Math.floor(lines));
-    if (n >= 4) return this.tetris();
+    if (n >= 4) return this.tetris(this.emitPan);
     this.clearN(Math.min(3, n));
   }
 
-  tetris(): void {
+  tetris(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.sub({ freq: 130, freqEnd: 42, dur: 0.55, gain: 0.64, attack: 0.003, reverb: REVERB * 0.1 });
     this.voice({ type: 'triangle', freq: 82, freqEnd: 41, dur: 0.45, gain: 0.11, drive: DRIVE });
     this.crunch({ freq: 700, freqEnd: 5200, q: 0.7, dur: 0.4, gain: 0.16 * CRUNCH, drive: DRIVE });
@@ -185,8 +194,9 @@ export class NeoSynth {
     this.noteP(2093, 0.4, 0.10, 0.42, REVERB * 0.7);
   }
 
-  tSpin(): void {
+  tSpin(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.sub({ freq: 160, freqEnd: 55, dur: 0.30, gain: 0.52, reverb: REVERB * 0.1 });
     this.crunch({ freq: 3000, freqEnd: 1000, q: 3.0, dur: 0.18, gain: 0.16 * CRUNCH, drive: DRIVE * 1.2 });
     [740, 932.3, 1174.7, 1480].forEach((f, i) => this.noteP(f, 0.13, 0.15, i * 0.045, REVERB * 0.5));
@@ -195,8 +205,9 @@ export class NeoSynth {
     this.crunch({ filter: 'highpass', freq: 7000, q: 0.6, dur: 0.25, gain: 0.09 * BRIGHT * CRUNCH, when: 0.05, drive: DRIVE * 0.7 });
   }
 
-  perfectClear(): void {
+  perfectClear(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.sub({ freq: 120, freqEnd: 60, dur: 0.70, gain: 0.62, reverb: REVERB * 0.15 });
     [523.25, 659.25, 783.99, 987.77, 1174.7, 1568].forEach((f, i) => this.noteP(f, 0.28, 0.15, i * 0.06, REVERB * 0.7));
     this.voice({ type: 'sine', freq: 1568, freqEnd: 3136, dur: 0.70, gain: 0.11, when: 0.30, reverb: REVERB * 0.9 });
@@ -205,8 +216,9 @@ export class NeoSynth {
     this.noteP(2093, 0.80, 0.10, 0.50, REVERB);
   }
 
-  combo(n: number): void {
+  combo(n: number, pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     const step = Math.max(0, Math.min(12, Math.floor(n)));
     const f = 300 * Math.pow(2, step / 12);
     this.voice({ type: 'triangle', freq: f, freqEnd: f * 1.5, dur: 0.10, gain: 0.12, reverb: REVERB * 0.2, drive: DRIVE });
@@ -214,14 +226,16 @@ export class NeoSynth {
     this.crunch({ filter: 'highpass', freq: 5200, q: 0.6, dur: 0.02, gain: 0.04 * CRUNCH, drive: DRIVE * 0.6 });
   }
 
-  comboBreak(): void {
+  comboBreak(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.voice({ type: 'sawtooth', freq: 420, freqEnd: 90, dur: 0.26, gain: 0.13, glide: 'lin', drive: DRIVE });
     this.noise({ filter: 'lowpass', freq: 1400, freqEnd: 400, dur: 0.22, gain: 0.12, drive: DRIVE * 0.7 });
   }
 
-  b2b(): void {
+  b2b(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.noteP(880, 0.10, 0.13, 0, REVERB * 0.3);
     this.noteP(1320, 0.14, 0.10, 0.04, REVERB * 0.4);
     this.voice({ type: 'sine', freq: 1760, dur: 0.12, gain: 0.06, when: 0.08, reverb: REVERB * 0.4 });
@@ -229,15 +243,17 @@ export class NeoSynth {
     this.sub({ freq: 110, dur: 0.12, gain: 0.20 });
   }
 
-  attackLaunch(size: AttackSize = 'M'): void {
+  attackLaunch(size: AttackSize = 'M', pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     const g = { S: 0.14, M: 0.18, L: 0.24 }[size];
     this.crunch({ freq: 1400, freqEnd: 3800, q: 0.9, dur: 0.22, gain: g * CRUNCH, drive: DRIVE });
     this.voice({ type: 'sawtooth', freq: 700, freqEnd: 240, dur: 0.20, gain: g * 0.62, reverb: REVERB * 0.2, drive: DRIVE });
   }
 
-  attackHit(size: AttackSize = 'M'): void {
+  attackHit(size: AttackSize = 'M', pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     const low = { S: 140, M: 120, L: 95 }[size];
     const g = { S: 0.42, M: 0.52, L: 0.62 }[size];
     this.sub({ freq: low, freqEnd: low * 0.46, dur: 0.24, gain: g, reverb: REVERB * 0.15 });
@@ -245,21 +261,24 @@ export class NeoSynth {
     this.modal({ freq: low * 1.16, ratios: [1, 2, 3.2], gains: [1, 0.4, 0.2], decay: 0.14, falloff: 0.5, q: 6, gain: 0.10 * CRUNCH, drive: DRIVE });
   }
 
-  garbageTelegraph(level: number): void {
+  garbageTelegraph(level: number, pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.crunch({ filter: 'highpass', freq: 1400 + level * 600, q: 0.8, dur: 0.04, gain: 0.07 * CRUNCH, drive: DRIVE * 0.6 });
   }
 
-  garbageRise(): void {
+  garbageRise(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.voice({ type: 'sawtooth', freq: 90, freqEnd: 220, dur: 0.28, gain: 0.15, glide: 'lin', reverb: REVERB * 0.1, drive: DRIVE });
     this.noise({ filter: 'lowpass', freq: 500, freqEnd: 1400, dur: 0.26, gain: 0.16, drive: DRIVE * 0.8 });
     this.sub({ freq: 60, freqEnd: 130, dur: 0.28, gain: 0.30, glide: 'lin' });
   }
 
   /** Un latido. Llamalo desde tu loop de "peligro" (level 0..1). */
-  heart(level = 0.5): void {
+  heart(level = 0.5, pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     const l = clamp01(level);
     this.sub({ freq: 58, freqEnd: 40, dur: 0.14, gain: 0.34 + l * 0.18, harm: false });
     this.sub({ freq: 52, freqEnd: 38, dur: 0.13, gain: 0.26 + l * 0.16, when: 0.16, harm: false });
@@ -267,8 +286,9 @@ export class NeoSynth {
 
   /** Sirena tensa de "estás por morir" (top-out inminente). Dos beeps disonantes
    * que muerden, por encima del latido, para que sea imposible no notarlo. */
-  alarm(): void {
+  alarm(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.voice({ type: 'sawtooth', freq: 1380, freqEnd: 980, dur: 0.13, gain: 0.16, glide: 'lin', drive: DRIVE });
     this.voice({ type: 'square', freq: 920, freqEnd: 1320, dur: 0.12, gain: 0.10, glide: 'lin', when: 0.14, drive: DRIVE * 0.8 });
     this.crunch({ filter: 'highpass', freq: 2600, q: 0.7, dur: 0.10, gain: 0.10 * CRUNCH, drive: DRIVE });
@@ -276,8 +296,9 @@ export class NeoSynth {
 
   /** "Tu rival se está por morir": barrido predador que sube y un campanazo
    * brillante. Es buena noticia para vos (rematalo), así que suena afilado y dulce. */
-  rivalCrit(): void {
+  rivalCrit(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.voice({ type: 'sawtooth', freq: 420, freqEnd: 1560, dur: 0.26, gain: 0.22, glide: 'exp', drive: DRIVE * 0.6, reverb: REVERB * 0.2 });
     this.noteP(1568.0, 0.40, 0.24, 0.10, REVERB * 0.5);
     this.noteP(2093.0, 0.36, 0.20, 0.15, REVERB * 0.6);
@@ -285,8 +306,9 @@ export class NeoSynth {
     this.crunch({ filter: 'highpass', freq: 4200, q: 0.6, dur: 0.12, gain: 0.14 * BRIGHT * CRUNCH, when: 0.10, drive: DRIVE * 0.6 });
   }
 
-  ko(): void {
+  ko(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     this.sub({ freq: 320, freqEnd: 38, dur: 0.70, gain: 0.55, reverb: REVERB * 0.2 });
     this.voice({ type: 'sawtooth', freq: 300, freqEnd: 40, dur: 0.60, gain: 0.15, reverb: REVERB * 0.2, drive: DRIVE });
     this.noise({ filter: 'lowpass', freq: 1300, freqEnd: 200, dur: 0.60, gain: 0.22, drive: DRIVE });
@@ -296,8 +318,9 @@ export class NeoSynth {
   // Fanfarria de victoria (~4s). Cuatro fases que escalan dopamina: barrido de
   // apertura → arpegio mayor que trepa → acorde de coronación → cascada de
   // brillos con cola larga de reverb. Pensada para "ganaste" en solo y online.
-  win(): void {
+  win(pan = 0): void {
     if (!this.open()) return;
+    this.emitPan = clampPan(pan);
     const R = REVERB;
 
     // ── Fase 1 · golpe de apertura + barrido ascendente (0.0s) ──────────────
@@ -393,8 +416,7 @@ export class NeoSynth {
       osc.connect(node);
       osc.start(t0); osc.stop(t0 + atk + hold + o.dur + 0.06);
     }
-    let out: AudioNode = g;
-    if (o.pan) { const p = ctx.createStereoPanner(); p.pan.value = o.pan; g.connect(p); out = p; }
+    const out = this.applyPan(g, o.pan);
     out.connect(this.master);
     if (o.reverb && this.reverb) { const s = ctx.createGain(); s.gain.value = o.reverb; out.connect(s); s.connect(this.reverb); }
   }
@@ -416,8 +438,7 @@ export class NeoSynth {
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + atk + o.dur);
     let node: AudioNode = f;
     if (o.drive) { const sh = ctx.createWaveShaper(); sh.curve = this.driveCurve(o.drive); f.connect(sh); node = sh; }
-    let out: AudioNode = g;
-    if (o.pan) { const p = ctx.createStereoPanner(); p.pan.value = o.pan; g.connect(p); out = p; }
+    const out = this.applyPan(g, o.pan);
     src.connect(f); node.connect(g); out.connect(this.master);
     if (o.reverb && this.reverb) { const s = ctx.createGain(); s.gain.value = o.reverb; out.connect(s); s.connect(this.reverb); }
     src.start(t0); src.stop(t0 + atk + o.dur + 0.06);
@@ -441,8 +462,8 @@ export class NeoSynth {
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + atk + o.dur);
     let node: AudioNode = f; src.connect(f);
     if (o.drive) { const sh = ctx.createWaveShaper(); sh.curve = this.driveCurve(o.drive); f.connect(sh); node = sh; }
-    let out: AudioNode = g; node.connect(g);
-    if (o.pan) { const p = ctx.createStereoPanner(); p.pan.value = o.pan; g.connect(p); out = p; }
+    node.connect(g);
+    const out = this.applyPan(g, o.pan);
     out.connect(this.master);
     if (o.reverb && this.reverb) { const s = ctx.createGain(); s.gain.value = o.reverb; out.connect(s); s.connect(this.reverb); }
     src.start(t0); src.stop(t0 + atk + o.dur + 0.06);
@@ -464,8 +485,7 @@ export class NeoSynth {
     g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t0 + atk);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + atk + dur);
     src.connect(f); f.connect(sh); sh.connect(g);
-    let out: AudioNode = g;
-    if (o.pan) { const p = ctx.createStereoPanner(); p.pan.value = o.pan; g.connect(p); out = p; }
+    const out = this.applyPan(g, o.pan);
     out.connect(this.master);
     if (o.reverb && this.reverb) { const s = ctx.createGain(); s.gain.value = o.reverb; out.connect(s); s.connect(this.reverb); }
     src.start(t0); src.stop(t0 + atk + dur + 0.05);
@@ -503,11 +523,21 @@ export class NeoSynth {
     });
     let node: AudioNode = mix;
     if (o.drive) { const sh = ctx.createWaveShaper(); sh.curve = this.driveCurve(o.drive); mix.connect(sh); node = sh; }
-    let out: AudioNode = node;
-    if (o.pan) { const p = ctx.createStereoPanner(); p.pan.value = o.pan; node.connect(p); out = p; }
+    const out = this.applyPan(node, o.pan);
     out.connect(this.master);
     if (o.reverb && this.reverb) { const s = ctx.createGain(); s.gain.value = o.reverb; out.connect(s); s.connect(this.reverb); }
     src.start(t0); src.stop(t0 + burst + 0.02);
+  }
+
+  // Inserta un StereoPanner si la emisión actual (o la voz) tiene paneo. Combina el
+  // paneo posicional de la emisión con el paneo local de la primitiva y lo acota.
+  private applyPan(source: AudioNode, localPan = 0): AudioNode {
+    const pan = clampPan((this.emitPan || 0) + (localPan || 0));
+    if (pan === 0 || !this.ctx) return source;
+    const p = this.ctx.createStereoPanner();
+    p.pan.value = pan;
+    source.connect(p);
+    return p;
   }
 
   // ---------- infraestructura ----------
@@ -569,6 +599,11 @@ export class NeoSynth {
 function clamp01(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Math.min(1, Math.max(0, v));
+}
+
+function clampPan(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(1, Math.max(-1, v));
 }
 
 /** Pan estéreo aleatorio y sutil (random pan) para los ticks de movimiento. */

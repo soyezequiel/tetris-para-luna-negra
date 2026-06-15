@@ -79,7 +79,8 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, saveSoundMuted, saveTouchControlsHidden } from './storage';
+import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, savePositionalAudio, saveSoundMuted, saveTouchControlsHidden } from './storage';
+import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
 import { JuiceConductor } from './effects/JuiceConductor';
@@ -241,6 +242,9 @@ const juice = new JuiceConductor(renderer.getJuice(), juiceAudio);
 // compartirlo lo pisaría cada frame. Como espectador no se usa (el latido del rival
 // enfocado lo dispara driveSpectatorJuice sobre juiceAudio).
 const rivalDangerAudio = new JuiceAudio(loadRecord().soundMuted || loadRecord().sfxMuted, loadRecord().sfxVolume);
+// Audio posicional: el paneo estéreo de cada sonido sigue la posición en pantalla de
+// su fuente. El interruptor vive en spatial.ts; lo inicializamos desde el ajuste guardado.
+setPositionalAudio(loadRecord().positionalAudio);
 // Mantiene las dos capas juice en el mismo estado de mute/volumen.
 const juiceLayers = [juiceAudio, rivalDangerAudio];
 const setJuiceMuted = (muted: boolean): void => { for (const layer of juiceLayers) layer.setMuted(muted); };
@@ -1260,6 +1264,10 @@ function handleOverlayClick(event: MouseEvent): void {
   }
   if (action === 'next-music') sound.nextMusicTrack();
   if (action === 'cycle-reverb') best = saveMusicReverb(sound.cycleReverbMode());
+  if (action === 'toggle-positional') {
+    setPositionalAudio(!isPositionalAudio());
+    best = savePositionalAudio(isPositionalAudio());
+  }
   if (action === 'capture-binding') {
     const controlAction = parseControlAction(control.dataset.controlAction);
     if (controlAction) bindingCapture = controlAction;
@@ -4070,6 +4078,7 @@ function renderOverlay(state: GameState): void {
       ${renderVolumeChannelRow('music')}
       <button class="hud-action music" type="button" data-ui-action="next-music">${escapeHtml(sound.isMuted() || sound.isMusicMuted() || sound.getMusicVolume() === 0 ? 'Music paused' : currentMusicTrack)}</button>
       <button class="hud-action reverb" type="button" data-ui-action="cycle-reverb" title="Cola de reverb al apagar la música">Reverb: ${reverbLabel(sound.getReverbMode())}</button>
+      <button class="hud-action positional" type="button" data-ui-action="toggle-positional" title="El paneo estéreo de cada sonido sigue su posición en pantalla">Posicional: ${isPositionalAudio() ? 'on' : 'off'}</button>
     </div>`}
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
@@ -5444,7 +5453,10 @@ function syncRivalDeathSounds(): void {
     }
     if (spectatorDeathAnnounced.has(player.id)) continue;
     spectatorDeathAnnounced.add(player.id);
-    if (!spectating || (focus && player.id === focus.id)) sound.play('gameOver');
+    // Jugando: la muerte del rival suena desde su mini-tablero en la grilla. Como
+    // espectador solo suena el rival ENFOCADO, que está centrado → paneo neutro.
+    if (!spectating) sound.play('gameOver', panForPlayerBoard(player.id));
+    else if (focus && player.id === focus.id) sound.play('gameOver');
   }
 }
 
@@ -5460,6 +5472,7 @@ function syncRivalDangerCues(): void {
     return;
   }
   let level = 0;
+  let dangerPlayerId: string | null = null;
   for (const player of onlineRoom.players) {
     if (player.id === onlinePlayer.id) continue;
     const alive = player.alive
@@ -5474,9 +5487,10 @@ function syncRivalDangerCues(): void {
     // el propio) y acelera al máximo al borde del top-out. Sin `critical` para que sea
     // solo el latido, sin la sirena de alarma.
     const mapped = (dl - RIVAL_DANGER_WARN) / (10 - RIVAL_DANGER_WARN);
-    if (mapped > level) level = mapped;
+    if (mapped > level) { level = mapped; dangerPlayerId = player.id; }
   }
-  rivalDangerAudio.setDanger(level);
+  // El latido suena desde el mini-tablero del rival más al borde (grilla lateral).
+  rivalDangerAudio.setDanger(level, false, dangerPlayerId ? panForPlayerBoard(dangerPlayerId) : 0);
 }
 
 // Reconstruye el GameState del rival enfocado a partir de su engine snapshot, para
@@ -5550,6 +5564,9 @@ function driveSpectatorJuice(focusState: GameState, focusId: string): void {
   const pendingDelta = stats.pendingGarbage - prev.pending;
   if (pendingDelta > 0) events.push({ type: 'incomingGarbage', frame: stats.frame, lines: pendingDelta });
   spectatorJuice.handleEvents(focusState, events);
+  // Paneo del tablero enfocado: también está centrado en el canvas, así que sigue la
+  // columna de su pieza activa igual que el tablero propio.
+  const focusPan = panForBoardColumn(focusState.active?.x);
   if (stats.pieces > prev.pieces) {
     spectatorJuice.onLock();
     // Sonido de pieza colocada del rival observado. En la partida propia este "thud"
@@ -5557,15 +5574,15 @@ function driveSpectatorJuice(focusState: GameState, focusId: string): void {
     // espectador; sin esto solo se oirían los eventos grandes (clears/ataques/KO) y
     // el tablero se sentiría mudo pieza a pieza. Usamos 'lock' (no 'hardDrop') porque
     // desde snapshots no sabemos si fue hard drop y es un golpe de colocación neutro.
-    sound.play('lock');
+    sound.play('lock', focusPan);
   } else if (activeNow && prev.active && activeNow.type === prev.active.type) {
     // Misma pieza entre snapshots (no se fijó ninguna): deduzco mover/girar por diff
     // contra el snapshot anterior, igual que en la partida propia. Los snapshots
     // llegan espaciados, así que esto suena una vez por actualización (no por input),
     // pero da el feedback de que la pieza se está moviendo. El giro tiene prioridad
     // sobre el desplazamiento si ambos cambiaron en el mismo salto de snapshot.
-    if (activeNow.rotation !== prev.active.rotation) sound.play('rotate');
-    else if (activeNow.x !== prev.active.x) sound.play('move');
+    if (activeNow.rotation !== prev.active.rotation) sound.play('rotate', focusPan);
+    else if (activeNow.x !== prev.active.x) sound.play('move', focusPan);
   }
   spectatorJuice.frame(focusState);
   spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
@@ -6984,22 +7001,43 @@ function renderRelaxAudio(): string {
     </div>`;
 }
 
+// Paneo posicional de un sonido del tablero CENTRADO (el tuyo o el enfocado como
+// espectador), a partir de la columna donde ocurre. Como el tablero está centrado en
+// pantalla, el efecto es leve y sigue a la pieza activa de un borde al otro.
+function panForBoardColumn(col: number | null | undefined): number {
+  if (col == null || !isPositionalAudio()) return 0;
+  const rect = renderer.boardGeometry();
+  if (!rect || rect.cell <= 0) return 0;
+  const screenX = rect.boardX + (col + 0.5) * rect.cell;
+  return panForScreenX(screenX);
+}
+
+// Paneo de la pieza activa de TU motor local (cues de input move/rotate/hardDrop/...).
+function localPiecePan(): number {
+  try {
+    return panForBoardColumn(engine.getState().active?.x);
+  } catch {
+    return 0;
+  }
+}
+
 function playImmediateInputSounds(actions: InputAction[]): void {
+  const pan = localPiecePan();
   for (const action of actions) {
-    if (action === 'rotateCW' || action === 'rotateCCW' || action === 'rotate180') sound.play('rotate');
-    if (action === 'softDrop') sound.play('softDrop');
+    if (action === 'rotateCW' || action === 'rotateCCW' || action === 'rotate180') sound.play('rotate', pan);
+    if (action === 'softDrop') sound.play('softDrop', pan);
     if (action === 'hardDrop') {
-      sound.play('hardDrop');
+      sound.play('hardDrop', pan);
       juice.onHardDrop();
     }
-    if (action === 'hold') sound.play('hold');
+    if (action === 'hold') sound.play('hold', pan);
   }
 }
 
 function playAcceptedMoveSound(before: { type: string; x: number } | null, after: { type: string; x: number } | null, actions: InputAction[]): void {
   const requestedHorizontalMove = actions.some((action) => action === 'moveLeft' || action === 'moveRight');
   if (!requestedHorizontalMove || !before || !after) return;
-  if (before.type === after.type && before.x !== after.x) sound.play('move');
+  if (before.type === after.type && before.x !== after.x) sound.play('move', panForBoardColumn(after.x));
 }
 
 // Disparo por flanco del bump de pared: 0 = sin contacto, -1/1 = pared ya tocada
