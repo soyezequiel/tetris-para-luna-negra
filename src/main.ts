@@ -40,7 +40,7 @@ import { SoundEngine, type ReverbMode, type VolumeChannel } from './audio/SoundE
 import { GameEngine } from './game/engine';
 import { cellsFor } from './game/pieces';
 import { createReplayLog, recordGarbage, recordInput } from './game/replay';
-import { BATTLE_RULES, DEFAULT_RULES, softDropCellsPerFrameForFactor } from './game/rules';
+import { BATTLE_RULES, softDropCellsPerFrameForFactor } from './game/rules';
 import { resolveGameplayFrame } from './game/frameClock';
 import { displayedElapsedFrames } from './game/timing';
 import type { ActivePiece, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
@@ -79,7 +79,7 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { canStartRoom, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden } from './storage';
+import { loadRecord, saveAudioMutes, saveAudioVolumes, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
@@ -191,7 +191,7 @@ const MAX_OFFLINE_RESUME_FRAMES = 30;
 const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
-type RunKind = 'standard' | 'custom' | 'online';
+type RunKind = 'custom' | 'online';
 type SequencedOnlineInput = GameInput & { sequence: number };
 type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: string };
 type StoredOnlineRoomSession = {
@@ -201,7 +201,7 @@ type StoredOnlineRoomSession = {
 
 let inputSettings = loadInputSettings();
 let customSettings = loadCustomSettings();
-let gameRules = rulesFromSettings(inputSettings);
+let gameRules = customRulesFromSettings(customSettings, inputSettings);
 let seed = randomSeed();
 let engine = new GameEngine(seed, gameRules);
 let replay = createReplayLog(seed, gameRules);
@@ -268,18 +268,16 @@ let soloCountdownStartsAtMs = 0;
 // Compartido por la cuenta regresiva solo y online: el último segundo cuyo sonido
 // ya se reprodujo, para no repetir el beep dentro del mismo segundo.
 let lastCountdownSecondPlayed = -1;
-let currentRunKind: RunKind = 'standard';
+let currentRunKind: RunKind = 'custom';
 let customTab: CustomTab = 'game';
 let gameFrame = 0;
 let gameClockOriginMs = performance.now();
-let savedFinish = false;
 let savedRunHistoryEntry = false;
 let runSplitTracker = new RunSplitTracker();
 let lastPieces = 0;
 let lastLines = 0;
 let lastStatus = engine.getState().status;
 let runMaxCombo = 0;
-let runWasNewBest = false;
 let volumeFeedback: { channel: VolumeChannel; expiresAt: number } | null = null;
 let bindingCapture: ControlAction | null = null;
 let lastExportName: string | null = null;
@@ -1130,7 +1128,7 @@ function handleOverlayClick(event: MouseEvent): void {
     return;
   }
 
-  if (action === 'start') startNewRun();
+  if (action === 'start') startCustomRun();
   if (action === 'restart') restartCurrentRun();
   if (action === 'solo-menu') openModeMenu('soloMenu');
   if (action === 'multiplayer-menu') openOnlineMenu();
@@ -1395,7 +1393,7 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
   return false;
 }
 
-function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nextRunKind: RunKind = nextMode === 'onlinePlaying' ? 'online' : 'standard'): void {
+function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nextRunKind: RunKind = nextMode === 'onlinePlaying' ? 'online' : 'custom'): void {
   if (nextRunKind !== 'online' && onlineRoomHasOtherPlayers()) {
     localRunError = 'No podés jugar modo solo mientras hay otras personas en la sala.';
     input.releaseAll();
@@ -1415,7 +1413,7 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   // Online: main.ts conoce los tableros rivales y enruta el proyectil de ataque
   // hacia ellos (ver flyOnlineAttackProjectile). En solo, retroceso en tu borde.
   juice.setAttackRouting(nextRunKind === 'online' ? 'external' : 'auto');
-  gameRules = rulesForRun(nextMode, nextRunKind);
+  gameRules = rulesForRun(nextMode);
   seed = nextSeed;
   engine = new GameEngine(seed, gameRules);
   replay = createReplayLog(seed, gameRules);
@@ -1424,14 +1422,12 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   onlineReplayBroadcast = false;
   gameFrame = 0;
   gameClockOriginMs = performance.now();
-  savedFinish = false;
   savedRunHistoryEntry = false;
   runSplitTracker = new RunSplitTracker();
   lastPieces = 0;
   lastLines = 0;
   lastStatus = engine.getState().status;
   runMaxCombo = 0;
-  runWasNewBest = false;
   if (nextMode === 'playing') {
     const isE2E = !!(window as any).__E2E__ || navigator.webdriver;
     if (isE2E) {
@@ -1507,7 +1503,7 @@ function goToMenu(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
   appMode = 'menu';
-  currentRunKind = 'standard';
+  currentRunKind = 'custom';
   syncGameplayClockToCurrentFrame();
   settingsReturnMode = 'menu';
   playback = null;
@@ -2887,13 +2883,6 @@ function syncRunEffects(state: GameState, events: GameEvent[]): void {
   lastPieces = state.stats.pieces;
   lastLines = state.stats.lines;
   lastStatus = state.status;
-  if (state.status === 'finished' && state.stats.finishFrame !== null && !savedFinish) {
-    const previousBest = best.best40LineFrames;
-    runWasNewBest = currentRunKind === 'standard'
-      && (previousBest === null || state.stats.finishFrame < previousBest);
-    best = saveBest40LineFrames(state.stats.finishFrame);
-    savedFinish = true;
-  }
   if ((state.status === 'finished' || state.status === 'gameover') && !savedRunHistoryEntry) {
     const entry = createRunHistoryEntry(createExportedReplay(replay, state, inputSettings, undefined, currentRunSummary(state)));
     if (entry) runHistory = saveRunHistoryEntry(entry);
@@ -4111,7 +4100,6 @@ function renderOverlay(state: GameState): void {
     ${soloRelax ? renderRelaxAudio() : ''}
     ${autoPlayAccessGranted ? renderAutoPlayToggle() : ''}
     <div class="help">${escapeHtml(helpText())}</div>
-    ${soloRelax ? '' : `<div class="best">Best ${best.best40LineFrames === null ? '--:--.---' : formatFrames(best.best40LineFrames)}</div>`}
     ${soloRelax ? '' : `<div class="audio-panel">
       <button class="hud-action sound" type="button" data-ui-action="toggle-sound">${sound.isMuted() ? 'Sound off' : 'Sound on'}</button>
       ${renderVolumeChannelRow('sfx')}
@@ -4326,9 +4314,9 @@ function renderSoloResultsOverlay(state: GameState): string {
   const pieces = state.stats.pieces;
   const pps = summary.pps.toFixed(1);
   const combo = runMaxCombo;
-  const subtitle = target ? `${target} LÍNEAS · SPRINT` : 'CUSTOM';
+  const subtitle = target ? `OBJETIVO ${target} LÍNEAS` : 'CUSTOM';
   const badge = isClear
-    ? `<div class="solo-results-badge solo-results-badge--clear">✓ OBJETIVO CUMPLIDO${runWasNewBest ? ' · MEJOR MARCA' : ''}</div>`
+    ? '<div class="solo-results-badge solo-results-badge--clear">✓ OBJETIVO CUMPLIDO</div>'
     : `<div class="solo-results-badge solo-results-badge--fail">${escapeHtml(gameOverReasonMessage(state.stats.gameOverReason))}</div>`;
   const verdict = isClear
     ? '<div class="solo-results-verdict solo-results-verdict--clear">CLEAR</div>'
@@ -6067,7 +6055,7 @@ function renderCustomPanelContent(): string {
         ${runError}
         <div class="panel-actions custom-actions" style="display: flex; gap: 12px; margin-top: 24px;">
           <button class="dash-action-btn" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="custom-back">Volver</button>
-          <button class="dash-action-btn accent" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="start">Jugar 40 líneas</button>
+          <button class="dash-action-btn accent" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="custom-start">Jugar</button>
           <button class="dash-action-btn danger" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="custom-reset">Restablecer</button>
         </div>
       </section>
@@ -6523,19 +6511,19 @@ function renderDashboardCenterContent(_state: GameState): string {
   if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
     return `
       <div class="dash-hero-card">
-        <img class="dash-hero-img" src="/tetris-hero.png" alt="40 líneas" />
+        <img class="dash-hero-img" src="/tetris-hero.png" alt="Custom" />
         <div class="dash-hero-veil"></div>
         <div class="dash-hero-scan"></div>
         <div class="dash-hero-sheen"></div>
         <div class="dash-hero-content">
-          <div class="dash-hero-eyebrow">SPRINT · OBJETIVO 40 LÍNEAS</div>
-          <h2 class="dash-hero-title">40 LÍNEAS</h2>
-          <p class="dash-hero-subtitle">Despejá 40 líneas lo antes posible. Termina con <strong>CLEAR</strong>.</p>
+          <div class="dash-hero-eyebrow">PARTIDA PERSONALIZADA</div>
+          <h2 class="dash-hero-title">CUSTOM</h2>
+          <p class="dash-hero-subtitle">Jugá con tus reglas. Configurá todo a tu gusto, en solo o multijugador.</p>
           <div class="dash-hero-cta">
-            <button class="dash-hero-btn dash-hero-btn--play" type="button" data-ui-action="start" aria-label="Jugar 40 líneas">
+            <button class="dash-hero-btn dash-hero-btn--play" type="button" data-ui-action="start" aria-label="Jugar custom">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="#05070f"><path d="M8 5v14l11-7z"/></svg>JUGAR
             </button>
-            <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Custom</button>
+            <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar</button>
           </div>
         </div>
       </div>
@@ -6548,8 +6536,8 @@ function renderDashboardCenterContent(_state: GameState): string {
         <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Modos solo</h1>
         <p style="color: var(--dash-text-dim); margin-bottom: 24px; font-size: 14px; font-weight: 500;">Todos los modos disponibles para jugar local.</p>
         <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px;">
-          <button class="dash-action-btn accent" type="button" data-ui-action="start">40 líneas</button>
-          <button class="dash-action-btn" type="button" data-ui-action="custom-open">Custom</button>
+          <button class="dash-action-btn accent" type="button" data-ui-action="start">Jugar custom</button>
+          <button class="dash-action-btn" type="button" data-ui-action="custom-open">Configurar custom</button>
           <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
         </div>
       </div>
@@ -7217,23 +7205,9 @@ function triggerWallImpact(
   }
 }
 
-function rulesFromSettings(settings: InputSettings): GameRules {
-  return {
-    ...DEFAULT_RULES,
-    // La gravedad acelera como en TETR.IO: curva guideline subiendo de nivel cada
-    // 10 líneas a medida que avanza la partida.
-    gravityCurve: 'guideline',
-    gravityLevelLines: 10,
-    dasFrames: settings.dasFrames,
-    arrFrames: settings.arrFrames,
-    softDropCellsPerFrame: softDropCellsPerFrameForFactor(settings.softDropFactor),
-  };
-}
-
-function rulesForRun(mode: AppMode, runKind: RunKind): GameRules {
+function rulesForRun(mode: AppMode): GameRules {
   if (mode === 'onlinePlaying') return onlineRulesFromRoom();
-  if (runKind === 'custom') return customRulesFromSettings(customSettings, inputSettings);
-  return rulesFromSettings(inputSettings);
+  return customRulesFromSettings(customSettings, inputSettings);
 }
 
 function battleRulesFromSettings(settings: InputSettings): GameRules {

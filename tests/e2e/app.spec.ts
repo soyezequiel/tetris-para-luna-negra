@@ -19,12 +19,11 @@ test.describe('TETRA browser flows', () => {
   test('starts a run and pauses/resumes from the HUD', async ({ page }) => {
     await openFreshApp(page);
 
-    await expect(action(page, 'solo-menu')).toHaveText('SOLO');
-    await action(page, 'solo-menu').click();
-    await expect.poll(() => appMode(page)).toBe('soloMenu');
-    await expect(action(page, 'start')).toHaveText('40 líneas');
-    await action(page, 'start').click();
+    // El hero del inicio arranca una partida custom solo (ya no existe el modo 40 líneas).
+    await expect(action(page, 'start')).toContainText('JUGAR');
+    await action(page, 'start').click({ force: true });
     await expect.poll(() => appMode(page)).toBe('playing');
+    await expect.poll(() => page.evaluate(() => window.stack40.getState().stats.targetLines)).toBeNull();
 
     await page.keyboard.press('Escape');
     await expect.poll(() => appMode(page)).toBe('paused');
@@ -39,12 +38,12 @@ test.describe('TETRA browser flows', () => {
   test('configures and starts a custom run from the visible menu', async ({ page }) => {
     await openFreshApp(page);
 
-    await action(page, 'solo-menu').click();
-    await expect.poll(() => appMode(page)).toBe('soloMenu');
     await action(page, 'custom-open').click();
     await expect.poll(() => appMode(page)).toBe('custom');
     await expect(page.getByRole('heading', { name: 'Custom' })).toBeVisible();
-    await expect(page.locator('[data-custom-setting="gravity"]')).toHaveValue('0.02');
+    // Por defecto el modelo de gravedad es guideline (estilo TETR.IO); el slider
+    // manual 'gravity' sólo aparece en modo lineal, así que validamos el selector.
+    await expect(page.locator('select[data-custom-setting="gravityModel"]')).toHaveValue('guideline');
     await expect(page.locator('[data-custom-setting="lockDelayFrames"]')).toHaveValue('30');
     await expect(page.locator('[data-custom-setting="boardWidth"]')).toHaveValue('10');
 
@@ -86,8 +85,7 @@ test.describe('TETRA browser flows', () => {
     const replayPath = await writeReplayFixture('imported-replay.json');
     await openFreshApp(page);
 
-    await action(page, 'solo-menu').click();
-    await action(page, 'start').click();
+    await action(page, 'start').click({ force: true });
     await expect.poll(() => appMode(page)).toBe('playing');
     await page.keyboard.press('Space');
     await page.keyboard.press('Escape');
@@ -127,8 +125,7 @@ test.describe('TETRA browser flows', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openFreshApp(page);
 
-    await action(page, 'solo-menu').click();
-    await action(page, 'start').click();
+    await action(page, 'start').click({ force: true });
     await expect.poll(() => appMode(page)).toBe('playing');
 
     const moveLeft = page.locator('[data-touch-action="moveLeft"]');
@@ -165,8 +162,7 @@ test.describe('TETRA browser flows', () => {
   test('repeats held keyboard controls after the input debounce', async ({ page }) => {
     await openFreshApp(page);
 
-    await action(page, 'solo-menu').click();
-    await action(page, 'start').click();
+    await action(page, 'start').click({ force: true });
     await expect.poll(() => appMode(page)).toBe('playing');
 
     await page.keyboard.down('ArrowLeft');
@@ -188,8 +184,7 @@ test.describe('TETRA browser flows', () => {
   test('does not repeat held rotation controls', async ({ page }) => {
     await openFreshApp(page);
 
-    await action(page, 'solo-menu').click();
-    await action(page, 'start').click();
+    await action(page, 'start').click({ force: true });
     await expect.poll(() => appMode(page)).toBe('playing');
 
     await page.keyboard.down('ArrowUp');
@@ -785,10 +780,10 @@ test.describe('TETRA browser flows', () => {
     await action(page, 'main-menu').click();
     await expect.poll(() => appMode(page)).toBe('menu');
 
-    await action(page, 'solo-menu').click();
-    await action(page, 'start').click();
+    await action(page, 'start').click({ force: true });
 
-    await expect.poll(() => appMode(page)).toBe('soloMenu');
+    // Sigue en el menú (no arranca) y muestra el aviso.
+    await expect.poll(() => appMode(page)).toBe('menu');
     await expect(page.getByText('No podés jugar modo solo mientras hay otras personas en la sala.')).toBeVisible();
   });
 
@@ -799,8 +794,7 @@ test.describe('TETRA browser flows', () => {
     await action(page, 'online-create-private').click();
     await expect.poll(() => appMode(page)).toBe('roomLobby');
     await action(page, 'main-menu').click();
-    await action(page, 'solo-menu').click();
-    await action(page, 'start').click();
+    await action(page, 'start').click({ force: true });
 
     await expect.poll(() => appMode(page)).toBe('playing');
   });
