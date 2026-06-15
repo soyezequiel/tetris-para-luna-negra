@@ -5421,7 +5421,7 @@ function spectatorFocusState(player: OnlinePlayer): GameState | null {
 // Reproduce el juice (partículas, flashes, popups, sonido) del tablero observado.
 // Los snapshots del rival NO traen eventos, así que se infieren por diff contra el
 // snapshot anterior: líneas borradas → line-clear (con TETRIS/combo/ataque según
-// stats), pieza nueva → lock, garbage pendiente que sube → telegrafía entrante;
+// stats), pieza nueva → lock (visual + sonido), garbage pendiente que sube → telegrafía entrante;
 // el peligro por altura y las transiciones KO/Win las saca frame() del estado.
 // Entre snapshots el estado no cambia (mismo snapshot reconstruido), así que no se
 // generan eventos falsos; solo el peligro se actualiza suave cada frame.
@@ -5464,7 +5464,15 @@ function driveSpectatorJuice(focusState: GameState, focusId: string): void {
   const pendingDelta = stats.pendingGarbage - prev.pending;
   if (pendingDelta > 0) events.push({ type: 'incomingGarbage', frame: stats.frame, lines: pendingDelta });
   spectatorJuice.handleEvents(focusState, events);
-  if (stats.pieces > prev.pieces) spectatorJuice.onLock();
+  if (stats.pieces > prev.pieces) {
+    spectatorJuice.onLock();
+    // Sonido de pieza colocada del rival observado. En la partida propia este "thud"
+    // sale del handler de input (playImmediateInputSounds), que no corre para el
+    // espectador; sin esto solo se oirían los eventos grandes (clears/ataques/KO) y
+    // el tablero se sentiría mudo pieza a pieza. Usamos 'lock' (no 'hardDrop') porque
+    // desde snapshots no sabemos si fue hard drop y es un golpe de colocación neutro.
+    sound.play('lock');
+  }
   spectatorJuice.frame(focusState);
   spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage };
 }
