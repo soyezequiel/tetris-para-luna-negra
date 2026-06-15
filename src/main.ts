@@ -6137,40 +6137,25 @@ function renderCustomTabBody(): string {
   if (customTab === 'meta') {
     return [
       renderCustomSection('Meta', [
-        renderCustomSelect('Música', 'musicMode', [['random-calm', 'Aleatoria: tranquila']]),
         renderCustomStaticRow('Envío de repeticiones', 'No'),
       ]),
     ].join('');
   }
   return [
     renderCustomSection('General', [
-      renderCustomSelect('Tipo de bolsa', 'randomBagType', [['7-bag', '7-BAG']]),
-      renderCustomSelect('Giros permitidos', 'allowedSpins', [['all-mini-plus', 'ALL-MINI+']]),
-      renderCustomSelect('Tabla de combos', 'comboTable', [['multiplier', 'MULTIPLIER']]),
-      renderCustomToggle('All clears', 'enableAllClears'),
       renderCustomToggle('Semilla aleatoria', 'useRandomSeed'),
       renderCustomNumber('Semilla', 'seed'),
       renderCustomToggle('Permitir reintento', 'allowRetry'),
-      renderCustomNumber('Stock', 'stock'),
-      renderCustomToggle('Clutch clears', 'enableClutchClears'),
-      renderCustomToggle('Desactivar lockout', 'disableLockout'),
       renderCustomNumber('Ancho del tablero', 'boardWidth'),
       renderCustomNumber('Alto del tablero', 'boardHeight'),
     ]),
-    renderCustomSection('Supervivencia', [
-      renderCustomSelect('Modo', 'survivalMode', [['none', 'Ninguno']]),
+    renderCustomSection('Basura', [
       renderCustomNumber('Desorden de basura %', 'garbageMessinessPercent'),
       renderCustomNumber('Tope de basura', 'garbageCap'),
       renderCustomToggle('Cambiar al atacar', 'changeOnAttack'),
       renderCustomToggle('Basura continua', 'continuousGarbage'),
-      renderCustomNumber('Altura de capa', 'layerHeight'),
-      renderCustomToggle('Capa pegajosa', 'stickyLayer'),
-      renderCustomNumber('Altura mínima de capa', 'minimumLayerHeight'),
-      renderCustomNumber('Intervalo del temporizador', 'timerIntervalSeconds'),
     ]),
     renderCustomSection('Controles', [
-      renderCustomToggle('Giros 180°', 'allow180Spins'),
-      renderCustomSelect('Tabla de kicks', 'kickTable', [['srs-plus', 'SRS+']]),
       renderCustomToggle('Hard drop', 'useHardDrop'),
       renderCustomToggle('Cola next', 'useNextQueue'),
       renderCustomToggle('Cola hold', 'useHoldQueue'),
@@ -6178,8 +6163,6 @@ function renderCustomTabBody(): string {
       renderCustomToggle('Movimiento infinito', 'infiniteMovement'),
       renderCustomToggle('Hold infinito', 'infiniteHold'),
       renderCustomToggle('Pieza fantasma', 'showShadowPiece'),
-      renderCustomNumber('ARE (frames)', 'areFrames'),
-      renderCustomNumber('ARE de line clear', 'lineClearAreFrames'),
     ]),
     renderCustomSection('Gravedad y niveles', renderGravityRows()),
   ].join('');
@@ -6197,7 +6180,6 @@ function renderGravityRows(): string[] {
     ]),
     ...(linear ? [renderCustomNumber('Gravedad', 'gravity')] : []),
     renderCustomToggle('Usar niveles', 'useLevelling'),
-    renderCustomToggle('Niveles master', 'useMasterLevels'),
     renderCustomNumber('Nivel inicial', 'startingLevel'),
     renderCustomToggle('Niveles estáticos', 'useStaticLevelling'),
     renderCustomNumber('Velocidad estática', 'levelStaticSpeed'),
@@ -6223,7 +6205,7 @@ function renderCustomSection(title: string, rows: string[]): string {
 
 function renderCustomSelect(
   label: string,
-  key: keyof Pick<CustomSettings, 'randomBagType' | 'allowedSpins' | 'comboTable' | 'survivalMode' | 'kickTable' | 'objectiveMode' | 'musicMode' | 'gravityModel'>,
+  key: keyof Pick<CustomSettings, 'objectiveMode' | 'gravityModel'>,
   options: [string, string][],
 ): string {
   const value = String(customSettings[key]);
