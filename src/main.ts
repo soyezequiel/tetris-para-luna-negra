@@ -1015,12 +1015,16 @@ function handleOverlayInput(event: Event): void {
     const customKey = parseCustomSettingKey(target.dataset.customSetting);
     if (customKey && target.value !== '') {
       customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.type === 'checkbox' ? target.checked : target.value));
+      scheduleOnlineRoomRulesSync();
     }
     return;
   }
   if (target instanceof HTMLSelectElement) {
     const customKey = parseCustomSettingKey(target.dataset.customSetting);
-    if (customKey) customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.value));
+    if (customKey) {
+      customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.value));
+      scheduleOnlineRoomRulesSync();
+    }
   }
 }
 
@@ -1142,6 +1146,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'custom-reset') {
     customSettings = resetCustomSettings();
     renderer.setColorBlind(customSettings.colorBlindMode);
+    scheduleOnlineRoomRulesSync();
   }
   if (action === 'custom-export') lastCustomExportName = exportCustomSettings();
   if (action === 'custom-tab') {
@@ -1153,6 +1158,7 @@ function handleOverlayClick(event: MouseEvent): void {
     if (setting && isCustomBooleanSetting(setting)) {
       customSettings = saveCustomSettings(updateCustomSetting(customSettings, setting, !customSettings[setting]));
       if (setting === 'colorBlindMode') renderer.setColorBlind(customSettings.colorBlindMode);
+      scheduleOnlineRoomRulesSync();
     }
   }
   if (action === 'custom-step') {
@@ -1160,6 +1166,7 @@ function handleOverlayClick(event: MouseEvent): void {
     const delta = Number(control.dataset.delta ?? 0);
     if (setting && Number.isFinite(delta)) {
       customSettings = saveCustomSettings(updateCustomSettingByDelta(customSettings, setting, delta));
+      scheduleOnlineRoomRulesSync();
     }
   }
   if (action === 'online-open') openOnlineMenu();
@@ -2098,6 +2105,55 @@ async function setOnlineRoomVisibility(value: string | undefined): Promise<void>
       visibility,
       visibilityOnly: true,
       matchType: 'custom',
+    });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+// Sync de reglas en vivo: si el host edita la config custom estando en el lobby,
+// re-enviamos las reglas a la sala (debounced) para que apliquen al instante en
+// todos los clientes. Reusa el path completo de updateRoomSettings del server.
+let onlineRulesSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function canSyncOnlineRoomRules(): boolean {
+  if (!onlineRoom || !isOnlineHost() || onlineRoom.status !== 'lobby') return false;
+  // El server rechaza cambios de reglas con una apuesta activa; no spameamos.
+  if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) return false;
+  return true;
+}
+
+function scheduleOnlineRoomRulesSync(): void {
+  if (!canSyncOnlineRoomRules()) return;
+  if (onlineRulesSyncTimer) clearTimeout(onlineRulesSyncTimer);
+  onlineRulesSyncTimer = setTimeout(() => {
+    onlineRulesSyncTimer = null;
+    void syncOnlineRoomRules();
+  }, 350);
+}
+
+async function syncOnlineRoomRules(): Promise<void> {
+  if (!canSyncOnlineRoomRules() || !onlineRoom) return;
+  if (onlineBusy) {
+    // Otra operación online en curso: reintentar sin perder el cambio.
+    scheduleOnlineRoomRulesSync();
+    return;
+  }
+  const room = onlineRoom;
+  onlineBusy = true;
+  try {
+    const response = await onlineClient.updateRoomSettings({
+      roomId: room.id,
+      playerId: onlinePlayer.id,
+      visibility: room.visibility,
+      mode: 'custom',
+      matchType: 'custom',
+      rules: onlineCustomRulesFromSettings(),
     });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);

@@ -19,6 +19,7 @@ import {
   setPlayerReady,
   startRoom,
   updateProgress,
+  updateRoomSettings,
   type RoomStore,
 } from '../src/online/roomService';
 import type { EliminateRequest, OnlineRoom, ProgressRequest } from '../src/online/protocol';
@@ -474,6 +475,63 @@ describe('spectators when not everyone is ready', () => {
     expect(third.status).toBe('joined');
     expect(third.alive).toBe(false);
     expect(third.ready).toBe(false);
+  });
+});
+
+describe('custom rules live update in the lobby', () => {
+  // El host edita la config custom estando en el lobby: el cliente re-envía las
+  // reglas vía updateRoomSettings (sin visibilityOnly) y deben aplicarse a la sala
+  // para que el resto de los jugadores las reciba.
+  it('applies host custom rules to the room', async () => {
+    const store = new MemoryRoomStore();
+    const created = await createRoom(store, {
+      playerId: HOST_ID,
+      name: 'Host',
+      visibility: 'private',
+      mode: 'custom',
+      matchType: 'custom',
+    });
+
+    const updated = await updateRoomSettings(store, {
+      roomId: created.id,
+      playerId: HOST_ID,
+      mode: 'custom',
+      matchType: 'custom',
+      rules: { ...created.rules, boardWidth: 7, gravityCurve: 'linear', allowHold: false },
+    });
+
+    expect(updated.rules.boardWidth).toBe(7);
+    expect(updated.rules.gravityCurve).toBe('linear');
+    expect(updated.rules.allowHold).toBe(false);
+
+    const persisted = await store.getRoom(created.id);
+    expect(persisted?.rules.boardWidth).toBe(7);
+    expect(persisted?.rules.gravityCurve).toBe('linear');
+  });
+
+  it('refuses rule changes from a non-host', async () => {
+    const store = new MemoryRoomStore();
+    const created = await createRoom(store, {
+      playerId: HOST_ID,
+      name: 'Host',
+      visibility: 'private',
+      mode: 'custom',
+      matchType: 'custom',
+    });
+    await joinRoom(store, { roomId: created.id, playerId: GUEST_ID, name: 'Guest' });
+
+    await expect(
+      updateRoomSettings(store, {
+        roomId: created.id,
+        playerId: GUEST_ID,
+        mode: 'custom',
+        matchType: 'custom',
+        rules: { ...created.rules, boardWidth: 5 },
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    const persisted = await store.getRoom(created.id);
+    expect(persisted?.rules.boardWidth).toBe(created.rules.boardWidth);
   });
 });
 
