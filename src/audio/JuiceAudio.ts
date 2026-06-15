@@ -29,6 +29,7 @@ export class JuiceAudio {
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatId = 0;
   private dangerLevel = 0;
+  private dangerCritical = false;
 
   constructor(muted = false, sfxVolume = 1) {
     this.muted = muted;
@@ -91,14 +92,26 @@ export class JuiceAudio {
   ko(): void {
     this.neo.ko();
   }
+  /** Sirena de top-out inminente (tu propia muerte a punto de pasar). */
+  alarm(): void {
+    this.neo.alarm();
+  }
+  /** Un rival está al borde de la derrota: barrido predador + campanazo. */
+  rivalDanger(): void {
+    this.neo.rivalCrit();
+  }
   win(): void {
     this.resetMix();
     this.neo.win();
   }
 
   // ---------- latido de peligro (loop que acelera con la altura) ----------
-  setDanger(level: number): void {
+  // `critical` = top-out inminente: dispara la sirena al cruzar el umbral (flanco
+  // de subida) y, mientras dure, el latido se acelera al máximo.
+  setDanger(level: number, critical = false): void {
     this.dangerLevel = clamp01(level);
+    if (critical && !this.dangerCritical && !this.muted) this.neo.alarm();
+    this.dangerCritical = critical;
     if (this.dangerLevel > 0.02 && !this.muted) this.startHeartbeat();
     else this.stopHeartbeat();
   }
@@ -110,8 +123,9 @@ export class JuiceAudio {
         this.heartbeatTimer = null;
         return;
       }
-      this.neo.heart(this.dangerLevel);
-      const period = 920 - this.dangerLevel * 540;
+      this.neo.heart(this.dangerCritical ? 1 : this.dangerLevel);
+      const eff = this.dangerCritical ? 1 : this.dangerLevel;
+      const period = 920 - eff * 540;
       this.heartbeatTimer = setTimeout(tick, period);
     };
     tick();

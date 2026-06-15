@@ -265,6 +265,25 @@ export class NeoSynth {
     this.sub({ freq: 52, freqEnd: 38, dur: 0.13, gain: 0.26 + l * 0.16, when: 0.16, harm: false });
   }
 
+  /** Sirena tensa de "estás por morir" (top-out inminente). Dos beeps disonantes
+   * que muerden, por encima del latido, para que sea imposible no notarlo. */
+  alarm(): void {
+    if (!this.open()) return;
+    this.voice({ type: 'sawtooth', freq: 1380, freqEnd: 980, dur: 0.13, gain: 0.16, glide: 'lin', drive: DRIVE });
+    this.voice({ type: 'square', freq: 920, freqEnd: 1320, dur: 0.12, gain: 0.10, glide: 'lin', when: 0.14, drive: DRIVE * 0.8 });
+    this.crunch({ filter: 'highpass', freq: 2600, q: 0.7, dur: 0.10, gain: 0.10 * CRUNCH, drive: DRIVE });
+  }
+
+  /** "Tu rival se está por morir": barrido predador que sube y un campanazo
+   * brillante. Es buena noticia para vos (rematalo), así que suena afilado y dulce. */
+  rivalCrit(): void {
+    if (!this.open()) return;
+    this.voice({ type: 'sawtooth', freq: 420, freqEnd: 1560, dur: 0.22, gain: 0.12, glide: 'exp', drive: DRIVE * 0.6, reverb: REVERB * 0.2 });
+    this.noteP(1568.0, 0.34, 0.13, 0.10, REVERB * 0.5);
+    this.noteP(2093.0, 0.30, 0.10, 0.14, REVERB * 0.6);
+    this.crunch({ filter: 'highpass', freq: 4200, q: 0.6, dur: 0.10, gain: 0.08 * BRIGHT * CRUNCH, when: 0.10, drive: DRIVE * 0.6 });
+  }
+
   ko(): void {
     if (!this.open()) return;
     this.sub({ freq: 320, freqEnd: 38, dur: 0.70, gain: 0.55, reverb: REVERB * 0.2 });

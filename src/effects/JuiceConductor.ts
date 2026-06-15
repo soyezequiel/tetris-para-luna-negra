@@ -86,18 +86,28 @@ export class JuiceConductor {
     if (this.alive && state.status === 'playing') {
       const ratio = stackHeightRatio(state);
       let level = ratio > this.dangerStart ? Math.min(1, (ratio - this.dangerStart) / (1 - this.dangerStart - 0.08)) : 0;
+
+      // Aviso atado a la PROXIMIDAD real del top-out, no solo a la altura visible:
+      // así da antelación antes de que un lock/spawn arriba del tablero te mate de
+      // golpe. `rowsToTopOut` = filas libres entre la cima de la pila y la zona de
+      // aparición (donde el próximo spawn colisiona = muerte). Cuanto menos margen,
+      // más sube el peligro; <=3 filas ya es crítico.
+      const rowsToTopOut = rowsUntilTopOut(state);
+      const proximity = Math.max(0, Math.min(1, (5 - rowsToTopOut) / 5));
+      level = Math.max(level, proximity);
+
       // Pila por encima del área visible (dentro del buffer, estilo tetr.io): no
-      // hay muerte por tiempo, así que en vez de un countdown subimos el peligro
-      // visual al máximo mientras estás topeado. La rampa usa los primeros frames
-      // arriba para que el aviso crezca rápido pero no salte de golpe.
+      // hay muerte por tiempo; subimos el peligro al máximo mientras estés topeado.
       const above = state.stats.aboveFieldFrames;
-      if (above > 0) {
-        const progress = Math.min(1, above / 30);
-        level = Math.max(level, 0.6 + 0.4 * progress);
-      }
+      if (above > 0) level = 1;
+
+      // Crítico = muerte inminente: ya estás topeado o te quedan <=3 filas. Esto
+      // gatilla el velo rojo de pantalla y la sirena (en vez del simple latido).
+      const critical = above > 0 || rowsToTopOut <= 3;
+
       this.fx.setTopOutCountdown(null);
-      this.fx.setDanger(level);
-      this.audio.setDanger(level);
+      this.fx.setDanger(level, critical);
+      this.audio.setDanger(level, critical);
       this.fx.setPendingGarbage(state.stats.pendingGarbage);
     } else {
       this.fx.setDanger(0);
@@ -365,6 +375,24 @@ export class JuiceConductor {
   private boardTop(): number {
     return this.fx.cellPoint(0, -0.5).y;
   }
+}
+
+/** Filas libres entre la cima de la pila y la zona de aparición (= muerte por
+ * block-out). El spawn ocupa ~`hiddenRows - 2`; cuando la pila llega ahí el próximo
+ * spawn colisiona y morís. Devuelve un número grande si el tablero está vacío. */
+function rowsUntilTopOut(state: GameState): number {
+  const board = state.board;
+  const total = board.length;
+  let topRow = total;
+  for (let y = 0; y < total; y += 1) {
+    if (board[y].some((c) => c !== null)) {
+      topRow = y;
+      break;
+    }
+  }
+  if (topRow >= total) return total;
+  const spawnRow = Math.max(0, state.stats.hiddenRows - 2);
+  return topRow - spawnRow;
 }
 
 /** Altura de la pila (0..1): de la primera fila ocupada al fondo, sobre filas visibles. */

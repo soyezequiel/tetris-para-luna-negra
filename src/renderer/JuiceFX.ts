@@ -116,6 +116,7 @@ export class JuiceFX {
   private glow: { color: number; t: number; dur: number; intensity: number } | null = null;
   private dangerLevel = 0;
   private dangerPhase = 0;
+  private dangerCritical = false;
   // Flash acotado a las filas limpiadas: bandas horizontales a lo ancho del tablero,
   // en la posición exacta de cada fila borrada, que suben y bajan rápido.
   private rowFlashes: { rows: number[]; t: number; dur: number; color: number; peak: number }[] = [];
@@ -282,8 +283,9 @@ export class JuiceFX {
     this.dropTrails.push({ cols: [...cols], top, bottom, t: 0, dur: 0.28, color, subtle: true });
   }
 
-  setDanger(level: number): void {
+  setDanger(level: number, critical = false): void {
     this.dangerLevel = Math.max(0, Math.min(1, level));
+    this.dangerCritical = critical;
   }
 
   /** Garbage entrante pendiente (en líneas): dibuja un telegraph en el borde. */
@@ -405,6 +407,7 @@ export class JuiceFX {
     this.glow = null;
     this.dangerLevel = 0;
     this.dangerPhase = 0;
+    this.dangerCritical = false;
     this.pendingGarbage = 0;
     this.garbagePhase = 0;
     this.topOutSeconds = null;
@@ -582,23 +585,38 @@ export class JuiceFX {
       }
     }
 
-    // viñeta de peligro: bordes rojos que laten, escala con la altura de la pila
+    // viñeta de peligro: bordes rojos que laten, escala con la altura de la pila.
+    // En estado crítico (top-out inminente) el aviso se vuelve inconfundible: late
+    // más rápido, más rojo y suma un velo rojo que cubre el tablero entero.
     if (this.dangerLevel > 0.02 && !this.reducedMotion) {
-      this.dangerPhase += dt * (1.0 + this.dangerLevel * 2.0);
+      const crit = this.dangerCritical;
+      const speed = crit ? 4.2 : 1.0 + this.dangerLevel * 2.0;
+      this.dangerPhase += dt * speed;
       const beat = Math.pow(Math.max(0, Math.sin(this.dangerPhase * Math.PI * 2)), 1.6);
-      const a = this.dangerLevel * 0.32 + this.dangerLevel * 0.52 * beat;
-      const bands = 5;
-      const band = this.geo.cell * 1.4;
+      // Base mucho más presente que antes (0.50 + 0.70*beat vs 0.32 + 0.52*beat),
+      // y al máximo permanente cuando es crítico para que no dependa de la altura.
+      const lvl = crit ? 1 : this.dangerLevel;
+      const a = lvl * 0.5 + lvl * 0.7 * beat;
+      // Bandas rojas desde el borde hacia adentro (más bandas y más anchas en crítico).
+      const bands = crit ? 8 : 6;
+      const band = this.geo.cell * (crit ? 2.4 : 1.7);
       for (let i = 0; i < bands; i += 1) {
         const t = i / (bands - 1);
         const inset = t * band;
-        const alpha = a * (1 - t) * 0.5;
-        g.lineStyle(this.geo.cell * 0.4, PALETTE.danger, Math.max(0, alpha));
+        const alpha = a * (1 - t) * (crit ? 0.85 : 0.6);
+        g.lineStyle(this.geo.cell * (crit ? 0.55 : 0.45), PALETTE.danger, Math.max(0, alpha));
         g.drawRect(r.x + inset, r.y + inset, r.w - inset * 2, r.h - inset * 2);
       }
-      g.lineStyle(2, 0xff3c50, a * 0.7);
+      // Marco rojo brillante encendido.
+      g.lineStyle(crit ? 4 : 2.5, 0xff3c50, a * (crit ? 1 : 0.8));
       g.drawRect(r.x, r.y, r.w, r.h);
       g.lineStyle(0, 0, 0);
+      // Crítico: velo rojo latiendo sobre TODO el tablero — imposible no verlo.
+      if (crit) {
+        g.beginFill(PALETTE.danger, 0.1 + 0.22 * beat);
+        g.drawRect(r.x, r.y, r.w, r.h);
+        g.endFill();
+      }
     }
 
     // telegraph de garbage entrante: barra vertical en el borde izquierdo del

@@ -1740,6 +1740,61 @@ canvas {
   border-color: rgba(57, 212, 154, 0.6);
 }
 
+/* Rival al borde de la derrota: efectos especiales sin texto. WARN = aviso suave
+ * (la pila ya está alta). PERIL = inminente, late fuerte, se sacude y destella. */
+@keyframes peerWarnPulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(255, 170, 60, 0.35), 0 0 10px rgba(255, 150, 40, 0.25); }
+  50% { box-shadow: 0 0 0 1px rgba(255, 190, 80, 0.6), 0 0 18px rgba(255, 160, 50, 0.5); }
+}
+
+@keyframes peerPerilPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(255, 70, 80, 0.7), 0 0 14px rgba(255, 50, 60, 0.55);
+    transform: translate(0, 0);
+  }
+  25% { transform: translate(-1.5px, 1px); }
+  50% {
+    box-shadow: 0 0 0 2px rgba(255, 90, 100, 1), 0 0 26px rgba(255, 60, 70, 0.9);
+    transform: translate(1.5px, -1px);
+  }
+  75% { transform: translate(-1px, -1px); }
+}
+
+@keyframes peerPerilVeil {
+  0%, 100% { opacity: 0.12; }
+  50% { opacity: 0.4; }
+}
+
+.online-peer-board--warn .online-mini-board {
+  border-color: rgba(255, 180, 70, 0.7);
+  animation: peerWarnPulse 1s ease-in-out infinite;
+}
+
+.online-peer-board--peril .online-mini-board {
+  border-color: rgba(255, 90, 100, 0.95);
+  animation: peerPerilPulse 0.42s ease-in-out infinite;
+}
+
+/* Velo rojo latiendo sobre el tablero del rival en peligro inminente. */
+.online-peer-board--peril .online-peer-board-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: radial-gradient(circle at 50% 30%, rgba(255, 60, 70, 0.55), rgba(180, 20, 30, 0.25) 70%, transparent);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: peerPerilVeil 0.42s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .online-peer-board--warn .online-mini-board,
+  .online-peer-board--peril .online-mini-board,
+  .online-peer-board--peril .online-peer-board-body::after {
+    animation: none;
+  }
+}
+
 .online-mini-board {
   display: grid;
   width: 100%;

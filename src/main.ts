@@ -235,6 +235,13 @@ const sound = new SoundEngine(
 // Es 100% efectos, así que también se calla con el mute de canal SFX.
 const juiceAudio = new JuiceAudio(loadRecord().soundMuted || loadRecord().sfxMuted, loadRecord().sfxVolume);
 const juice = new JuiceConductor(renderer.getJuice(), juiceAudio);
+// Umbrales (sobre dangerLevel 0..10 de la sala) para los efectos de "rival al borde
+// de perder": WARN enciende el aviso suave, CRITICAL los efectos fuertes + sonido.
+const RIVAL_DANGER_WARN = 6;
+const RIVAL_DANGER_CRITICAL = 8;
+// Rivales que ya estaban en peligro crítico el frame anterior, para sonar la señal
+// una sola vez al cruzar el umbral (flanco de subida), no en loop.
+const rivalsInPeril = new Set<string>();
 // Desbloquea el AudioContext de la capa juice en el primer gesto del usuario.
 const unlockJuiceAudio = (): void => { void juiceAudio.unlock(); };
 window.addEventListener('pointerdown', unlockJuiceAudio, { once: true });
@@ -615,6 +622,7 @@ function loopBody(): void {
 
   syncOnline();
   if (import.meta.env.DEV) devBotMatch?.frame(); // BOT DEV: avanza al oponente simulado
+  syncRivalDangerCues(); // sonido cuando un rival vivo entra en peligro crítico
   syncOnlineDeathPhase(state);
   syncSoloDeathPhase(state);
   // Ya morí y terminó la animación de derrota: paso a espectador. En vez de ocultar
@@ -5433,6 +5441,32 @@ function syncSpectatorDeathSounds(focus: OnlinePlayer | null): void {
   }
 }
 
+// Suena la señal de "rival al borde de la derrota" una vez, al cruzar el umbral
+// crítico (flanco de subida). El efecto VISUAL lo dibuja el CSS del mini-tablero
+// (clases --warn/--peril en renderOnlinePeerBoard); esto solo aporta el audio.
+function syncRivalDangerCues(): void {
+  if (!onlineRoom || appMode !== 'onlinePlaying') {
+    rivalsInPeril.clear();
+    return;
+  }
+  for (const player of onlineRoom.players) {
+    if (player.id === onlinePlayer.id) continue;
+    const alive = player.alive
+      && player.status !== 'eliminated'
+      && player.status !== 'lost'
+      && player.status !== 'disconnected'
+      && player.status !== 'winner';
+    const inPeril = alive && (player.dangerLevel ?? 0) >= RIVAL_DANGER_CRITICAL;
+    if (!inPeril) {
+      rivalsInPeril.delete(player.id);
+      continue;
+    }
+    if (rivalsInPeril.has(player.id)) continue;
+    rivalsInPeril.add(player.id);
+    juiceAudio.rivalDanger();
+  }
+}
+
 // Reconstruye el GameState del rival enfocado a partir de su engine snapshot, para
 // dibujarlo en el canvas principal igual que una partida en vivo (tablero, hold,
 // next, ghost y stats). Devuelve null si todavía no llegó un snapshot con motor.
@@ -5582,8 +5616,17 @@ function renderOnlinePeerBoard(player: OnlinePlayer): string {
   const boardHtml = displayGame
     ? renderOnlineMiniBoard(displayGame)
     : '<div class="online-mini-board online-mini-board-empty">No board yet</div>';
+  // Rival vivo al borde de la derrota: clases que disparan los efectos especiales
+  // (borde rojo latiendo + sacudida + destello), sin texto. dangerLevel es 0..10.
+  const dangerClass = !outcome
+    ? player.dangerLevel >= RIVAL_DANGER_CRITICAL
+      ? ' online-peer-board--peril'
+      : player.dangerLevel >= RIVAL_DANGER_WARN
+        ? ' online-peer-board--warn'
+        : ''
+    : '';
   return `
-    <section class="online-peer-board${outcome ? ` online-peer-board--${outcome.kind}` : ''}" data-player-id="${escapeHtml(player.id)}">
+    <section class="online-peer-board${outcome ? ` online-peer-board--${outcome.kind}` : ''}${dangerClass}" data-player-id="${escapeHtml(player.id)}">
       <div class="online-peer-board-head">
         <div class="online-player-label">
           ${renderOnlineAvatar(player, 'small')}
