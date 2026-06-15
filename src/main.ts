@@ -76,7 +76,7 @@ import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayM
 import { OnlineReplayCollector } from './app/multiplayerReplay';
 import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlaybackSnapshot, type MultiReplayPlayerSnapshot } from './app/multiReplayPlayback';
 import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
-import { canStartRoom, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
+import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioMutes, saveAudioVolumes, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden } from './storage';
@@ -1124,10 +1124,15 @@ function handleOverlayClick(event: MouseEvent): void {
   }
 
   if (action === 'sidebar-play') {
-    if (!onlineRoom || !onlineRoomHasOtherPlayers()) {
-      openCustomMode();
+    // Único botón de inicio (topbar ▶), inteligente:
+    // - solo o sin sala → partida de un jugador con la config custom (honra el seed).
+    // - con rivales en la sala → el host arranca la ronda; el invitado (no puede
+    //   iniciar) alterna su estado "listo".
+    if (onlineRoom && onlineRoomHasOtherPlayers()) {
+      if (isOnlineHost()) void startOnlineRoom();
+      else void setOnlineReady(!currentOnlinePlayer()?.ready);
     } else {
-      startOnlineRoom();
+      startCustomRun();
     }
     return;
   }
@@ -4652,10 +4657,6 @@ function renderOnlineLobbyPanelContent(): string {
   if (!room) return renderOnlineMenuPanelContent();
   const player = currentOnlinePlayer();
   const host = room.hostPlayerId === onlinePlayer.id;
-  // El host puede arrancar aunque no todos estén listos: los que no lo estén entran
-  // de espectadores (basta con ≥2 listos, host incluido).
-  const canStart = canStartRoom(room, onlineNowMs());
-  const betReady = !room.bet || room.bet.status === 'funded';
   const modeLabel = roomModeLabel(room.mode);
   const readyCount = room.players.filter((candidate) => candidate.ready).length;
   // Mostramos los jugadores + un par de slots vacios para que se vea como lobby.
@@ -4690,7 +4691,7 @@ function renderOnlineLobbyPanelContent(): string {
           ? `${player?.ready
             ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
             : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
-            ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${canStart && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}`
+            ${host ? `<span class="cs2-start-hint">El host arranca con ▶ arriba</span>` : ''}`
           : '<button class="cs2-btn" type="button" disabled>Ronda en curso…</button>'}
         <button class="cs2-btn" type="button" data-ui-action="main-menu">Menú</button>
         <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
@@ -6092,10 +6093,7 @@ function renderCustomPanelContent(): string {
         </div>
         <div class="custom-start-row">
           <div class="custom-music">Música aleatoria: tranquila</div>
-          <button class="custom-start-button" type="button" data-ui-action="custom-start">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-            Empezar
-          </button>
+          <span class="custom-start-hint" style="color: var(--dash-text-dim); font-size: 13px; font-weight: 600;">Usá ▶ arriba para jugar</span>
         </div>
         <div class="custom-tabs" aria-label="Secciones de custom">
           ${CUSTOM_TABS.map((tab) => `
@@ -6111,7 +6109,6 @@ function renderCustomPanelContent(): string {
         ${runError}
         <div class="panel-actions custom-actions" style="display: flex; gap: 12px; margin-top: 24px;">
           <button class="dash-action-btn" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="custom-back">Volver</button>
-          <button class="dash-action-btn accent" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="custom-start">Jugar</button>
           <button class="dash-action-btn danger" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="custom-reset">Restablecer</button>
         </div>
       </section>
@@ -6500,6 +6497,10 @@ function renderDashboardMenu(state: GameState): string {
 
   const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
   const playClass = isPlayActive ? 'dash-topbar-play--active' : '';
+  // El único botón de inicio cambia de intención según el contexto.
+  const playTitle = onlineRoom && onlineRoomHasOtherPlayers()
+    ? (isOnlineHost() ? 'Empezar partida' : (currentOnlinePlayer()?.ready ? 'Quitar listo' : 'Marcar listo'))
+    : 'Jugar';
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
   const leaderboardClass = isLeaderboardActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
@@ -6515,7 +6516,7 @@ function renderDashboardMenu(state: GameState): string {
       <header class="dash-topbar">
         <h1 class="dash-logo">TETRA</h1>
         
-        <button class="dash-topbar-play ${playClass}" type="button" data-ui-action="sidebar-play" aria-label="Jugar">
+        <button class="dash-topbar-play ${playClass}" type="button" data-ui-action="sidebar-play" aria-label="${playTitle}" title="${playTitle}">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         </button>
 
@@ -6576,10 +6577,10 @@ function renderDashboardCenterContent(_state: GameState): string {
           <h2 class="dash-hero-title">CUSTOM</h2>
           <p class="dash-hero-subtitle">Jugá con tus reglas. Configurá todo a tu gusto, en solo o multijugador.</p>
           <div class="dash-hero-cta">
-            <button class="dash-hero-btn dash-hero-btn--play" type="button" data-ui-action="start" aria-label="Jugar custom">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="#05070f"><path d="M8 5v14l11-7z"/></svg>JUGAR
+            <button class="dash-hero-btn dash-hero-btn--play" type="button" data-ui-action="custom-open" aria-label="Configurar partida">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="#05070f"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>CONFIGURAR
             </button>
-            <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar</button>
+            <span class="dash-hero-hint" style="align-self: center; color: var(--dash-text-dim); font-size: 13px; font-weight: 600;">Usá ▶ arriba para jugar</span>
           </div>
         </div>
       </div>
@@ -6792,9 +6793,6 @@ function renderDashboardRoomPanel(): string {
   // Cuando hay una sala activa
   const host = room.hostPlayerId === onlinePlayer.id;
   const player = currentOnlinePlayer();
-  // No exigimos que todos estén listos: los que no lo estén entran de espectadores.
-  const canStart = canStartRoom(room, onlineNowMs());
-  const betReady = !room.bet || room.bet.status === 'funded';
   const readyCount = room.players.filter((candidate) => candidate.ready).length;
   const matchText = matchTypeLabel(room.matchType);
   const statusText = roomStatusLabel(room.status);
@@ -6888,7 +6886,7 @@ function renderDashboardRoomPanel(): string {
         ? `${player?.ready
           ? '<button class="dash-action-btn" type="button" data-ui-action="online-unready">No listo</button>'
           : '<button class="dash-action-btn accent" type="button" data-ui-action="online-ready">Listo</button>'}
-          ${host ? `<button class="dash-action-btn success" type="button" data-ui-action="online-start"${canStart && betReady && !onlineBusy ? '' : ' disabled'}>Empezar juego</button>` : ''}`
+          ${host ? `<span class="dash-room-start-hint" style="align-self: center; color: var(--dash-text-dim); font-size: 12px; font-weight: 600;">El host arranca con ▶ arriba</span>` : ''}`
         : '<button class="dash-action-btn" type="button" disabled>Ronda en curso…</button>'}
       <button class="dash-action-btn danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
     </div>
@@ -6942,9 +6940,6 @@ function renderActivePersistentRoomPanel(): string {
   if (!onlineRoom) return '';
   const host = onlineRoom.hostPlayerId === onlinePlayer.id;
   const player = currentOnlinePlayer();
-  // Los que no estén listos no bloquean el arranque: entran de espectadores.
-  const canStart = canStartRoom(onlineRoom, onlineNowMs());
-  const betReady = !onlineRoom.bet || onlineRoom.bet.status === 'funded';
   const readyCount = onlineRoom.players.filter((candidate) => candidate.ready).length;
   const visibilityActions = host && onlineRoom.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : '';
   return `
@@ -6968,7 +6963,7 @@ function renderActivePersistentRoomPanel(): string {
           ? `${player?.ready
             ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
             : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
-            ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${canStart && betReady && !onlineBusy ? '' : ' disabled'}>Empezar</button>` : ''}`
+            ${host ? `<span class="cs2-start-hint">El host arranca con ▶ arriba</span>` : ''}`
           : '<button class="cs2-btn" type="button" disabled>Ronda en curso…</button>'}
         <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
       </div>

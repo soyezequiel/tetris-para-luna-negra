@@ -19,9 +19,8 @@ test.describe('TETRA browser flows', () => {
   test('starts a run and pauses/resumes from the HUD', async ({ page }) => {
     await openFreshApp(page);
 
-    // El hero del inicio arranca una partida custom solo (ya no existe el modo 40 líneas).
-    await expect(action(page, 'start')).toContainText('JUGAR');
-    await action(page, 'start').click({ force: true });
+    // Único botón de inicio: el ▶ del topbar. Sin sala → partida custom solo.
+    await action(page, 'sidebar-play').click({ force: true });
     await expect.poll(() => appMode(page)).toBe('playing');
     await expect.poll(() => page.evaluate(() => window.stack40.getState().stats.targetLines)).toBeNull();
 
@@ -52,7 +51,8 @@ test.describe('TETRA browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.stack40.getCustomSettings().boardWidth)).toBe(12);
     await expect.poll(() => page.evaluate(() => window.stack40.getCustomSettings().useRandomSeed)).toBe(false);
 
-    await action(page, 'custom-start').click();
+    // Iniciar con el único botón (▶ del topbar); desde la pantalla custom y sin sala arranca solo.
+    await action(page, 'sidebar-play').click({ force: true });
     await expect.poll(() => appMode(page)).toBe('playing');
     await expect.poll(() => page.evaluate(() => window.stack40.getReplay().seed)).toBe(0);
     await expect.poll(() => page.evaluate(() => window.stack40.getState().stats.boardWidth)).toBe(12);
