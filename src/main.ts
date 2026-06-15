@@ -5296,7 +5296,7 @@ function renderOnlinePeerBoards(): string {
           .join('')
       : '<div class="online-empty">Sin otros rivales.</div>';
     return `
-      <aside class="online-versus-grid" aria-label="Remote player boards">
+      <aside class="online-versus-grid online-versus-grid--watching" aria-label="Remote player boards">
         <div class="online-versus-title online-versus-title--spectating">
           <span>Viendo</span>
           <strong>${escapeHtml(focus?.name ?? '—')}</strong>

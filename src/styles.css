@@ -6012,6 +6012,17 @@ canvas {
   font-weight: 900;
 }
 
+/* En escritorio la grilla lateral vive en el mismo top-right que el panel de audio
+   del HUD (Best + volúmenes + música). Jugando casi no molesta (rótulo "Opponents"),
+   pero como espectador el rótulo "Viendo · NOMBRE" y la cabecera del tablero se
+   pisaban con los controles de audio. La bajamos para que arranque debajo del panel.
+   En móvil la grilla va anclada abajo, así que no aplica. */
+@media (min-width: 761px) {
+  .online-versus-grid--watching {
+    top: 188px;
+  }
+}
+
 /* Cada mini-tablero lateral es clickeable para cambiar el foco. La grilla en sí
    tiene pointer-events:none, así que lo reactivamos solo en estas tarjetas. */
 .online-spec-pick {
