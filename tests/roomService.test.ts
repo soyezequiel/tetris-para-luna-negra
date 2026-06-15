@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   addAttack,
+  canStartRoom,
   createRoom,
   eliminatePlayer,
   getRoomState,
   HOST_STALE_MS,
   HOST_UNREACHABLE_MS,
+  isRoundReady,
   joinRoom,
   listPublicRooms,
   MemoryRoomStore,
+  PLAYER_STALE_MS,
   requestHostFailover,
   ROOM_ABANDONED_MS,
   ROOM_START_DELAY_MS,
@@ -348,6 +351,129 @@ describe('room abandonment cleanup', () => {
     expect(listed.map((room) => room.id)).toContain(fresh.id);
     expect(listed.map((room) => room.id)).not.toContain(stale.id);
     expect(await store.getRoom(stale.id)).toBeNull();
+  });
+});
+
+describe('spectators when not everyone is ready', () => {
+  /**
+   * Arma una sala en lobby con una lista de jugadores y marca listos solo a
+   * `readyIds`. Todos los latidos quedan fijados en `nowMs` para poder medir la
+   * presencia de forma determinística.
+   */
+  async function buildLobby(
+    store: RoomStore,
+    playerIds: string[],
+    readyIds: string[],
+    nowMs: number,
+  ): Promise<OnlineRoom> {
+    const [hostId, ...guestIds] = playerIds;
+    const created = await createRoom(store, { playerId: hostId, name: 'Host', visibility: 'private' }, nowMs);
+    for (const guestId of guestIds) {
+      await joinRoom(store, { roomId: created.id, playerId: guestId, name: guestId }, nowMs);
+    }
+    // Todos entran listos por defecto (createPlayer); des-marcamos a mano a los
+    // que no deben jugar la ronda para que entren de espectadores.
+    for (const playerId of playerIds) {
+      if (!readyIds.includes(playerId)) {
+        await setPlayerReady(store, { roomId: created.id, playerId, ready: false }, nowMs);
+      }
+    }
+    return (await store.getRoom(created.id))!;
+  }
+
+  it('lets the host start with a non-ready guest, who joins as a spectator', async () => {
+    const store = new MemoryRoomStore();
+    const t = 1_000_000;
+    const room = await buildLobby(store, [HOST_ID, GUEST_ID, THIRD_ID], [HOST_ID, GUEST_ID], t);
+    expect(canStartRoom(room, t)).toBe(true);
+
+    const started = await startRoom(store, { roomId: room.id, playerId: HOST_ID }, t);
+    expect(started.status).toBe('countdown');
+
+    // Los listos juegan; el que no estaba listo entra de espectador (alive=false).
+    const host = started.players.find((player) => player.id === HOST_ID)!;
+    const guest = started.players.find((player) => player.id === GUEST_ID)!;
+    const third = started.players.find((player) => player.id === THIRD_ID)!;
+    expect(host.alive).toBe(true);
+    expect(guest.alive).toBe(true);
+    expect(third.alive).toBe(false);
+    expect(third.ready).toBe(false);
+    expect(third.status).toBe('joined');
+  });
+
+  it('refuses to start when the host is not ready', async () => {
+    const store = new MemoryRoomStore();
+    const t = 2_000_000;
+    const room = await buildLobby(store, [HOST_ID, GUEST_ID], [GUEST_ID], t);
+    expect(canStartRoom(room, t)).toBe(false);
+    await expect(
+      startRoom(store, { roomId: room.id, playerId: HOST_ID }, t),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('refuses to start a multiplayer room with only the host ready', async () => {
+    const store = new MemoryRoomStore();
+    const t = 3_000_000;
+    const room = await buildLobby(store, [HOST_ID, GUEST_ID], [HOST_ID], t);
+    expect(canStartRoom(room, t)).toBe(false);
+    await expect(
+      startRoom(store, { roomId: room.id, playerId: HOST_ID }, t),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('lets a solo room start with just the host ready', async () => {
+    const store = new MemoryRoomStore();
+    const t = 4_000_000;
+    const room = await buildLobby(store, [HOST_ID], [HOST_ID], t);
+    expect(canStartRoom(room, t)).toBe(true);
+    const started = await startRoom(store, { roomId: room.id, playerId: HOST_ID }, t);
+    expect(started.status).toBe('countdown');
+  });
+
+  it('unmarks ready for a player who closed the tab (stale presence) in the lobby', async () => {
+    const store = new MemoryRoomStore();
+    const t = 5_000_000;
+    const room = await buildLobby(store, [HOST_ID, GUEST_ID], [HOST_ID, GUEST_ID], t);
+
+    // El host sigue presente (poll con presencia); el guest dejó de pollear.
+    const later = t + PLAYER_STALE_MS + 1;
+    const polled = await getRoomState(store, room.id, later, HOST_ID);
+
+    const guest = polled.players.find((player) => player.id === GUEST_ID)!;
+    expect(guest.ready).toBe(false);
+    // La proyección de lectura lo muestra desconectado (sin presencia); lo que
+    // importa es que ya no cuenta como listo.
+    expect(guest.status).toBe('disconnected');
+    expect(isRoundReady(guest, later)).toBe(false);
+    // Con el guest des-marcado solo queda el host listo: no se puede arrancar (1v1).
+    expect(canStartRoom(polled, later)).toBe(false);
+  });
+
+  it('does not turn a spectator into a loser when the round finishes', async () => {
+    const store = new MemoryRoomStore();
+    const t = 6_000_000;
+    const room = await buildLobby(store, [HOST_ID, GUEST_ID, THIRD_ID], [HOST_ID, GUEST_ID], t);
+    const started = await startRoom(store, { roomId: room.id, playerId: HOST_ID }, t);
+
+    // El host arranca la ronda (countdown → playing) y luego elimina al guest:
+    // como el tercero es espectador (alive=false), solo queda el host vivo y gana.
+    await updateProgress(store, {
+      roomId: started.id,
+      authorityPlayerId: HOST_ID,
+      playerId: HOST_ID,
+      seed: started.seed,
+      lines: 0,
+      pieces: 1,
+      elapsedFrames: 1,
+    }, t + 100);
+    const finished = await eliminatePlayer(store, eliminateRequest(started, GUEST_ID), t + 200);
+
+    expect(finished.status).toBe('finished');
+    expect(finished.winnerPlayerId).toBe(HOST_ID);
+    const third = finished.players.find((player) => player.id === THIRD_ID)!;
+    expect(third.status).toBe('joined');
+    expect(third.alive).toBe(false);
+    expect(third.ready).toBe(false);
   });
 });
 

@@ -331,8 +331,14 @@ async function startRoomOnce(
   const room = await requireRoom(store, request.roomId);
   if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can start.', 403);
   if (room.status !== 'lobby') return room;
-  if (room.players.some((player) => !player.ready)) {
-    throw new OnlineRoomError('All players must be ready.', 409);
+  const ready = room.players.filter((player) => isRoundReady(player, nowMs));
+  if (!ready.some((player) => player.id === room.hostPlayerId)) {
+    throw new OnlineRoomError('El host tiene que estar listo para empezar.', 409);
+  }
+  // Los que no estén listos no bloquean el arranque: entran de espectadores. Solo
+  // exigimos que haya con quién jugar (≥2 listos), salvo una sala de un jugador.
+  if (room.players.length > 1 && ready.length < 2) {
+    throw new OnlineRoomError('Se necesitan al menos dos jugadores listos para empezar.', 409);
   }
   if (room.bet && room.bet.status !== 'funded') {
     throw new OnlineRoomError('La apuesta todavía no está fondeada por todos los jugadores.', 409);
@@ -794,6 +800,19 @@ async function getRoomStateOnce(
       needsPersist = true;
     }
   }
+  // En el lobby, quien cerró la pestaña sin salir de la sala (dejó de mostrar
+  // presencia) se des-marca de "listo". Es durable: al volver tiene que volver a
+  // marcarse listo a mano, y mientras tanto no bloquea el arranque ni cuenta como
+  // participante. NO movemos room.updatedAtServerMs (igual que la presencia).
+  if (room.status === 'lobby') {
+    for (const player of room.players) {
+      if (player.ready && isPlayerStale(player, nowMs)) {
+        player.ready = false;
+        player.status = 'joined';
+        needsPersist = true;
+      }
+    }
+  }
   if (room.status === 'countdown' && room.startsAtServerMs !== null && nowMs >= room.startsAtServerMs) {
     room.status = 'playing';
     changed = true;
@@ -1196,7 +1215,9 @@ function finishSprintRace(room: OnlineRoom, winner: OnlinePlayer, nowMs: number)
   winner.finishedAtServerMs = nowMs;
   winner.updatedAtServerMs = nowMs;
   for (const player of room.players) {
-    if (player.id === winner.id || isTerminalPlayer(player)) continue;
+    // Los espectadores (alive=false desde el arranque) no jugaron: no se marcan
+    // como perdedores ni se readyean, así siguen de espectadores en un restart.
+    if (player.id === winner.id || isTerminalPlayer(player) || !player.alive) continue;
     player.status = 'lost';
     player.alive = false;
     player.ready = true;
@@ -1216,15 +1237,16 @@ function prepareRoundCountdown(room: OnlineRoom, nowMs: number, reseed: boolean)
   if (reseed) room.seed = randomSeed();
   room.attacks = [];
   room.players.forEach((player) => {
-    player.ready = true;
-    player.status = 'ready';
+    // Solo juega quien está listo y presente; el resto queda de espectador. Un
+    // espectador sigue en la sala pero con alive=false, así no entra en el conteo
+    // de vivos (finishRoomIfOnlyOneAlive) ni puede coronarse ganador.
+    const plays = isRoundReady(player, nowMs);
     player.lines = 0;
     player.pieces = 0;
     player.elapsedFrames = 0;
     player.sentGarbage = 0;
     player.receivedGarbage = 0;
     player.pendingGarbage = 0;
-    player.alive = true;
     player.finishedAtServerMs = null;
     player.eliminatedAtFrame = null;
     player.eliminatedAtServerMs = null;
@@ -1234,6 +1256,15 @@ function prepareRoundCountdown(room: OnlineRoom, nowMs: number, reseed: boolean)
     player.receivedGarbageThisRound = 0;
     player.dangerLevel = 0;
     player.updatedAtServerMs = nowMs;
+    if (plays) {
+      player.ready = true;
+      player.status = 'ready';
+      player.alive = true;
+    } else {
+      player.ready = false;
+      player.status = 'joined';
+      player.alive = false;
+    }
   });
 }
 
@@ -1243,6 +1274,35 @@ function isTerminalPlayer(player: OnlinePlayer): boolean {
     || player.status === 'won'
     || player.status === 'lost'
     || player.finishedAtServerMs !== null;
+}
+
+/** Un jugador está "ausente" si dejó de mostrar presencia (cerró la pestaña). */
+function isPlayerStale(player: OnlinePlayer, nowMs: number): boolean {
+  return nowMs - player.updatedAtServerMs > PLAYER_STALE_MS;
+}
+
+/**
+ * ¿El jugador entra a jugar la ronda? Solo si marcó "listo" y sigue presente. Los
+ * que no están listos (o cerraron la pestaña) entran como espectadores, no juegan.
+ * No se mira isTerminalPlayer porque prepareRoundCountdown resetea el estado de la
+ * ronda anterior: lo único que decide es la intención de listo del lobby.
+ */
+export function isRoundReady(player: OnlinePlayer, nowMs: number): boolean {
+  return player.ready && !isPlayerStale(player, nowMs);
+}
+
+/**
+ * ¿Puede arrancar la ronda? El host corre la autoridad de la sala, así que debe
+ * estar listo. Salvo una sala de un solo jugador (práctica en solitario), hacen
+ * falta al menos dos participantes listos para que sea una partida; el resto que
+ * no esté listo entra de espectador (ver prepareRoundCountdown). Compartida con el
+ * cliente para habilitar/deshabilitar el botón "Empezar".
+ */
+export function canStartRoom(room: OnlineRoom, nowMs: number): boolean {
+  const ready = room.players.filter((player) => isRoundReady(player, nowMs));
+  if (!ready.some((player) => player.id === room.hostPlayerId)) return false;
+  if (room.players.length === 1) return true;
+  return ready.length >= 2;
 }
 
 function normalizeAttackId(value: string): string {

@@ -76,7 +76,7 @@ import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayM
 import { OnlineReplayCollector } from './app/multiplayerReplay';
 import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlaybackSnapshot, type MultiReplayPlayerSnapshot } from './app/multiReplayPlayback';
 import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
-import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
+import { canStartRoom, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBest40LineFrames, saveMusicReverb, savePositionalAudio, saveSoundMuted, saveTouchControlsHidden } from './storage';
@@ -368,6 +368,10 @@ let onlineLastKoBroadcastAt = 0;
 let onlineServerOffsetMs = 0;
 let onlineResultSubmitted = false;
 let onlineRunStarted = false;
+// La ronda arrancó pero yo no estaba listo (o cerré la pestaña): entro de
+// espectador, sin tablero propio ni reportes. Miro a los rivales hasta que la sala
+// termine. Se limpia entre rondas (resetOnlineRuntimeForNextRound).
+let onlineSpectatorRound = false;
 let onlinePeerBroadcaster: OnlinePeerBroadcaster | null = null;
 // Recolector de replays multi-tablero: junta el log de cada jugador de la ronda
 // (el propio + los que llegan por WebRTC) para reproducir la partida completa.
@@ -548,7 +552,9 @@ function loopBody(): void {
   // sólo dispara play/pause en la transición real de modo.
   sound.setMusicAllowed(shouldPlayMusic(appMode));
   const beforeState = engine.getState();
-  const canAdvanceThisLoop = !hasBlockingModal() && canAdvanceGame(appMode, beforeState.status);
+  // Un espectador de la ronda no tiene tablero propio: aunque el motor heredado
+  // quede en 'playing', no debe avanzar (solo mira a los rivales).
+  const canAdvanceThisLoop = !hasBlockingModal() && !onlineSpectatorRound && canAdvanceGame(appMode, beforeState.status);
   if (!canAdvanceThisLoop) syncGameplayClockToCurrentFrame();
   const candidateFrame = canAdvanceThisLoop ? targetGameplayFrame() : gameFrame;
   // P2: con el frame anclado al reloj real, un rAF de un monitor >60Hz puede no
@@ -2648,6 +2654,7 @@ function resetOnlineRoomState(): void {
   onlineBetRefreshQueued = false;
   onlineResultSubmitted = false;
   onlineRunStarted = false;
+  onlineSpectatorRound = false;
   onlineAttackSequence = 0;
   onlineAppliedAttackIds = new Set();
   onlineHostAuthority = null;
@@ -2702,6 +2709,7 @@ function onlineRoundKey(room: OnlineRoom): string {
 
 function resetOnlineRuntimeForNextRound(): void {
   onlineRunStarted = false;
+  onlineSpectatorRound = false;
   onlineResultSubmitted = false;
   onlineAttackSequence = 0;
   onlineAppliedAttackIds = new Set();
@@ -3133,7 +3141,11 @@ function syncOnline(): void {
   // la sala terminaría mal (o nunca).
   const roomStillRunning = onlineRoom.status === 'playing' || onlineRoom.status === 'countdown';
   const hostStillAuthority = isOnlineHost() && onlineRunStarted && appMode === 'onlineResults' && roomStillRunning;
-  if (appMode === 'onlinePlaying' || hostStillAuthority) {
+  // Un espectador de la ronda (no estaba listo al arrancar) no tiene tablero
+  // propio: no simula, no reporta ni difunde nada. Solo mira a los rivales con los
+  // snapshots que llegan por WebRTC. El host nunca es espectador (debe estar listo
+  // para arrancar), así que la autoridad/relay no se ve afectada.
+  if ((appMode === 'onlinePlaying' || hostStillAuthority) && !onlineSpectatorRound) {
     if (appMode === 'onlinePlaying' && now - onlineLastDiagLogAt >= 2000) {
       onlineLastDiagLogAt = now;
       const serverFrame = onlineRoom.startsAtServerMs
@@ -3171,7 +3183,7 @@ function syncOnline(): void {
   // deja de entrar ahí, pero su partida ya terminó y todavía sigue conectado como
   // espectador. Difundimos su replay igual (idempotente por flag) para que el host
   // y el resto lo reciban; si no, solo se vería el tablero del host.
-  maybeBroadcastOwnReplay(liveState);
+  if (!onlineSpectatorRound) maybeBroadcastOwnReplay(liveState);
 }
 
 // Mientras el host juega, la simulación autoritativa avanza con su gameFrame.
@@ -3574,6 +3586,17 @@ function maybeStartOnlineRun(): void {
   if (!onlineRoom?.startsAtServerMs || onlineRunStarted) return;
   if (onlineNowMs() < onlineRoom.startsAtServerMs) return;
   onlineRunStarted = true;
+  // No estaba listo cuando arrancó la ronda: el servidor me dejó como espectador
+  // (alive=false). No simulo tablero propio ni reporto nada; solo miro a los
+  // rivales. Ver isOnlineSpectating() y los guards de syncOnline().
+  const me = onlineRoom.players.find((player) => player.id === onlinePlayer.id);
+  if (me && !me.alive) {
+    onlineSpectatorRound = true;
+    appMode = 'onlinePlaying';
+    resetSpectatorFocus();
+    return;
+  }
+  onlineSpectatorRound = false;
   onlineResultSubmitted = false;
   onlineAttackSequence = 0;
   onlineAppliedAttackIds = new Set();
@@ -4580,7 +4603,9 @@ function renderOnlineLobbyPanelContent(): string {
   if (!room) return renderOnlineMenuPanelContent();
   const player = currentOnlinePlayer();
   const host = room.hostPlayerId === onlinePlayer.id;
-  const allReady = room.players.length > 0 && room.players.every((candidate) => candidate.ready);
+  // El host puede arrancar aunque no todos estén listos: los que no lo estén entran
+  // de espectadores (basta con ≥2 listos, host incluido).
+  const canStart = canStartRoom(room, onlineNowMs());
   const betReady = !room.bet || room.bet.status === 'funded';
   const modeLabel = roomModeLabel(room.mode);
   const readyCount = room.players.filter((candidate) => candidate.ready).length;
@@ -4616,7 +4641,7 @@ function renderOnlineLobbyPanelContent(): string {
           ? `${player?.ready
             ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
             : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
-            ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}`
+            ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${canStart && betReady && !onlineBusy ? '' : ' disabled'}>Empezar partida</button>` : ''}`
           : '<button class="cs2-btn" type="button" disabled>Ronda en curso…</button>'}
         <button class="cs2-btn" type="button" data-ui-action="main-menu">Menú</button>
         <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
@@ -5114,6 +5139,12 @@ function renderLobbyPlayer(player: OnlinePlayer, viewerIsHost = false): string {
   const kick = viewerIsHost && !isSelf
     ? `<button class="cs2-kick" type="button" data-ui-action="online-kick" data-target-player-id="${escapeHtml(player.id)}" aria-label="Expulsar a ${escapeHtml(player.name)}"${onlineBusy ? ' disabled' : ''}>✕</button>`
     : '';
+  // Durante una ronda activa, quien no estaba listo (alive=false sin ser eliminado)
+  // la juega de espectador: lo etiquetamos así en vez de "Sin listo", que en mitad
+  // de la partida confunde.
+  const roundActive = onlineRoom?.status === 'playing' || onlineRoom?.status === 'countdown';
+  const spectating = roundActive && !player.alive && player.status !== 'eliminated' && player.status !== 'lost';
+  const statusLabel = spectating ? '👁 Espectador' : player.ready ? '✓ Listo' : 'Sin listo';
   return `
     <div class="cs2-player-card ${player.ready ? 'cs2-player-ready' : ''} ${isSelf ? 'cs2-player-self' : ''}">
       ${kick}
@@ -5122,7 +5153,7 @@ function renderLobbyPlayer(player: OnlinePlayer, viewerIsHost = false): string {
         <strong>${escapeHtml(player.name)}</strong>
         <span class="cs2-player-badges">${badges}</span>
       </div>
-      <span class="cs2-player-status ${player.ready ? 'is-ready' : ''}">${player.ready ? '✓ Listo' : 'Sin listo'}</span>
+      <span class="cs2-player-status ${player.ready ? 'is-ready' : ''}">${statusLabel}</span>
     </div>
   `;
 }
@@ -5398,7 +5429,11 @@ function renderOnlinePeerBoards(): string {
 // Durante la animación de derrota todavía NO es espectador: se sigue viendo su
 // tablero (muriendo, a tamaño completo) y los rivales quedan al costado.
 function isOnlineSpectating(): boolean {
-  return appMode === 'onlinePlaying' && lastStatus !== 'playing' && !isOnlineDeathAnimating();
+  if (appMode !== 'onlinePlaying') return false;
+  // Espectador de toda la ronda (no estaba listo al arrancar): no tengo tablero
+  // propio, miro a los rivales desde el primer frame.
+  if (onlineSpectatorRound) return true;
+  return lastStatus !== 'playing' && !isOnlineDeathAnimating();
 }
 
 // Rivales que puedo mirar como espectador (todos menos yo). El orden es el de
@@ -6691,7 +6726,8 @@ function renderDashboardRoomPanel(): string {
   // Cuando hay una sala activa
   const host = room.hostPlayerId === onlinePlayer.id;
   const player = currentOnlinePlayer();
-  const allReady = room.players.length > 0 && room.players.every((candidate) => candidate.ready);
+  // No exigimos que todos estén listos: los que no lo estén entran de espectadores.
+  const canStart = canStartRoom(room, onlineNowMs());
   const betReady = !room.bet || room.bet.status === 'funded';
   const readyCount = room.players.filter((candidate) => candidate.ready).length;
   const matchText = matchTypeLabel(room.matchType);
@@ -6786,7 +6822,7 @@ function renderDashboardRoomPanel(): string {
         ? `${player?.ready
           ? '<button class="dash-action-btn" type="button" data-ui-action="online-unready">No listo</button>'
           : '<button class="dash-action-btn accent" type="button" data-ui-action="online-ready">Listo</button>'}
-          ${host ? `<button class="dash-action-btn success" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar juego</button>` : ''}`
+          ${host ? `<button class="dash-action-btn success" type="button" data-ui-action="online-start"${canStart && betReady && !onlineBusy ? '' : ' disabled'}>Empezar juego</button>` : ''}`
         : '<button class="dash-action-btn" type="button" disabled>Ronda en curso…</button>'}
       <button class="dash-action-btn danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
     </div>
@@ -6840,7 +6876,8 @@ function renderActivePersistentRoomPanel(): string {
   if (!onlineRoom) return '';
   const host = onlineRoom.hostPlayerId === onlinePlayer.id;
   const player = currentOnlinePlayer();
-  const allReady = onlineRoom.players.length > 0 && onlineRoom.players.every((candidate) => candidate.ready);
+  // Los que no estén listos no bloquean el arranque: entran de espectadores.
+  const canStart = canStartRoom(onlineRoom, onlineNowMs());
   const betReady = !onlineRoom.bet || onlineRoom.bet.status === 'funded';
   const readyCount = onlineRoom.players.filter((candidate) => candidate.ready).length;
   const visibilityActions = host && onlineRoom.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : '';
@@ -6865,7 +6902,7 @@ function renderActivePersistentRoomPanel(): string {
           ? `${player?.ready
             ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
             : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
-            ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${allReady && betReady && !onlineBusy ? '' : ' disabled'}>Empezar</button>` : ''}`
+            ${host ? `<button class="cs2-btn cs2-btn-go" type="button" data-ui-action="online-start"${canStart && betReady && !onlineBusy ? '' : ' disabled'}>Empezar</button>` : ''}`
           : '<button class="cs2-btn" type="button" disabled>Ronda en curso…</button>'}
         <button class="cs2-btn cs2-btn-danger" type="button" data-ui-action="online-leave">Salir</button>
       </div>
