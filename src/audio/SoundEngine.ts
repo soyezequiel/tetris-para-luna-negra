@@ -38,7 +38,7 @@ const REVERB_DURATIONS: Record<ReverbMode, number> = {
 };
 
 const DEFAULT_SFX_VOLUME = 1;
-const DEFAULT_MUSIC_VOLUME = 0.3;
+const DEFAULT_MUSIC_VOLUME = 0.5;
 const DEFAULT_REVERB_MODE: ReverbMode = 'medium';
 const MUSIC_OUTPUT_GAIN = 0.34;
 

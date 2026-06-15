@@ -4030,6 +4030,10 @@ function rememberOnlineAttack(fromPlayerId: string, toPlayerId: string, lines: n
 }
 
 function syncOnlineVisibilityChange(): void {
+  // La música se silencia cuando la pestaña pasa a segundo plano (estilo TETR.IO).
+  // El bucle rAF se congela al ocultarse, así que loopBody() no llega a aplicar el
+  // gate: lo hacemos acá explícitamente. Al volver, el primer frame lo restaura.
+  sound.setMusicAllowed(!document.hidden && shouldPlayMusic(appMode));
   if (document.hidden) {
     syncOnlineBackground();
     return;
