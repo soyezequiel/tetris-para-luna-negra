@@ -1,7 +1,14 @@
 import type { CreateBetRequest, RoomBetActionRequest } from '../../src/online/protocol.js';
-import { cancelRoomBet, createBetForRoom, ensureWebhookRegistered, refreshRoomBet, settleRoomBet } from '../../src/online/lunaNegraBets.js';
 import {
-  getRoomStore,
+  cancelRoomBet,
+  createBetForRoom,
+  ensureWebhookRegistered,
+  refreshRoomBet,
+  settleRoomBet,
+  syncBetParticipantsWithRoom,
+} from '../../src/online/lunaNegraBets.js';
+import {
+  getBetRoomStore,
   handleApiError,
   handleNodeApi,
   queryParam,
@@ -21,7 +28,7 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const action = actionFromRequest(request);
     if (action === 'state') {
-      const room = await refreshRoomBet(getRoomStore(), queryParam(request, 'roomId'));
+      const room = await refreshBetWithParticipantSync(queryParam(request, 'roomId'));
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     return sendMethodNotAllowed();
@@ -36,7 +43,7 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'create') {
       const body = await readJsonBody<CreateBetRequest>(request);
       await ensureWebhookRegistered(new URL(request.url).origin);
-      const room = await createBetForRoom(getRoomStore(), {
+      const room = await createBetForRoom(getBetRoomStore(), {
         roomId: body.roomId,
         playerId: body.playerId,
         stakeSats: body.stakeSats,
@@ -46,17 +53,17 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (action === 'refresh') {
       const body = await readJsonBody<RoomBetActionRequest>(request);
-      const room = await refreshRoomBet(getRoomStore(), body.roomId);
+      const room = await refreshBetWithParticipantSync(body.roomId);
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'cancel') {
       const body = await readJsonBody<RoomBetActionRequest>(request);
-      const room = await cancelRoomBet(getRoomStore(), body.roomId, body.playerId);
+      const room = await cancelRoomBet(getBetRoomStore(), body.roomId, body.playerId);
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'settle') {
       const body = await readJsonBody<RoomBetActionRequest>(request);
-      const room = await settleRoomBet(getRoomStore(), body.roomId, body.playerId);
+      const room = await settleRoomBet(getBetRoomStore(), body.roomId, body.playerId);
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     return sendMethodNotAllowed();
@@ -68,4 +75,10 @@ export async function POST(request: Request): Promise<Response> {
 function actionFromRequest(request: Request): string {
   const pathname = new URL(request.url).pathname;
   return pathname.split('/').filter(Boolean).at(-1) ?? '';
+}
+
+async function refreshBetWithParticipantSync(roomId: string) {
+  const store = getBetRoomStore();
+  await syncBetParticipantsWithRoom(store, roomId);
+  return refreshRoomBet(store, roomId);
 }

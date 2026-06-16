@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { getWebhookSecret, refreshRoomBet } from '../../src/online/lunaNegraBets.js';
 import { normalizeRoomId } from '../../src/online/roomService.js';
-import { getRoomStore, handleApiError, handleNodeApi, sendJson } from '../../src/online/vercelApi.js';
+import { getBetRoomStore, handleApiError, handleNodeApi, sendJson } from '../../src/online/vercelApi.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../../src/online/vercelApi.js';
@@ -53,7 +53,7 @@ export async function POST(request: Request): Promise<Response> {
       const roomId = roomIdFromPayload(payload);
       if (roomId) {
         try {
-          await refreshRoomBet(getRoomStore(), roomId);
+          await refreshRoomBet(getBetRoomStore(), roomId);
         } catch {
           // Best-effort: la sala puede haber expirado; igual respondemos 200.
         }

@@ -1,4 +1,4 @@
-import { MemoryRoomStore, OnlineRoomError, RoomVersionConflictError, type RoomStore } from './roomService.js';
+import { MemoryRoomStore, normalizeRoomId, OnlineRoomError, RoomVersionConflictError, type RoomStore } from './roomService.js';
 import { LEADERBOARD_MAX_ENTRIES, MemoryLeaderboardStore, type LeaderboardStore, type LeaderboardWinMeta } from './leaderboard.js';
 import type { LeaderboardEntry, OnlineRoom } from './protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -9,6 +9,11 @@ export const config = {
 
 interface UpstashResponse<T> {
   result?: T;
+  error?: string;
+}
+
+interface PartyBridgeResponse {
+  room?: OnlineRoom | null;
   error?: string;
 }
 
@@ -81,6 +86,56 @@ class UpstashRoomStore implements RoomStore {
   }
 }
 
+class PartyBridgeRoomStore implements RoomStore {
+  private readonly baseUrl: string;
+
+  constructor(
+    baseUrl: string,
+    private readonly token: string,
+  ) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+  }
+
+  async getRoom(id: string): Promise<OnlineRoom | null> {
+    const payload = await this.request('GET', normalizeRoomId(id));
+    return payload.room ?? null;
+  }
+
+  async saveRoom(room: OnlineRoom): Promise<void> {
+    const payload = await this.request('PUT', room.id, { room });
+    if (!payload.room) throw new OnlineRoomError('Room bridge returned an empty room.', 502);
+    Object.assign(room, payload.room);
+  }
+
+  async deleteRoom(): Promise<void> {
+    throw new OnlineRoomError('Room bridge delete is not supported.', 405);
+  }
+
+  async listPublicRoomIds(): Promise<string[]> {
+    return [];
+  }
+
+  async savePublicRoomIds(): Promise<void> {
+    // El lobby de WebSocket vive en Cloudflare; las apuestas no actualizan listas publicas de Vercel.
+  }
+
+  private async request(method: 'GET' | 'PUT', roomId: string, body?: unknown): Promise<PartyBridgeResponse> {
+    const response = await fetch(`${this.baseUrl}/__bridge/rooms/${encodeURIComponent(normalizeRoomId(roomId))}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${this.token}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null) as PartyBridgeResponse | null;
+    if (!response.ok) {
+      throw new OnlineRoomError(payload?.error ?? 'Room bridge request failed.', response.status);
+    }
+    return payload ?? {};
+  }
+}
+
 declare global {
   // eslint-disable-next-line no-var
   var stack40MemoryRoomStore: MemoryRoomStore | undefined;
@@ -92,6 +147,18 @@ export function getRoomStore(): RoomStore {
   if (url && token) return new UpstashRoomStore(url, token);
   globalThis.stack40MemoryRoomStore ??= new MemoryRoomStore();
   return globalThis.stack40MemoryRoomStore;
+}
+
+export function getBetRoomStore(): RoomStore {
+  const token = (process.env.PARTY_BRIDGE_TOKEN ?? '').trim();
+  if (token) {
+    const bridgeUrl = (process.env.PARTY_BRIDGE_URL ?? '').trim() || 'https://tetra.naranjas.workers.dev';
+    return new PartyBridgeRoomStore(
+      bridgeUrl,
+      token,
+    );
+  }
+  return getRoomStore();
 }
 
 declare global {

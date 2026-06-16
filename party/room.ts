@@ -1,5 +1,5 @@
 import { Server, getServerByName, type Connection, type WSMessage } from 'partyserver';
-import { getRoomState, HOST_STALE_MS, MemoryRoomStore, OnlineRoomError } from '../src/online/roomService.js';
+import { getRoomState, HOST_STALE_MS, MemoryRoomStore, normalizeRoomId, OnlineRoomError } from '../src/online/roomService.js';
 import {
   dispatchRoomAction,
   lobbyUpdateForRoom,
@@ -143,6 +143,27 @@ export class RoomServer extends Server<Env> {
       throw error;
     }
     await this.rescheduleAlarm(roomId);
+  }
+
+  /** Bridge server-to-server para que Vercel sincronice apuestas sobre la sala autoritativa. */
+  async bridgeGetRoom(): Promise<OnlineRoom | null> {
+    return this.store.getRoom(this.name);
+  }
+
+  /**
+   * Reemplaza la sala con una copia leida previamente del mismo DO.
+   * MemoryRoomStore valida la version, asi que una escritura vieja devuelve 409.
+   */
+  async bridgeSaveRoom(room: OnlineRoom): Promise<OnlineRoom> {
+    const roomId = normalizeRoomId(room.id);
+    const currentRoomId = normalizeRoomId(this.name);
+    if (roomId !== currentRoomId) throw new OnlineRoomError('Room bridge id mismatch.', 400);
+    const next: OnlineRoom = { ...room, id: currentRoomId };
+    await this.store.saveRoom(next);
+    await this.persistAndBroadcastRoom(next, Date.now());
+    await this.syncLobby(next);
+    await this.rescheduleAlarm(currentRoomId);
+    return next;
   }
 
   // ⚠️ partyserver invierte el orden respecto a PartyKit: (connection, message).

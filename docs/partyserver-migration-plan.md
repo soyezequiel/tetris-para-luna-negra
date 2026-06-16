@@ -143,10 +143,13 @@ Las clases `RoomServer`/`LobbyServer` ahora `extends Server<Env>` para tipar
   `ctx.storage` alarms igual que PartyKit; nuestro patrón onStart-rehidrata +
   alarm-único se mantiene.
 
-## Lo que esta migración NO resuelve (sigue pendiente, aparte)
-- **Apuestas/Luna Negra bajo WS**: los handlers de apuestas (`api/bets`) leen la
-  sala de Upstash; el Party la tiene en RAM. Quitar `UpstashRoomStore` + WS-default
-  requiere primero PUENTEAR el estado de sala Party→handlers de apuestas. Esta
-  migración a Cloudflare es ortogonal a eso: deja el deploy desbloqueado. Las
-  apuestas siguen por el camino HTTP/Upstash intacto hasta que se implemente ese
-  puente.
+## Apuestas / Luna Negra bajo WS
+- Implementado con un bridge server-to-server: Vercel conserva las credenciales de
+  Luna Negra y usa `PARTY_BRIDGE_TOKEN` para leer/escribir la sala autoritativa en
+  el Worker `tetra`.
+- El bridge vive en `party/index.ts` (`/__bridge/rooms/:roomId`) y delega en el
+  `RoomServer` del Durable Object. Cada escritura valida version, persiste en
+  storage durable y emite broadcast a los sockets conectados.
+- `/api/bets/*`, `/api/webhooks/luna-negra` y `/api/rooms/luna-negra/enter` usan
+  `getBetRoomStore()`: con token configurado van al Worker; sin token conservan el
+  store viejo para desarrollo local.

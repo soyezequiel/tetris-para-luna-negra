@@ -82,8 +82,10 @@ export class PartyOnlineClient implements OnlineClientApi {
   }
 
   // ── Acciones que NO son de sala: siguen por HTTP (Vercel) ──
-  enterLunaNegraRoom(request: LunaNegraEnterRequest): Promise<LunaNegraEnterResponse> {
-    return this.http.enterLunaNegraRoom(request);
+  async enterLunaNegraRoom(request: LunaNegraEnterRequest): Promise<LunaNegraEnterResponse> {
+    const response = await this.http.enterLunaNegraRoom(request);
+    await this.ensureRoom(response.room.id);
+    return response;
   }
   createBet(request: CreateBetRequest): Promise<OnlineRoomResponse> {
     return this.http.createBet(request);

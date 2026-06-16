@@ -74,6 +74,8 @@ Variables de entorno (Vercel) para habilitarlo en el backend:
 | `LUNA_NEGRA_GAME_ID` | (Opcional) Fallback del `gameId`; normalmente **no hace falta** porque se toma del `inviteToken`. |
 | `LUNA_NEGRA_WEBHOOK_URL` | (Opcional) Fuerza la URL de webhook a registrar; si no, se deriva del dominio del deploy. |
 | `LUNA_NEGRA_WEBHOOK_SECRET` | (Opcional) Override del secreto de firma; normalmente **no hace falta** (se obtiene solo). |
+| `PARTY_BRIDGE_TOKEN` | Token compartido entre Vercel y el Worker `tetra` para que `/api/bets/*`, webhooks e invites Luna Negra lean/escriban la sala WebSocket autoritativa. |
+| `PARTY_BRIDGE_URL` | (Opcional) URL del Worker de salas; por defecto `https://tetra.naranjas.workers.dev`. |
 
 > El juego **no toca Nostr**: el ganador se reporta con la API key y Luna Negra firma
 > el resultado con el oráculo gestionado del proveedor.

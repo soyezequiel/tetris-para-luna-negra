@@ -1,6 +1,6 @@
 import type { LunaNegraEnterRequest } from '../../../src/online/protocol.js';
 import { enterLunaNegraRoom, normalizeRoomId, OnlineRoomError, type VerifiedLunaNegraInvite } from '../../../src/online/roomService.js';
-import { getRoomStore, handleApiError, handleNodeApi, readJsonBody, sendJson } from '../../../src/online/vercelApi.js';
+import { getBetRoomStore, handleApiError, handleNodeApi, readJsonBody, sendJson } from '../../../src/online/vercelApi.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../../../src/online/vercelApi.js';
@@ -34,7 +34,7 @@ export async function POST(request: Request): Promise<Response> {
     const verifiedRoomId = normalizeRoomId(verified.roomId);
     if (verifiedRoomId !== expectedRoomId) throw new OnlineRoomError('Luna Negra room mismatch.', 403);
 
-    const { room, player } = await enterLunaNegraRoom(getRoomStore(), {
+    const { room, player } = await enterLunaNegraRoom(getBetRoomStore(), {
       ...verified,
       roomId: verifiedRoomId,
     });
