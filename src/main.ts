@@ -144,6 +144,7 @@ const ONLINE_POLL_MS = 1000;
 const ONLINE_ROOM_GONE_POLL_LIMIT = 5;
 const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_BET_FAST_POLL_MS = 750;
+const DEFAULT_ONLINE_BET_STAKE_SATS = 50;
 // Ventana generosa: pagar copiando la invoice en otra app/billetera puede tardar
 // minutos. Además, mientras MI depósito siga pendiente se pollea rápido siempre
 // (ver maybeRefreshBet); esta ventana cubre los depósitos de los demás.
@@ -339,7 +340,7 @@ let lastDevBotOverlayHtml = '';
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
-let onlineStakeInput = '';
+let onlineStakeInput = String(DEFAULT_ONLINE_BET_STAKE_SATS);
 let onlineBetBusy = false;
 let onlineLastBetPollAt = 0;
 let onlineBetFastPollUntil = 0;
@@ -2435,8 +2436,8 @@ async function restartOnlineRoom(): Promise<void> {
 }
 
 async function createOnlineBet(): Promise<void> {
-  if (!onlineRoom || onlineBusy || onlineBetBusy) return;
-  const stakeSats = Number(onlineStakeInput);
+  if (!onlineRoom || onlineBetBusy) return;
+  const stakeSats = Number(readOnlineStakeInput());
   if (!Number.isInteger(stakeSats) || stakeSats <= 0) {
     onlineError = 'Ingresá un monto de apuesta válido (sats).';
     return;
@@ -2453,6 +2454,14 @@ async function createOnlineBet(): Promise<void> {
   } finally {
     onlineBetBusy = false;
   }
+}
+
+function readOnlineStakeInput(): string {
+  const field = overlayElement.querySelector<HTMLInputElement>('[data-online-field="bet-stake"]');
+  const value = (field?.value ?? onlineStakeInput).replace(/[^0-9]/g, '').slice(0, 7);
+  onlineStakeInput = value;
+  if (field && field.value !== value) field.value = value;
+  return value;
 }
 
 async function cancelOnlineBet(): Promise<void> {
@@ -2726,7 +2735,7 @@ function resetOnlineRoomState(): void {
   resetSpectatorFocus();
   onlineRoom = null;
   onlineError = null;
-  onlineStakeInput = '';
+  onlineStakeInput = String(DEFAULT_ONLINE_BET_STAKE_SATS);
   onlineBetBusy = false;
   onlineLastBetPollAt = 0;
   onlineBetFastPollUntil = 0;

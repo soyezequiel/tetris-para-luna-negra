@@ -2,7 +2,7 @@ import { expect, type Page, type Route, test } from '@playwright/test';
 import { action, appMode, openFreshApp, writeReplayFixture } from './fixtures';
 import { BATTLE_RULES } from '../../src/game/rules';
 import type { Cell, GameRules, PieceType } from '../../src/game/types';
-import type { OnlineGameSnapshot, OnlineMatchType, OnlineRoomMode, OnlineRuleset, RoomBet, TargetingMode, UpdateRoomSettingsRequest } from '../../src/online/protocol';
+import type { CreateBetRequest, OnlineGameSnapshot, OnlineMatchType, OnlineRoomMode, OnlineRuleset, RoomBet, TargetingMode, UpdateRoomSettingsRequest } from '../../src/online/protocol';
 
 test.describe('TETRA browser flows', () => {
   test('serves online API during local Vite dev', async ({ page }) => {
@@ -508,6 +508,27 @@ test.describe('TETRA browser flows', () => {
     await expect(page.getByText(/depositos 0\/2/).first()).toBeVisible();
   });
 
+  test('creates a Luna Negra bet from the visible stake', async ({ page }) => {
+    const requests = await mockOnlineApi(page, { lunaGuestRoom: true });
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?inviteToken=fake-token&room=bet12345');
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+    await expect(page.locator('[data-online-field="bet-stake"]')).toHaveValue('50');
+
+    await page.locator('[data-online-field="bet-stake"]').fill('25');
+    await action(page, 'online-bet-create').click();
+
+    await expect.poll(() => requests.lastBetCreate).toMatchObject({
+      roomId: 'BET12345',
+      playerId: 'pubkey-host-luna',
+      stakeSats: 25,
+    });
+    await expect(action(page, 'online-bet-pay')).toBeVisible();
+  });
+
   test('explains bet refresh failures after opening payment', async ({ page }) => {
     await mockOnlineApi(page, { lunaBetRoom: true, failBetRefresh: true });
     await page.addInitScript(() => {
@@ -841,6 +862,7 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
   const now = Date.now();
   const requests: MockOnlineApiRequests = {
     lastCreate: null,
+    lastBetCreate: null,
     lastSettings: null,
     restartCount: 0,
     restartOnNextState: false,
@@ -877,6 +899,7 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
     const url = new URL(route.request().url());
     const path = url.pathname;
     if (path.endsWith('/create')) {
+      requests.lastBetCreate = route.request().postDataJSON() as CreateBetRequest;
       room = { ...room, bet: createMockBet(room, Date.now()) };
       await fulfillRoom(route, room);
       return;
@@ -929,7 +952,7 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
         lunaGameId: 'tetra-game',
       };
       const host = { ...lunaRoom.players[0], npub: player.npub };
-      const players = options.lunaBetRoom
+      const players = options.lunaBetRoom || options.lunaGuestRoom
         ? [host, { ...createMockPlayer('pubkey-guest-luna', 'Nostr Guest', serverNowMs), npub: 'npub-guest-luna' }]
         : [host];
       lunaRoom = {
@@ -1113,11 +1136,13 @@ type MockOnlineApiOptions = {
   createdPlayingGuestRoom?: boolean;
   createdLobbyGuestRoom?: boolean;
   lunaBetRoom?: boolean;
+  lunaGuestRoom?: boolean;
   failBetRefresh?: boolean;
 };
 
 type MockOnlineApiRequests = {
   lastCreate: MockCreateRequest | null;
+  lastBetCreate: CreateBetRequest | null;
   lastSettings: UpdateRoomSettingsRequest | null;
   restartCount: number;
   restartOnNextState: boolean;
