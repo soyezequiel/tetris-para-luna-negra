@@ -334,15 +334,49 @@ function matchesFilters(room: OnlineRoomSummary, filters: PublicRoomsFilters): b
   return true;
 }
 
+/** Claves de override en localStorage (persisten la elección entre recargas). */
+const TRANSPORT_OVERRIDE_KEY = 'stack40:onlineTransport';
+const PARTYKIT_HOST_OVERRIDE_KEY = 'stack40:partykitHost';
+
 /**
- * Elige el transporte según `VITE_ONLINE_TRANSPORT`:
+ * Override de transporte/host en runtime, vía query param (persistido en
+ * localStorage). Pensado para PROBAR WS en producción detrás del flag sin
+ * recompilar: `?transport=ws&pkhost=stacker-40.usuario.partykit.dev` activa WS
+ * solo para ese navegador; `?transport=http` vuelve al default. El build de
+ * producción sigue saliendo en HTTP salvo que se pida explícitamente. Sin efecto
+ * fuera del browser (node/tests): devuelve vacío.
+ */
+function readTransportOverride(): { transport?: string; host?: string } {
+  if (typeof window === 'undefined') return {};
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const queryTransport = params.get('transport');
+    const queryHost = params.get('pkhost');
+    if (queryTransport) localStorage.setItem(TRANSPORT_OVERRIDE_KEY, queryTransport);
+    if (queryHost) localStorage.setItem(PARTYKIT_HOST_OVERRIDE_KEY, queryHost);
+    return {
+      transport: queryTransport ?? localStorage.getItem(TRANSPORT_OVERRIDE_KEY) ?? undefined,
+      host: queryHost ?? localStorage.getItem(PARTYKIT_HOST_OVERRIDE_KEY) ?? undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Elige el transporte:
  *  - 'ws'  → PartyOnlineClient (WebSocket / PartyKit), host en VITE_PARTYKIT_HOST.
  *  - otro  → OnlineClient (HTTP sobre /api/rooms en Vercel), el de siempre.
+ *
+ * El override de runtime (query/localStorage) tiene prioridad sobre las env del
+ * build, para poder probar WS en prod sin recompilar. Ver readTransportOverride.
  */
 export function createOnlineClient(): OnlineClientApi {
   const env = import.meta.env;
-  if (env?.VITE_ONLINE_TRANSPORT === 'ws') {
-    const host = env.VITE_PARTYKIT_HOST ?? '127.0.0.1:1999';
+  const override = readTransportOverride();
+  const transport = override.transport ?? env?.VITE_ONLINE_TRANSPORT;
+  if (transport === 'ws') {
+    const host = override.host ?? env?.VITE_PARTYKIT_HOST ?? '127.0.0.1:1999';
     return new PartyOnlineClient(host);
   }
   return new OnlineClient();
