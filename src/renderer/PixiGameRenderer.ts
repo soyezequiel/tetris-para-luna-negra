@@ -83,6 +83,10 @@ export class PixiGameRenderer {
   private boardColumns = DEFAULT_RULES.boardWidth;
   private visibleRows = DEFAULT_RULES.visibleRows;
   private hiddenRows = DEFAULT_RULES.hiddenRows;
+  // Filas extra del buffer que se dibujan (con marco y grilla) por ENCIMA del área
+  // de juego, para ver dónde aparecen y se apilan las piezas. Es puramente visual:
+  // no cambia el spawn, las muertes ni la altura jugable (eso vive en el engine).
+  private readonly topPad = 4;
   // Geometría de los paneles laterales (HOLD/NEXT), en celdas. Se recalcula en layout()
   // para que el tablero + ambos paneles entren siempre dentro del viewport.
   private sideUnits = 5.2;
@@ -199,6 +203,12 @@ export class PixiGameRenderer {
     return this.juice;
   }
 
+  // Filas extra de buffer efectivamente dibujadas sobre el área jugable. Se acota a
+  // hiddenRows para no pretender mostrar más buffer del que existe en el tablero.
+  private get topRows(): number {
+    return Math.min(this.topPad, this.hiddenRows);
+  }
+
   boardGeometry(): BoardGeometry {
     return { boardX: this.boardX, boardY: this.boardY, cell: this.cell, columns: this.boardColumns, rows: this.visibleRows };
   }
@@ -241,10 +251,10 @@ export class PixiGameRenderer {
     if (this.deathFrame < DEATH_TOTAL_FRAMES) this.deathFrame += 1;
 
     state.board.forEach((row, y) => {
-      if (y < this.hiddenRows) return;
+      if (y < this.hiddenRows - this.topRows) return;
       const boardY = y - this.hiddenRows;
       // Las filas superiores empiezan a colapsar antes que las inferiores.
-      const rowStart = (boardY / this.visibleRows) * 0.5;
+      const rowStart = (Math.max(0, boardY) / this.visibleRows) * 0.5;
       const rowP = clamp01((progress - rowStart) / 0.5);
       if (rowP >= 1) return;
       const alpha = 1 - rowP;
@@ -258,7 +268,7 @@ export class PixiGameRenderer {
     if (progress < 0.2) {
       const flash = (1 - progress / 0.2) * 0.5;
       this.effectLayer.beginFill(0xffffff, flash);
-      this.effectLayer.drawRect(this.boardX, this.boardY, this.cell * this.boardColumns, this.cell * this.visibleRows);
+      this.effectLayer.drawRect(this.boardX, this.boardY - this.topRows * this.cell, this.cell * this.boardColumns, this.cell * (this.visibleRows + this.topRows));
       this.effectLayer.endFill();
     }
   }
@@ -304,14 +314,20 @@ export class PixiGameRenderer {
     const totalUnits = this.boardColumns + 2 * (this.sideUnits + this.gapUnits);
     const horizMargin = this.width < 760 ? 0.99 : 0.94;
     const horizontalCell = (this.width * horizMargin) / totalUnits;
-    const verticalCell = availableHeight * 0.86 / this.visibleRows;
+    // Incluimos el buffer extra (topRows) en el alto para que el marco ampliado
+    // entre completo en el viewport.
+    const renderRows = this.visibleRows + this.topRows;
+    const verticalCell = availableHeight * 0.86 / renderRows;
     this.cell = Math.max(12, Math.min(34, horizontalCell, verticalCell));
 
     this.sideW = this.cell * this.sideUnits;
     const boardW = this.cell * this.boardColumns;
-    const boardH = this.cell * this.visibleRows;
+    const frameH = this.cell * renderRows;
     this.boardX = Math.round(this.width / 2 - boardW / 2);
-    this.boardY = Math.round(availableHeight / 2 - boardH / 2 + 8);
+    // boardY = tope del área JUGABLE (fila 0 visible). El buffer extra se dibuja por
+    // encima: centramos el marco completo y bajamos boardY ese buffer.
+    const frameTop = Math.round(availableHeight / 2 - frameH / 2 + 8);
+    this.boardY = frameTop + Math.round(this.topRows * this.cell);
     this.holdX = this.boardX - this.sideW - this.cell * this.gapUnits;
     this.nextX = this.boardX + boardW + this.cell * this.gapUnits;
 
@@ -333,12 +349,14 @@ export class PixiGameRenderer {
     this.effectLayer.clear();
     const radius = Math.max(6, this.cell * 0.42);
     const boardW = this.cell * this.boardColumns;
-    const boardH = this.cell * this.visibleRows;
+    const frameTop = this.boardY - this.topRows * this.cell;
+    const frameH = this.cell * (this.visibleRows + this.topRows);
 
-    // Marco del tablero: relleno oscuro translúcido + borde fino redondeado.
+    // Marco del tablero: relleno oscuro translúcido + borde fino redondeado. Incluye
+    // las filas extra de buffer dibujadas sobre el área jugable.
     this.boardLayer.lineStyle(Math.max(1.5, this.cell * 0.055), BOARD_FRAME, 0.5);
     this.boardLayer.beginFill(0x070b12, 0.5);
-    this.boardLayer.drawRoundedRect(this.boardX, this.boardY, boardW, boardH, radius * 0.6);
+    this.boardLayer.drawRoundedRect(this.boardX, frameTop, boardW, frameH, radius * 0.6);
     this.boardLayer.endFill();
     this.boardLayer.lineStyle(0, 0, 0);
     this.drawGrid();
@@ -379,14 +397,24 @@ export class PixiGameRenderer {
   }
 
   private drawGrid(): void {
+    const frameTop = this.boardY - this.topRows * this.cell;
+    const frameBottom = this.boardY + this.cell * this.visibleRows;
     this.boardLayer.lineStyle(1, GRID_LINE, 0.4);
     for (let x = 1; x < this.boardColumns; x += 1) {
-      this.boardLayer.moveTo(this.boardX + x * this.cell, this.boardY);
-      this.boardLayer.lineTo(this.boardX + x * this.cell, this.boardY + this.cell * this.visibleRows);
+      this.boardLayer.moveTo(this.boardX + x * this.cell, frameTop);
+      this.boardLayer.lineTo(this.boardX + x * this.cell, frameBottom);
     }
-    for (let y = 1; y < this.visibleRows; y += 1) {
+    // Filas del buffer extra (y < 0) y del área jugable; la línea del tope (y === 0)
+    // se dibuja aparte, un poco más marcada, para separar buffer de campo.
+    for (let y = -this.topRows + 1; y < this.visibleRows; y += 1) {
+      if (y === 0) continue;
       this.boardLayer.moveTo(this.boardX, this.boardY + y * this.cell);
       this.boardLayer.lineTo(this.boardX + this.cell * this.boardColumns, this.boardY + y * this.cell);
+    }
+    if (this.topRows > 0) {
+      this.boardLayer.lineStyle(Math.max(1, this.cell * 0.05), BOARD_FRAME, 0.55);
+      this.boardLayer.moveTo(this.boardX, this.boardY);
+      this.boardLayer.lineTo(this.boardX + this.cell * this.boardColumns, this.boardY);
     }
     this.boardLayer.lineStyle(0, 0, 0);
   }
@@ -395,7 +423,7 @@ export class PixiGameRenderer {
     this.pieceLayer.clear();
     // No saltamos las filas ocultas: las celdas bloqueadas que quedan por encima del
     // área visible (al apilar alto) deben verse igual que la pieza activa. El recorte
-    // lo hace drawVisibleBlock vía isVisibleCell (boardY >= -hiddenRows).
+    // lo hace drawVisibleBlock vía isVisibleCell (boardY >= -topRows).
     state.board.forEach((row, y) => {
       row.forEach((cell, x) => {
         if (cell) this.drawVisibleBlock(x, y - this.hiddenRows, cell, 1);
@@ -566,7 +594,7 @@ export class PixiGameRenderer {
   }
 
   private isVisibleCell(boardX: number, boardY: number): boolean {
-    return boardX >= 0 && boardX < this.boardColumns && boardY >= -this.hiddenRows && boardY < this.visibleRows;
+    return boardX >= 0 && boardX < this.boardColumns && boardY >= -this.topRows && boardY < this.visibleRows;
   }
 
 
@@ -581,14 +609,14 @@ export class PixiGameRenderer {
   }
 
   private drawBlock(g: Graphics, boardX: number, boardY: number, piece: PieceType, alpha: number): void {
-    if (boardY < -this.hiddenRows) return;
+    if (boardY < -this.topRows) return;
     const x = this.boardX + boardX * this.cell;
     const y = this.boardY + boardY * this.cell;
     this.drawBlockAt(g, x, y, this.cell, piece, alpha);
   }
 
   private drawGhostBlock(g: Graphics, boardX: number, boardY: number): void {
-    if (boardY < -this.hiddenRows) return;
+    if (boardY < -this.topRows) return;
     const x = this.boardX + boardX * this.cell;
     const y = this.boardY + boardY * this.cell;
     const pad = Math.max(1, this.cell * 0.1);
