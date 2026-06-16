@@ -1,0 +1,9 @@
+{
+  "$schema": "https://www.partykit.io/schema.json",
+  "name": "stacker-40",
+  "main": "party/room.ts",
+  "parties": {
+    "lobby": "party/lobby.ts"
+  },
+  "compatibilityDate": "2026-06-16"
+}

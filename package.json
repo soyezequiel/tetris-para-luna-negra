@@ -13,7 +13,9 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "party:dev": "partykit dev",
+    "party:deploy": "partykit deploy"
   },
   "dependencies": {
     "@pixi/app": "^7.4.3",
@@ -22,12 +24,14 @@
     "@pixi/graphics": "^7.4.3",
     "@pixi/sprite": "^7.4.3",
     "@pixi/text": "^7.4.3",
+    "partysocket": "^1.2.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@types/node": "^25.9.1",
     "@types/qrcode": "^1.5.6",
+    "partykit": "^0.0.115",
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
     "vitest": "^4.0.15"

@@ -35,7 +35,40 @@ export class OnlineApiError extends Error {
   }
 }
 
-export class OnlineClient {
+/**
+ * Superficie del cliente online. La implementan tanto `OnlineClient` (HTTP, sobre
+ * /api/rooms en Vercel) como `PartyOnlineClient` (WebSocket vía PartyKit). El juego
+ * habla contra esta interfaz; el transporte se elige con `VITE_ONLINE_TRANSPORT`.
+ */
+export interface OnlineClientApi {
+  createRoom(request: CreateRoomRequest): Promise<OnlineRoomResponse>;
+  joinRoom(request: JoinRoomRequest): Promise<OnlineRoomResponse>;
+  leaveRoom(request: LeaveRoomRequest): Promise<LeaveRoomResponse>;
+  kickPlayer(request: KickPlayerRequest): Promise<OnlineRoomResponse>;
+  enterLunaNegraRoom(request: LunaNegraEnterRequest): Promise<LunaNegraEnterResponse>;
+  createBet(request: CreateBetRequest): Promise<OnlineRoomResponse>;
+  refreshBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
+  cancelBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
+  settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
+  setReady(request: ReadyRequest): Promise<OnlineRoomResponse>;
+  startRoom(request: StartRoomRequest): Promise<OnlineRoomResponse>;
+  restartRoom(request: RestartRoomRequest): Promise<OnlineRoomResponse>;
+  reopenRoom(request: RestartRoomRequest): Promise<OnlineRoomResponse>;
+  updateRoomSettings(request: UpdateRoomSettingsRequest): Promise<OnlineRoomResponse>;
+  setTargeting(request: SetTargetingRequest): Promise<OnlineRoomResponse>;
+  updateProgress(request: ProgressRequest): Promise<OnlineRoomResponse>;
+  sendAttack(request: AttackRequest): Promise<OnlineRoomResponse>;
+  eliminatePlayer(request: EliminateRequest): Promise<OnlineRoomResponse>;
+  requestHostFailover(request: RequestHostFailoverRequest): Promise<OnlineRoomResponse>;
+  submitResult(request: ResultRequest): Promise<OnlineRoomResponse>;
+  sendPeerSignal(request: PeerSignalRequest): Promise<OnlineRoomResponse>;
+  getRoomState(roomId: string, playerId?: string): Promise<OnlineRoomResponse>;
+  listPublicRooms(filters?: PublicRoomsFilters): Promise<PublicRoomsResponse>;
+  getLeaderboard(limit?: number): Promise<LeaderboardResponse>;
+  submitScore(request: SubmitScoreRequest): Promise<LeaderboardResponse>;
+}
+
+export class OnlineClient implements OnlineClientApi {
   constructor(private readonly basePath = '/api/rooms') {}
 
   createRoom(request: CreateRoomRequest): Promise<OnlineRoomResponse> {

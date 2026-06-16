@@ -1084,7 +1084,7 @@ function createPlayer(id: string, name: string, nowMs: number, avatarUrl?: strin
   };
 }
 
-function roomSummary(room: OnlineRoom): OnlineRoomSummary {
+export function roomSummary(room: OnlineRoom): OnlineRoomSummary {
   const host = room.players.find((player) => player.id === room.hostPlayerId);
   return {
     id: room.id,

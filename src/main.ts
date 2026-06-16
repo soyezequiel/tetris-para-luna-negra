@@ -67,7 +67,8 @@ import {
   updateInputTiming,
 } from './input/settings';
 import { INSTANT_SOFT_DROP_FACTOR } from './game/rules';
-import { OnlineApiError, OnlineClient } from './online/client';
+import { OnlineApiError } from './online/client';
+import { createOnlineClient } from './online/partyClient';
 import { LunaSocialClient } from './online/lunaNegraFriendsClient';
 import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostAuthority';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
@@ -257,7 +258,7 @@ const RIVAL_DANGER_CRITICAL = 7;
 const unlockJuiceAudio = (): void => { void juiceAudio.unlock(); void rivalDangerAudio.unlock(); };
 window.addEventListener('pointerdown', unlockJuiceAudio, { once: true });
 window.addEventListener('keydown', unlockJuiceAudio, { once: true });
-const onlineClient = new OnlineClient();
+const onlineClient = createOnlineClient();
 const lunaSocialClient = new LunaSocialClient();
 
 let best = loadRecord();
