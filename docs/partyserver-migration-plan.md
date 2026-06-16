@@ -5,8 +5,8 @@
 > Verificado: `party:check` (tsc worker-types) OK, root tsc OK, 214 unit + **5/5 e2e
 > contra `wrangler dev`** (incl. countdown→playing por alarm y cleanup de abandono),
 > `wrangler deploy --dry-run` OK, y **smoke test 3/3 contra el worker en prod**
-> (flujo de sala + lobby push + 404). Probar en el juego con
-> `?transport=ws&pkhost=tetra.naranjas.workers.dev`. Ver [[partykit-websocket-migration]].
+> (flujo de sala + lobby push + 404). El frontend de producción usa WS contra
+> `tetra.naranjas.workers.dev` por default. Ver [[partykit-websocket-migration]].
 >
 > Motivo: el deploy de PartyKit está bloqueado porque la zona compartida
 > `partykit.dev` está al tope de custom domains de Cloudflare. `partyserver` es el
@@ -20,8 +20,9 @@
   13k GB-s/día, 5 GB storage). Si te pasás, la operación falla hasta el reset —
   no hay cobro sorpresa.
 - **El cliente NO cambia:** `partyClient.ts` usa `partysocket`, que es compatible
-  con partyserver. Solo cambia el HOST (de `*.partykit.dev` a `*.workers.dev`),
-  que ya se puede setear con el override `?pkhost=` que dejamos en Fase 6a.
+  con partyserver. Solo cambia el HOST (de `*.partykit.dev` a `*.workers.dev`).
+  En producción el default apunta a `tetra.naranjas.workers.dev`; `?pkhost=` queda
+  sólo para debugging.
 
 ## Lo que NO cambia (la mayor parte)
 
@@ -118,12 +119,11 @@ Las clases `RoomServer`/`LobbyServer` ahora `extends Server<Env>` para tipar
 
 ## Deploy (en TU cuenta de Cloudflare)
 1. `npx wrangler login` (abre el navegador, login con tu cuenta de Cloudflare).
-2. `npx wrangler deploy` → publica en `stacker-40.<tu-subdominio>.workers.dev`.
-3. Probar en prod sin tocar el default: abrir el juego con
-   `?transport=ws&pkhost=stacker-40.<tu-subdominio>.workers.dev` (override de Fase
-   6a, persistido en localStorage). El default sigue HTTP para todos los demás.
-4. Cuando estés conforme, recién ahí evaluar flipear el default (y encarar el
-   puente de apuestas, ver más abajo).
+2. `npx wrangler deploy` → publica en `tetra.<tu-subdominio>.workers.dev`.
+3. Publicar el frontend. En builds de producción, si no hay env explícita,
+   `partyClient.ts` usa WS contra `tetra.naranjas.workers.dev` sin query params.
+4. Para debugging puntual, `?transport=http` fuerza HTTP y
+   `?transport=ws&pkhost=<host>` fuerza otro host WS sólo en esa carga.
 
 ## Verificación
 - `wrangler dev --port 1999 --var PARTY_ABANDON_GRACE_MS=1500` levanta local.
@@ -147,5 +147,6 @@ Las clases `RoomServer`/`LobbyServer` ahora `extends Server<Env>` para tipar
 - **Apuestas/Luna Negra bajo WS**: los handlers de apuestas (`api/bets`) leen la
   sala de Upstash; el Party la tiene en RAM. Quitar `UpstashRoomStore` + WS-default
   requiere primero PUENTEAR el estado de sala Party→handlers de apuestas. Esta
-  migración a Cloudflare es ortogonal a eso: deja el deploy desbloqueado, pero el
-  default sigue HTTP y las apuestas siguen por el camino HTTP/Upstash intacto.
+  migración a Cloudflare es ortogonal a eso: deja el deploy desbloqueado. Las
+  apuestas siguen por el camino HTTP/Upstash intacto hasta que se implemente ese
+  puente.

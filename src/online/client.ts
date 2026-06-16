@@ -38,7 +38,7 @@ export class OnlineApiError extends Error {
 /**
  * Superficie del cliente online. La implementan tanto `OnlineClient` (HTTP, sobre
  * /api/rooms en Vercel) como `PartyOnlineClient` (WebSocket vía PartyKit). El juego
- * habla contra esta interfaz; el transporte se elige con `VITE_ONLINE_TRANSPORT`.
+ * habla contra esta interfaz; el transporte se elige en `createOnlineClient`.
  */
 export interface OnlineClientApi {
   createRoom(request: CreateRoomRequest): Promise<OnlineRoomResponse>;
