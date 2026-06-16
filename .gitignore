@@ -7,3 +7,12 @@ stack40-*.png
 .codex-output/
 
 .vercel
+
+# Estado/artefactos locales de PartyKit/Wrangler (Durable Objects locales, bundles temp)
+.wrangler/
+.partykit/
+
+# Config local por-dev (flags de transporte, host de dev) y secrets de wrangler
+.env.local
+.env*.local
+.dev.vars
