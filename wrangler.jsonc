@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stacker-40",
+  "main": "party/index.ts",
+  "compatibility_date": "2026-06-16",
+  "durable_objects": {
+    "bindings": [
+      { "name": "Main", "class_name": "RoomServer" },
+      { "name": "Lobby", "class_name": "LobbyServer" }
+    ]
+  },
+  // new_sqlite_classes es lo que pone los Durable Objects en el FREE TIER de Workers.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomServer", "LobbyServer"] }
+  ]
+}

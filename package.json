@@ -14,8 +14,9 @@
     "test:e2e": "playwright test",
     "test:watch": "vitest",
     "preview": "vite preview --host 127.0.0.1",
-    "party:dev": "partykit dev",
-    "party:deploy": "partykit deploy"
+    "party:dev": "wrangler dev",
+    "party:deploy": "wrangler deploy",
+    "party:check": "tsc -p party/tsconfig.json --noEmit"
   },
   "dependencies": {
     "@pixi/app": "^7.4.3",
@@ -24,16 +25,18 @@
     "@pixi/graphics": "^7.4.3",
     "@pixi/sprite": "^7.4.3",
     "@pixi/text": "^7.4.3",
+    "partyserver": "^0.5.8",
     "partysocket": "^1.2.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260616.1",
     "@playwright/test": "^1.57.0",
     "@types/node": "^25.9.1",
     "@types/qrcode": "^1.5.6",
-    "partykit": "^0.0.115",
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
-    "vitest": "^4.0.15"
+    "vitest": "^4.0.15",
+    "wrangler": "^4.100.0"
   }
 }
