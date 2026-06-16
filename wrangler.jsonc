@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "stacker-40",
+  "name": "tetra",
   "main": "party/index.ts",
   "compatibility_date": "2026-06-16",
   "durable_objects": {

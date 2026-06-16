@@ -1,11 +1,12 @@
 # Plan de migración PartyKit → partyserver (Cloudflare Durable Objects)
 
-> Estado: ✅ IMPLEMENTADO en la rama `feature/partyserver-migration` (sin commitear).
+> Estado: ✅ IMPLEMENTADO y **DESPLEGADO EN PRODUCCIÓN** (rama `feature/partyserver-migration`,
+> sin commitear). Worker `tetra` vivo en `https://tetra.naranjas.workers.dev`.
 > Verificado: `party:check` (tsc worker-types) OK, root tsc OK, 214 unit + **5/5 e2e
 > contra `wrangler dev`** (incl. countdown→playing por alarm y cleanup de abandono),
-> y `wrangler deploy --dry-run` OK (bundle prod 106 KiB). Falta solo el deploy real
-> (`wrangler login` + `wrangler deploy` con tu cuenta de Cloudflare). Ver
-> [[partykit-websocket-migration]].
+> `wrangler deploy --dry-run` OK, y **smoke test 3/3 contra el worker en prod**
+> (flujo de sala + lobby push + 404). Probar en el juego con
+> `?transport=ws&pkhost=tetra.naranjas.workers.dev`. Ver [[partykit-websocket-migration]].
 >
 > Motivo: el deploy de PartyKit está bloqueado porque la zona compartida
 > `partykit.dev` está al tope de custom domains de Cloudflare. `partyserver` es el
