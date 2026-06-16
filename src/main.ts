@@ -1196,6 +1196,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-restart') restartOnlineRoom();
   if (action === 'online-bet-create') createOnlineBet();
   if (action === 'online-bet-cancel') cancelOnlineBet();
+  if (action === 'online-bet-retry') retryOnlineBetInvoiceGeneration();
   if (action === 'online-bet-settle') settleOnlineBet();
   if (action === 'online-bet-refresh') refreshOnlineBet(false);
   if (action === 'online-bet-pay') {
@@ -2461,6 +2462,22 @@ async function cancelOnlineBet(): Promise<void> {
     const response = await onlineClient.cancelBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBetBusy = false;
+  }
+}
+
+async function retryOnlineBetInvoiceGeneration(): Promise<void> {
+  if (!onlineRoom || onlineBetBusy) return;
+  onlineBetBusy = true;
+  try {
+    const response = await onlineClient.retryBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    armOnlineBetFastPolling();
     onlineError = null;
   } catch (error) {
     onlineError = onlineErrorText(error);
@@ -5255,6 +5272,19 @@ function betParticipantName(participant: RoomBetParticipant): string {
   return `${participant.npub.slice(0, 8)}…${participant.npub.slice(-4)}`;
 }
 
+function canRetryBetInvoiceGeneration(bet: RoomBet, host: boolean): boolean {
+  if (!host || bet.status !== 'pending_deposits') return false;
+  if (bet.depositsReceived > 0) return false;
+  if (bet.participants.some((entry) => entry.depositStatus === 'paid')) return false;
+  return bet.participants.some((entry) => (
+    entry.depositStatus === 'pending'
+    && !!entry.depositError
+    && !entry.bolt11
+    && !entry.lnurl
+    && !entry.payUrl
+  ));
+}
+
 function renderOnlineBetPanel(host: boolean): string {
   if (!onlineRoom) return '';
   const bet = onlineRoom.bet;
@@ -5323,6 +5353,9 @@ function renderOnlineBetPanel(host: boolean): string {
       : '';
 
   const terminal = ['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status);
+  const retryInvoice = canRetryBetInvoiceGeneration(bet, host)
+    ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-retry"${onlineBetBusy ? ' disabled' : ''}>Reintentar invoice</button>`
+    : '';
   return `
     <section class="online-bet-panel">
       <div class="online-bet-head">
@@ -5336,6 +5369,7 @@ function renderOnlineBetPanel(host: boolean): string {
       ${myDeposit}
       <div class="online-bet-actions">
         <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
+        ${retryInvoice}
         ${host && !terminal ? `<button class="dash-copy-btn dash-kick-btn" type="button" data-ui-action="online-bet-cancel"${onlineBetBusy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
       </div>
     </section>

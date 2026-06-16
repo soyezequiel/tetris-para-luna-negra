@@ -330,6 +330,44 @@ export async function cancelRoomBet(
   return refreshRoomBet(store, roomId, nowMs);
 }
 
+export async function retryRoomBetInvoiceGeneration(
+  store: RoomStore,
+  roomId: string,
+  playerId: string,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const config = readApiConfig();
+  const room = await loadRoom(store, roomId);
+  const bet = room.bet;
+  if (!bet) throw new OnlineRoomError('No hay apuesta para reintentar.', 404);
+  if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede reintentar la apuesta.', 403);
+  if (room.status !== 'lobby') throw new OnlineRoomError('La sala ya empezó.', 409);
+  if (bet.status !== 'pending_deposits') {
+    throw new OnlineRoomError('La apuesta ya no está esperando depósitos.', 409);
+  }
+  const hasDeposit = bet.depositsReceived > 0
+    || bet.participants.some((participant) => participant.depositStatus === 'paid');
+  if (hasDeposit) {
+    throw new OnlineRoomError('No se puede recrear una apuesta con depósitos recibidos.', 409);
+  }
+  const hasInvoiceFailure = bet.participants.some((participant) => (
+    participant.depositStatus === 'pending'
+    && !!participant.depositError
+    && !participant.bolt11
+    && !participant.lnurl
+    && !participant.payUrl
+  ));
+  if (!hasInvoiceFailure) return refreshRoomBet(store, roomId, nowMs);
+
+  await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' }).catch(() => undefined);
+  await setRoomBet(store, room.id, null, nowMs);
+  return createBetForRoom(store, {
+    roomId: room.id,
+    playerId,
+    stakeSats: bet.stakeSats,
+  }, nowMs);
+}
+
 /**
  * Liquidación manual disparada por el host desde la pantalla de resultados, como
  * red de seguridad si el reporte automático no llegó a concretarse. Reutiliza

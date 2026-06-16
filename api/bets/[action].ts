@@ -4,6 +4,7 @@ import {
   createBetForRoom,
   ensureWebhookRegistered,
   refreshRoomBet,
+  retryRoomBetInvoiceGeneration,
   settleRoomBet,
   syncBetParticipantsWithRoom,
 } from '../../src/online/lunaNegraBets.js';
@@ -59,6 +60,11 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'cancel') {
       const body = await readJsonBody<RoomBetActionRequest>(request);
       const room = await cancelRoomBet(getBetRoomStore(), body.roomId, body.playerId);
+      return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'retry') {
+      const body = await readJsonBody<RoomBetActionRequest>(request);
+      const room = await retryRoomBetInvoiceGeneration(getBetRoomStore(), body.roomId, body.playerId);
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'settle') {

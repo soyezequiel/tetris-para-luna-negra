@@ -48,6 +48,7 @@ export interface OnlineClientApi {
   enterLunaNegraRoom(request: LunaNegraEnterRequest): Promise<LunaNegraEnterResponse>;
   createBet(request: CreateBetRequest): Promise<OnlineRoomResponse>;
   refreshBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
+  retryBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
   cancelBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
   settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
   setReady(request: ReadyRequest): Promise<OnlineRoomResponse>;
@@ -97,6 +98,10 @@ export class OnlineClient implements OnlineClientApi {
 
   refreshBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
     return this.post('/api/bets/refresh', request);
+  }
+
+  retryBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
+    return this.post('/api/bets/retry', request);
   }
 
   cancelBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {

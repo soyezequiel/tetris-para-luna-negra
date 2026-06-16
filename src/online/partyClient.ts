@@ -93,6 +93,9 @@ export class PartyOnlineClient implements OnlineClientApi {
   refreshBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
     return this.http.refreshBet(request);
   }
+  retryBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
+    return this.http.retryBet(request);
+  }
   cancelBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
     return this.http.cancelBet(request);
   }
