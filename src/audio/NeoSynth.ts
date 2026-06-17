@@ -37,7 +37,9 @@ const SUBW = 1.0;     // peso del sub-bass de la paleta
 // Material modal: barra/struck "campana limpia". Modos inarmónicos + decaimientos.
 const MAT = { ratios: [1, 2, 3, 4.2, 5.4], gains: [1, 0.45, 0.3, 0.17, 0.1], decay: 0.5, falloff: 0.6, q: 20 };
 
-const OUTPUT_TRIM = 0.95;        // trim de salida antes del compresor
+const OUTPUT_TRIM = 0.82;        // trim de salida: headroom para que el saturador
+                                 // sólo muerda en picos reales y no en toda la mezcla
+                                 // (sin esto, en el parlante del celular satura feo)
 const REVERB_SECONDS = 2.4;
 const REVERB_DECAY = 3.0;
 
@@ -582,9 +584,14 @@ export class NeoSynth {
     const sat = ctx.createWaveShaper(); sat.curve = this.makeSatCurve(2.4); sat.oversample = '2x';
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -14; comp.knee.value = 18; comp.ratio.value = 3.2; comp.attack.value = 0.003; comp.release.value = 0.18;
+    // Limitador brick-wall final: techo duro para que NINGÚN pico llegue a recortar
+    // en el hardware (el parlante del celular no perdona). El compresor de arriba es
+    // suave y deja pasar picos >0 dB; este los frena en seco a ~-1 dBFS.
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.5; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.001; limiter.release.value = 0.05;
     const reverb = ctx.createConvolver(); reverb.buffer = this.makeImpulse(ctx, REVERB_SECONDS, REVERB_DECAY);
     const reverbReturn = ctx.createGain(); reverbReturn.gain.value = 0.9;
-    master.connect(sat); sat.connect(comp); comp.connect(ctx.destination);
+    master.connect(sat); sat.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
     reverb.connect(reverbReturn); reverbReturn.connect(sat);
     this.noiseBuf = this.makeNoise(ctx, 1.0);
     this.ctx = ctx; this.master = master; this.reverb = reverb;
