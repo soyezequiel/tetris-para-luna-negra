@@ -42,6 +42,7 @@ import { cellsFor } from './game/pieces';
 import { createReplayLog, recordGarbage, recordInput } from './game/replay';
 import { BATTLE_RULES, softDropCellsPerFrameForFactor } from './game/rules';
 import { resolveGameplayFrame } from './game/frameClock';
+import { currentGravityCellsPerFrame } from './game/gravity';
 import { displayedElapsedFrames } from './game/timing';
 import type { ActivePiece, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
@@ -6827,7 +6828,7 @@ function renderDashboardRoomPanel(): string {
   const matchText = matchTypeLabel(room.matchType);
   const statusText = roomStatusLabel(room.status);
   const visibilityText = room.visibility === 'private' ? 'Privada' : 'Pública';
-  const speedLevelText = `Nivel ${room.rules?.gravityStartingLevel ?? 1}`;
+  const speedLevelText = roomSpeedLabel(room.rules);
   
   const playersHtml = room.players.map((candidate) => {
     const isHost = candidate.id === room.hostPlayerId;
@@ -7316,6 +7317,29 @@ function onlineRulesFromRoom(room = onlineRoom): GameRules {
     arrFrames: inputSettings.arrFrames,
     softDropCellsPerFrame: softDropCellsPerFrameForFactor(inputSettings.softDropFactor),
   };
+}
+
+// Etiqueta de la tarjeta "Velocidad" del panel de sala. Refleja la gravedad real
+// configurada, no solo el nivel inicial: en modo guideline la gravedad la define el
+// nivel (mostramos "Nivel X"); en modo lineal mostramos la gravedad efectiva de
+// arranque (en G o celdas/seg). El "↑" indica que la velocidad sube en la partida.
+function roomSpeedLabel(rules: GameRules | undefined): string {
+  if (!rules) return 'Nivel 1';
+  const climbsLevels = rules.gravityLevelLines > 0 || rules.gravityLevelPieces > 0;
+  if (rules.gravityCurve === 'guideline') {
+    const level = Math.max(1, Math.floor(rules.gravityStartingLevel));
+    return `Nivel ${level}${climbsLevels ? ' ↑' : ''}`;
+  }
+  const ramps = climbsLevels && rules.gravityIncreaseCellsPerLevel > 0;
+  const startG = currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0 });
+  return `${formatGravitySpeed(startG)}${ramps ? ' ↑' : ''}`;
+}
+
+// Gravedad (celdas por frame) a texto legible: 1G = 1 celda/frame (60 celdas/seg).
+function formatGravitySpeed(cellsPerFrame: number): string {
+  if (cellsPerFrame >= 20) return 'Instantánea';
+  if (cellsPerFrame >= 1) return `${formatCustomNumber(Number(cellsPerFrame.toFixed(2)))}G`;
+  return `${formatCustomNumber(Number((cellsPerFrame * 60).toFixed(2)))} cel/s`;
 }
 
 function parseControlAction(value: string | undefined): ControlAction | null {
