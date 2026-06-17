@@ -842,13 +842,14 @@ describe('core stacker engine', () => {
   });
 
   it('defaults to responsive horizontal handling', () => {
-    expect(DEFAULT_INPUT_SETTINGS.dasFrames).toBe(8);
+    expect(DEFAULT_INPUT_SETTINGS.dasFrames).toBe(10);
     expect(DEFAULT_INPUT_SETTINGS.arrFrames).toBe(2);
   });
 
   it.each([
     { dasFrames: 9, arrFrames: 1 },
     { dasFrames: 12, arrFrames: 2 },
+    { dasFrames: 8, arrFrames: 2 },
   ])('migrates saved default input timing $dasFrames/$arrFrames to the current baseline', (stored) => {
     const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     Object.defineProperty(globalThis, 'localStorage', {
@@ -859,7 +860,7 @@ describe('core stacker engine', () => {
     });
 
     try {
-      expect(loadInputSettings()).toMatchObject({ dasFrames: 8, arrFrames: 2 });
+      expect(loadInputSettings()).toMatchObject({ dasFrames: 10, arrFrames: 2 });
     } finally {
       if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
       else delete (globalThis as { localStorage?: Storage }).localStorage;

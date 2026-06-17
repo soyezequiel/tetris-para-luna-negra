@@ -77,7 +77,7 @@ export interface HandlingPresetDef {
 
 export const HANDLING_PRESETS: Record<HandlingPreset, HandlingPresetDef> = {
   classic: { label: 'Clásico', dasFrames: 10, arrFrames: 2, softDropFactor: 20 },
-  default: { label: 'Actual', dasFrames: 8, arrFrames: 2, softDropFactor: 40 },
+  default: { label: 'Actual', dasFrames: 10, arrFrames: 2, softDropFactor: 40 },
   agile: { label: 'Ágil', dasFrames: 7, arrFrames: 1, softDropFactor: 40 },
   competitive: { label: 'Competitivo', dasFrames: 6, arrFrames: 0, softDropFactor: INSTANT_SOFT_DROP_FACTOR },
 };
@@ -88,6 +88,9 @@ const STORAGE_KEY = 'stack40.inputSettings';
 const LEGACY_DEFAULT_TIMINGS = [
   { dasFrames: 9, arrFrames: 1 },
   { dasFrames: 12, arrFrames: 2 },
+  // Default anterior (DAS 8): se sube al nuevo default (DAS 10) para que "Actual"
+  // sea más perdonador con los toques rápidos.
+  { dasFrames: 8, arrFrames: 2 },
 ];
 const MIN_DAS_FRAMES = 0;
 const MAX_DAS_FRAMES = 30;
