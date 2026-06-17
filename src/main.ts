@@ -5301,6 +5301,9 @@ function renderOnlineBetPanel(host: boolean): string {
 
   if (!bet) {
     if (!host || !isLunaNegraRoom()) return '';
+    // No mostramos el panel de crear apuesta hasta que haya con quién apostar:
+    // con una sola persona en la sala no tiene sentido ofrecer el pozo.
+    if (onlineRoom.players.length < 2) return '';
     const blocked = lunaNegraBettingBlockedReason();
     const canCreate = !blocked && !onlineBetBusy;
     return `
