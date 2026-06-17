@@ -1,4 +1,4 @@
-import { routePartykitRequest } from 'partyserver';
+import { routePartykitRequest, getServerByName } from 'partyserver';
 import { normalizeRoomId, OnlineRoomError } from '../src/online/roomService.js';
 import type { OnlineRoom } from '../src/online/protocol.js';
 import type { Env } from './env.js';
@@ -31,7 +31,12 @@ async function handleRoomBridgeRequest(request: Request, env: Env): Promise<Resp
     authorizeBridgeRequest(request, env);
     const roomId = normalizeRoomId(decodeURIComponent(url.pathname.slice(ROOM_BRIDGE_PREFIX.length).split('/')[0] ?? ''));
     if (!roomId) throw new OnlineRoomError('Missing room id.', 400);
-    const room = env.Main.getByName(roomId);
+    // getServerByName (no env.Main.getByName a secas): los métodos RPC definidos por
+    // el usuario NO disparan onStart(), y onStart() es donde RoomServer rehidrata la
+    // sala desde el storage durable a su MemoryRoomStore. Con el stub crudo, una
+    // instancia fría/hibernada respondería el bridge con la sala vacía (room=null) y
+    // la apuesta nunca se crearía. getServerByName espera a onStart() antes de devolver.
+    const room = await getServerByName(env.Main, roomId);
 
     if (request.method === 'GET') {
       return sendBridgeJson(200, { room: await room.bridgeGetRoom() });
