@@ -1131,13 +1131,13 @@ function handleOverlayClick(event: MouseEvent): void {
   }
 
   if (action === 'sidebar-play') {
-    // Único botón de inicio (topbar ▶), inteligente:
+    // Botón principal del topbar, inteligente:
     // - solo o sin sala → partida de un jugador con la config custom (honra el seed).
-    // - con rivales en la sala → el host arranca la ronda; el invitado (no puede
-    //   iniciar) alterna su estado "listo".
+    // - con rivales en la sala → alterna el estado "listo" (host e invitado por igual).
     if (onlineRoom && onlineRoomHasOtherPlayers()) {
-      if (isOnlineHost()) void startOnlineRoom();
-      else void setOnlineReady(!currentOnlinePlayer()?.ready);
+      // Host e invitado: el botón principal alterna "listo". El host arranca la
+      // ronda con el botón aparte "Empezar" (acción 'online-start').
+      void setOnlineReady(!currentOnlinePlayer()?.ready);
     } else {
       startCustomRun();
     }
@@ -6534,25 +6534,36 @@ function renderDashboardMenu(state: GameState): string {
   const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
 
   const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
-  // El único botón de inicio cambia de intención (y de aspecto) según el contexto:
-  // - solo / host de la sala → botón ▶ "Jugar/Empezar".
-  // - invitado en sala con rivales → botón "Listo": al marcarse listo se transforma
-  //   visualmente (verde + check marcado) y vuelve a alternar a "no listo".
-  const isReadyButton = !!onlineRoom && onlineRoomHasOtherPlayers() && !isOnlineHost();
+  // El botón principal de inicio cambia de intención (y de aspecto) según el contexto:
+  // - solo / sin rivales → botón ▶ "Jugar" (arranca partida de un jugador).
+  // - en sala con rivales (host O invitado) → botón "Listo": al marcarse listo se
+  //   transforma visualmente (verde + check) y vuelve a alternar a "no listo".
+  // El host además tiene un botón aparte "Empezar" para lanzar la ronda.
+  const inRoomWithRivals = !!onlineRoom && onlineRoomHasOtherPlayers();
+  const isReadyButton = inRoomWithRivals;
   const isPlayerReady = isReadyButton && !!currentOnlinePlayer()?.ready;
   const playClass = [
     isPlayActive ? 'dash-topbar-play--active' : '',
     isReadyButton ? 'dash-topbar-play--ready-btn' : '',
     isPlayerReady ? 'dash-topbar-play--ready' : '',
   ].filter(Boolean).join(' ');
-  const playTitle = onlineRoom && onlineRoomHasOtherPlayers()
-    ? (isOnlineHost() ? 'Empezar partida' : (isPlayerReady ? 'Quitar listo' : 'Marcar listo'))
+  const playTitle = inRoomWithRivals
+    ? (isPlayerReady ? 'Quitar listo' : 'Marcar listo')
     : 'Jugar';
-  // Ícono: ▶ para jugar/empezar; check para el modo "Listo".
+  // Ícono: ▶ para jugar; check para el modo "Listo".
   const playIcon = isReadyButton
     ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>'
     : '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
   const playLabel = isReadyButton ? (isPlayerReady ? 'Listo' : 'Marcar listo') : '';
+  // Botón "Empezar" del host: visible solo para el host en sala con rivales; se
+  // habilita cuando el host está listo y hay al menos 2 listos (lo que exige el
+  // server en startRoom). El click usa la acción 'online-start' ya existente.
+  const showHostStart = inRoomWithRivals && isOnlineHost();
+  const readyCount = onlineRoom ? onlineRoom.players.filter((player) => player.ready).length : 0;
+  const canHostStart = showHostStart && isPlayerReady && readyCount >= 2;
+  const hostStartTitle = !isPlayerReady
+    ? 'Marcate listo para empezar'
+    : (readyCount < 2 ? 'Esperá a que haya 2 jugadores listos' : 'Empezar partida');
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
   const leaderboardClass = isLeaderboardActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
@@ -6572,6 +6583,11 @@ function renderDashboardMenu(state: GameState): string {
           ${playIcon}
           ${playLabel ? `<span class="dash-topbar-play-label">${playLabel}</span>` : ''}
         </button>
+        ${showHostStart ? `
+        <button class="dash-topbar-start" type="button" data-ui-action="online-start" aria-label="${hostStartTitle}" title="${hostStartTitle}"${canHostStart ? '' : ' disabled'}>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <span class="dash-topbar-start-label">Empezar</span>
+        </button>` : ''}
 
         <div class="dash-user">
           ${renderOnlineAvatar({ name: userDisplayName, avatarUrl: onlinePlayer.avatarUrl }, 'small', 'dash-user-avatar')}

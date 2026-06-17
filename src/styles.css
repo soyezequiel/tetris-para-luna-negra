@@ -3194,6 +3194,40 @@ canvas {
   box-shadow: 0 0 26px rgba(45, 211, 111, 0.7);
 }
 
+/* Botón "Empezar" del host (aparte del botón listo). */
+.dash-topbar-start {
+  display: grid;
+  grid-auto-flow: column;
+  place-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px 0 12px;
+  border: none;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #9d4edd, #ff007f);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 0 18px rgba(157, 78, 221, 0.5);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.dash-topbar-start:hover:not(:disabled) {
+  transform: scale(1.06);
+  box-shadow: 0 0 26px rgba(157, 78, 221, 0.7);
+}
+
+.dash-topbar-start:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  filter: grayscale(0.4);
+  box-shadow: none;
+}
+
 @keyframes dash-pulse-soft {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.012); }
