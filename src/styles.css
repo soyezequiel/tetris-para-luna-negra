@@ -3113,121 +3113,6 @@ canvas {
   position: relative;
 }
 
-.dash-topbar-play {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
-  border: none;
-  background: linear-gradient(135deg, #00f5ff, #0aa6cc);
-  color: #05070f;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease, filter 0.3s ease;
-  padding: 0;
-  box-shadow: 0 0 18px rgba(0, 245, 255, 0.5);
-  animation: dash-pulse-soft 2.6s ease-in-out infinite;
-}
-
-.dash-topbar-play svg {
-  margin-left: 2px;
-  transition: transform 0.2s ease;
-}
-
-.dash-topbar-play:hover {
-  transform: scale(1.1);
-  filter: brightness(1.08);
-  box-shadow: 0 0 26px rgba(0, 245, 255, 0.65);
-}
-
-.dash-topbar-play:hover svg {
-  transform: scale(1.1);
-}
-
-.dash-topbar-play--active {
-  background: linear-gradient(135deg, #9d4edd, #ff007f);
-  color: #fff;
-  box-shadow: 0 0 18px rgba(157, 78, 221, 0.55);
-}
-
-.dash-topbar-play--active:hover {
-  box-shadow: 0 0 26px rgba(157, 78, 221, 0.7);
-}
-
-/* Modo "Listo" (invitado en sala con rivales): el botón muestra texto y check. */
-.dash-topbar-play--ready-btn {
-  width: auto;
-  min-width: 40px;
-  height: 40px;
-  padding: 0 16px 0 12px;
-  gap: 6px;
-  grid-auto-flow: column;
-  background: linear-gradient(135deg, #ffb627, #ff7b00);
-  color: #1a0d00;
-  box-shadow: 0 0 18px rgba(255, 154, 39, 0.45);
-}
-
-.dash-topbar-play--ready-btn:hover {
-  box-shadow: 0 0 26px rgba(255, 154, 39, 0.6);
-}
-
-.dash-topbar-play--ready-btn svg {
-  margin-left: 0;
-}
-
-.dash-topbar-play-label {
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-/* Ya marcado listo: verde, "transformado". */
-.dash-topbar-play--ready {
-  background: linear-gradient(135deg, #2dd36f, #10b981);
-  color: #04130a;
-  box-shadow: 0 0 18px rgba(45, 211, 111, 0.55);
-}
-
-.dash-topbar-play--ready:hover {
-  box-shadow: 0 0 26px rgba(45, 211, 111, 0.7);
-}
-
-/* Botón "Empezar" del host (aparte del botón listo). */
-.dash-topbar-start {
-  display: grid;
-  grid-auto-flow: column;
-  place-items: center;
-  gap: 6px;
-  height: 40px;
-  padding: 0 16px 0 12px;
-  border: none;
-  border-radius: 11px;
-  background: linear-gradient(135deg, #9d4edd, #ff007f);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  white-space: nowrap;
-  cursor: pointer;
-  box-shadow: 0 0 18px rgba(157, 78, 221, 0.5);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
-}
-
-.dash-topbar-start:hover:not(:disabled) {
-  transform: scale(1.06);
-  box-shadow: 0 0 26px rgba(157, 78, 221, 0.7);
-}
-
-.dash-topbar-start:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-  filter: grayscale(0.4);
-  box-shadow: none;
-}
-
 @keyframes dash-pulse-soft {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.012); }
@@ -3509,6 +3394,207 @@ canvas {
 
 .dash-hero-btn--ghost:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* ===== Smart Play Stage (centro del home) ===== */
+@keyframes dash-fade-up { from { transform: translateY(22px); } to { transform: translateY(0); } }
+@keyframes dash-pop { 0% { transform: scale(0.85); } 60% { transform: scale(1.04); } 100% { transform: scale(1); } }
+@keyframes dash-spin { to { transform: rotate(360deg); } }
+@keyframes dash-dot { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
+
+.dash-play-stage {
+  width: 100%;
+  max-width: 560px;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.dash-step-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 26px;
+  animation: dash-fade-up 0.5s ease both;
+}
+.dash-step-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(247, 247, 242, 0.5);
+  white-space: nowrap;
+}
+.dash-step-pill.is-active {
+  background: rgba(0, 245, 255, 0.14);
+  border-color: rgba(0, 245, 255, 0.4);
+  color: var(--dash-neon-cyan);
+}
+.dash-step-sep { width: 18px; height: 1px; background: rgba(255, 255, 255, 0.2); }
+
+.dash-play-eyebrow {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--stage-accent, var(--dash-neon-cyan));
+  animation: dash-fade-up 0.5s ease 0.05s both;
+}
+.dash-play-title {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-size: 52px;
+  font-weight: 900;
+  line-height: 1.02;
+  letter-spacing: 0;
+  margin: 10px 0 8px;
+  color: #f7f7f2;
+  text-wrap: balance;
+  animation: dash-fade-up 0.5s ease 0.1s both;
+}
+.dash-play-subtitle {
+  font-size: 15px;
+  color: rgba(247, 247, 242, 0.7);
+  margin: 0 0 30px;
+  max-width: 420px;
+  line-height: 1.5;
+  font-weight: 500;
+  text-wrap: pretty;
+  animation: dash-fade-up 0.5s ease 0.15s both;
+}
+.dash-play-cta { animation: dash-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.2s both; }
+.dash-play-secondary { margin-top: 22px; animation: dash-fade-up 0.5s ease 0.3s both; }
+
+/* El botón inteligente */
+.dash-smart-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  height: 88px;
+  padding: 0 42px;
+  border: none;
+  border-radius: 18px;
+  cursor: pointer;
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  max-width: 100%;
+  transition: transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.2s ease, filter 0.2s ease;
+}
+.dash-smart-play:hover { transform: scale(1.04); filter: brightness(1.07); }
+.dash-smart-play:active { transform: scale(0.97); }
+.dash-smart-play-icon { display: grid; place-items: center; flex: 0 0 auto; }
+.dash-smart-play-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.05; }
+.dash-smart-play-text strong { font-size: 24px; font-weight: 900; letter-spacing: 0.5px; }
+.dash-smart-play-text small { font-size: 12px; font-weight: 700; opacity: 0.8; letter-spacing: 0.3px; margin-top: 3px; }
+
+.dash-smart-play--solo {
+  color: #05070f;
+  background: linear-gradient(135deg, #00f5ff, #0aa6cc);
+  box-shadow: 0 12px 40px rgba(0, 245, 255, 0.4);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+.dash-smart-play--host {
+  color: #fff;
+  background: linear-gradient(135deg, #9d4edd, #ff007f);
+  box-shadow: 0 12px 40px rgba(157, 78, 221, 0.5);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+.dash-smart-play--guest {
+  color: #1a0d00;
+  background: linear-gradient(135deg, #ffb627, #ff7b00);
+  box-shadow: 0 12px 40px rgba(255, 154, 39, 0.45);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+.dash-smart-play--ready {
+  color: #04130a;
+  background: linear-gradient(135deg, #2dd36f, #10b981);
+  box-shadow: 0 12px 40px rgba(45, 211, 111, 0.5);
+}
+/* Botón inteligente deshabilitado (host sin condiciones para empezar) */
+.dash-smart-play:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  filter: grayscale(0.4);
+  box-shadow: none;
+  animation: none;
+}
+.dash-smart-play:disabled:hover { transform: none; filter: grayscale(0.4); }
+/* Estado "esperando": no es un botón, es un indicador */
+.dash-smart-play--waiting {
+  cursor: default;
+  color: #ffb627;
+  background: rgba(255, 182, 39, 0.1);
+  border: 1px solid rgba(255, 182, 39, 0.4);
+  padding: 0 38px;
+}
+.dash-smart-play--waiting:hover { transform: none; filter: none; }
+
+.dash-smart-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 182, 39, 0.2);
+  border-top-color: #ffb627;
+  animation: dash-spin 0.9s linear infinite;
+}
+.dash-dots { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px; }
+.dash-dots i { width: 9px; height: 9px; border-radius: 50%; background: #ffb627; animation: dash-dot 1.2s ease-in-out infinite; }
+.dash-dots i:nth-child(2) { animation-delay: 0.18s; }
+.dash-dots i:nth-child(3) { animation-delay: 0.36s; }
+
+/* ===== Encabezado de propósito del panel de sala ===== */
+.dash-room-purpose { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.dash-room-purpose-top { display: flex; align-items: center; gap: 8px; }
+.dash-room-purpose-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(157, 78, 221, 0.18);
+  border: 1px solid rgba(157, 78, 221, 0.4);
+  color: #c79bff;
+  flex: 0 0 auto;
+}
+.dash-room-purpose-explainer {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(247, 247, 242, 0.55);
+  line-height: 1.45;
+}
+.dash-field-hint {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  color: rgba(247, 247, 242, 0.5);
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .dash-play-title { font-size: 42px; }
+  .dash-step-pills { flex-wrap: wrap; justify-content: center; }
+  .dash-smart-play {
+    min-height: 78px;
+    height: auto;
+    padding: 18px 28px;
+  }
+}
+
+@media (max-width: 520px) {
+  .dash-play-title { font-size: 32px; }
+  .dash-play-subtitle { font-size: 14px; }
+  .dash-smart-play {
+    gap: 12px;
+    padding: 16px 20px;
+  }
+  .dash-smart-play-text strong { font-size: 20px; }
+  .dash-smart-play-text small { font-size: 11px; }
+  .dash-step-pill { font-size: 10px; padding: 6px 10px; }
 }
 
 /* ===== Solo results (CLEAR / TOP OUT) — spec 05 ===== */

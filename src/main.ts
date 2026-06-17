@@ -1131,12 +1131,12 @@ function handleOverlayClick(event: MouseEvent): void {
   }
 
   if (action === 'sidebar-play') {
-    // Botón principal del topbar, inteligente:
+    // Botón principal inteligente:
     // - solo o sin sala → partida de un jugador con la config custom (honra el seed).
     // - con rivales en la sala → alterna el estado "listo" (host e invitado por igual).
     if (onlineRoom && onlineRoomHasOtherPlayers()) {
-      // Host e invitado: el botón principal alterna "listo". El host arranca la
-      // ronda con el botón aparte "Empezar" (acción 'online-start').
+      // Host e invitado: este botón alterna "listo". El host arranca la ronda
+      // con la acción 'online-start' del botón central.
       void setOnlineReady(!currentOnlinePlayer()?.ready);
     } else {
       startCustomRun();
@@ -6528,42 +6528,11 @@ function renderDashboardMenu(state: GameState): string {
   const userDisplayName = onlineName.trim() || 'Jugador';
 
   const isHomeActive = appMode === 'menu';
-  const isPlayActive = appMode === 'soloMenu' || appMode === 'multiplayerMenu' || appMode === 'custom' || appMode === 'onlineMenu' || appMode === 'roomLobby';
   const isHistoryActive = appMode === 'historyMenu' || appMode === 'library';
   const isLeaderboardActive = appMode === 'leaderboard';
   const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
 
   const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
-  // El botón principal de inicio cambia de intención (y de aspecto) según el contexto:
-  // - solo / sin rivales → botón ▶ "Jugar" (arranca partida de un jugador).
-  // - en sala con rivales (host O invitado) → botón "Listo": al marcarse listo se
-  //   transforma visualmente (verde + check) y vuelve a alternar a "no listo".
-  // El host además tiene un botón aparte "Empezar" para lanzar la ronda.
-  const inRoomWithRivals = !!onlineRoom && onlineRoomHasOtherPlayers();
-  const isReadyButton = inRoomWithRivals;
-  const isPlayerReady = isReadyButton && !!currentOnlinePlayer()?.ready;
-  const playClass = [
-    isPlayActive ? 'dash-topbar-play--active' : '',
-    isReadyButton ? 'dash-topbar-play--ready-btn' : '',
-    isPlayerReady ? 'dash-topbar-play--ready' : '',
-  ].filter(Boolean).join(' ');
-  const playTitle = inRoomWithRivals
-    ? (isPlayerReady ? 'Quitar listo' : 'Marcar listo')
-    : 'Jugar';
-  // Ícono: ▶ para jugar; check para el modo "Listo".
-  const playIcon = isReadyButton
-    ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>'
-    : '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-  const playLabel = isReadyButton ? (isPlayerReady ? 'Listo' : 'Marcar listo') : '';
-  // Botón "Empezar" del host: visible solo para el host en sala con rivales; se
-  // habilita cuando el host está listo y hay al menos 2 listos (lo que exige el
-  // server en startRoom). El click usa la acción 'online-start' ya existente.
-  const showHostStart = inRoomWithRivals && isOnlineHost();
-  const readyCount = onlineRoom ? onlineRoom.players.filter((player) => player.ready).length : 0;
-  const canHostStart = showHostStart && isPlayerReady && readyCount >= 2;
-  const hostStartTitle = !isPlayerReady
-    ? 'Marcate listo para empezar'
-    : (readyCount < 2 ? 'Esperá a que haya 2 jugadores listos' : 'Empezar partida');
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
   const leaderboardClass = isLeaderboardActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
@@ -6578,16 +6547,6 @@ function renderDashboardMenu(state: GameState): string {
 
       <header class="dash-topbar">
         <h1 class="dash-logo">TETRA</h1>
-        
-        <button class="dash-topbar-play ${playClass}" type="button" data-ui-action="sidebar-play" aria-label="${playTitle}" title="${playTitle}" aria-pressed="${isPlayerReady ? 'true' : 'false'}">
-          ${playIcon}
-          ${playLabel ? `<span class="dash-topbar-play-label">${playLabel}</span>` : ''}
-        </button>
-        ${showHostStart ? `
-        <button class="dash-topbar-start" type="button" data-ui-action="online-start" aria-label="${hostStartTitle}" title="${hostStartTitle}"${canHostStart ? '' : ' disabled'}>
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          <span class="dash-topbar-start-label">Empezar</span>
-        </button>` : ''}
 
         <div class="dash-user">
           ${renderOnlineAvatar({ name: userDisplayName, avatarUrl: onlinePlayer.avatarUrl }, 'small', 'dash-user-avatar')}
@@ -6632,28 +6591,110 @@ function renderDashboardMenu(state: GameState): string {
   `;
 }
 
+function renderSmartIconPlay(): string {
+  return '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+}
+
+function renderSmartIconCheck(): string {
+  return '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>';
+}
+
+function renderSmartIconRocket(): string {
+  return '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M12 2c3.5 2 5.5 5.5 5.5 9.5 0 1.6-.3 2.9-.8 4l-1.7-1V12a3 3 0 1 0-6 0v2.5l-1.7 1c-.5-1.1-.8-2.4-.8-4C6.5 7.5 8.5 4 12 2zm-1 10a1 1 0 1 1 2 0v6l-1 2-1-2v-6z"/></svg>';
+}
+
+function renderSmartPlayStage(): string {
+  const hasRoom = !!onlineRoom;
+  const hasOthers = hasRoom && onlineRoomHasOtherPlayers();
+  const host = isOnlineHost();
+  const ready = !!currentOnlinePlayer()?.ready;
+
+  // Contexto = exactamente la lógica del botón inteligente (sidebar-play)
+  const ctx: 'solo' | 'waiting' | 'host' | 'guest' =
+    !hasRoom ? 'solo' : !hasOthers ? 'waiting' : host ? 'host' : 'guest';
+
+  let accent = '#00f5ff';
+  let eyebrow = 'MODO SOLO';
+  let step2 = 'JUGÁ';
+  let title = 'Listo para jugar';
+  let subtitle = 'Tocá jugar y empezás una partida al instante.';
+  let playHtml = '';
+  let secondaryHtml = '';
+
+  if (ctx === 'solo') {
+    playHtml = `
+      <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="sidebar-play" aria-label="Jugar">
+        <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
+        <span class="dash-smart-play-text"><strong>JUGAR</strong><small>Partida solo · al instante</small></span>
+      </button>`;
+    secondaryHtml = `<button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar partida</button>`;
+  } else if (ctx === 'waiting') {
+    accent = '#ffb627'; eyebrow = 'SALA · ESPERANDO'; step2 = 'ESPERÁ RIVALES';
+    title = 'Esperando a que lleguen';
+    subtitle = 'Sos el único en la sala. Invitá amigos desde el panel de la derecha — la partida arranca cuando haya al menos 2 jugadores.';
+    playHtml = `
+      <div class="dash-smart-play dash-smart-play--waiting" role="status">
+        <span class="dash-smart-spinner" aria-hidden="true"></span>
+        <span class="dash-smart-play-text"><strong>ESPERANDO JUGADORES</strong><small>Faltan rivales<span class="dash-dots"><i></i><i></i><i></i></span></small></span>
+      </div>`;
+  } else if (ctx === 'host') {
+    accent = '#c79bff'; eyebrow = 'SALA · SOS EL ANFITRIÓN'; step2 = 'EMPEZÁ';
+    const total = onlineRoom!.players.length;
+    const readyCount = onlineRoom!.players.filter((p) => p.ready).length;
+    // El host arranca la ronda (acción 'online-start'). El server exige host listo
+    // + ≥2 listos, así que el botón se deshabilita hasta cumplirlo. Marcarse listo
+    // se hace desde el panel de sala (online-ready/online-unready).
+    const canStart = ready && readyCount >= 2;
+    const startTitle = !ready
+      ? 'Marcate listo en el panel para empezar'
+      : (readyCount < 2 ? 'Esperá a que haya 2 jugadores listos' : 'Empezar partida');
+    title = '¡Ya pueden jugar!';
+    subtitle = canStart
+      ? 'Cuando estén todos listos, arrancá la partida. Vos controlás el inicio.'
+      : (!ready
+        ? 'Marcate listo en el panel de la derecha para poder arrancar.'
+        : 'Necesitás al menos 2 jugadores listos para arrancar.');
+    playHtml = `
+      <button class="dash-smart-play dash-smart-play--host" type="button" data-ui-action="online-start" aria-label="${startTitle}" title="${startTitle}"${canStart ? '' : ' disabled'}>
+        <span class="dash-smart-play-icon">${renderSmartIconRocket()}</span>
+        <span class="dash-smart-play-text"><strong>EMPEZAR PARTIDA</strong><small>${readyCount}/${total} listos · multijugador</small></span>
+      </button>`;
+  } else { // guest
+    accent = ready ? '#39d49a' : '#ffb627';
+    eyebrow = 'SALA · ESPERANDO AL ANFITRIÓN';
+    step2 = ready ? '¡LISTO!' : 'MARCÁ LISTO';
+    title = ready ? 'Estás listo' : 'Marcá que estás listo';
+    subtitle = ready
+      ? 'La partida arranca apenas el anfitrión la inicie. Podés cambiar de opinión cuando quieras.'
+      : 'Confirmá que estás listo — el anfitrión arranca cuando todos lo estén.';
+    playHtml = `
+      <button class="dash-smart-play ${ready ? 'dash-smart-play--ready' : 'dash-smart-play--guest'}" type="button" data-ui-action="sidebar-play" aria-pressed="${ready}" aria-label="${ready ? 'Quitar listo' : 'Estoy listo'}">
+        <span class="dash-smart-play-icon">${renderSmartIconCheck()}</span>
+        <span class="dash-smart-play-text"><strong>${ready ? '¡LISTO!' : 'ESTOY LISTO'}</strong><small>${ready ? 'Esperando al anfitrión…' : 'Tocá para confirmar'}</small></span>
+      </button>`;
+  }
+
+  const step2Active = ctx !== 'solo' ? ' is-active' : '';
+  return `
+    <div class="dash-play-stage" style="--stage-accent: ${accent};">
+      <div class="dash-step-pills">
+        <span class="dash-step-pill is-active">1 · ELEGÍ CÓMO JUGAR</span>
+        <span class="dash-step-sep"></span>
+        <span class="dash-step-pill${step2Active}">2 · ${step2}</span>
+      </div>
+      <div class="dash-play-eyebrow">${eyebrow}</div>
+      <h2 class="dash-play-title">${title}</h2>
+      <p class="dash-play-subtitle">${subtitle}</p>
+      <div class="dash-play-cta">${playHtml}</div>
+      ${secondaryHtml ? `<div class="dash-play-secondary">${secondaryHtml}</div>` : ''}
+    </div>
+  `;
+}
+
 function renderDashboardCenterContent(_state: GameState): string {
   const mode = appMode;
   if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
-    return `
-      <div class="dash-hero-card">
-        <img class="dash-hero-img" src="/tetris-hero.png" alt="Custom" />
-        <div class="dash-hero-veil"></div>
-        <div class="dash-hero-scan"></div>
-        <div class="dash-hero-sheen"></div>
-        <div class="dash-hero-content">
-          <div class="dash-hero-eyebrow">PARTIDA PERSONALIZADA</div>
-          <h2 class="dash-hero-title">CUSTOM</h2>
-          <p class="dash-hero-subtitle">Jugá con tus reglas. Configurá todo a tu gusto, en solo o multijugador.</p>
-          <div class="dash-hero-cta">
-            <button class="dash-hero-btn dash-hero-btn--play" type="button" data-ui-action="custom-open" aria-label="Configurar partida">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="#05070f"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>CONFIGURAR
-            </button>
-            <span class="dash-hero-hint" style="align-self: center; color: var(--dash-text-dim); font-size: 13px; font-weight: 600;">Usá ▶ arriba para jugar</span>
-          </div>
-        </div>
-      </div>
-    `;
+    return renderSmartPlayStage();
   }
   if (mode === 'soloMenu') {
     return `
@@ -6799,6 +6840,7 @@ function renderDashboardRoomPanel(): string {
       </div>
     </div>
   `;
+  const roomPurposeIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2l9 5v6c0 5-3.6 8.7-9 9-5.4-.3-9-4-9-9V7l9-5zm0 4.2L6 9.5V13c0 3.1 2.1 5.4 6 5.8 3.9-.4 6-2.7 6-5.8V9.5l-6-3.3z"/></svg>';
 
   if (!room) {
     // Cuando no hay sala activa
@@ -6827,12 +6869,21 @@ function renderDashboardRoomPanel(): string {
       </div>
       
       ${renderOnlineError()}
+
+      <div class="dash-room-purpose">
+        <div class="dash-room-purpose-top">
+          <span class="dash-room-purpose-icon">${roomPurposeIcon}</span>
+          <strong>Armá una sala o unite a otra</strong>
+        </div>
+        <p class="dash-room-purpose-explainer">Todo lo multijugador se gestiona desde este panel: crear sala, entrar con código, invitaciones y salas públicas.</p>
+      </div>
       
       ${inviteSectionHtml}
 
       <div class="dash-empty-state">
         <div class="dash-field-group">
           <label>Crear Sala</label>
+          <p class="dash-field-hint">Abrí una sala nueva y después compartí el código, el link o una invitación.</p>
           <div class="dash-buttons-row">
             <button class="dash-action-btn accent" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
           </div>
@@ -6843,6 +6894,7 @@ function renderDashboardRoomPanel(): string {
         
         <div class="dash-field-group">
           <label for="dash-code-input">Unirse con código</label>
+          <p class="dash-field-hint">Pegá el código que te pasaron para entrar directo a esa sala.</p>
           <div class="dash-join-row">
             <input id="dash-code-input" class="dash-input" type="text" style="text-transform: uppercase;" placeholder="CÓDIGO" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
             <button class="dash-action-btn accent" type="button" style="width: auto; padding: 8px 16px;" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse</button>
@@ -6852,6 +6904,7 @@ function renderDashboardRoomPanel(): string {
 
       <div class="dash-field-group" style="margin-top: 10px;">
         <label>Salas Públicas</label>
+        <p class="dash-field-hint">Entrá a una sala abierta sin pedir código.</p>
         <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
           ${publicRooms}
         </div>
@@ -6867,6 +6920,9 @@ function renderDashboardRoomPanel(): string {
   const statusText = roomStatusLabel(room.status);
   const visibilityText = room.visibility === 'private' ? 'Privada' : 'Pública';
   const speedLevelText = roomSpeedLabel(room.rules);
+  const roomPurposeText = host
+    ? 'Gestioná jugadores, invitaciones y listos desde este panel. Cuando estén listos, el botón central empieza la partida.'
+    : 'Marcá tu estado desde el botón central y seguí la sala desde este panel mientras el anfitrión prepara la partida.';
   
   const playersHtml = room.players.map((candidate) => {
     const isHost = candidate.id === room.hostPlayerId;
@@ -6917,6 +6973,14 @@ function renderDashboardRoomPanel(): string {
       <span>${escapeHtml(statusText)}</span>
     </div>
 
+    <div class="dash-room-purpose">
+      <div class="dash-room-purpose-top">
+        <span class="dash-room-purpose-icon">${roomPurposeIcon}</span>
+        <strong>${host ? 'Control de anfitrión' : 'Tu lugar en la sala'}</strong>
+      </div>
+      <p class="dash-room-purpose-explainer">${escapeHtml(roomPurposeText)}</p>
+    </div>
+
     <div class="dash-room-summary" aria-label="Configuración de sala">
       <div class="dash-room-summary-item">
         <span>Tipo</span>
@@ -6955,7 +7019,7 @@ function renderDashboardRoomPanel(): string {
         ? `${player?.ready
           ? '<button class="dash-action-btn" type="button" data-ui-action="online-unready">No listo</button>'
           : '<button class="dash-action-btn accent" type="button" data-ui-action="online-ready">Listo</button>'}
-          ${host ? `<span class="dash-room-start-hint" style="align-self: center; color: var(--dash-text-dim); font-size: 12px; font-weight: 600;">El host arranca con ▶ arriba</span>` : ''}`
+          ${host ? `<span class="dash-room-start-hint" style="align-self: center; color: var(--dash-text-dim); font-size: 12px; font-weight: 600;">El host arranca con el botón central</span>` : ''}`
         : '<button class="dash-action-btn" type="button" disabled>Ronda en curso…</button>'}
       <button class="dash-action-btn danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
     </div>
