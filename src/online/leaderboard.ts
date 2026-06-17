@@ -36,6 +36,16 @@ export class MemoryLeaderboardStore implements LeaderboardStore {
       this.entries = new Map(trimmed.map((item) => [item.playerId, item]));
     }
   }
+
+  /** Snapshot serializable para persistir en el storage durable del Durable Object. */
+  snapshot(): LeaderboardEntry[] {
+    return [...this.entries.values()];
+  }
+
+  /** Rehidrata desde un snapshot persistido (al (re)arrancar el DO tras hibernar). */
+  hydrate(entries: LeaderboardEntry[]): void {
+    this.entries = new Map(entries.map((entry) => [entry.playerId, entry]));
+  }
 }
 
 function compareEntries(a: LeaderboardEntry, b: LeaderboardEntry): number {

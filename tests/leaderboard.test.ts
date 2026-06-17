@@ -74,4 +74,20 @@ describe('submitWin', () => {
     const top = await getWinsLeaderboard(store);
     expect(top[0].name).toBe('Jugador');
   });
+
+  it('round-trips wins through snapshot/hydrate (DO persistence)', async () => {
+    const store = new MemoryLeaderboardStore();
+    await submitWin(store, baseInput({ playerId: 'a', name: 'A' }));
+    await submitWin(store, baseInput({ playerId: 'b', name: 'B' }));
+    await submitWin(store, baseInput({ playerId: 'b', name: 'B' }));
+
+    // Simula el reinicio del Durable Object: snapshot persistido → nueva instancia.
+    const rehydrated = new MemoryLeaderboardStore();
+    rehydrated.hydrate(store.snapshot());
+    await submitWin(rehydrated, baseInput({ playerId: 'b', name: 'B' }));
+
+    const top = await getWinsLeaderboard(rehydrated);
+    expect(top.map((entry) => entry.playerId)).toEqual(['b', 'a']);
+    expect(top.map((entry) => entry.wins)).toEqual([3, 1]);
+  });
 });

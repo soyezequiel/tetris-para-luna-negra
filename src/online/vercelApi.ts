@@ -207,7 +207,59 @@ class UpstashLeaderboardStore implements LeaderboardStore {
   }
 }
 
+/**
+ * Ranking mundial servido por el Worker de Cloudflare (DO `LeaderboardServer`) vía
+ * el bridge HTTP `/__bridge/leaderboard`. Reemplaza a Upstash, cuya cuota free se
+ * agotaba y tiraba abajo el "Top mundial". Mismo token/host que el bridge de salas.
+ */
+class PartyBridgeLeaderboardStore implements LeaderboardStore {
+  private readonly baseUrl: string;
+
+  constructor(
+    baseUrl: string,
+    private readonly token: string,
+  ) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+  }
+
+  async topWins(limit: number): Promise<LeaderboardEntry[]> {
+    const payload = await this.request('GET', `?limit=${encodeURIComponent(String(limit))}`);
+    return Array.isArray(payload.entries) ? payload.entries : [];
+  }
+
+  async recordWin(meta: LeaderboardWinMeta): Promise<void> {
+    await this.request('POST', '', meta);
+  }
+
+  private async request(
+    method: 'GET' | 'POST',
+    suffix: string,
+    body?: unknown,
+  ): Promise<{ entries?: LeaderboardEntry[]; error?: string }> {
+    const response = await fetch(`${this.baseUrl}/__bridge/leaderboard${suffix}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${this.token}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null) as { entries?: LeaderboardEntry[]; error?: string } | null;
+    if (!response.ok) {
+      throw new OnlineRoomError(payload?.error ?? 'Leaderboard bridge request failed.', response.status);
+    }
+    return payload ?? {};
+  }
+}
+
 export function getLeaderboardStore(): LeaderboardStore {
+  // Preferimos el Worker de Cloudflare (DO) cuando hay token de bridge: saca el
+  // ranking de Upstash, que se quedaba sin cuota. Cae a Upstash y luego a memoria.
+  const bridgeToken = (process.env.PARTY_BRIDGE_TOKEN ?? '').trim();
+  if (bridgeToken) {
+    const bridgeUrl = (process.env.PARTY_BRIDGE_URL ?? '').trim() || 'https://tetra.naranjas.workers.dev';
+    return new PartyBridgeLeaderboardStore(bridgeUrl, bridgeToken);
+  }
   const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
   if (url && token) return new UpstashLeaderboardStore(url, token);
