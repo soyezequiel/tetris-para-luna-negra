@@ -582,6 +582,10 @@ function loopBody(): void {
     for (let i = replayFramesDueThisLoop(); i > 0; i -= 1) snapshot = playback.tick();
     renderer.render(snapshot.state);
     renderOverlay(snapshot.state);
+    // "Ver últimos 5s": al terminar la reproducción vuelve solo a los resultados
+    // (replayReturnMode != null distingue este caso del replay importado/historial,
+    // donde el usuario se queda en la pantalla "Complete").
+    if (snapshot.done && replayReturnMode !== null) exitReplayPlayback();
     return;
   }
 
