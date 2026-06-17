@@ -616,13 +616,13 @@ canvas {
 
 .custom-rows {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
   gap: 10px;
 }
 
 .custom-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 12px;
   align-items: center;
   min-height: 46px;
@@ -634,21 +634,24 @@ canvas {
 
 .custom-row label {
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   color: rgba(247, 247, 242, 0.82);
   font-family: 'Exo 2', sans-serif;
   font-size: 13px;
   font-weight: 600;
-  text-overflow: ellipsis;
+  line-height: 1.18;
   text-transform: none;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .custom-control {
   display: flex;
   justify-content: end;
+  justify-self: end;
   min-width: 0;
   flex: 0 0 auto;
+  width: max-content;
+  max-width: 100%;
 }
 
 .custom-control select,
@@ -666,6 +669,7 @@ canvas {
 }
 
 .custom-control select {
+  width: 162px;
   max-width: 100%;
   padding: 0 10px;
 }
@@ -675,7 +679,7 @@ canvas {
   grid-template-columns: 30px minmax(60px, 92px) 30px;
   gap: 6px;
   justify-content: end;
-  width: auto;
+  width: 164px;
   max-width: 100%;
 }
 
@@ -2201,6 +2205,7 @@ canvas {
 
   .custom-control {
     justify-content: start;
+    justify-self: start;
   }
 
   .custom-number-control {
