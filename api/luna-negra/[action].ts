@@ -11,7 +11,7 @@ import {
 } from '../../src/online/lunaNegraSocial.js';
 import { OnlineRoomError, loadRoom, normalizeRoomId } from '../../src/online/roomService.js';
 import {
-  getRoomStore,
+  getBetRoomStore,
   handleApiError,
   handleNodeApi,
   queryParam,
@@ -49,7 +49,7 @@ export async function GET(request: Request): Promise<Response> {
       if (!gameId) throw new OnlineRoomError('Falta el gameId de Luna Negra.', 400);
       if (!roomId) throw new OnlineRoomError('Falta la sala.', 400);
       if (!playerId) throw new OnlineRoomError('Falta el jugador.', 400);
-      const room = await loadRoom(getRoomStore(), roomId);
+      const room = await loadRoom(getBetRoomStore(), roomId);
       if (room.hostPlayerId !== playerId) {
         throw new OnlineRoomError('Solo el host puede invitar amigos.', 403);
       }
@@ -102,7 +102,7 @@ function actionFromRequest(request: Request): string {
 // npub del jugador que invita (para el toast "X te invitó" de Luna Negra).
 async function lunaInviteContext(roomId: string, playerId: string): Promise<{ fromNpub: string | null; gameId: string | null }> {
   try {
-    const room = await loadRoom(getRoomStore(), roomId);
+    const room = await loadRoom(getBetRoomStore(), roomId);
     return {
       fromNpub: room.players.find((player) => player.id === playerId)?.npub ?? null,
       gameId: room.lunaGameId ?? null,
