@@ -6530,11 +6530,25 @@ function renderDashboardMenu(state: GameState): string {
   const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
 
   const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
-  const playClass = isPlayActive ? 'dash-topbar-play--active' : '';
-  // El único botón de inicio cambia de intención según el contexto.
+  // El único botón de inicio cambia de intención (y de aspecto) según el contexto:
+  // - solo / host de la sala → botón ▶ "Jugar/Empezar".
+  // - invitado en sala con rivales → botón "Listo": al marcarse listo se transforma
+  //   visualmente (verde + check marcado) y vuelve a alternar a "no listo".
+  const isReadyButton = !!onlineRoom && onlineRoomHasOtherPlayers() && !isOnlineHost();
+  const isPlayerReady = isReadyButton && !!currentOnlinePlayer()?.ready;
+  const playClass = [
+    isPlayActive ? 'dash-topbar-play--active' : '',
+    isReadyButton ? 'dash-topbar-play--ready-btn' : '',
+    isPlayerReady ? 'dash-topbar-play--ready' : '',
+  ].filter(Boolean).join(' ');
   const playTitle = onlineRoom && onlineRoomHasOtherPlayers()
-    ? (isOnlineHost() ? 'Empezar partida' : (currentOnlinePlayer()?.ready ? 'Quitar listo' : 'Marcar listo'))
+    ? (isOnlineHost() ? 'Empezar partida' : (isPlayerReady ? 'Quitar listo' : 'Marcar listo'))
     : 'Jugar';
+  // Ícono: ▶ para jugar/empezar; check para el modo "Listo".
+  const playIcon = isReadyButton
+    ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  const playLabel = isReadyButton ? (isPlayerReady ? 'Listo' : 'Marcar listo') : '';
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
   const leaderboardClass = isLeaderboardActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
@@ -6550,8 +6564,9 @@ function renderDashboardMenu(state: GameState): string {
       <header class="dash-topbar">
         <h1 class="dash-logo">TETRA</h1>
         
-        <button class="dash-topbar-play ${playClass}" type="button" data-ui-action="sidebar-play" aria-label="${playTitle}" title="${playTitle}">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        <button class="dash-topbar-play ${playClass}" type="button" data-ui-action="sidebar-play" aria-label="${playTitle}" title="${playTitle}" aria-pressed="${isPlayerReady ? 'true' : 'false'}">
+          ${playIcon}
+          ${playLabel ? `<span class="dash-topbar-play-label">${playLabel}</span>` : ''}
         </button>
 
         <div class="dash-user">

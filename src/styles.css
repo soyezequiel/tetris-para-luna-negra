@@ -3154,6 +3154,46 @@ canvas {
   box-shadow: 0 0 26px rgba(157, 78, 221, 0.7);
 }
 
+/* Modo "Listo" (invitado en sala con rivales): el botón muestra texto y check. */
+.dash-topbar-play--ready-btn {
+  width: auto;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 16px 0 12px;
+  gap: 6px;
+  grid-auto-flow: column;
+  background: linear-gradient(135deg, #ffb627, #ff7b00);
+  color: #1a0d00;
+  box-shadow: 0 0 18px rgba(255, 154, 39, 0.45);
+}
+
+.dash-topbar-play--ready-btn:hover {
+  box-shadow: 0 0 26px rgba(255, 154, 39, 0.6);
+}
+
+.dash-topbar-play--ready-btn svg {
+  margin-left: 0;
+}
+
+.dash-topbar-play-label {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Ya marcado listo: verde, "transformado". */
+.dash-topbar-play--ready {
+  background: linear-gradient(135deg, #2dd36f, #10b981);
+  color: #04130a;
+  box-shadow: 0 0 18px rgba(45, 211, 111, 0.55);
+}
+
+.dash-topbar-play--ready:hover {
+  box-shadow: 0 0 26px rgba(45, 211, 111, 0.7);
+}
+
 @keyframes dash-pulse-soft {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.012); }
