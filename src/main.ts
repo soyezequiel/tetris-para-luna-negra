@@ -5060,7 +5060,6 @@ function renderOnlineResultsOverlay(state: GameState): string {
   const ranked = room ? rankPlayers(room.players) : [];
   const bet = room?.bet;
   const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded') ? bet.netPayoutSats : null;
-  const isHost = room ? room.hostPlayerId === onlinePlayer.id : false;
   // Frame en que terminó la partida = el del último rival eliminado. El ganador sigue
   // vivo, así que su elapsedFrames quedó congelado en su último snapshot y puede ser
   // MENOR al de quien eliminó; mostrarlo crudo hacía que el "último en pie" figurara
@@ -5089,13 +5088,6 @@ function renderOnlineResultsOverlay(state: GameState): string {
   // La ronda puede seguir corriendo (p. ej. quedé eliminado y el server aún no
   // cerró la sala): nadie puede relanzar hasta que termine de verdad.
   const roundOver = room?.status === 'finished';
-  const rematch = room
-    ? !roundOver
-      ? '<button class="solo-results-btn solo-results-btn--ghost" type="button" disabled>Ronda en curso…</button>'
-      : isHost
-        ? `<button class="solo-results-btn solo-results-btn--rematch" type="button" data-ui-action="online-restart"${onlineBusy ? ' disabled' : ''}>Revancha</button>`
-        : '<button class="solo-results-btn solo-results-btn--ghost" type="button" disabled>Esperando host</button>'
-    : '';
   return `
     <div class="menu-scrim online-results-scrim">
       <div class="online-results">
@@ -5108,15 +5100,15 @@ function renderOnlineResultsOverlay(state: GameState): string {
         ${renderOnlineError()}
         ${renderOnlineBetResult()}
         <div class="online-results-actions">
-          ${rematch}
           ${onlineReplayCollector.size() > 0
             ? '<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="online-replay-open">Ver repetición</button>'
             : ''}
           ${roundOver && canReplayLastSeconds(state)
             ? `<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="replay-last-seconds">Ver mis últimos ${DEATH_REPLAY_SECONDS}s</button>`
             : ''}
-          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="online-results-menu">Volver al menú</button>
-          <button class="solo-results-btn solo-results-btn--danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
+        </div>
+        <div class="online-results-next">
+          <button class="solo-results-btn solo-results-btn--next" type="button" data-ui-action="online-results-menu">Siguiente</button>
         </div>
       </div>
     </div>

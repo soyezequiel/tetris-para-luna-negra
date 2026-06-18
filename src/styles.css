@@ -4423,6 +4423,28 @@ canvas {
   margin-top: 4px;
 }
 
+/* "Siguiente" va separado del resto para darle protagonismo. */
+.online-results-next {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.solo-results-btn--next {
+  color: #05070f;
+  background: linear-gradient(135deg, #00f5ff, #0aa6cc);
+  box-shadow: 0 8px 26px rgba(0, 245, 255, 0.4);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+  padding: 0 56px;
+  font-size: 16px;
+}
+
+.solo-results-btn--next:hover {
+  filter: brightness(1.06);
+}
+
 .dash-room {
   grid-area: room;
   display: flex;
