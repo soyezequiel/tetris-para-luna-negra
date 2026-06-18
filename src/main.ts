@@ -545,15 +545,58 @@ let scheduleNextFrame: (cb: FrameRequestCallback) => void = (cb) => {
   requestAnimationFrame(cb);
 };
 
+// Probe de performance (solo DEV): cada ~1s loguea en la consola del navegador FPS real,
+// frames de motor por segundo, y el costo en ms del frame completo y del render. Sirve
+// para diagnosticar lag en monitores de alta tasa de refresco: si `fps` << refresco del
+// monitor y `render max` es alto, el render no llega a sostener el refresco (el input se
+// siente con retraso). `rebuilds=X/Y` muestra cuántos rAF reconstruyeron el tablero (X)
+// del total (Y); a 180Hz, con la optimización, debería ser ~1/3.
+interface PerfProbe {
+  since: number; rafs: number; ticks: number; full: number; skip: number;
+  loopMs: number; loopMax: number; renderMs: number; renderMax: number; longLoops: number;
+}
+const perf: PerfProbe | null = import.meta.env.DEV
+  ? { since: performance.now(), rafs: 0, ticks: 0, full: 0, skip: 0, loopMs: 0, loopMax: 0, renderMs: 0, renderMax: 0, longLoops: 0 }
+  : null;
+
+function perfFlush(now: number): void {
+  if (!perf) return;
+  const dt = now - perf.since;
+  if (dt < 1000) return;
+  const fps = perf.rafs / (dt / 1000);
+  const engineFps = perf.ticks / (dt / 1000);
+  const loopAvg = perf.loopMs / Math.max(1, perf.rafs);
+  const renderAvg = perf.renderMs / Math.max(1, perf.full);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[perf] ${appMode} fps=${fps.toFixed(0)} engineFps=${engineFps.toFixed(0)} | `
+    + `loop avg=${loopAvg.toFixed(2)} max=${perf.loopMax.toFixed(2)}ms | `
+    + `render avg=${renderAvg.toFixed(2)} max=${perf.renderMax.toFixed(2)}ms | `
+    + `rebuilds=${perf.full}/${perf.rafs} skip=${perf.skip} slowFrames=${perf.longLoops} | `
+    + `dpr=${(window.devicePixelRatio || 1).toFixed(2)} vp=${window.innerWidth}x${window.innerHeight}`,
+  );
+  perf.since = now; perf.rafs = 0; perf.ticks = 0; perf.full = 0; perf.skip = 0;
+  perf.loopMs = 0; perf.loopMax = 0; perf.renderMs = 0; perf.renderMax = 0; perf.longLoops = 0;
+}
+
 // Envoltorio resiliente: si un frame lanza, lo registramos pero SIEMPRE volvemos a
 // agendar el siguiente. Antes, una excepción en cualquier paso por-frame mataba el
 // bucle entero de forma permanente y silenciosa (juego congelado, sin error visible).
 function loop(): void {
+  const t0 = perf ? performance.now() : 0;
   try {
     loopBody();
   } catch (error) {
     console.error('[loop] error en el frame; continúo con el siguiente', error);
   } finally {
+    if (perf) {
+      const dur = performance.now() - t0;
+      perf.rafs += 1;
+      perf.loopMs += dur;
+      if (dur > perf.loopMax) perf.loopMax = dur;
+      if (dur > 1000 / 90) perf.longLoops += 1; // frame que excede ~11ms => cae por debajo de 90fps
+      perfFlush(performance.now());
+    }
     scheduleNextFrame(loop);
   }
 }
@@ -697,7 +740,14 @@ function loopBody(): void {
     // de resultados, animación de muerte, cuenta regresiva). El juice/shake igual corren
     // a tasa de refresco dentro de render() para que partículas y temblor sigan suaves.
     const boardChanged = gameFrame !== frameBefore || state.status !== 'playing';
+    const renderStart = perf ? performance.now() : 0;
     renderer.render(state, boardChanged);
+    if (perf) {
+      const rd = performance.now() - renderStart;
+      perf.ticks += Math.max(0, gameFrame - frameBefore);
+      if (boardChanged) { perf.full += 1; perf.renderMs += rd; if (rd > perf.renderMax) perf.renderMax = rd; }
+      else perf.skip += 1;
+    }
     // `live` solo en juego real: en lobby/resultados/pausa el motor puede quedar
     // congelado en 'playing' (el ganador online conserva ese status) y, con la pila
     // alta, el latido de peligro seguiría sonando fuera de la partida.
