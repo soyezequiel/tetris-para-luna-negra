@@ -5461,10 +5461,18 @@ function renderOnlineBetResult(): string {
     const settleAction = isHost
       ? `<div class="online-bet-deposit-actions"><button type="button" data-ui-action="online-bet-settle"${onlineBetBusy ? ' disabled' : ''}>Cobrar apuesta</button></div>`
       : '';
-    const settlementError = bet.settlementError
-      ? `<div class="panel-note panel-error">No se pudo avisar a Luna Negra: ${escapeHtml(bet.settlementError)}</div>`
-      : '';
-    return `<div class="panel-note">Apuesta fondeada · pozo ${bet.potSats} sats. Liquidando el pago al ganador…</div>${settlementError}${settleAction}`;
+    // NOT_READY no es un fallo: significa que otro `/result` ya tomó la apuesta y
+    // la está liquidando (o todavía no quedó lista). Es transitorio y se auto-cura
+    // cuando el estado pasa a `settled`, así que lo mostramos como "reintentando"
+    // en vez de un error rojo que asusta sin motivo. Solo los códigos genuinos
+    // (CONTRACT_MISMATCH, BAD_WINNERS, etc.) se muestran como error.
+    const isTransientSettlement = !bet.settlementError || /^NOT_READY\b/.test(bet.settlementError);
+    const settlementNote = !bet.settlementError
+      ? ''
+      : isTransientSettlement
+        ? `<div class="panel-note">⏳ Liquidando… puede tardar unos segundos, reintentando.</div>`
+        : `<div class="panel-note panel-error">No se pudo avisar a Luna Negra: ${escapeHtml(bet.settlementError)}</div>`;
+    return `<div class="panel-note">Apuesta fondeada · pozo ${bet.potSats} sats. Liquidando el pago al ganador…</div>${settlementNote}${settleAction}`;
   }
   return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.</div>`;
 }
