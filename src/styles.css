@@ -1279,6 +1279,175 @@ canvas {
   background: rgba(235, 68, 90, 0.16);
 }
 
+/* ── Pago de la apuesta: progreso del pozo (lobby) ───────────────────── */
+.bet-pot {
+  display: grid;
+  gap: 5px;
+}
+
+.bet-pot-bar {
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.bet-pot-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #f7c850, #39d49a);
+  transition: width 0.4s ease;
+}
+
+.bet-pot-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--dash-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.bet-paid-ok {
+  color: var(--dash-success);
+  font-weight: 800;
+}
+
+/* ── Liquidación (pantalla de resultados) ───────────────────────────── */
+.bet-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(247, 200, 80, 0.28);
+  border-top-color: #f7c850;
+  animation: bet-spin 0.7s linear infinite;
+  vertical-align: -2px;
+}
+
+@keyframes bet-spin {
+  to { transform: rotate(360deg); }
+}
+
+.bet-settle {
+  margin-top: 14px;
+  display: grid;
+  gap: 9px;
+  padding: 12px 14px;
+  border: 1px solid rgba(247, 200, 80, 0.24);
+  border-radius: 10px;
+  background: rgba(247, 200, 80, 0.06);
+  text-align: left;
+}
+
+.bet-settle--paid {
+  border-color: rgba(57, 212, 154, 0.34);
+  background: rgba(57, 212, 154, 0.08);
+}
+
+.bet-settle-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f7c850;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+}
+
+.bet-settle-title--win {
+  color: var(--dash-success);
+  font-size: 15px;
+}
+
+.bet-settle-amount {
+  color: var(--dash-success);
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.bet-settle-amount small {
+  font-size: 13px;
+  font-weight: 800;
+  opacity: 0.7;
+}
+
+.bet-settle-amount--pending {
+  margin-top: 10px;
+  color: #f7c850;
+  font-size: 18px;
+}
+
+.bet-settle-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+.bet-settle-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.bet-settle-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.bet-settle-step.is-done {
+  color: var(--dash-success);
+}
+
+.bet-settle-step.is-done .bet-settle-dot {
+  background: rgba(57, 212, 154, 0.18);
+  color: var(--dash-success);
+}
+
+.bet-settle-step.is-active {
+  color: var(--dash-text);
+}
+
+.bet-settle-step.is-todo {
+  color: var(--dash-text-muted);
+}
+
+.bet-settle-step.is-todo .bet-settle-dot {
+  border: 1.5px dashed rgba(255, 255, 255, 0.22);
+}
+
+.bet-settle-hint {
+  margin: 0;
+  color: var(--dash-text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.bet-settle-error {
+  margin: 0;
+  color: var(--dash-danger);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.bet-settle-muted {
+  color: var(--dash-text-dim);
+}
+
 .online-room-row span,
 .online-lobby-player span,
 .online-empty {

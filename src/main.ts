@@ -5383,16 +5383,40 @@ function renderOnlineBetPanel(host: boolean): string {
   const retryInvoice = canRetryBetInvoiceGeneration(bet, host)
     ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-retry"${onlineBetBusy ? ' disabled' : ''}>Reintentar invoice</button>`
     : '';
+
+  // Barra de progreso del pozo: cuántos depósitos entraron sobre el total. Da una
+  // lectura de un vistazo de "cuánto falta para arrancar" sin leer cada fila.
+  const potPct = bet.potTargetSats > 0 ? Math.min(100, Math.round((bet.potSats / bet.potTargetSats) * 100)) : 0;
+  const progress = !terminal
+    ? `
+      <div class="bet-pot">
+        <div class="bet-pot-bar"><span style="width:${potPct}%"></span></div>
+        <div class="bet-pot-meta">
+          <span>${bet.potSats}/${bet.potTargetSats} sats</span>
+          <span>${bet.depositsReceived}/${bet.depositsTotal} depósitos</span>
+        </div>
+      </div>
+    `
+    : '';
+
+  // Confirmación personal calma: una vez que pagué, no quiero seguir viendo el QR ni
+  // dudar si entró. `myDeposit` ya devuelve '' si mi depósito no está pendiente.
+  const myPaidConfirm = myEntry?.depositStatus === 'paid' && bet.status === 'pending_deposits'
+    ? `<p class="online-bet-note bet-paid-ok">✅ Pagaste tus ${bet.stakeSats} sats. Esperando a los demás…</p>`
+    : '';
+
   return `
     <section class="online-bet-panel">
       <div class="online-bet-head">
         <span>Apuesta · ${escapeHtml(betStatusLabel(bet.status))}</span>
-        <small>${bet.potSats}/${bet.potTargetSats} sats</small>
+        <small>${bet.feePct ? `comisión ${bet.feePct}%` : `comisión ${bet.feeSats} sats`}</small>
       </div>
-      <p class="online-bet-note">Stake ${bet.stakeSats} · ganador ${bet.netPayoutSats} sats · comisión ${bet.feeSats}.</p>
+      <p class="online-bet-note">Apostás <strong>${bet.stakeSats} sats</strong> · ganás <strong>${bet.netPayoutSats} sats</strong> si quedás último en pie.</p>
+      ${progress}
       <div class="online-bet-rows">
         ${rows}
       </div>
+      ${myPaidConfirm}
       ${myDeposit}
       <div class="online-bet-actions">
         <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
@@ -5442,38 +5466,89 @@ function ensureBetInvoiceQr(bolt11: string): string | null {
   return null;
 }
 
+// Spinner inline de un solo elemento (CSS lo anima); seguro para reusar varias veces.
+const BET_SPINNER = '<span class="bet-spinner" aria-hidden="true"></span>';
+
+// ¿El jugador local es el ganador del pozo? Antes de liquidar nos basamos en el
+// ranking de la sala; ya liquidada, en quién recibió payout (fuente de verdad).
+function amILocalBetWinner(bet: RoomBet, myNpub: string | null | undefined): boolean {
+  if (bet.status === 'settled') {
+    const myEntry = myNpub ? bet.participants.find((e) => e.npub === myNpub) : undefined;
+    return (myEntry?.payoutSats ?? 0) > 0;
+  }
+  const winner = onlineRoom ? rankPlayers(onlineRoom.players)[0] : null;
+  return !!winner && winner.id === onlinePlayer.id;
+}
+
+// Card de liquidación: dos pasos (reportar → liquidar) con el activo animado y el
+// hecho tildado, más una expectativa de tiempo. El pago Lightning puede tardar y
+// el card lo comunica para que "esto sigue andando", no "se colgó".
+function renderBetSettlementCard(reportDone: boolean, errorHtml: string): string {
+  const step = (done: boolean, active: boolean, label: string) => {
+    const cls = done ? 'is-done' : active ? 'is-active' : 'is-todo';
+    const mark = done ? '✓' : active ? BET_SPINNER : '';
+    return `<li class="bet-settle-step ${cls}"><span class="bet-settle-dot">${mark}</span><span>${label}</span></li>`;
+  };
+  return `
+    <div class="bet-settle">
+      <div class="bet-settle-title">${BET_SPINNER}<span>Pagando al ganador…</span></div>
+      <ol class="bet-settle-steps">
+        ${step(reportDone, !reportDone, 'Reportando el resultado')}
+        ${step(false, reportDone, 'Liquidando el pago Lightning')}
+      </ol>
+      <p class="bet-settle-hint">El pago se completa solo. Por la red Lightning puede tardar hasta ~1 minuto.</p>
+      ${errorHtml}
+    </div>
+  `;
+}
+
 function renderOnlineBetResult(): string {
   const bet = onlineRoom?.bet;
   if (!bet) return '';
+  const myNpub = currentOnlinePlayer()?.npub;
+  const amIWinner = amILocalBetWinner(bet, myNpub);
+
   if (bet.status === 'settled') {
-    const winners = bet.participants.filter((entry) => (entry.payoutSats ?? 0) > 0);
-    const names = winners.map((entry) => `${escapeHtml(betParticipantName(entry))} (+${entry.payoutSats} sats)`).join(', ');
-    return `<div class="panel-note">💰 Apuesta pagada. ${names || `${bet.netPayoutSats} sats al ganador.`}</div>`;
-  }
-  if (bet.status === 'refunded' || bet.status === 'cancelled' || bet.status === 'expired') {
-    return `<div class="panel-note">↩️ Apuesta ${escapeHtml(betStatusLabel(bet.status).toLowerCase())}: se reembolsaron los depósitos.</div>`;
-  }
-  if (bet.status === 'funded') {
-    if (bet.resultReported) {
-      return `<div class="panel-note">✅ Ganador reportado a Luna Negra. El pago se está liquidando…</div>`;
+    const myEntry = myNpub ? bet.participants.find((e) => e.npub === myNpub) : undefined;
+    const myPayout = myEntry?.payoutSats ?? 0;
+    if (myPayout > 0) {
+      return `
+        <div class="bet-settle bet-settle--paid">
+          <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Cobraste el pozo!</span></div>
+          <div class="bet-settle-amount">+${myPayout.toLocaleString('es-AR')} <small>sats</small></div>
+          <p class="bet-settle-hint">Acreditados en tu billetera Lightning de Luna Negra.</p>
+        </div>
+      `;
     }
-    const isHost = onlineRoom?.hostPlayerId === onlinePlayer.id;
-    const settleAction = isHost
-      ? `<div class="online-bet-deposit-actions"><button type="button" data-ui-action="online-bet-settle"${onlineBetBusy ? ' disabled' : ''}>Cobrar apuesta</button></div>`
-      : '';
-    // NOT_READY no es un fallo: significa que otro `/result` ya tomó la apuesta y
-    // la está liquidando (o todavía no quedó lista). Es transitorio y se auto-cura
-    // cuando el estado pasa a `settled`, así que lo mostramos como "reintentando"
-    // en vez de un error rojo que asusta sin motivo. Solo los códigos genuinos
-    // (CONTRACT_MISMATCH, BAD_WINNERS, etc.) se muestran como error.
-    const isTransientSettlement = !bet.settlementError || /^NOT_READY\b/.test(bet.settlementError);
-    const settlementNote = !bet.settlementError
-      ? ''
-      : isTransientSettlement
-        ? `<div class="panel-note">⏳ Liquidando… puede tardar unos segundos, reintentando.</div>`
-        : `<div class="panel-note panel-error">No se pudo avisar a Luna Negra: ${escapeHtml(bet.settlementError)}</div>`;
-    return `<div class="panel-note">Apuesta fondeada · pozo ${bet.potSats} sats. Liquidando el pago al ganador…</div>${settlementNote}${settleAction}`;
+    const winners = bet.participants.filter((entry) => (entry.payoutSats ?? 0) > 0);
+    const names = winners.map((entry) => `${escapeHtml(betParticipantName(entry))} (+${entry.payoutSats!.toLocaleString('es-AR')} sats)`).join(', ');
+    return `<div class="panel-note bet-settle-muted">💰 Apuesta pagada a ${names || `el ganador (${bet.netPayoutSats} sats)`}. Perdiste tu apuesta de ${bet.stakeSats} sats.</div>`;
   }
+
+  if (bet.status === 'refunded' || bet.status === 'cancelled' || bet.status === 'expired') {
+    return `<div class="panel-note">↩️ Apuesta ${escapeHtml(betStatusLabel(bet.status).toLowerCase())}: se reembolsaron los depósitos a todos.</div>`;
+  }
+
+  if (bet.status === 'funded') {
+    const isHost = onlineRoom?.hostPlayerId === onlinePlayer.id;
+    // NOT_READY no es un fallo: significa que otro `/result` ya tomó la apuesta y la
+    // está liquidando (o todavía no quedó lista). Es transitorio y se auto-cura al
+    // pasar a `settled`, así que lo absorbemos en el paso "Liquidando" en vez de un
+    // error rojo. Solo los códigos genuinos (CONTRACT_MISMATCH, BAD_WINNERS…) se ven.
+    const isTransientSettlement = !bet.settlementError || /^NOT_READY\b/.test(bet.settlementError);
+    const errorHtml = bet.settlementError && !isTransientSettlement
+      ? `<p class="bet-settle-error">⚠️ Luna Negra rechazó el cobro: ${escapeHtml(bet.settlementError)}.${isHost ? ' Probá «Reintentar cobro».' : ''}</p>`
+      : '';
+    // El host tiene un empujón manual por si el reporte automático no progresa.
+    const settleAction = isHost
+      ? `<div class="online-bet-deposit-actions"><button type="button" data-ui-action="online-bet-settle"${onlineBetBusy ? ' disabled' : ''}>Reintentar cobro</button></div>`
+      : '';
+    const winnerBadge = amIWinner
+      ? `<div class="bet-settle-amount bet-settle-amount--pending">Ganás +${bet.netPayoutSats.toLocaleString('es-AR')} <small>sats</small></div>`
+      : '';
+    return `${renderBetSettlementCard(!!bet.resultReported, errorHtml)}${winnerBadge}${settleAction}`;
+  }
+
   return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.</div>`;
 }
 
