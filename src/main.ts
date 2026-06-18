@@ -555,7 +555,23 @@ interface PerfProbe {
   since: number; rafs: number; ticks: number; full: number; skip: number;
   loopMs: number; loopMax: number; renderMs: number; renderMax: number; longLoops: number;
 }
-const perf: PerfProbe | null = import.meta.env.DEV
+// Activo en DEV siempre; en PRODUCCIÓN solo bajo demanda con `?perf=1` en la URL (o
+// localStorage 'stack40.perf'='1'), para poder medir el lag real —p. ej. en multijugador—
+// sin spamear la consola a los usuarios normales. El flag se persiste en localStorage al
+// pasar `?perf=1` para que sobreviva a la navegación entre salas/recargas.
+const perfEnabled = ((): boolean => {
+  if (import.meta.env.DEV) return true;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('perf')) {
+      const on = params.get('perf') !== '0';
+      localStorage.setItem('stack40.perf', on ? '1' : '0');
+      return on;
+    }
+    return localStorage.getItem('stack40.perf') === '1';
+  } catch { return false; }
+})();
+const perf: PerfProbe | null = perfEnabled
   ? { since: performance.now(), rafs: 0, ticks: 0, full: 0, skip: 0, loopMs: 0, loopMax: 0, renderMs: 0, renderMax: 0, longLoops: 0 }
   : null;
 
