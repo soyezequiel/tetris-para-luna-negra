@@ -377,7 +377,19 @@ let onlineFailoverRequestInFlight = false;
 let onlineLastFailoverRequestAt = 0;
 let onlineLastPeerBroadcastAt = 0;
 let onlineLastKoBroadcastAt = 0;
-let onlineServerOffsetMs = 0;
+// Reloj del servidor anclado a un reloj LOCAL MONOTÓNICO (performance.now()), no a
+// Date.now(): Date.now() puede saltar por ajustes del SO/NTP y es de baja resolución, lo
+// que metía jitter en el frame del motor en online (engineFps saltando 44↔76 con fps=180).
+// `offset` es el efectivo (suavizado); `target` el crudo del último sync. Inicializados a
+// (Date.now - performance.now) para que antes del primer sync onlineNowMs() ≈ Date.now().
+let onlineServerOffsetMs = Date.now() - performance.now();
+let onlineServerOffsetTargetMs = onlineServerOffsetMs;
+let onlineClockSynced = false;       // primer sync con el server → snap directo
+let onlineClockLastSlewAt = 0;       // performance.now() del último slew (ver slewOnlineClock)
+// Desfase (ms) a partir del cual snapeamos en vez de suavizar (pestaña en segundo plano,
+// reanudación tras congelarse rAF): por debajo, slew exponencial suave.
+const ONLINE_CLOCK_SNAP_MS = 150;
+const ONLINE_CLOCK_SMOOTH_TAU_MS = 250; // constante de tiempo del slew (~0.25s)
 let onlineResultSubmitted = false;
 let onlineRunStarted = false;
 // La ronda arrancó pero yo no estaba listo (o cerré la pestaña): entro de
@@ -3303,6 +3315,8 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
 function syncOnline(): void {
   if (!onlineRoom) return;
   const now = performance.now();
+  // Suaviza el reloj del server cada frame (el frame del motor se ancla a él en online).
+  slewOnlineClock();
   if (shouldPollOnline(now)) pollOnlineRoom();
   if (appMode === 'onlineCountdown') {
     // Mismo sonido de cuenta regresiva que el solo, dirigido por el reloj del
@@ -7804,11 +7818,34 @@ function onlineErrorText(error: unknown): string {
 
 function syncOnlineClock(serverNowMs: number): void {
   if (!Number.isFinite(serverNowMs)) return;
-  onlineServerOffsetMs = serverNowMs - Date.now();
+  // Offset relativo al reloj monotónico local. Cada poll (~750ms) lo recalcula con la
+  // latencia de red del momento: NO lo aplicamos de golpe (eso congelaba/adelantaba el
+  // motor a tirones), solo movemos el objetivo y dejamos que slewOnlineClock() lo alcance.
+  onlineServerOffsetTargetMs = serverNowMs - performance.now();
+  // Primer sync, o desfase grande (segundo plano / reanudación): snap directo, sin slew.
+  if (!onlineClockSynced || Math.abs(onlineServerOffsetTargetMs - onlineServerOffsetMs) > ONLINE_CLOCK_SNAP_MS) {
+    onlineServerOffsetMs = onlineServerOffsetTargetMs;
+    onlineClockSynced = true;
+    onlineClockLastSlewAt = performance.now();
+  }
+}
+
+// Acerca suavemente el offset efectivo al objetivo (slew exponencial ~0.25s). Se llama
+// cada frame mientras hay sala (ver syncOnline). Mantiene el promedio del reloj del server
+// (host y cliente siguen alineados, frameSkew≈0) pero elimina los saltos por-poll que
+// hacían avanzar el motor a tirones → input parejo en multijugador.
+function slewOnlineClock(): void {
+  const now = performance.now();
+  const dt = onlineClockLastSlewAt > 0 ? now - onlineClockLastSlewAt : 0;
+  onlineClockLastSlewAt = now;
+  const diff = onlineServerOffsetTargetMs - onlineServerOffsetMs;
+  if (dt <= 0 || diff === 0) return;
+  const factor = 1 - Math.exp(-dt / ONLINE_CLOCK_SMOOTH_TAU_MS);
+  onlineServerOffsetMs += diff * factor;
 }
 
 function onlineNowMs(): number {
-  return Date.now() + onlineServerOffsetMs;
+  return performance.now() + onlineServerOffsetMs;
 }
 
 function normalizeProgressInteger(value: number | undefined, fallback: number): number {
