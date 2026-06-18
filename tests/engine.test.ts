@@ -2782,14 +2782,15 @@ describe('core stacker engine', () => {
     expect(state.active).toBeNull();
   });
 
-  it('keeps the topped-out piece in lockOutPiece so it can be shown instead of erased', () => {
+  it('does not kill when a locked piece only pokes one row above the ceiling', () => {
     const engine = new GameEngine(99, {
       ...DEFAULT_RULES,
       gravityCellsPerFrame: 0,
       softDropCellsPerFrame: 0,
     });
     const unsafe = engine as unknown as { board: Cell[][]; active: ActivePiece };
-    // Pieza O cuyas celdas superiores quedan por encima del techo del tablero (y<0).
+    // Pieza O mitad dentro / mitad fuera: celdas superiores en y<0 pero las de
+    // abajo caen en el tablero (y>=0). Asomar un casillero NO debe matar.
     // Celdas O (rot 0): (1,0)(2,0)(1,1)(2,1) → en x=4,y=-1 ocupa (5,-1)(6,-1)(5,0)(6,0).
     unsafe.active = { type: 'O', x: 4, y: -1, rotation: 0 };
     // Tapamos la fila 1 bajo la pieza para que el hard drop no pueda bajarla.
@@ -2797,16 +2798,34 @@ describe('core stacker engine', () => {
     unsafe.board[1][6] = 'O';
 
     const state = engine.tick(1, [{ frame: 1, action: 'hardDrop' }]);
+    // Lock válido: la parte que cae dentro del tablero se congela y la partida
+    // sigue (sin lockOut). Las celdas y<0 se descartan, no hay índice negativo.
+    expect(state.stats.gameOverReason).not.toBe('lockOut');
+    expect(state.board[0][5]).toBe('O');
+    expect(state.board[0][6]).toBe('O');
+  });
+
+  it('locks out and keeps the topped-out piece when it fixes entirely above the ceiling', () => {
+    const engine = new GameEngine(99, {
+      ...DEFAULT_RULES,
+      gravityCellsPerFrame: 0,
+      softDropCellsPerFrame: 0,
+    });
+    const unsafe = engine as unknown as { board: Cell[][]; active: ActivePiece };
+    // Pieza O enteramente por encima del techo (todas las celdas en y<0).
+    // En x=4,y=-2 ocupa (5,-2)(6,-2)(5,-1)(6,-1).
+    unsafe.active = { type: 'O', x: 4, y: -2, rotation: 0 };
+    // Tapamos la fila 0 para que el hard drop no pueda bajarla al tablero.
+    unsafe.board[0][5] = 'O';
+    unsafe.board[0][6] = 'O';
+
+    const state = engine.tick(1, [{ frame: 1, action: 'hardDrop' }]);
     expect(state.status).toBe('gameover');
     expect(state.stats.gameOverReason).toBe('lockOut');
     // La activa se suelta, pero la pieza topeada se conserva entera (con sus celdas
     // y<0) para dibujarla asomando del techo en vez de borrar la parte de arriba.
     expect(state.active).toBeNull();
-    expect(state.lockOutPiece).toEqual({ type: 'O', x: 4, y: -1, rotation: 0 });
-    // Las celdas que sí caben en el tablero quedan congeladas; las de y<0 no se
-    // escriben (no hay índice negativo) pero viven en lockOutPiece.
-    expect(state.board[0][5]).toBe('O');
-    expect(state.board[0][6]).toBe('O');
+    expect(state.lockOutPiece).toEqual({ type: 'O', x: 4, y: -2, rotation: 0 });
   });
 
   it('lifts the active piece when incoming garbage rises into it instead of killing', () => {

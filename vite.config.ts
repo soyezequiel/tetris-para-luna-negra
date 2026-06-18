@@ -5,6 +5,7 @@ import * as lunaNegraEnter from './api/rooms/luna-negra/enter';
 import * as roomsAction from './api/rooms/[action]';
 import * as betsAction from './api/bets/[action]';
 import * as leaderboard from './api/leaderboard';
+import * as survival from './api/survival';
 
 type LocalApiHandler = (request: Request) => Response | Promise<Response>;
 type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
@@ -44,6 +45,7 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/bets/state', betsAction],
 
   ['/api/leaderboard', leaderboard],
+  ['/api/survival', survival],
 ]);
 
 export default defineConfig({

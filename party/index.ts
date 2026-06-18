@@ -1,17 +1,21 @@
 import { routePartykitRequest, getServerByName } from 'partyserver';
 import { normalizeRoomId, OnlineRoomError } from '../src/online/roomService.js';
 import { LEADERBOARD_DEFAULT_LIMIT, type LeaderboardWinMeta } from '../src/online/leaderboard.js';
+import { SURVIVAL_DEFAULT_LIMIT, type SurvivalTimeMeta } from '../src/online/survivalLeaderboard.js';
 import type { OnlineRoom } from '../src/online/protocol.js';
 import { LEADERBOARD_PARTY_ID } from './leaderboard.js';
+import { SURVIVAL_PARTY_ID } from './survivalLeaderboard.js';
 import type { Env } from './env.js';
 
 // Los Durable Objects deben exportarse desde el módulo main del Worker.
 export { RoomServer } from './room.js';
 export { LobbyServer } from './lobby.js';
 export { LeaderboardServer } from './leaderboard.js';
+export { SurvivalLeaderboardServer } from './survivalLeaderboard.js';
 
 const ROOM_BRIDGE_PREFIX = '/__bridge/rooms/';
 const LEADERBOARD_BRIDGE_PATH = '/__bridge/leaderboard';
+const SURVIVAL_BRIDGE_PATH = '/__bridge/survival';
 
 /**
  * Entrypoint del Worker. `routePartykitRequest` mantiene el esquema de URL
@@ -25,6 +29,8 @@ export default {
     if (roomBridge) return roomBridge;
     const leaderboardBridge = await handleLeaderboardBridgeRequest(request, env);
     if (leaderboardBridge) return leaderboardBridge;
+    const survivalBridge = await handleSurvivalBridgeRequest(request, env);
+    if (survivalBridge) return survivalBridge;
     return (await routePartykitRequest(request, env as never)) ?? new Response('Not Found', { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
@@ -86,6 +92,40 @@ async function handleLeaderboardBridgeRequest(request: Request, env: Env): Promi
         throw new OnlineRoomError('Missing leaderboard win payload.', 400);
       }
       return sendBridgeJson(200, { entries: await leaderboard.recordWin(meta) });
+    }
+    return sendBridgeJson(405, { error: 'Method not allowed.' });
+  } catch (error) {
+    const status = error instanceof OnlineRoomError ? error.status : 500;
+    const message = error instanceof Error ? error.message : 'Unexpected bridge error.';
+    return sendBridgeJson(status, { error: message });
+  }
+}
+
+/**
+ * Bridge HTTP del top de supervivencia, respaldado por el DO singleton
+ * `SurvivalLeaderboardServer`. Vercel (api/survival.ts) lo consume. Mismo token que el
+ * resto de bridges. GET → top por tiempo; POST {meta} → registra un tiempo (solo mejora
+ * el récord) y devuelve el top actualizado.
+ */
+async function handleSurvivalBridgeRequest(request: Request, env: Env): Promise<Response | null> {
+  const url = new URL(request.url);
+  if (url.pathname !== SURVIVAL_BRIDGE_PATH) return null;
+
+  try {
+    authorizeBridgeRequest(request, env);
+    const survival = await getServerByName(env.SurvivalLeaderboard, SURVIVAL_PARTY_ID);
+
+    if (request.method === 'GET') {
+      const requested = Number(url.searchParams.get('limit'));
+      const limit = Number.isFinite(requested) && requested > 0 ? requested : SURVIVAL_DEFAULT_LIMIT;
+      return sendBridgeJson(200, { entries: await survival.topTimes(limit) });
+    }
+    if (request.method === 'POST') {
+      const meta = await request.json() as SurvivalTimeMeta;
+      if (!meta || typeof meta.playerId !== 'string' || !meta.playerId) {
+        throw new OnlineRoomError('Missing survival time payload.', 400);
+      }
+      return sendBridgeJson(200, { entries: await survival.recordTime(meta) });
     }
     return sendBridgeJson(405, { error: 'Method not allowed.' });
   } catch (error) {

@@ -508,3 +508,32 @@ export interface LeaderboardResponse {
   entries: LeaderboardEntry[];
   serverNowMs: number;
 }
+
+// ───────────────────── Top de supervivencia (por tiempo) ─────────────────────
+// Ranking mundial del modo Supervivencia (reglas iguales para todos): el mejor
+// (mayor) tiempo que cada jugador logró sobrevivir antes de perder. El rank no se
+// persiste; se deriva del orden de la lista (mayor tiempo primero).
+export interface SurvivalEntry {
+  playerId: string;
+  npub: string | null;
+  name: string;
+  avatarUrl: string | null;
+  // Mejor tiempo de supervivencia en milisegundos (mayor = mejor).
+  bestMs: number;
+  // Momento en que se logró el mejor tiempo (desempata el ranking).
+  createdAtServerMs: number;
+}
+
+export interface SubmitSurvivalRequest {
+  playerId: string;
+  name: string;
+  avatarUrl?: string | null;
+  npub?: string | null;
+  // Duración de la partida en milisegundos.
+  durationMs: number;
+}
+
+export interface SurvivalLeaderboardResponse {
+  entries: SurvivalEntry[];
+  serverNowMs: number;
+}

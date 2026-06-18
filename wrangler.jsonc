@@ -7,13 +7,15 @@
     "bindings": [
       { "name": "Main", "class_name": "RoomServer" },
       { "name": "Lobby", "class_name": "LobbyServer" },
-      { "name": "Leaderboard", "class_name": "LeaderboardServer" }
+      { "name": "Leaderboard", "class_name": "LeaderboardServer" },
+      { "name": "SurvivalLeaderboard", "class_name": "SurvivalLeaderboardServer" }
     ]
   },
   // new_sqlite_classes es lo que pone los Durable Objects en el FREE TIER de Workers.
-  // Una clase nueva no se agrega a un tag existente: requiere su propio tag (v2).
+  // Una clase nueva no se agrega a un tag existente: requiere su propio tag (v2, v3...).
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["RoomServer", "LobbyServer"] },
-    { "tag": "v2", "new_sqlite_classes": ["LeaderboardServer"] }
+    { "tag": "v2", "new_sqlite_classes": ["LeaderboardServer"] },
+    { "tag": "v3", "new_sqlite_classes": ["SurvivalLeaderboardServer"] }
   ]
 }

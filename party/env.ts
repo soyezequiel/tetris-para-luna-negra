@@ -1,6 +1,7 @@
 import type { RoomServer } from './room.js';
 import type { LobbyServer } from './lobby.js';
 import type { LeaderboardServer } from './leaderboard.js';
+import type { SurvivalLeaderboardServer } from './survivalLeaderboard.js';
 
 /**
  * Bindings del Worker. Los nombres `Main`/`Lobby` mapean (kebab-case) a los party
@@ -12,6 +13,7 @@ export interface Env {
   Main: DurableObjectNamespace<RoomServer>;
   Lobby: DurableObjectNamespace<LobbyServer>;
   Leaderboard: DurableObjectNamespace<LeaderboardServer>;
+  SurvivalLeaderboard: DurableObjectNamespace<SurvivalLeaderboardServer>;
   PARTY_ABANDON_GRACE_MS?: string;
   PARTY_BRIDGE_TOKEN?: string;
 }

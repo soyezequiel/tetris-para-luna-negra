@@ -8,6 +8,8 @@ import type {
   LeaveRoomResponse,
   CreateBetRequest,
   LeaderboardResponse,
+  SurvivalLeaderboardResponse,
+  SubmitSurvivalRequest,
   LunaNegraEnterRequest,
   LunaNegraEnterResponse,
   RoomBetActionRequest,
@@ -67,6 +69,8 @@ export interface OnlineClientApi {
   listPublicRooms(filters?: PublicRoomsFilters): Promise<PublicRoomsResponse>;
   getLeaderboard(limit?: number): Promise<LeaderboardResponse>;
   submitScore(request: SubmitScoreRequest): Promise<LeaderboardResponse>;
+  getSurvivalLeaderboard(limit?: number): Promise<SurvivalLeaderboardResponse>;
+  submitSurvival(request: SubmitSurvivalRequest): Promise<SurvivalLeaderboardResponse>;
 }
 
 export class OnlineClient implements OnlineClientApi {
@@ -181,6 +185,17 @@ export class OnlineClient implements OnlineClientApi {
   /** Suma una victoria multijugador del jugador al ranking mundial. */
   submitScore(request: SubmitScoreRequest): Promise<LeaderboardResponse> {
     return this.post('/api/leaderboard', request);
+  }
+
+  /** Top de supervivencia (modo "igual para todos"): mayor tiempo por jugador. */
+  getSurvivalLeaderboard(limit?: number): Promise<SurvivalLeaderboardResponse> {
+    const query = limit ? `?limit=${encodeURIComponent(limit)}` : '';
+    return this.get(`/api/survival${query}`);
+  }
+
+  /** Registra el tiempo de supervivencia del jugador (solo mejora su récord). */
+  submitSurvival(request: SubmitSurvivalRequest): Promise<SurvivalLeaderboardResponse> {
+    return this.post('/api/survival', request);
   }
 
   private async get<T>(path: string): Promise<T> {

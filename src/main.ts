@@ -80,7 +80,7 @@ import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlaybackS
 import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
+import type { AttackRequest, LeaderboardEntry, SurvivalEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
@@ -194,7 +194,7 @@ const MAX_OFFLINE_RESUME_FRAMES = 30;
 const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
-type RunKind = 'custom' | 'online';
+type RunKind = 'custom' | 'online' | 'survival';
 type SequencedOnlineInput = GameInput & { sequence: number };
 type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: string };
 type StoredOnlineRoomSession = {
@@ -363,6 +363,12 @@ let onlinePublicRooms: OnlineRoomSummary[] = [];
 let leaderboardEntries: LeaderboardEntry[] = [];
 let leaderboardLoading = false;
 let leaderboardError: string | null = null;
+// Top de supervivencia (modo "igual para todos"): mayor tiempo por jugador.
+let survivalEntries: SurvivalEntry[] = [];
+let survivalLoading = false;
+let survivalError: string | null = null;
+// Guard: cada partida de supervivencia envía su tiempo al top una sola vez.
+let submittedSurvivalRun = false;
 let localRunError: string | null = null;
 let onlineError: string | null = null;
 let onlineBusy = false;
@@ -1255,6 +1261,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'history-menu') openReplayLibrary();
   if (action === 'leaderboard-open') openLeaderboard();
   if (action === 'leaderboard-refresh') void refreshLeaderboard();
+  if (action === 'survival-top-open') openSurvivalTop();
+  if (action === 'survival-top-refresh') void refreshSurvivalTop();
+  if (action === 'survival-start') startSurvivalRun();
   if (action === 'config-menu') openModeMenu('configMenu');
   if (action === 'custom-open') openCustomMode();
   if (action === 'custom-back') goToMenu();
@@ -1551,6 +1560,7 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   gameFrame = 0;
   gameClockOriginMs = performance.now();
   savedRunHistoryEntry = false;
+  submittedSurvivalRun = false;
   runSplitTracker = new RunSplitTracker();
   lastPieces = 0;
   lastLines = 0;
@@ -1573,6 +1583,10 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
 }
 
 function restartCurrentRun(): void {
+  if (currentRunKind === 'survival') {
+    startSurvivalRun();
+    return;
+  }
   if (currentRunKind === 'custom') {
     if (!customSettings.allowRetry) return;
     startCustomRun();
@@ -1583,6 +1597,12 @@ function restartCurrentRun(): void {
 
 function startCustomRun(): void {
   startNewRun(customSeed(customSettings, randomSeed), 'playing', 'custom');
+}
+
+// Modo Supervivencia: semilla aleatoria (no se comparte config), reglas fijas iguales
+// para todos. Arranca con la cuenta regresiva 3·2·1 como el solo normal.
+function startSurvivalRun(): void {
+  startNewRun(randomSeed(), 'playing', 'survival');
 }
 
 function openCustomMode(): void {
@@ -2491,6 +2511,43 @@ async function submitLeaderboardWin(): Promise<void> {
   }
 }
 
+// ─────────────────────── Top de supervivencia (por tiempo) ───────────────────────
+
+function openSurvivalTop(): void {
+  openModeMenu('survivalTop');
+  void refreshSurvivalTop();
+}
+
+async function refreshSurvivalTop(): Promise<void> {
+  if (survivalLoading) return;
+  survivalLoading = true;
+  survivalError = null;
+  try {
+    const response = await onlineClient.getSurvivalLeaderboard(50);
+    survivalEntries = response.entries;
+  } catch (error) {
+    survivalError = onlineErrorText(error);
+  } finally {
+    survivalLoading = false;
+  }
+}
+
+// Registra el tiempo de supervivencia del jugador en el top mundial.
+// Best-effort: el ranking es secundario, nunca corta el juego local.
+async function submitSurvivalTime(durationMs: number): Promise<void> {
+  try {
+    await onlineClient.submitSurvival({
+      playerId: onlinePlayer.id,
+      name: onlineName.trim() || onlinePlayer.name,
+      avatarUrl: onlinePlayer.avatarUrl,
+      npub: lunaIdentity?.npub ?? null,
+      durationMs,
+    });
+  } catch {
+    // Silencioso: un fallo del ranking no debe afectar la partida.
+  }
+}
+
 // Cuando la sala termina conmigo coronado ganador, sumo una victoria al ranking
 // mundial — una sola vez por ronda (la clave de ronda evita el doble conteo del
 // polling). Solo cuenta el multijugador: las salas online siempre tienen rivales.
@@ -3092,6 +3149,13 @@ function syncRunEffects(state: GameState, events: GameEvent[]): void {
     if (entry) runHistory = saveRunHistoryEntry(entry);
     savedRunHistoryEntry = true;
   }
+  // Modo Supervivencia: al perder, mandamos cuánto duró la partida al top mundial
+  // (una sola vez por partida). El endless solo termina en 'gameover' (no hay meta).
+  if (currentRunKind === 'survival' && state.status === 'gameover' && !submittedSurvivalRun) {
+    submittedSurvivalRun = true;
+    const durationMs = Math.round(terminalRunFrame(state) * GAME_FRAME_MS);
+    if (durationMs > 0) void submitSurvivalTime(durationMs);
+  }
 }
 
 function syncOnlineBattleEvents(events: GameEvent[], state: GameState): void {
@@ -3397,7 +3461,7 @@ function onlineAuthorityTargetFrame(state: GameState): number {
 
 function shouldPollOnline(now: number): boolean {
   if (onlinePollInFlight) return false;
-  if (!['menu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'leaderboard', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults', 'onlineReplay', 'replayPlayback'].includes(appMode)) return false;
+  if (!['menu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'leaderboard', 'survivalTop', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults', 'onlineReplay', 'replayPlayback'].includes(appMode)) return false;
   return now - onlineLastPollAt >= ONLINE_POLL_MS;
 }
 
@@ -4464,6 +4528,7 @@ function renderScreenOverlay(state: GameState): string {
     || appMode === 'custom'
     || appMode === 'library'
     || appMode === 'leaderboard'
+    || appMode === 'survivalTop'
     || appMode === 'onlineMenu'
     || appMode === 'roomLobby'
     || (appMode === 'settings' && settingsReturnMode !== 'paused')
@@ -6686,7 +6751,8 @@ function isPersistentRoomPanelMode(mode: AppMode): boolean {
     || mode === 'historyMenu'
     || mode === 'configMenu'
     || mode === 'custom'
-    || mode === 'leaderboard';
+    || mode === 'leaderboard'
+    || mode === 'survivalTop';
 }
 
 function renderPersistentRoomPanel(): string {
@@ -6730,11 +6796,13 @@ function renderDashboardMenu(state: GameState): string {
   const isHomeActive = appMode === 'menu';
   const isHistoryActive = appMode === 'historyMenu' || appMode === 'library';
   const isLeaderboardActive = appMode === 'leaderboard';
+  const isSurvivalActive = appMode === 'survivalTop';
   const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
 
   const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
   const leaderboardClass = isLeaderboardActive ? 'dash-sidebar-btn--active' : '';
+  const survivalClass = isSurvivalActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
 
   const showRightRoomPanel = true;
@@ -6768,6 +6836,10 @@ function renderDashboardMenu(state: GameState): string {
           <button class="dash-sidebar-btn ${leaderboardClass}" type="button" data-ui-action="leaderboard-open">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 4h10v2h3a1 1 0 0 1 1 1v2a4 4 0 0 1-4 4 5 5 0 0 1-3 2.45V18h3v2H7v-2h3v-2.55A5 5 0 0 1 7 13a4 4 0 0 1-4-4V7a1 1 0 0 1 1-1h3V4zm10 4v3a2 2 0 0 0 2-2V8h-2zM5 8v1a2 2 0 0 0 2 2V8H5z"/></svg>
             Top
+          </button>
+          <button class="dash-sidebar-btn ${survivalClass}" type="button" data-ui-action="survival-top-open">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13h-1.5v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg>
+            Tiempo
           </button>
           <button class="dash-sidebar-btn ${settingsClass}" type="button" data-ui-action="settings">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
@@ -6953,6 +7025,9 @@ function renderDashboardCenterContent(_state: GameState): string {
   if (mode === 'leaderboard') {
     return renderLeaderboardPanelContent();
   }
+  if (mode === 'survivalTop') {
+    return renderSurvivalTopPanelContent();
+  }
   if (mode === 'custom') {
     return renderCustomPanelContent();
   }
@@ -7000,6 +7075,51 @@ function renderLeaderboardPanelContent(): string {
       ${body}
       <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px; margin-top: 20px;">
         <button class="dash-action-btn" type="button" data-ui-action="leaderboard-refresh"${leaderboardLoading ? ' disabled' : ''}>${leaderboardLoading ? 'Actualizando…' : 'Actualizar'}</button>
+        <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
+      </div>
+    </div>
+  `;
+}
+
+// Top de supervivencia: ranking por mayor tiempo sobrevivido en el modo "igual para
+// todos". Espeja renderLeaderboardPanelContent pero muestra el tiempo (formatFrames)
+// y agrega un botón para jugar el modo.
+function renderSurvivalTopPanelContent(): string {
+  const myId = onlinePlayer.id;
+  let body: string;
+  if (survivalLoading && survivalEntries.length === 0) {
+    body = '<p class="leaderboard-note">Cargando ranking…</p>';
+  } else if (survivalError && survivalEntries.length === 0) {
+    body = `<p class="leaderboard-note leaderboard-note--error">${escapeHtml(survivalError)}</p>`;
+  } else if (survivalEntries.length === 0) {
+    body = '<p class="leaderboard-note">Todavía no hay tiempos registrados. ¡Jugá Supervivencia y aguantá lo más posible para aparecer acá!</p>';
+  } else {
+    const rows = survivalEntries.map((entry, index) => {
+      const rank = index + 1;
+      const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`;
+      const mine = entry.playerId === myId ? ' leaderboard-row--me' : '';
+      const time = formatFrames(Math.round(entry.bestMs / GAME_FRAME_MS));
+      return `
+        <div class="leaderboard-row${mine}">
+          <span class="leaderboard-rank">${escapeHtml(medal)}</span>
+          ${renderOnlineAvatar({ name: entry.name, avatarUrl: entry.avatarUrl }, 'small', 'leaderboard-avatar')}
+          <span class="leaderboard-name">${escapeHtml(entry.name)}</span>
+          <span class="leaderboard-time">${escapeHtml(time)}</span>
+        </div>
+      `;
+    }).join('');
+    body = `<div class="leaderboard-rows">${rows}</div>`;
+  }
+
+  return `
+    <div class="menu-panel" style="width: 100%; max-width: 480px; border: none; background: transparent; box-shadow: none; padding: 0;">
+      <div class="panel-eyebrow">TOP TIEMPO</div>
+      <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Supervivencia</h1>
+      <p style="color: var(--dash-text-dim); margin-bottom: 20px; font-size: 14px; font-weight: 500;">Mismo modo para todos: aguantá lo más posible. El ranking ordena por quién duró más tiempo.</p>
+      ${body}
+      <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px; margin-top: 20px;">
+        <button class="dash-action-btn primary" type="button" data-ui-action="survival-start">Jugar Supervivencia</button>
+        <button class="dash-action-btn" type="button" data-ui-action="survival-top-refresh"${survivalLoading ? ' disabled' : ''}>${survivalLoading ? 'Actualizando…' : 'Actualizar'}</button>
         <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
       </div>
     </div>
@@ -7591,7 +7711,23 @@ function triggerWallImpact(
 
 function rulesForRun(mode: AppMode): GameRules {
   if (mode === 'onlinePlaying') return onlineRulesFromRoom();
+  if (currentRunKind === 'survival') return survivalRulesFromSettings(inputSettings);
   return customRulesFromSettings(customSettings, inputSettings);
+}
+
+// Reglas FIJAS del modo Supervivencia: iguales para todos para que los tiempos sean
+// comparables. Sin meta de líneas (endless) y con gravedad guideline que sube con las
+// líneas hasta que perdés. Solo el handling (DAS/ARR/soft drop) sigue la preferencia
+// del jugador, igual que en las batallas online (no afecta la dificultad).
+function survivalRulesFromSettings(settings: InputSettings): GameRules {
+  return {
+    ...BATTLE_RULES,
+    // Sin rivales no hay basura entrante; la tabla de ataque es irrelevante en solo.
+    attackTable: 'simple',
+    dasFrames: settings.dasFrames,
+    arrFrames: settings.arrFrames,
+    softDropCellsPerFrame: softDropCellsPerFrameForFactor(settings.softDropFactor),
+  };
 }
 
 function battleRulesFromSettings(settings: InputSettings): GameRules {

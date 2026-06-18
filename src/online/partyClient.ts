@@ -37,6 +37,8 @@ import type {
   SetTargetingRequest,
   StartRoomRequest,
   SubmitScoreRequest,
+  SubmitSurvivalRequest,
+  SurvivalLeaderboardResponse,
   UpdateRoomSettingsRequest,
 } from './protocol.js';
 
@@ -107,6 +109,12 @@ export class PartyOnlineClient implements OnlineClientApi {
   }
   submitScore(request: SubmitScoreRequest): Promise<LeaderboardResponse> {
     return this.http.submitScore(request);
+  }
+  getSurvivalLeaderboard(limit?: number): Promise<SurvivalLeaderboardResponse> {
+    return this.http.getSurvivalLeaderboard(limit);
+  }
+  submitSurvival(request: SubmitSurvivalRequest): Promise<SurvivalLeaderboardResponse> {
+    return this.http.submitSurvival(request);
   }
 
   // ── Acciones de sala: por WebSocket ──

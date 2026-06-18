@@ -1,6 +1,7 @@
 import { MemoryRoomStore, normalizeRoomId, OnlineRoomError, RoomVersionConflictError, type RoomStore } from './roomService.js';
 import { LEADERBOARD_MAX_ENTRIES, MemoryLeaderboardStore, type LeaderboardStore, type LeaderboardWinMeta } from './leaderboard.js';
-import type { LeaderboardEntry, OnlineRoom } from './protocol.js';
+import { MemorySurvivalLeaderboardStore, type SurvivalLeaderboardStore, type SurvivalTimeMeta } from './survivalLeaderboard.js';
+import type { LeaderboardEntry, OnlineRoom, SurvivalEntry } from './protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export const config = {
@@ -265,6 +266,68 @@ export function getLeaderboardStore(): LeaderboardStore {
   if (url && token) return new UpstashLeaderboardStore(url, token);
   globalThis.stack40MemoryLeaderboardStore ??= new MemoryLeaderboardStore();
   return globalThis.stack40MemoryLeaderboardStore;
+}
+
+/**
+ * Top de supervivencia servido por el Worker de Cloudflare (DO `SurvivalLeaderboardServer`)
+ * vía el bridge HTTP `/__bridge/survival`. Mismo token/host que el bridge de salas y el
+ * de victorias.
+ */
+class PartyBridgeSurvivalStore implements SurvivalLeaderboardStore {
+  private readonly baseUrl: string;
+
+  constructor(
+    baseUrl: string,
+    private readonly token: string,
+  ) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+  }
+
+  async topTimes(limit: number): Promise<SurvivalEntry[]> {
+    const payload = await this.request('GET', `?limit=${encodeURIComponent(String(limit))}`);
+    return Array.isArray(payload.entries) ? payload.entries : [];
+  }
+
+  async recordTime(meta: SurvivalTimeMeta): Promise<void> {
+    await this.request('POST', '', meta);
+  }
+
+  private async request(
+    method: 'GET' | 'POST',
+    suffix: string,
+    body?: unknown,
+  ): Promise<{ entries?: SurvivalEntry[]; error?: string }> {
+    const response = await fetch(`${this.baseUrl}/__bridge/survival${suffix}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${this.token}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null) as { entries?: SurvivalEntry[]; error?: string } | null;
+    if (!response.ok) {
+      throw new OnlineRoomError(payload?.error ?? 'Survival bridge request failed.', response.status);
+    }
+    return payload ?? {};
+  }
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var stack40MemorySurvivalStore: MemorySurvivalLeaderboardStore | undefined;
+}
+
+export function getSurvivalLeaderboardStore(): SurvivalLeaderboardStore {
+  // Igual que el ranking de victorias: preferimos el Worker de Cloudflare (DO) cuando
+  // hay token de bridge; en dev caemos a un store en memoria.
+  const bridgeToken = (process.env.PARTY_BRIDGE_TOKEN ?? '').trim();
+  if (bridgeToken) {
+    const bridgeUrl = (process.env.PARTY_BRIDGE_URL ?? '').trim() || 'https://tetra.naranjas.workers.dev';
+    return new PartyBridgeSurvivalStore(bridgeUrl, bridgeToken);
+  }
+  globalThis.stack40MemorySurvivalStore ??= new MemorySurvivalLeaderboardStore();
+  return globalThis.stack40MemorySurvivalStore;
 }
 
 async function upstashCommand<T>(url: string, token: string, command: unknown[]): Promise<T> {

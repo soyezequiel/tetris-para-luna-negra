@@ -440,14 +440,11 @@ export class GameEngine {
     if (!this.active) return;
     const lockedPiece = this.active;
     const cells = this.occupied(this.active);
-    if (cells.some((cell) => cell.y < 0)) {
-      // Lock-out: la pieza se fijó sobresaliendo del techo del buffer. Congelamos
-      // solo las celdas que caen dentro del tablero (las de y<0 quedan fuera) y
-      // soltamos la activa: antes hacíamos un return a mitad del bucle, dejando un
-      // escritura parcial de la pieza en el tablero MÁS la activa completa encima.
-      for (const cell of cells) {
-        if (cell.y >= 0) this.board[cell.y][cell.x] = cell.type;
-      }
+    if (cells.every((cell) => cell.y < 0)) {
+      // Lock-out real (guideline): solo muere si la pieza queda fijada ENTERAMENTE
+      // por encima del techo del buffer (todas sus celdas en y<0). Que asome
+      // parcialmente —con parte dentro del tablero— es un lock válido, no una
+      // muerte: antes un solo casillero asomando mataba al instante.
       this.status = 'gameover';
       this.gameOverFrame = this.frame;
       this.gameOverReason = 'lockOut';
@@ -459,7 +456,9 @@ export class GameEngine {
       return;
     }
     for (const cell of cells) {
-      this.board[cell.y][cell.x] = cell.type;
+      // Congelamos solo las celdas dentro del tablero; las que asoman del techo
+      // (y<0) se descartan en vez de provocar un índice negativo.
+      if (cell.y >= 0) this.board[cell.y][cell.x] = cell.type;
     }
     this.pieces += 1;
     const spin = this.detectSpin(lockedPiece);
