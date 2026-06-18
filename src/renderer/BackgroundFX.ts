@@ -51,6 +51,11 @@ export class BackgroundFX {
   // resize en lugar de recrearse cada frame (crear un CanvasGradient no es gratis).
   private baseGrad: CanvasGradient | null = null;
   private vignette: CanvasGradient | null = null;
+  // Repintar solo cuando el cuadro cambia de verdad. Con el movimiento apagado y sin
+  // peligro/transición el fondo es estático: repintar gradientes radiales a pantalla
+  // completa con composición 'screen' 30×/s sería costo puro tirado (caro en Firefox).
+  // Eventos puntuales (resize, semilla nueva, (re)activar) marcan dirty para un repinte.
+  private dirty = true;
 
   private blobs: Blob[] = [];
   private particles: Particle[] = [];
@@ -94,6 +99,7 @@ export class BackgroundFX {
     const s = seed >>> 0;
     if (s === this.seed) return;
     this.seed = s;
+    this.dirty = true;
     const next = this.styleForSeed(s);
     if (!this.hasSeed || this.reducedMotion) {
       // Primera partida o "reducir movimiento": sin crossfade.
@@ -103,6 +109,7 @@ export class BackgroundFX {
       this.transP = 0;
       return;
     }
+    this.dirty = true;
     if (next === this.curStyle) { this.transStyle = null; this.transP = 0; return; }
     this.transStyle = next;
     this.transP = 0.0001;
@@ -117,14 +124,17 @@ export class BackgroundFX {
   // Nivel de peligro del tablero local (0..1). El renderer lo reenvía cada frame
   // desde JuiceFX. El fondo se oscurece de forma proporcional.
   setDanger(level: number, critical = false): void {
-    this.dangerTarget = Math.max(0, Math.min(1, level));
+    const target = Math.max(0, Math.min(1, level));
+    if (target !== this.dangerTarget || critical !== this.dangerCritical) this.dirty = true;
+    this.dangerTarget = target;
     this.dangerCritical = critical;
   }
 
-  setMotion(enabled: boolean): void { this.motion = enabled; }
+  setMotion(enabled: boolean): void { this.motion = enabled; this.dirty = true; }
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
+    this.dirty = true;
     this.canvas.style.display = enabled ? 'block' : 'none';
   }
 
@@ -161,6 +171,7 @@ export class BackgroundFX {
     this.canvas.height = Math.max(1, Math.round(h * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.buildGradients();
+    this.dirty = true;
   }
 
   // Gradientes dependientes solo del tamaño: se cachean por resize.
@@ -189,10 +200,20 @@ export class BackgroundFX {
       this.transP += dt / TRANSITION_SECONDS;
       if (this.transP >= 1) { this.curStyle = this.transStyle; this.transStyle = null; this.transP = 0; }
     }
+    // ¿El cuadro cambia respecto del anterior? Solo entonces vale la pena repintar.
+    //  - motion: el fondo se está animando (this.t avanzó).
+    //  - transStyle: crossfade entre estilos en curso.
+    //  - danger asentándose, o latido crítico (que usa this.t, solo vivo con motion).
+    // Con el movimiento apagado y sin peligro el fondo es estático: repintar gradientes
+    // radiales a pantalla completa 30×/s sería costo puro tirado (caro en Firefox).
+    const dangerLive = Math.abs(this.dangerTarget - this.danger) > 0.002
+      || (this.danger > 0.01 && this.dangerCritical && this.motion);
+    const animating = this.motion || this.transStyle !== null || dangerLive;
     // Throttle del fondo a ~30fps (ver drawInterval). El loop de rAF sigue a 60 para
     // mantener this.t suave, pero solo repintamos cada ~33ms.
-    if (this.enabled && now - this.lastDraw >= this.drawInterval - 4) {
+    if (this.enabled && (this.dirty || animating) && now - this.lastDraw >= this.drawInterval - 4) {
       this.lastDraw = now;
+      this.dirty = false;
       this.draw();
     }
     this.rafId = requestAnimationFrame(() => this.loop());

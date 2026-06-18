@@ -102,6 +102,9 @@ export class PixiGameRenderer {
   // Modo daltónico: cambia a la paleta Okabe–Ito, con tonos distinguibles entre
   // sí en los tipos de daltonismo más comunes. Lo sincroniza main.ts.
   private colorBlind = false;
+  // Marca un resize pendiente: fuerza una reconstrucción completa en el próximo render
+  // aunque el motor no haya avanzado (ver render(), parámetro `changed`).
+  private layoutDirty = false;
 
   constructor(root: HTMLElement) {
     this.app = new Application({
@@ -174,7 +177,7 @@ export class PixiGameRenderer {
     );
     this.stage.addChild(this.bg, this.sideLayer, this.boardLayer, this.pieceLayer, this.effectLayer, this.juiceLayer, this.labelLayer, this.hudText);
     this.app.stage.addChild(this.stage);
-    window.addEventListener('resize', () => this.layout());
+    window.addEventListener('resize', () => { this.layoutDirty = true; this.layout(); });
     this.layout();
   }
 
@@ -213,7 +216,13 @@ export class PixiGameRenderer {
     return { boardX: this.boardX, boardY: this.boardY, cell: this.cell, columns: this.boardColumns, rows: this.visibleRows };
   }
 
-  render(state: GameState): void {
+  // `changed` = el tablero pudo cambiar desde el render anterior (frame de motor nuevo,
+  // animación de muerte en curso, o no estamos en `playing`). En monitores >60Hz la
+  // mayoría de los rAF NO producen frame nuevo: ahí `changed` es false y nos saltamos la
+  // reconstrucción completa de tablero/paneles/HUD (Pixi conserva la geometría del frame
+  // anterior, idéntica). El juice (partículas/popups) y el shake SÍ corren cada rAF para
+  // mantenerse suaves a la tasa de refresco. Esto evita ~2 de cada 3 rebuilds a 180Hz.
+  render(state: GameState, changed = true): void {
     // El shake por line-clear ahora lo gestiona JuiceFX (vía el conductor); aquí
     // solo se mantiene el conteo de líneas por si algo más lo consulta.
     if (state.stats.lines !== this.lastLines) {
@@ -222,7 +231,8 @@ export class PixiGameRenderer {
     // Si volvió a jugar (retry / nueva ronda), se cancela la animación de derrota.
     if (state.status === 'playing') this.deathFrame = -1;
 
-    this.layout(state);
+    // Juice + shake: SIEMPRE, cada rAF (las partículas/popups se animan independientes
+    // del tick del motor; el shake debe ser suave a la tasa de refresco).
     this.juice.update(this.boardGeometry()); // partículas, overlays, popups
     // El shake legacy se conserva SOLO para playDeathAnimation(); el de gameplay
     // fluye por JuiceFX.
@@ -236,6 +246,13 @@ export class PixiGameRenderer {
     // conductor sobre JuiceFX; aquí solo lo reenviamos al fondo cada frame.
     const dng = this.juice.getDanger();
     this.backgroundFX.setDanger(dng.level, dng.critical);
+
+    // Reconstrucción completa del tablero solo cuando hace falta. La animación de muerte
+    // (deathFrame) avanza por frame y debe redibujarse aunque el motor esté congelado.
+    if (!changed && this.deathFrame < 0 && !this.layoutDirty) return;
+    this.layoutDirty = false;
+
+    this.layout(state);
     this.drawBackground();
     this.drawPanels();
     if (this.deathFrame >= 0) {

@@ -610,6 +610,10 @@ function loopBody(): void {
   }
 
   let state = engine.getState();
+  // Frame del motor ANTES del posible tick de abajo: si no cambia, este rAF no produjo
+  // un frame nuevo (típico en monitores >60Hz, ~2 de cada 3 rAF) y el tablero es idéntico
+  // al ya dibujado → el renderer puede saltarse la reconstrucción completa (ver render()).
+  const frameBefore = gameFrame;
   // candidateFrame > gameFrame garantiza que advanceGameToFrame ticará al menos un
   // frame: en un rAF sin frame nuevo (skipInputThisLoop) el for de catch-up no
   // iteraría, pero evitamos igual el autoplay/bot/sendOnline/recordInput con inputs
@@ -686,7 +690,14 @@ function loopBody(): void {
       driveSpectatorJuice(focusState, focus.id);
     }
   } else {
-    renderer.render(state);
+    // En monitores >60Hz solo ~1 de cada 3 rAF produce frame de motor; los demás
+    // mostrarían un tablero idéntico. Reconstruir todo igual desperdicia main thread y
+    // puede tirar el framerate por debajo del refresco (input se siente con retraso).
+    // Reconstrucción completa solo cuando hay frame nuevo o no estamos jugando (banner
+    // de resultados, animación de muerte, cuenta regresiva). El juice/shake igual corren
+    // a tasa de refresco dentro de render() para que partículas y temblor sigan suaves.
+    const boardChanged = gameFrame !== frameBefore || state.status !== 'playing';
+    renderer.render(state, boardChanged);
     // `live` solo en juego real: en lobby/resultados/pausa el motor puede quedar
     // congelado en 'playing' (el ganador online conserva ese status) y, con la pila
     // alta, el latido de peligro seguiría sonando fuera de la partida.
