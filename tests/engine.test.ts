@@ -199,6 +199,42 @@ describe('core stacker engine', () => {
     expect(level5).toBeCloseTo(1 / (Math.pow(0.772, 4) * 60), 4);
   });
 
+  it('accelerates with elapsed time when gravityLevelSeconds is set (survival)', () => {
+    const rules = {
+      ...BATTLE_RULES,
+      gravityCurve: 'guideline' as const,
+      gravityLevelLines: 0, // aislamos la rampa por tiempo: sin líneas ni piezas.
+      gravityLevelPieces: 0,
+      gravityLevelSeconds: 30,
+      gravityStartingLevel: 1,
+    };
+    // Sin limpiar nada, la gravedad sube solo por el paso del tiempo.
+    const start = currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0, frame: 0 });
+    const after30s = currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0, frame: 30 * 60 });
+    const after90s = currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0, frame: 90 * 60 });
+    expect(start).toBeCloseTo(1 / 60, 5); // nivel 1 al arrancar
+    expect(after30s).toBeGreaterThan(start); // +1 nivel a los 30s
+    expect(after90s).toBeGreaterThan(after30s); // +3 niveles a los 90s
+    // A los 30s = nivel 2 de la curva guideline (mismo valor que +10 líneas).
+    expect(after30s).toBeCloseTo(1 / (0.793 * 60), 4);
+  });
+
+  it('ignores elapsed time when gravityLevelSeconds is 0 (no regression)', () => {
+    const rules = {
+      ...BATTLE_RULES,
+      gravityCurve: 'guideline' as const,
+      gravityLevelLines: 10,
+      gravityLevelSeconds: 0,
+      gravityStartingLevel: 1,
+    };
+    // Con la rampa por tiempo apagada (default), el frame no cambia la gravedad:
+    // las partidas normales/online se comportan igual que antes.
+    const noFrame = currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0 });
+    const bigFrame = currentGravityCellsPerFrame(rules, { lines: 0, pieces: 0, frame: 600 * 60 });
+    expect(bigFrame).toBeCloseTo(noFrame, 6);
+    expect(noFrame).toBeCloseTo(1 / 60, 5);
+  });
+
   it('respects the starting level and caps guideline gravity at 20G', () => {
     const rules = {
       ...BATTLE_RULES,

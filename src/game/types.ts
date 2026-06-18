@@ -58,6 +58,10 @@ export interface GameRules {
   gravityIncreaseCellsPerLevel: number;
   gravityLevelLines: number;
   gravityLevelPieces: number;
+  // Sube un nivel de gravedad cada N segundos de juego, además de por líneas/piezas.
+  // 0 = desactivado. Lo usa el modo Supervivencia para forzar que la partida escale
+  // y termine sola (que el tiempo mida habilidad y no aguante).
+  gravityLevelSeconds: number;
   gravityStartingLevel: number;
   // 'linear': base + nivel * incremento (modelo configurable de custom).
   // 'guideline': curva exponencial estilo Tetris Guideline / TETR.IO, donde la

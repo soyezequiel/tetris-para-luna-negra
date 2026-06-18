@@ -372,6 +372,7 @@ export class GameEngine {
     this.fallAccumulator += currentGravityCellsPerFrame(this.rules, {
       lines: this.lines,
       pieces: this.pieces,
+      frame: this.frame,
     });
     this.applyAccumulatedFall();
     if (this.isGrounded()) {

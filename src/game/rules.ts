@@ -33,6 +33,7 @@ export const DEFAULT_RULES: GameRules = {
   gravityIncreaseCellsPerLevel: 0,
   gravityLevelLines: 0,
   gravityLevelPieces: 0,
+  gravityLevelSeconds: 0,
   gravityStartingLevel: 1,
   softDropCellsPerFrame: softDropCellsPerFrameForFactor(DEFAULT_SOFT_DROP_FACTOR),
   lockDelayFrames: 30,

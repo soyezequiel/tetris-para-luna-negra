@@ -6,15 +6,20 @@ const FRAMES_PER_SECOND = 60;
 export interface GravityProgress {
   lines: number;
   pieces: number;
+  // Frame actual (a 60fps). Opcional: ausente equivale a 0 (sin rampa por tiempo).
+  frame?: number;
 }
 
 export function currentGravityCellsPerFrame(rules: GameRules, progress: GravityProgress): number {
   const startingLevelOffset = Math.max(0, Math.floor(rules.gravityStartingLevel) - 1);
   const lineInterval = Math.max(0, Math.floor(rules.gravityLevelLines));
   const pieceInterval = Math.max(0, Math.floor(rules.gravityLevelPieces));
+  const secondsInterval = Math.max(0, Math.floor(rules.gravityLevelSeconds));
   const lineLevels = lineInterval > 0 ? Math.floor(nonNegative(progress.lines) / lineInterval) : 0;
   const pieceLevels = pieceInterval > 0 ? Math.floor(nonNegative(progress.pieces) / pieceInterval) : 0;
-  const levelOffset = startingLevelOffset + lineLevels + pieceLevels;
+  const elapsedSeconds = nonNegative(progress.frame ?? 0) / FRAMES_PER_SECOND;
+  const timeLevels = secondsInterval > 0 ? Math.floor(elapsedSeconds / secondsInterval) : 0;
+  const levelOffset = startingLevelOffset + lineLevels + pieceLevels + timeLevels;
   const gravity = rules.gravityCurve === 'guideline'
     ? guidelineCellsPerFrame(levelOffset + 1)
     : rules.gravityCellsPerFrame + levelOffset * Math.max(0, rules.gravityIncreaseCellsPerLevel);

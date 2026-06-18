@@ -7715,15 +7715,24 @@ function rulesForRun(mode: AppMode): GameRules {
   return customRulesFromSettings(customSettings, inputSettings);
 }
 
+// Supervivencia sube un nivel de gravedad cada N segundos pase lo que pase. Sin esto
+// la velocidad solo subía limpiando líneas, así que estancarse en nivel 1 dejaba
+// sobrevivir indefinidamente y el ranking medía aguante, no skill. Con la rampa por
+// tiempo la partida converge (~10-12 min para los mejores) y el tiempo mide cuánta
+// velocidad bancás. Tuneable: bajarlo = partidas más cortas/agresivas.
+const SURVIVAL_GRAVITY_SECONDS_PER_LEVEL = 30;
+
 // Reglas FIJAS del modo Supervivencia: iguales para todos para que los tiempos sean
-// comparables. Sin meta de líneas (endless) y con gravedad guideline que sube con las
-// líneas hasta que perdés. Solo el handling (DAS/ARR/soft drop) sigue la preferencia
-// del jugador, igual que en las batallas online (no afecta la dificultad).
+// comparables. Sin meta de líneas (endless), gravedad guideline que sube con las
+// líneas Y con el tiempo (hasta que perdés). Solo el handling (DAS/ARR/soft drop)
+// sigue la preferencia del jugador, igual que en las batallas online (no afecta la
+// dificultad).
 function survivalRulesFromSettings(settings: InputSettings): GameRules {
   return {
     ...BATTLE_RULES,
     // Sin rivales no hay basura entrante; la tabla de ataque es irrelevante en solo.
     attackTable: 'simple',
+    gravityLevelSeconds: SURVIVAL_GRAVITY_SECONDS_PER_LEVEL,
     dasFrames: settings.dasFrames,
     arrFrames: settings.arrFrames,
     softDropCellsPerFrame: softDropCellsPerFrameForFactor(settings.softDropFactor),

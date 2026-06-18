@@ -75,6 +75,9 @@ function parseRules(value: unknown): GameRules | null {
   const gravityLevelPieces = value.gravityLevelPieces === undefined
     ? DEFAULT_RULES.gravityLevelPieces
     : readNonNegativeInteger(value.gravityLevelPieces);
+  const gravityLevelSeconds = value.gravityLevelSeconds === undefined
+    ? DEFAULT_RULES.gravityLevelSeconds
+    : readNonNegativeInteger(value.gravityLevelSeconds);
   const gravityStartingLevel = value.gravityStartingLevel === undefined
     ? DEFAULT_RULES.gravityStartingLevel
     : readPositiveInteger(value.gravityStartingLevel);
@@ -122,6 +125,7 @@ function parseRules(value: unknown): GameRules | null {
     || gravityIncreaseCellsPerLevel === null
     || gravityLevelLines === null
     || gravityLevelPieces === null
+    || gravityLevelSeconds === null
     || gravityStartingLevel === null
     || softDropCellsPerFrame === null
     || lockDelayFrames === null
@@ -152,6 +156,7 @@ function parseRules(value: unknown): GameRules | null {
     gravityIncreaseCellsPerLevel,
     gravityLevelLines,
     gravityLevelPieces,
+    gravityLevelSeconds,
     gravityStartingLevel,
     gravityCurve,
     softDropCellsPerFrame,

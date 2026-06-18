@@ -1474,6 +1474,7 @@ function normalizeRoomRules(value: unknown, mode: OnlineRoomMode, ruleset: Onlin
     gravityIncreaseCellsPerLevel: normalizeFiniteRuleNumber(value.gravityIncreaseCellsPerLevel, base.gravityIncreaseCellsPerLevel, { min: 0, max: 2 }),
     gravityLevelLines: normalizeFiniteRuleNumber(value.gravityLevelLines, base.gravityLevelLines, { min: 0, max: 60, integer: true }),
     gravityLevelPieces: normalizeFiniteRuleNumber(value.gravityLevelPieces, base.gravityLevelPieces, { min: 0, max: 60, integer: true }),
+    gravityLevelSeconds: normalizeFiniteRuleNumber(value.gravityLevelSeconds, base.gravityLevelSeconds, { min: 0, max: 600, integer: true }),
     gravityStartingLevel: normalizeFiniteRuleNumber(value.gravityStartingLevel, base.gravityStartingLevel, { min: 1, max: 30, integer: true }),
     softDropCellsPerFrame: normalizeFiniteRuleNumber(value.softDropCellsPerFrame, base.softDropCellsPerFrame, { min: 0.001, max: 20 }),
     lockDelayFrames: normalizeFiniteRuleNumber(value.lockDelayFrames, base.lockDelayFrames, { min: 0, max: 300, integer: true }),
