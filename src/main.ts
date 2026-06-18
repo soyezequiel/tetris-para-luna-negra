@@ -4415,7 +4415,10 @@ function renderOverlay(state: GameState): void {
     ${soloRelax ? renderRelaxAudio() : ''}
     ${autoPlayAccessGranted ? renderAutoPlayToggle() : ''}
     <div class="help">${escapeHtml(helpText())}</div>
-    ${soloRelax ? '' : `<div class="audio-panel">
+    ${soloRelax ? '' : (appMode === 'onlinePlaying' ? `<div class="audio-panel audio-panel--online">
+      ${renderVolumeChannelRow('sfx')}
+      ${renderVolumeChannelRow('music')}
+    </div>` : `<div class="audio-panel">
       <button class="hud-action sound" type="button" data-ui-action="toggle-sound">${sound.isMuted() ? 'Sound off' : 'Sound on'}</button>
       ${renderVolumeChannelRow('sfx')}
       ${renderVolumeChannelRow('music')}
@@ -4424,7 +4427,7 @@ function renderOverlay(state: GameState): void {
       <button class="hud-action positional" type="button" data-ui-action="toggle-positional" title="El paneo estéreo de cada sonido sigue su posición en pantalla">Posicional: ${isPositionalAudio() ? 'on' : 'off'}</button>
       <button class="hud-action royalty-free" type="button" data-ui-action="toggle-royalty-free" title="${HAS_ROYALTY_FREE_TRACKS ? 'Reproducir sólo temas libres de derechos (archivos con prefijo ncc)' : 'No hay temas libres de derechos cargados (archivos con prefijo ncc). Activarlo dejará la música en silencio.'}">Libre de derechos: ${loadRecord().royaltyFreeOnly ? 'on' : 'off'}</button>
       <button class="hud-action bg-motion" type="button" data-ui-action="toggle-bg-motion" title="Movimiento del fondo dinámico. Si tu sistema tiene activado 'reducir movimiento', el fondo se mueve más lento; apágalo aquí para dejarlo estático.">Fondo animado: ${loadRecord().backgroundMotion ? 'on' : 'off'}</button>
-    </div>`}
+    </div>`)}
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
     ${renderTouchControls()}

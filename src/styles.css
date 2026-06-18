@@ -124,6 +124,21 @@ canvas {
   text-align: right;
 }
 
+/* En partida online, los tableros de rivales ocupan TODO el borde derecho
+   (.online-versus-grid). El panel de audio se reduce a las dos filas de volumen
+   y se ancla a la izquierda, bajo la marca, para no quedar tapado por ellos. */
+.audio-panel--online {
+  top: 72px;
+  right: auto;
+  left: 28px;
+  width: auto;
+  text-align: left;
+}
+
+.audio-panel--online .volume-control {
+  margin: 4px auto 0 0;
+}
+
 .sound {
   display: block;
   margin: 0 0 0 auto;
