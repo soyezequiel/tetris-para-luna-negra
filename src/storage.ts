@@ -13,6 +13,9 @@ export interface LocalRecord {
   positionalAudio: boolean;
   // Reproducir sólo temas libres de derechos (archivos cuyo nombre empieza con 'ncc').
   royaltyFreeOnly: boolean;
+  // Movimiento del fondo dinámico (Aurora/Bruma/Marea). Si está off, el fondo queda
+  // estático. Independiente de "reducir movimiento" del sistema, que solo lo ralentiza.
+  backgroundMotion: boolean;
 }
 
 const KEY = 'stack40.records';
@@ -78,6 +81,12 @@ export function saveRoyaltyFreeOnly(royaltyFreeOnly: boolean): LocalRecord {
   return record;
 }
 
+export function saveBackgroundMotion(backgroundMotion: boolean): LocalRecord {
+  const record = { ...loadRecord(), backgroundMotion };
+  localStorage.setItem(KEY, JSON.stringify(record));
+  return record;
+}
+
 function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
   return {
     soundMuted: record.soundMuted ?? false,
@@ -89,6 +98,7 @@ function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
     touchControlsHidden: record.touchControlsHidden ?? false,
     positionalAudio: record.positionalAudio ?? true,
     royaltyFreeOnly: record.royaltyFreeOnly ?? false,
+    backgroundMotion: record.backgroundMotion ?? true,
   };
 }
 

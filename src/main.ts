@@ -81,7 +81,7 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioMutes, saveAudioVolumes, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden } from './storage';
+import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
@@ -225,6 +225,7 @@ const gamepad = new GamepadController(input, {
 });
 const renderer = new PixiGameRenderer(root);
 renderer.setColorBlind(customSettings.colorBlindMode);
+renderer.setBackgroundMotion(loadRecord().backgroundMotion);
 const sound = new SoundEngine(
   loadRecord().soundMuted,
   musicTracksFor(loadRecord().royaltyFreeOnly),
@@ -1322,6 +1323,10 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'toggle-royalty-free') {
     best = saveRoyaltyFreeOnly(!loadRecord().royaltyFreeOnly);
     sound.setMusicTracks(musicTracksFor(best.royaltyFreeOnly));
+  }
+  if (action === 'toggle-bg-motion') {
+    best = saveBackgroundMotion(!loadRecord().backgroundMotion);
+    renderer.setBackgroundMotion(best.backgroundMotion);
   }
   if (action === 'capture-binding') {
     const controlAction = parseControlAction(control.dataset.controlAction);
@@ -4222,6 +4227,7 @@ function renderOverlay(state: GameState): void {
       <button class="hud-action reverb" type="button" data-ui-action="cycle-reverb" title="Cola de reverb al apagar la música">Reverb: ${reverbLabel(sound.getReverbMode())}</button>
       <button class="hud-action positional" type="button" data-ui-action="toggle-positional" title="El paneo estéreo de cada sonido sigue su posición en pantalla">Posicional: ${isPositionalAudio() ? 'on' : 'off'}</button>
       <button class="hud-action royalty-free" type="button" data-ui-action="toggle-royalty-free" title="${HAS_ROYALTY_FREE_TRACKS ? 'Reproducir sólo temas libres de derechos (archivos con prefijo ncc)' : 'No hay temas libres de derechos cargados (archivos con prefijo ncc). Activarlo dejará la música en silencio.'}">Libre de derechos: ${loadRecord().royaltyFreeOnly ? 'on' : 'off'}</button>
+      <button class="hud-action bg-motion" type="button" data-ui-action="toggle-bg-motion" title="Movimiento del fondo dinámico. Si tu sistema tiene activado 'reducir movimiento', el fondo se mueve más lento; apágalo aquí para dejarlo estático.">Fondo animado: ${loadRecord().backgroundMotion ? 'on' : 'off'}</button>
     </div>`}
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}

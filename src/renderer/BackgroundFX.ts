@@ -178,7 +178,11 @@ export class BackgroundFX {
     const now = performance.now();
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
-    if (this.motion && !this.reducedMotion) this.t += dt;
+    // El usuario puede apagar el movimiento del fondo del todo (this.motion=false).
+    // Si solo está activo "reducir movimiento" del sistema, NO lo congelamos: el fondo
+    // es difuso y lento (no es el tipo de animación que marea), así que lo dejamos
+    // derivar a una fracción de la velocidad en vez de quedar estático.
+    if (this.motion) this.t += this.reducedMotion ? dt * 0.3 : dt;
     // Suavizado del peligro hacia su objetivo (~constante de tiempo de ~0.25s).
     this.danger += (this.dangerTarget - this.danger) * Math.min(1, dt * 4);
     if (this.transStyle) {
