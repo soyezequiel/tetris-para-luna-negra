@@ -348,6 +348,11 @@ let onlineBetBusy = false;
 // compartieran flag, el botón "Pagar con extensión" se vería deshabilitado y
 // tragaría clicks cada vez que hay un poll en vuelo durante el depósito.
 let onlineBetPaying = false;
+// Bandera dedicada a la creación de la apuesta disparada por el host. Separada de
+// onlineBetBusy (que el polling pone en true cada 750ms) para poder mostrar el
+// estado "Creando apuesta…" sin que parpadee con cada poll en vuelo. Crear tarda
+// varios segundos porque Luna Negra genera un invoice Lightning por jugador (NWC).
+let onlineBetCreating = false;
 let onlineLastBetPollAt = 0;
 let onlineBetFastPollUntil = 0;
 let onlineBetRefreshQueued = false;
@@ -2457,6 +2462,7 @@ async function createOnlineBet(): Promise<void> {
     return;
   }
   onlineBetBusy = true;
+  onlineBetCreating = true;
   try {
     const response = await onlineClient.createBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id, stakeSats });
     syncOnlineClock(response.serverNowMs);
@@ -2467,6 +2473,7 @@ async function createOnlineBet(): Promise<void> {
     onlineError = onlineErrorText(error);
   } finally {
     onlineBetBusy = false;
+    onlineBetCreating = false;
   }
 }
 
@@ -5319,18 +5326,21 @@ function renderOnlineBetPanel(host: boolean): string {
     // con una sola persona en la sala no tiene sentido ofrecer el pozo.
     if (onlineRoom.players.length < 2) return '';
     const blocked = lunaNegraBettingBlockedReason();
-    const canCreate = !blocked && !onlineBetBusy;
+    const canCreate = !blocked && !onlineBetBusy && !onlineBetCreating;
     return `
-      <section class="online-bet-panel">
+      <section class="online-bet-panel${onlineBetCreating ? ' online-bet-panel--creating' : ''}">
         <div class="online-bet-head">
           <span>Apuesta opcional</span>
           <small>Luna Negra</small>
         </div>
         <p class="online-bet-note">Pozo compartido: todos depositan lo mismo y el ganador cobra el saldo final.</p>
         <div class="online-bet-create-row">
-          <input type="text" inputmode="numeric" class="dash-input online-bet-input" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50" />
-          <button class="dash-action-btn accent online-bet-create-button" type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>Crear</button>
+          <input type="text" inputmode="numeric" class="dash-input online-bet-input" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50"${onlineBetCreating ? ' disabled' : ''} />
+          <button class="dash-action-btn accent online-bet-create-button" type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>${onlineBetCreating ? `${BET_SPINNER}<span>Creando…</span>` : 'Crear'}</button>
         </div>
+        ${onlineBetCreating
+          ? '<p class="online-bet-note">⏳ Generando los invoices de pago en Luna Negra… puede tardar unos segundos.</p>'
+          : ''}
         ${blocked ? `<p class="online-bet-note online-bet-warning">Atención: ${escapeHtml(blocked)}</p>` : ''}
       </section>
     `;

@@ -158,9 +158,17 @@ export class RoomServer extends Server<Env> {
     const roomId = normalizeRoomId(room.id);
     const currentRoomId = normalizeRoomId(this.name);
     if (roomId !== currentRoomId) throw new OnlineRoomError('Room bridge id mismatch.', 400);
-    const next: OnlineRoom = { ...room, id: currentRoomId };
+    // El DO es la ÚNICA autoridad de `updatedAtServerMs`: el resto de las escrituras
+    // de sala (peer signals, ready, failover) lo sellan con el reloj de Cloudflare.
+    // Las apuestas, en cambio, llegan vía Vercel selladas con OTRO reloj. Si dejáramos
+    // ese timestamp ajeno, el guard monótono del cliente (adoptOnlineRoom) lo compararía
+    // contra valores de Cloudflare y, ante el menor skew, descartaría la escritura por
+    // verla "más vieja" → p. ej. cancelar la apuesta "no hacía nada". Re-sellamos con el
+    // reloj del DO para que todos los timestamps de la sala vivan en un solo reloj.
+    const nowMs = Date.now();
+    const next: OnlineRoom = { ...room, id: currentRoomId, updatedAtServerMs: nowMs };
     await this.store.saveRoom(next);
-    await this.persistAndBroadcastRoom(next, Date.now());
+    await this.persistAndBroadcastRoom(next, nowMs);
     await this.syncLobby(next);
     await this.rescheduleAlarm(currentRoomId);
     return next;

@@ -326,8 +326,21 @@ export async function cancelRoomBet(
   if (['settled', 'cancelled', 'expired', 'refunded'].includes(room.bet.status)) {
     return room;
   }
-  await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(room.bet.betId)}/cancel`, { method: 'POST' });
-  return refreshRoomBet(store, roomId, nowMs);
+  const cancelResult = await lunaFetch<{ ok?: boolean; status?: string }>(
+    config,
+    `/api/v1/bets/${encodeURIComponent(room.bet.betId)}/cancel`,
+    { method: 'POST' },
+  );
+  // El POST ya canceló la apuesta en Luna. refreshRoomBet es best-effort: si el GET de
+  // detalle falla (red, 404 transitorio) devuelve la sala sin tocar el bet → la apuesta
+  // quedaría "pendiente" pese a estar cancelada, sin error visible. Forzamos el estado
+  // terminal que devolvió el propio cancel para que el host vea la cancelación igual.
+  const refreshed = await refreshRoomBet(store, roomId, nowMs);
+  if (!refreshed.bet || isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
+  const reported = asBetStatus(cancelResult?.status, 'cancelled');
+  const terminalStatus = isTerminalRoomBetStatus(reported) ? reported : 'cancelled';
+  const bet: RoomBet = { ...refreshed.bet, status: terminalStatus, updatedAtServerMs: nowMs };
+  return setRoomBet(store, roomId, bet, nowMs);
 }
 
 export async function retryRoomBetInvoiceGeneration(

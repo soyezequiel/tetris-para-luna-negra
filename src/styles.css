@@ -1207,6 +1207,15 @@ canvas {
   width: auto;
   min-width: 88px;
   padding-inline: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.online-bet-create-button .bet-spinner {
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
 }
 
 .online-bet-create {
