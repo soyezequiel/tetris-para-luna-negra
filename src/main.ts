@@ -681,7 +681,11 @@ function loopBody(): void {
     }
   } else {
     renderer.render(state);
-    juice.frame(state); // peligro por altura de pila + transiciones KO/Win
+    // `live` solo en juego real: en lobby/resultados/pausa el motor puede quedar
+    // congelado en 'playing' (el ganador online conserva ese status) y, con la pila
+    // alta, el latido de peligro seguiría sonando fuera de la partida.
+    const live = appMode === 'playing' || appMode === 'onlinePlaying';
+    juice.frame(state, live); // peligro por altura de pila + transiciones KO/Win
   }
   renderOverlay(state);
 }

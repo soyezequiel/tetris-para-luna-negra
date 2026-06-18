@@ -81,10 +81,15 @@ export class JuiceConductor {
     }
   }
 
-  /** Una vez por frame: peligro por altura de pila + transiciones de status. */
-  frame(state: GameState): void {
+  /** Una vez por frame: peligro por altura de pila + transiciones de status.
+   * `live` = el juego está realmente en curso (modo playing/onlinePlaying). En
+   * lobby/resultados el motor puede quedar congelado en status 'playing' (p. ej. el
+   * ganador online conserva 'playing'); con la pila alta el latido de peligro
+   * seguiría sonando en el lobby. Por eso el peligro se silencia cuando no es `live`,
+   * pero las transiciones de status (KO/Win/new-run) se siguen procesando. */
+  frame(state: GameState, live = true): void {
     // peligro
-    if (this.alive && state.status === 'playing') {
+    if (live && this.alive && state.status === 'playing') {
       const ratio = stackHeightRatio(state);
       let level = ratio > this.dangerStart ? Math.min(1, (ratio - this.dangerStart) / (1 - this.dangerStart - 0.08)) : 0;
 
