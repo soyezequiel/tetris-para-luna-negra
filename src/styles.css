@@ -3653,7 +3653,60 @@ canvas {
   animation: dash-fade-up 0.5s ease 0.15s both;
 }
 .dash-play-cta { animation: dash-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.2s both; }
-.dash-play-secondary { margin-top: 22px; animation: dash-fade-up 0.5s ease 0.3s both; }
+.dash-play-secondary { margin-top: 22px; animation: dash-fade-up 0.5s ease 0.3s both; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+
+/* Toggle Supervivencia / Custom del botón inteligente */
+.dash-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dash-text-dim);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.dash-mode-toggle:hover { background: rgba(255, 255, 255, 0.07); }
+
+.dash-mode-toggle.is-on {
+  border-color: var(--dash-accent);
+  color: #fff;
+}
+
+.dash-mode-toggle-track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background 0.18s ease;
+  flex: 0 0 auto;
+}
+
+.dash-mode-toggle.is-on .dash-mode-toggle-track {
+  background: var(--dash-accent);
+  box-shadow: 0 0 14px rgba(0, 229, 255, 0.45);
+}
+
+.dash-mode-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.18s ease;
+}
+
+.dash-mode-toggle.is-on .dash-mode-toggle-knob { transform: translateX(18px); }
+
+.dash-mode-toggle-label strong { color: var(--dash-accent); margin-left: 4px; }
 
 /* El botón inteligente */
 .dash-smart-play {
@@ -3906,6 +3959,25 @@ canvas {
 .solo-results-verdict--fail {
   color: var(--dash-danger);
   text-shadow: 0 0 24px rgba(235, 68, 90, 0.5);
+}
+
+.solo-results-rank {
+  margin: 2px 0 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.4px;
+  color: var(--dash-text-dim);
+}
+
+.solo-results-rank--ok {
+  color: #061018;
+  background: var(--dash-accent);
+  border-color: var(--dash-accent);
+  box-shadow: 0 0 22px rgba(0, 229, 255, 0.4);
 }
 
 .solo-results-stats {
@@ -6456,6 +6528,38 @@ canvas {
 
 .leaderboard-note--error {
   color: #ff6b6b;
+}
+
+.leaderboard-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.leaderboard-tab {
+  flex: 1 1 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--dash-text-dim);
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.leaderboard-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.leaderboard-tab--active {
+  color: #061018;
+  background: var(--dash-accent);
+  border-color: var(--dash-accent);
+  box-shadow: 0 0 18px rgba(0, 229, 255, 0.35);
 }
 
 .leaderboard-rows {
