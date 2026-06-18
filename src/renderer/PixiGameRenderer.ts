@@ -232,6 +232,10 @@ export class PixiGameRenderer {
     this.shakeFrames = Math.max(0, this.shakeFrames - 1);
 
     this.backgroundFX.setSeed(state.seed);
+    // El peligro (altura de pila) oscurece el fondo de la página: lo gestiona el
+    // conductor sobre JuiceFX; aquí solo lo reenviamos al fondo cada frame.
+    const dng = this.juice.getDanger();
+    this.backgroundFX.setDanger(dng.level, dng.critical);
     this.drawBackground();
     this.drawPanels();
     if (this.deathFrame >= 0) {

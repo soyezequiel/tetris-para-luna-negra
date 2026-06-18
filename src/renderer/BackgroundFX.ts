@@ -55,6 +55,12 @@ export class BackgroundFX {
   private blobs: Blob[] = [];
   private particles: Particle[] = [];
 
+  // Peligro (0..1): oscurece el fondo de la página conforme sube la pila. Se
+  // suaviza hacia el objetivo para que el cambio sea gradual, no un parpadeo.
+  private danger = 0;
+  private dangerTarget = 0;
+  private dangerCritical = false;
+
   private readonly onResize = () => this.resize();
 
   constructor(root: HTMLElement) {
@@ -106,6 +112,13 @@ export class BackgroundFX {
   private styleForSeed(seed: number): BgStyle {
     const rng = mulberry32(seed >>> 0);
     return STYLES[Math.floor(rng() * STYLES.length)];
+  }
+
+  // Nivel de peligro del tablero local (0..1). El renderer lo reenvía cada frame
+  // desde JuiceFX. El fondo se oscurece de forma proporcional.
+  setDanger(level: number, critical = false): void {
+    this.dangerTarget = Math.max(0, Math.min(1, level));
+    this.dangerCritical = critical;
   }
 
   setMotion(enabled: boolean): void { this.motion = enabled; }
@@ -166,6 +179,8 @@ export class BackgroundFX {
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     if (this.motion && !this.reducedMotion) this.t += dt;
+    // Suavizado del peligro hacia su objetivo (~constante de tiempo de ~0.25s).
+    this.danger += (this.dangerTarget - this.danger) * Math.min(1, dt * 4);
     if (this.transStyle) {
       this.transP += dt / TRANSITION_SECONDS;
       if (this.transP >= 1) { this.curStyle = this.transStyle; this.transStyle = null; this.transP = 0; }
@@ -196,6 +211,16 @@ export class BackgroundFX {
 
     // Viñeta: concentra la mirada en el tablero (gradiente cacheado).
     ctx.fillStyle = this.vignette!; ctx.fillRect(0, 0, W, H);
+
+    // Peligro: oscurece el fondo de la página (no el tablero, que lo tapa Pixi por
+    // encima). Casi negro con un punto de rojo para dar clima; en crítico late suave.
+    if (this.danger > 0.01) {
+      const crit = this.dangerCritical;
+      const pulse = crit ? 0.06 * (0.5 + 0.5 * Math.sin(this.t * 4.2)) : 0;
+      const a = Math.min(0.7, this.danger * (crit ? 0.62 : 0.48) + pulse);
+      ctx.fillStyle = `rgba(8,2,4,${a.toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
   }
 
   private runBg(style: BgStyle, a: number): void {
