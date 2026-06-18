@@ -5516,7 +5516,7 @@ function renderOnlineBetResult(): string {
         <div class="bet-settle bet-settle--paid">
           <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Cobraste el pozo!</span></div>
           <div class="bet-settle-amount">+${myPayout.toLocaleString('es-AR')} <small>sats</small></div>
-          <p class="bet-settle-hint">Acreditados en tu billetera Lightning de Luna Negra.</p>
+          <p class="bet-settle-hint">Acreditados en tu billetera Lightning.</p>
         </div>
       `;
     }
