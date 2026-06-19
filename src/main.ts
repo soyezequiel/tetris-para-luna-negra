@@ -1238,35 +1238,24 @@ Object.assign(window, {
 void bootstrapOnlineStartup();
 
 function targetGameplayFrame(now = performance.now()): number {
-  // En online, host y cliente DEBEN compartir la misma línea de tiempo de frames:
-  // el host resimula al cliente reproduciendo sus inputs (sellados con el frame del
-  // cliente) y aplica garbage por frame. Si cada peer contara frames desde su propio
-  // performance.now() local (gameClockOriginMs), el desfase entre relojes —que crece
-  // durante la partida por drift entre performance.now() y Date.now()— haría que el
-  // host aplicara los inputs en frames distintos a los que el cliente jugó, divergiendo
-  // hasta toparlo falsamente y reemplazarle el tablero por reconciliación. Anclamos el
-  // frame al reloj del servidor (startsAtServerMs) para que ambos avancen alineados.
-  // P2: anclamos el frame objetivo al reloj real (Math.max(gameFrame, ...)), NO a
-  // gameFrame + 1. Forzar al menos un frame de engine por cada requestAnimationFrame
-  // hacía que en un monitor >60Hz el juego entero (gravedad, DAS, ARR, lock delay)
-  // corriera proporcionalmente más rápido (~3× a 180Hz). Con el reloj anclado, un rAF
-  // puede no producir frame nuevo (candidateFrame === gameFrame); loop() detecta ese
-  // caso y conserva los inputs recolectados hasta el próximo tick real.
-  if (appMode === 'onlinePlaying' && onlineRoom?.startsAtServerMs) {
-    // Online: el frame SIEMPRE se ancla al reloj del servidor, incluso tras un stall
-    // largo. Host y cliente deben compartir la línea de frames (ver arriba), y en un
-    // "último en pie" irse a segundo plano y volver con la gravedad/garbage al día es
-    // parte de la competencia: no lo clampeamos.
-    const serverFrames = Math.floor((onlineNowMs() - onlineRoom.startsAtServerMs) / GAME_FRAME_MS);
-    return resolveGameplayFrame(gameFrame, serverFrames);
-  }
+  // DESACOPLE TOTAL (online + solo): el frame de juego se ancla al reloj LOCAL monotónico
+  // (gameClockOriginMs), NO al del servidor. Antes online se anclaba a startsAtServerMs para que
+  // el host resimulara reproduciendo los inputs del cliente —pero el host ya NO resimula (modelo
+  // cliente-autoritativo: sendOnlineInputsToHost es no-op)—, así que ese anclaje solo lograba que
+  // la red metiera tirones en tu propia partida: un snap de reloj (conexión mala / segundo plano)
+  // saltaba tu gravedad de golpe. Corriendo en reloj local, tu gravedad/DAS/ARR/lock-delay nunca
+  // dependen de la red. El garbage se telegrafía desde que lo recibís (ver applyOnlineAttack), así
+  // que tampoco necesita una línea de frames compartida.
+  //
+  // P2 (game feel): NUNCA forzamos gameFrame+1 (eso obligaba un frame de engine por rAF y aceleraba
+  // el juego ~3× en monitores >60Hz). Un rAF puede no producir frame nuevo (resolveGameplayFrame(f,f)
+  // === f); loop() detecta ese caso y conserva los inputs recolectados hasta el próximo tick real.
   const elapsedFrames = Math.floor((now - gameClockOriginMs) / GAME_FRAME_MS);
   const target = resolveGameplayFrame(gameFrame, elapsedFrames);
-  // Solo/offline: si la pestaña estuvo en segundo plano o congelada, rAF se detiene y
-  // al volver habríamos acumulado cientos de frames. Simularlos todos de golpe hace
-  // fast-forward de la gravedad y topa al jugador que ni estaba mirando. Como en solo
-  // el tiempo perdido no cuenta, reanclamos el reloj al frame actual (pausa-al-perder-
-  // foco) en vez de recuperar el hueco. Un hitch normal (GC, <0.5 s) sí se recupera.
+  // Si la pestaña estuvo en segundo plano o hubo un stall grande, NO simulamos cientos de frames de
+  // golpe (fast-forward violento de la gravedad + pico): reanclamos el reloj al frame actual y
+  // seguimos suave. Un hitch normal (GC, <0.5 s) sí se recupera. Vale para solo y online por igual
+  // ("confiar en el cliente": tu juego nunca se teletransporta, ni por la red ni por un freeze).
   if (target - gameFrame > MAX_OFFLINE_RESUME_FRAMES) {
     gameClockOriginMs = now - gameFrame * GAME_FRAME_MS;
     return gameFrame;
@@ -4533,15 +4522,18 @@ function applyOnlineAttack(attack: OnlineAttack): void {
     board: boardMetrics(beforeGarbage.board),
     pendingBefore: beforeGarbage.stats.pendingGarbage,
   });
-  // Anclamos al frame del ataque (no gameFrame): debe coincidir con el frame usado por
-  // la simulación del host para que el garbage se aplique en el mismo frame en ambos
-  // lados y las simulaciones no diverjan. Ver HostAuthoritySimulator.queueGarbage.
-  engine.queueGarbage(attack.lines, attack.holeSeed, attack.frame, attack.id);
-  // Registramos el evento para el replay online: queuedAtFrame = gameFrame local en que
-  // llegó (cuándo reaplicar), frame = ancla que fija el applyFrame. Ver ReplayGarbageEvent.
+  // Telegrafiamos el garbage desde el frame LOCAL en que lo recibimos (gameFrame), NO desde el
+  // frame del atacante. Con relojes desacoplados (ver targetGameplayFrame) el frame del atacante no
+  // significa nada en tu línea de tiempo; anclarlo a tu recepción da una ventana de reacción
+  // CONSTANTE (applyFrame = gameFrame + delay) sin importar la latencia —en vez de una ventana que
+  // se acortaba cuanto peor la conexión—. El host ya no resimula, así que no hace falta que el
+  // garbage caiga en el mismo frame en ambos lados.
+  engine.queueGarbage(attack.lines, attack.holeSeed, gameFrame, attack.id);
+  // Registramos los valores REALES usados para que el replay reproduzca idéntico: queuedAtFrame =
+  // gameFrame en que se encoló (cuándo reaplicar), frame = misma ancla local que fija el applyFrame.
   recordGarbage(replay, {
     queuedAtFrame: gameFrame,
-    frame: attack.frame,
+    frame: gameFrame,
     lines: attack.lines,
     holeSeed: attack.holeSeed,
     id: attack.id,
