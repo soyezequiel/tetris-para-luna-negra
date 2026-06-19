@@ -28,29 +28,53 @@ function readConfig(): LunaConfig {
   return { baseUrl, apiKey };
 }
 
+// fetch() descarta el header Authorization al seguir un redirect cross-origin
+// (Fetch spec). Si LUNA_NEGRA_BASE_URL es un alias que hace 3xx hacia el dominio
+// real, el bearer se pierde y la sesión SIEMPRE falla (login → invitado). Cuando
+// detectamos que hubo redirect, reintentamos directo contra la URL final
+// re-adjuntando el header. Lo ideal igual es apuntar LUNA_NEGRA_BASE_URL al
+// dominio final para evitar el doble request.
+async function lunaFetch(url: string, init: RequestInit, bearer: string): Promise<Response> {
+  const headers = { ...(init.headers as Record<string, string> | undefined), authorization: `Bearer ${bearer}` };
+  const response = await fetch(url, { ...init, headers });
+  if (response.redirected && response.url && response.url !== url) {
+    console.warn(
+      `[luna-negra] ${url} redirigió a ${response.url}; fetch descarta el header Authorization `
+        + 'en redirects cross-origin. Reintentando directo — apuntá LUNA_NEGRA_BASE_URL al dominio final.',
+    );
+    return fetch(response.url, { ...init, headers });
+  }
+  return response;
+}
+
 async function lunaGet<T>(config: LunaConfig, path: string, bearer = config.apiKey): Promise<T | null> {
   try {
-    const response = await fetch(`${config.baseUrl}${path}`, {
-      method: 'GET',
-      headers: { authorization: `Bearer ${bearer}` },
-    });
-    if (!response.ok) return null;
+    const response = await lunaFetch(`${config.baseUrl}${path}`, { method: 'GET' }, bearer);
+    if (!response.ok) {
+      console.warn(`[luna-negra] GET ${path} → HTTP ${response.status}`);
+      return null;
+    }
     return (await response.json().catch(() => null)) as T | null;
-  } catch {
+  } catch (error) {
+    console.warn(`[luna-negra] GET ${path} falló:`, error);
     return null;
   }
 }
 
 async function lunaPost<T>(config: LunaConfig, path: string, body: unknown): Promise<T | null> {
   try {
-    const response = await fetch(`${config.baseUrl}${path}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) return null;
+    const response = await lunaFetch(
+      `${config.baseUrl}${path}`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      config.apiKey,
+    );
+    if (!response.ok) {
+      console.warn(`[luna-negra] POST ${path} → HTTP ${response.status}`);
+      return null;
+    }
     return (await response.json().catch(() => null)) as T | null;
-  } catch {
+  } catch (error) {
+    console.warn(`[luna-negra] POST ${path} falló:`, error);
     return null;
   }
 }

@@ -1828,8 +1828,9 @@ async function bootstrapLunaSession(): Promise<void> {
       const response = await lunaSocialClient.resolveSession(freshToken);
       applyLunaIdentity(response.identity);
       saveStoredLunaIdentity(response.identity);
-    } catch {
+    } catch (error) {
       // Si Luna Negra rechaza un token fresco, la identidad cacheada ya no prueba sesión.
+      console.warn('[luna-negra] No se pudo resolver la sesión desde el token; entrando como invitado.', error);
       clearLunaIdentity();
     } finally {
       removeLunaSessionParamsFromUrl();
