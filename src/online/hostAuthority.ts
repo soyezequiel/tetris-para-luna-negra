@@ -1,5 +1,6 @@
 import { GameEngine } from '../game/engine';
 import type { GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState } from '../game/types';
+import { mpLogEnabled } from '../debugFlags';
 
 export interface HostSimulatedPlayer {
   playerId: string;
@@ -77,7 +78,7 @@ export class HostAuthoritySimulator {
     // piezas de ese intervalo cayeron solas (torre central) -> blockOut falso.
     if (accepted > 0 && !simulation.firstInputSeen) {
       simulation.firstInputSeen = true;
-      console.log(`[MP host-firstinput] ${JSON.stringify({
+      if (mpLogEnabled) console.log(`[MP host-firstinput] ${JSON.stringify({
         target: playerId.slice(0, 6),
         simFrameOnArrival: simulation.frame,
         firstInputFrame: Number.isFinite(minInputFrame) ? minInputFrame : null,
@@ -86,7 +87,7 @@ export class HostAuthoritySimulator {
     }
     // Cuánto se re-acomodaron los inputs hacia adelante: si maxClamp es grande, el
     // cliente jugó esos inputs en frames muy anteriores al de la simulación del host.
-    if (accepted > 0 && maxClamp >= 2) {
+    if (accepted > 0 && maxClamp >= 2 && mpLogEnabled) {
       console.log(`[MP host-input] ${JSON.stringify({
         target: playerId.slice(0, 6),
         accepted,

@@ -1,5 +1,6 @@
 import './styles.css';
 import QRCode from 'qrcode';
+import { mpLogEnabled } from './debugFlags';
 import { importReplayJson } from './app/replayImport';
 import { createExportedReplay, replayFileName, type ExportedReplay } from './app/replayExport';
 import { ReplayPlayback, type PlaybackSpeed, type ReplayPlaybackSnapshot } from './app/replayPlayback';
@@ -1207,6 +1208,7 @@ function replayFramesDueThisLoop(): number {
 // comparar el tablero local del cliente contra el autoritativo del host y el desfase
 // de frames, se ve si el host está topando falsamente por divergencia de simulación.
 function logMp(event: string, data: Record<string, unknown>): void {
+  if (!mpLogEnabled) return; // apagado por defecto; prender con ?mplog=1
   // Serializamos a string para que la consola imprima TODOS los campos en línea (los
   // objetos anidados se colapsan a "…" y se pierden al copiar/pegar).
   console.log(`[MP ${event}] ${JSON.stringify({ role: isOnlineHost() ? 'host' : 'guest', player: onlinePlayer.id.slice(0, 6), seed: onlineRoom?.seed, ...data })}`);
