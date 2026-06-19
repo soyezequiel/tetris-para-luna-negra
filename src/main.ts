@@ -7258,27 +7258,16 @@ function renderDashboardRoomPanel(): string {
       <div class="dash-room-header">
         <div class="dash-room-title-area">
           <span class="dash-room-eyebrow">SALA ONLINE</span>
-          <h2 style="margin: 0; font-size: 20px; font-weight: 800;">Disponible</h2>
+          <h2 style="margin: 0; font-size: 20px; font-weight: 800;">Jugá con amigos</h2>
         </div>
         <button class="dash-copy-btn" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Actualizar</button>
       </div>
-      
-      ${renderOnlineError()}
 
-      <div class="dash-room-purpose">
-        <div class="dash-room-purpose-top">
-          <span class="dash-room-purpose-icon">${roomPurposeIcon}</span>
-          <strong>Armá una sala o unite a otra</strong>
-        </div>
-        <p class="dash-room-purpose-explainer">Todo lo multijugador se gestiona desde este panel: crear sala, entrar con código, invitaciones y salas públicas.</p>
-      </div>
-      
-      ${inviteSectionHtml}
+      ${renderOnlineError()}
 
       <div class="dash-empty-state">
         <div class="dash-field-group">
-          <label>Crear Sala</label>
-          <p class="dash-field-hint">Abrí una sala nueva y después compartí el código, el link o una invitación.</p>
+          <label>Crear sala</label>
           <div class="dash-buttons-row">
             <button class="dash-action-btn accent" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
           </div>
@@ -7286,10 +7275,9 @@ function renderDashboardRoomPanel(): string {
             <button class="dash-action-btn" type="button" data-ui-action="dev-bot-match"${onlineBusy ? ' disabled' : ''}>Partida vs bot (dev)</button>
           </div>` : ''}
         </div>
-        
+
         <div class="dash-field-group">
           <label for="dash-code-input">Unirse con código</label>
-          <p class="dash-field-hint">Pegá el código que te pasaron para entrar directo a esa sala.</p>
           <div class="dash-join-row">
             <input id="dash-code-input" class="dash-input" type="text" style="text-transform: uppercase;" placeholder="CÓDIGO" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
             <button class="dash-action-btn accent" type="button" style="width: auto; padding: 8px 16px;" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse</button>
@@ -7297,9 +7285,10 @@ function renderDashboardRoomPanel(): string {
         </div>
       </div>
 
+      ${inviteSectionHtml}
+
       <div class="dash-field-group" style="margin-top: 10px;">
-        <label>Salas Públicas</label>
-        <p class="dash-field-hint">Entrá a una sala abierta sin pedir código.</p>
+        <label>Salas públicas</label>
         <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
           ${publicRooms}
         </div>
