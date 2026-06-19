@@ -37,8 +37,30 @@ export async function POST(request: Request): Promise<Response> {
     const content = buildDiscordSummary(report);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
+    // El JSON completo va en un bloque de código DENTRO de un embed: en Discord (desktop) un
+    // bloque ``` muestra botón "Copiar" de un clic, así se pega directo en Claude Code sin
+    // descargar nada. La descripción de un embed admite hasta 4096 chars (vs 2000 del content),
+    // así que el reporte entero suele entrar; si no, lo truncamos y queda el archivo adjunto.
+    const EMBED_DESC_MAX = 4096;
+    const FENCE = '```';
+    const wrap = (body: string): string => `${FENCE}json\n${body}\n${FENCE}`;
+    const overhead = wrap('').length + 1; // backticks + saltos de línea
+    const truncated = text.length > EMBED_DESC_MAX - overhead;
+    // Neutralizamos cualquier backtick del payload (p. ej. en el comentario del jugador) con un
+    // zero-width space para que no cierre el bloque de código del embed. En un reporte normal el
+    // JSON no tiene backticks, así que es un no-op; el ZWSP es invisible al pegar.
+    const safe = (s: string): string => s.replace(/`/g, '`​');
+    const jsonForEmbed = truncated
+      ? `${safe(text.slice(0, EMBED_DESC_MAX - overhead - 24))}…\n(truncado, ver adjunto)`
+      : safe(text);
+    const embed = {
+      title: '📋 Reporte (copialo y pegalo en Claude Code)',
+      description: wrap(jsonForEmbed),
+      color: 0xf59e0b,
+    };
+
     const form = new FormData();
-    form.append('payload_json', JSON.stringify({ content }));
+    form.append('payload_json', JSON.stringify({ content, embeds: [embed] }));
     form.append('files[0]', new Blob([text], { type: 'application/json' }), `report-${stamp}.json`);
 
     const discord = await fetch(webhookUrl, { method: 'POST', body: form });
