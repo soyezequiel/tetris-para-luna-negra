@@ -5726,6 +5726,17 @@ canvas {
   -webkit-backdrop-filter: blur(10px) !important;
 }
 
+/* Máquinas de pocos núcleos (clase low-gfx puesta en <html> al arrancar): el blur de pantalla
+   completa se recalcula cada frame sobre el canvas animado y dispara longtasks de paint (~60ms)
+   en GPUs flojas. Lo desactivamos y subimos un poco la opacidad del scrim para compensar la
+   legibilidad sin el desenfoque. Mayor especificidad que `.menu-scrim`, así gana aunque ambos
+   usen !important. Ver applyGraphicsQualityClass() en main.ts. */
+.low-gfx .menu-scrim {
+  background: rgba(5, 7, 12, 0.93) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 .menu-panel {
   border: 1px solid var(--dash-neon-purple) !important;
   border-radius: 16px !important;

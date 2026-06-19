@@ -1128,6 +1128,20 @@ function onlineLocalPlacementLabel(): string {
   return myIndex >= 0 ? `${myIndex + 1}° de ${ranked.length}` : '';
 }
 
+// Calidad gráfica adaptada al dispositivo: el `backdrop-filter: blur` de los scrims (menús,
+// lobby, resultados) se recalcula cada frame sobre el canvas animado y cuesta ~60ms en GPUs
+// flojas —los longtasks de paint "self" que cazamos en reportes de invitados con pocos núcleos—.
+// En esas máquinas marcamos `low-gfx` y el CSS desactiva el blur (el scrim queda semi-opaco, ya
+// casi no se ve la diferencia). Heurística por núcleos; override con ?lowgfx=1 / ?lowgfx=0 para probar.
+applyGraphicsQualityClass();
+function applyGraphicsQualityClass(): void {
+  try {
+    const override = new URLSearchParams(window.location.search).get('lowgfx');
+    const lowGfx = override !== null ? override !== '0' : (navigator.hardwareConcurrency ?? 8) <= 4;
+    if (lowGfx) document.documentElement.classList.add('low-gfx');
+  } catch { /* sin window/navigator: dejamos la calidad alta por defecto */ }
+}
+
 installErrorCapture();
 installLongTaskObserver();
 loop();
