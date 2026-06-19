@@ -74,6 +74,7 @@ export class NeoSynth {
   private reverb: ConvolverNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
   private driveCurves: Record<string, Float32Array<ArrayBuffer>> = {};
+  private mobile = false;  // perfil móvil activo (lo fija ensure()): suaviza el drive
 
   private muted: boolean;
   private vol: number;   // 0..1 volumen SFX
@@ -602,6 +603,7 @@ export class NeoSynth {
     if (!AC) return null;
     const ctx = new AC();
     const mobile = this.detectMobile();
+    this.mobile = mobile;
     this.outputTrim = mobile ? MOBILE_OUTPUT_TRIM : OUTPUT_TRIM;
     const master = ctx.createGain(); master.gain.value = this.gate();
     const sat = ctx.createWaveShaper(); sat.curve = this.makeSatCurve(mobile ? MOBILE_SAT_K : DESKTOP_SAT_K); sat.oversample = '2x';
@@ -632,9 +634,18 @@ export class NeoSynth {
   }
 
   private driveCurve(a: number): Float32Array<ArrayBuffer> {
-    const key = a.toFixed(2); if (this.driveCurves[key]) return this.driveCurves[key];
-    const n = 1024, c = new Float32Array(n), d = Math.tanh(a) || 1;
-    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(a * x) / d; }
+    // En móvil aplanamos el drive hacia lineal: el waveshaper tanh POR VOZ (sobre
+    // todo el del crunch, drive 4) se aplica al oscilador a amplitud plena, ANTES
+    // del gain de la voz y del master → su distorsión no baja al bajar el volumen,
+    // y en el parlante chico del celular se escucha como "saturación". Reducir `a`
+    // sólo puede bajar esa distorsión y el RMS (no agrega picos): no toca el
+    // saturador/compresor/limitador maestros, que siguen protegiendo los picos.
+    // En desktop queda el crunch original (a sin tocar).
+    const eff = this.mobile ? 1 + (a - 1) * 0.4 : a;
+    const key = (this.mobile ? 'm' : 'd') + eff.toFixed(2);
+    if (this.driveCurves[key]) return this.driveCurves[key];
+    const n = 1024, c = new Float32Array(n), d = Math.tanh(eff) || 1;
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(eff * x) / d; }
     this.driveCurves[key] = c; return c;
   }
   private makeSatCurve(k: number): Float32Array<ArrayBuffer> {
