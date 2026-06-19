@@ -55,6 +55,11 @@ const DESKTOP_SAT_K = 2.4;
 // suena "saturado" porque ese drive se aplica al oscilador a amplitud plena, antes
 // del volumen. 0 = lineal (sin crunch), 1 = drive original de desktop.
 const MOBILE_DRIVE_FACTOR = 0.4;
+// Atenuación global del sub-bass en móvil: el parlante chico distorsiona por
+// EXCURSIÓN al mover graves fuertes (p. ej. el hard drop: sub 150→44 Hz a gain 0.58).
+// No es recorte digital (el medidor lo confirmó: peak<1), es físico del parlante.
+// Bajamos el nivel de TODOS los sub para que el cono no se sature. 1 = sin tocar.
+const MOBILE_SUB_GAIN = 0.4;
 const REVERB_SECONDS = 2.4;
 const REVERB_DECAY = 3.0;
 
@@ -558,7 +563,7 @@ export class NeoSynth {
   }
 
   private sub(o: SubOpts): void {
-    const g = (o.gain == null ? 0.5 : o.gain) * this.bassMul() * SUBW;
+    const g = (o.gain == null ? 0.5 : o.gain) * this.bassMul() * SUBW * (this.mobile ? MOBILE_SUB_GAIN : 1);
     this.voice({ type: o.type || 'sine', freq: o.freq, freqEnd: o.freqEnd, glide: o.glide || 'exp', glideDur: o.glideDur, dur: o.dur, gain: g, attack: o.attack == null ? 0.003 : o.attack, when: o.when || 0, reverb: o.reverb || 0 });
     if (o.harm !== false) this.voice({ type: 'triangle', freq: o.freq * 2, freqEnd: o.freqEnd ? o.freqEnd * 2 : undefined, glide: o.glide || 'exp', dur: o.dur * 0.8, gain: g * 0.13, attack: 0.004, when: o.when || 0 });
   }
