@@ -4196,6 +4196,20 @@ canvas {
   border-color: rgba(235, 68, 90, 0.5);
 }
 
+/* En pantallas angostas el placeholder largo del comentario y el rótulo del
+   botón de reporte se cortaban; achicamos un punto para que entren enteros.
+   Va después de los estilos base para ganar por orden de cascada. */
+@media (max-width: 560px), (max-height: 620px) {
+  .report-comment {
+    font-size: 12px;
+    padding: 0 10px;
+  }
+  .report-block-btn {
+    font-size: 12px;
+    padding: 0 12px;
+  }
+}
+
 /* ===== Online battle results — spec 06 ===== */
 .online-results-scrim {
   background:

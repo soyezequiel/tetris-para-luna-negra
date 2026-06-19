@@ -5418,7 +5418,7 @@ function renderReportBlock(): string {
     <div class="report-block">
       <input type="text" class="report-comment" maxlength="400" value="${escapeHtml(reportComment)}"
         data-online-field="report-comment" autocomplete="off"
-        placeholder="¿Qué pasó? (lag, tirones, se trabó…) — opcional"${sent ? ' disabled' : ''} />
+        placeholder="¿Qué pasó? (lag, tirones…) — opcional"${sent ? ' disabled' : ''} />
       <button class="${btnClass}" type="button" data-ui-action="report-perf"${disabledAttr}>${label}</button>
     </div>
   `;
