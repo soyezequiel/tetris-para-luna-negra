@@ -51,6 +51,10 @@ const MOBILE_OUTPUT_TRIM = 0.66;
 const MOBILE_HP_HZ = 130;        // corte del high-pass de sub-bass en móvil
 const MOBILE_SAT_K = 1.4;        // saturador del master más suave en móvil (vs 2.4)
 const DESKTOP_SAT_K = 2.4;
+// Aplanado del drive (waveshaper tanh) POR VOZ en móvil: el crunch del celular
+// suena "saturado" porque ese drive se aplica al oscilador a amplitud plena, antes
+// del volumen. 0 = lineal (sin crunch), 1 = drive original de desktop.
+const MOBILE_DRIVE_FACTOR = 0.4;
 const REVERB_SECONDS = 2.4;
 const REVERB_DECAY = 3.0;
 
@@ -75,6 +79,17 @@ export class NeoSynth {
   private noiseBuf: AudioBuffer | null = null;
   private driveCurves: Record<string, Float32Array<ArrayBuffer>> = {};
   private mobile = false;  // perfil móvil activo (lo fija ensure()): suaviza el drive
+
+  // Medición de salida (diagnóstico del reporte): un analyser colgado del limitador
+  // final lee el pico real post-procesado cada 100 ms y acumula el máximo + cuántas
+  // lecturas tocaron techo (clipping digital). Sirve para saber, desde el reporte
+  // del celular, si el sonido recorta de verdad o sólo es áspero. Ver getDiagnostics().
+  private analyser: AnalyserNode | null = null;
+  private meterTimer = 0;
+  private meterBuf: Float32Array<ArrayBuffer> | null = null;
+  private peak = 0;        // máx |muestra| visto en la sesión (0..~1; ≥1 = clipping)
+  private clipReads = 0;   // lecturas con pico ≥ 0.999 (recorte)
+  private meterReads = 0;  // total de lecturas (para sacar la proporción de recorte)
 
   private muted: boolean;
   private vol: number;   // 0..1 volumen SFX
@@ -388,8 +403,60 @@ export class NeoSynth {
   }
 
   destroy(): void {
+    if (this.meterTimer) { window.clearInterval(this.meterTimer); this.meterTimer = 0; }
     if (this.ctx) { try { void this.ctx.close(); } catch { /* noop */ } }
-    this.ctx = null; this.master = null; this.reverb = null; this.noiseBuf = null;
+    this.ctx = null; this.master = null; this.reverb = null; this.noiseBuf = null; this.analyser = null;
+  }
+
+  // Lee el pico de salida cada 100 ms y acumula máximo + recortes. Barato (10 Hz,
+  // un Float32Array de 2048). Sólo arranca una vez, cuando ya existe el analyser.
+  private startMeter(): void {
+    if (this.meterTimer || !this.analyser) return;
+    this.meterBuf = new Float32Array(this.analyser.fftSize);
+    this.meterTimer = window.setInterval(() => {
+      const a = this.analyser, buf = this.meterBuf;
+      if (!a || !buf) return;
+      a.getFloatTimeDomainData(buf);
+      let p = 0;
+      for (let i = 0; i < buf.length; i++) { const m = Math.abs(buf[i]); if (m > p) p = m; }
+      if (p > this.peak) this.peak = p;
+      // Sólo contamos lecturas con señal real (evita inflar el total con silencio).
+      if (p > 0.0005) { this.meterReads++; if (p >= 0.999) this.clipReads++; }
+    }, 100);
+  }
+
+  // Diagnóstico de audio para el reporte. La pregunta clave en celular es si el
+  // PERFIL MÓVIL realmente se activó (si detectMobile da false en su teléfono, suena
+  // el drive áspero de desktop). Además: estado/sample-rate del contexto, ajustes
+  // efectivos y el pico medido (peak≥1 o clipReads>0 = recorte digital real).
+  getDiagnostics(): Record<string, unknown> {
+    const ctx = this.ctx;
+    const r3 = (v: number): number => Math.round(v * 1000) / 1000;
+    let pointerCoarse: boolean | null = null;
+    let minViewport: number | null = null;
+    try { pointerCoarse = window.matchMedia?.('(pointer: coarse)').matches ?? null; } catch { /* noop */ }
+    try { minViewport = Math.min(window.innerWidth, window.innerHeight); } catch { /* noop */ }
+    return {
+      mobileProfile: this.mobile,       // perfil con el que se ARMÓ el grafo (lo que importa)
+      detectMobileNow: this.detectMobile(),
+      pointerCoarse,
+      minViewport,
+      contextState: ctx?.state ?? 'none',
+      sampleRate: ctx?.sampleRate ?? null,
+      baseLatency: ctx?.baseLatency ?? null,
+      outputLatency: (ctx as unknown as { outputLatency?: number })?.outputLatency ?? null,
+      destChannels: ctx?.destination.maxChannelCount ?? null,
+      outputTrim: r3(this.outputTrim),
+      satK: this.mobile ? MOBILE_SAT_K : DESKTOP_SAT_K,
+      driveFactor: this.mobile ? MOBILE_DRIVE_FACTOR : 1,   // aplanado del drive por voz en móvil
+      peak: r3(this.peak),
+      clipReads: this.clipReads,
+      meterReads: this.meterReads,
+      clipRatio: this.meterReads ? r3(this.clipReads / this.meterReads) : 0,
+      muted: this.muted,
+      vol: r3(this.vol),
+      bass: r3(this.bass),
+    };
   }
 
   // ---------- helpers de diseño ----------
@@ -628,6 +695,11 @@ export class NeoSynth {
     }
     master.connect(satIn); sat.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
     reverb.connect(reverbReturn); reverbReturn.connect(sat);
+    // Medidor de pico colgado del limitador final (sink paralelo, no altera el audio).
+    const analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
+    limiter.connect(analyser);
+    this.analyser = analyser;
+    this.startMeter();
     this.noiseBuf = this.makeNoise(ctx, 1.0);
     this.ctx = ctx; this.master = master; this.reverb = reverb;
     return ctx;
@@ -641,7 +713,7 @@ export class NeoSynth {
     // sólo puede bajar esa distorsión y el RMS (no agrega picos): no toca el
     // saturador/compresor/limitador maestros, que siguen protegiendo los picos.
     // En desktop queda el crunch original (a sin tocar).
-    const eff = this.mobile ? 1 + (a - 1) * 0.4 : a;
+    const eff = this.mobile ? 1 + (a - 1) * MOBILE_DRIVE_FACTOR : a;
     const key = (this.mobile ? 'm' : 'd') + eff.toFixed(2);
     if (this.driveCurves[key]) return this.driveCurves[key];
     const n = 1024, c = new Float32Array(n), d = Math.tanh(eff) || 1;

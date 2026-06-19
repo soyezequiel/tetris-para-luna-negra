@@ -103,6 +103,39 @@ export class SoundEngine {
     window.addEventListener('keydown', this.unlock);
   }
 
+  // Diagnóstico de audio para el reporte (botón "Reportar" en resultados): junta el
+  // estado del canal de música (su propio AudioContext) + el de los efectos (NeoSynth,
+  // que trae el perfil móvil y el medidor de pico). Pensado para entender desde el
+  // teléfono del jugador por qué "suena mal": si el perfil móvil se activó, si recorta,
+  // qué volúmenes/mutes hay y si corre como PWA instalada (audio enrutado distinto).
+  getAudioDiagnostics(): Record<string, unknown> {
+    const ctx = this.context;
+    let standalone: boolean | null = null;
+    try {
+      standalone = window.matchMedia?.('(display-mode: standalone)').matches
+        || (navigator as unknown as { standalone?: boolean }).standalone
+        || false;
+    } catch { /* noop */ }
+    return {
+      muted: this.muted,
+      sfxMuted: this.sfxMuted,
+      musicMuted: this.musicMuted,
+      sfxVolume: this.sfxVolume,
+      musicVolume: this.musicVolume,
+      reverbMode: this.reverbMode,
+      standalone,
+      music: {
+        contextState: ctx?.state ?? 'none',
+        sampleRate: ctx?.sampleRate ?? null,
+        graphReady: this.musicGraphReady,
+        playing: !this.music.paused,
+        elementVolume: Math.round(this.music.volume * 1000) / 1000,
+        track: this.getCurrentMusicTrack()?.title ?? null,
+      },
+      sfx: this.neo.getDiagnostics(),
+    };
+  }
+
   isMuted(): boolean {
     return this.muted;
   }

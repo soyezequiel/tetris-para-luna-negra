@@ -845,6 +845,9 @@ function buildPerfReport(): Record<string, unknown> {
       players: onlineRoom?.players?.length ?? null,
       isHost: onlineRoom ? isOnlineHost() : null,
     },
+    // Diagnóstico de audio: para entender el "se escucha mal en el celular" (perfil
+    // móvil activo o no, recorte real medido, volúmenes/mutes, PWA). Ver SoundEngine.
+    audio: sound.getAudioDiagnostics(),
     session: { ...perfSession, durationMs: Date.now() - perfSession.startedAt },
     events: perfEvents.slice(),
     errors: perfErrors.slice(),

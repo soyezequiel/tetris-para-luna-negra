@@ -90,6 +90,16 @@ interface ReportPayload {
   };
   events?: unknown[];
   errors?: unknown[];
+  audio?: {
+    muted?: unknown; sfxMuted?: unknown; musicMuted?: unknown;
+    sfxVolume?: unknown; musicVolume?: unknown; reverbMode?: unknown; standalone?: unknown;
+    music?: { contextState?: unknown; sampleRate?: unknown; playing?: unknown } | null;
+    sfx?: {
+      mobileProfile?: unknown; detectMobileNow?: unknown; pointerCoarse?: unknown; minViewport?: unknown;
+      contextState?: unknown; sampleRate?: unknown; satK?: unknown; driveFactor?: unknown;
+      peak?: unknown; clipReads?: unknown; meterReads?: unknown; clipRatio?: unknown;
+    } | null;
+  };
   marks?: {
     tasksByLabel?: { label?: unknown; count?: unknown; totalMs?: unknown; maxMs?: unknown; avgMs?: unknown; kb?: unknown }[];
     slow?: unknown[];
@@ -117,6 +127,7 @@ function buildDiscordSummary(report: ReportPayload): string {
     `📊 spikes=**${num(s.spikes)}** longtasks=**${num(s.longtasks)}** snaps=**${num(s.snaps)}** | cola >33=${num(s.b33)} >50=${num(s.b50)} >100=${num(s.b100)} >200=${num(s.b200)}`,
     `⏱️ peor frame=${worstStr} · maxLongtask=${num(s.maxLongtaskMs)}ms · frames=${num(s.frames)} en ${num(s.durationMs)}ms · errores=**${errors}**`,
     `🖥️ ${str(dev.viewport)} dpr=${num(dev.dpr)} cores=${num(dev.cores)} transport=${str(dev.transport)}`,
+    buildAudioLine(report.audio),
     buildMarksLine(report.marks),
   ].filter((line): line is string => line !== null);
   return lines.join('\n').slice(0, 1990);
@@ -134,6 +145,24 @@ function buildMarksLine(marks: ReportPayload['marks']): string | null {
     .slice(0, 3)
     .map((t) => `${str(t.label)} ×${numOf(t.count)} (Σ${numOf(t.totalMs)}ms, max ${numOf(t.maxMs)}ms)`);
   return `🔍 fuera de rAF: ${top.join(' · ')}`;
+}
+
+// Línea de audio: lo crítico para el "suena mal en el celular". La clave es si el
+// perfil móvil se activó (si es false en un teléfono, suena el drive áspero de
+// desktop) y si la salida recorta de verdad (peak≥1 / clipReads>0). null si no hay datos.
+function buildAudioLine(audio: ReportPayload['audio']): string | null {
+  if (!audio || typeof audio !== 'object') return null;
+  const sfx = audio.sfx ?? null;
+  const num = (v: unknown): string => (typeof v === 'number' ? String(Math.round(v * 1000) / 1000) : '—');
+  const bool = (v: unknown): string => (v === true ? 'sí' : v === false ? 'no' : '—');
+  const profile = sfx
+    ? `móvil=${bool(sfx.mobileProfile)} (coarse=${bool(sfx.pointerCoarse)} minVp=${num(sfx.minViewport)}) drive=${num(sfx.driveFactor)} satK=${num(sfx.satK)}`
+    : '—';
+  const meter = sfx
+    ? `pico=${num(sfx.peak)} recortes=${num(sfx.clipReads)}/${num(sfx.meterReads)}`
+    : '—';
+  const mix = `sfx=${num(audio.sfxVolume)}${audio.sfxMuted ? '(mute)' : ''} mus=${num(audio.musicVolume)}${audio.musicMuted ? '(mute)' : ''} pwa=${bool(audio.standalone)} sr=${num(sfx?.sampleRate)}`;
+  return `🔊 ${profile} · ${meter} · ${mix}`;
 }
 
 function str(v: unknown): string {
