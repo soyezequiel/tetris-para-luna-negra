@@ -1,6 +1,7 @@
 import './styles.css';
 import QRCode from 'qrcode';
 import { mpLogEnabled } from './debugFlags';
+import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
 import { createExportedReplay, replayFileName, type ExportedReplay } from './app/replayExport';
 import { ReplayPlayback, type PlaybackSpeed, type ReplayPlaybackSnapshot } from './app/replayPlayback';
@@ -847,6 +848,9 @@ function buildPerfReport(): Record<string, unknown> {
     session: { ...perfSession, durationMs: Date.now() - perfSession.startedAt },
     events: perfEvents.slice(),
     errors: perfErrors.slice(),
+    // Atribución del trabajo fuera de rAF (mensajes peer / poll de sala): la pista para cazar
+    // los longtasks "self" del cliente invitado. Ver perfMarks.ts.
+    marks: getPerfMarks(),
   };
 }
 
@@ -3805,9 +3809,13 @@ async function pollOnlineRoom(): Promise<void> {
       void syncLunaPresence();
       return;
     }
+    // Procesamiento sincrónico de la respuesta del poll: corre fuera del loop()/rAF (post-await),
+    // así que el cronómetro por-frame no lo ve. Lo medimos aparte para atribuir el jank del cliente.
+    const pollProcessStart = performance.now();
     adoptOnlineRoom(response.room);
     syncOnlinePeers(response.room);
     applyRoomAttacks(response.room);
+    recordTask('poll:process', performance.now() - pollProcessStart);
     // Estoy mirando una repetición y la sala reabrió al lobby readyeando a todos:
     // re-afirmo el NO listo para que el host no arranque sin mí mientras la veo.
     if (holdNotReadyForReplay && response.room.status === 'lobby'

@@ -64,6 +64,10 @@ interface ReportPayload {
   };
   events?: unknown[];
   errors?: unknown[];
+  marks?: {
+    tasksByLabel?: { label?: unknown; count?: unknown; totalMs?: unknown; maxMs?: unknown; avgMs?: unknown; kb?: unknown }[];
+    slow?: unknown[];
+  };
 }
 
 // Resumen legible para el mensaje de Discord (≤2000 chars). El detalle completo va adjunto.
@@ -87,8 +91,23 @@ function buildDiscordSummary(report: ReportPayload): string {
     `📊 spikes=**${num(s.spikes)}** longtasks=**${num(s.longtasks)}** snaps=**${num(s.snaps)}** | cola >33=${num(s.b33)} >50=${num(s.b50)} >100=${num(s.b100)} >200=${num(s.b200)}`,
     `⏱️ peor frame=${worstStr} · maxLongtask=${num(s.maxLongtaskMs)}ms · frames=${num(s.frames)} en ${num(s.durationMs)}ms · errores=**${errors}**`,
     `🖥️ ${str(dev.viewport)} dpr=${num(dev.dpr)} cores=${num(dev.cores)} transport=${str(dev.transport)}`,
-  ];
+    buildMarksLine(report.marks),
+  ].filter((line): line is string => line !== null);
   return lines.join('\n').slice(0, 1990);
+}
+
+// Atribución del trabajo fuera de rAF (mensajes peer / poll). Mostramos las 3 etiquetas que más
+// tiempo total acumularon (la pista de qué bloquea el main thread del cliente). null si no hay datos.
+function buildMarksLine(marks: ReportPayload['marks']): string | null {
+  const tasks = Array.isArray(marks?.tasksByLabel) ? marks!.tasksByLabel! : [];
+  if (tasks.length === 0) return null;
+  const numOf = (v: unknown): number => (typeof v === 'number' ? v : 0);
+  const top = tasks
+    .slice()
+    .sort((a, b) => numOf(b.totalMs) - numOf(a.totalMs))
+    .slice(0, 3)
+    .map((t) => `${str(t.label)} ×${numOf(t.count)} (Σ${numOf(t.totalMs)}ms, max ${numOf(t.maxMs)}ms)`);
+  return `🔍 fuera de rAF: ${top.join(' · ')}`;
 }
 
 function str(v: unknown): string {

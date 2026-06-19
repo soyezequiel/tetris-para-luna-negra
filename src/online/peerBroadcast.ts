@@ -1,5 +1,6 @@
 import type { ReplayGarbageEvent } from '../game/replay';
 import type { GameInput, GameRules } from '../game/types';
+import { recordPeerMessage } from '../perfMarks';
 import type { AttackRequest, OnlineGameSnapshot, OnlinePeerSignal, OnlinePeerSignalType, OnlineRoom } from './protocol';
 
 type SendSignal = (signal: {
@@ -309,8 +310,14 @@ export class OnlinePeerBroadcaster {
 
   private handleChannelMessage(remoteId: string, data: unknown): void {
     if (typeof data !== 'string') return;
+    // Cronometramos TODO el procesamiento (parse + callback) para atribuir el jank del cliente
+    // invitado: estos handlers corren fuera del loop()/rAF, así que el cronómetro por-frame no
+    // los ve, pero son el sospechoso #1 de los longtasks "self" en ráfaga (ver perfMarks.ts).
+    const startMs = performance.now();
+    let messageType = 'parse-fail';
     try {
       const message = JSON.parse(data) as OnlinePeerMessage;
+      messageType = message.type ?? 'unknown';
       if (message.type === 'snapshot') {
         if (!message.playerId || !message.game) return;
         this.options.onSnapshot(remoteId, message.playerId, message.game);
@@ -370,6 +377,8 @@ export class OnlinePeerBroadcaster {
       }
     } catch {
       // Ignore malformed peer messages. The server polling fallback remains authoritative for room state.
+    } finally {
+      recordPeerMessage(messageType, performance.now() - startMs, data.length);
     }
   }
 
