@@ -4714,7 +4714,7 @@ function renderOverlay(state: GameState): void {
     </div>`)}
     ${appMode === 'onlinePlaying' && !hasBlockingModal() ? renderOnlinePlayingOverlay() : ''}
     ${renderScreenOverlay(state)}
-    ${renderTouchControls()}
+    ${renderTouchControls(state)}
   `;
   if (html !== lastOverlayHtml) {
     const focusSnapshot = captureOverlayFieldFocus();
@@ -4983,8 +4983,12 @@ function canRetryCurrentRun(): boolean {
   return currentRunKind !== 'custom' || customSettings.allowRetry;
 }
 
-function renderTouchControls(): string {
+function renderTouchControls(state: GameState): string {
   if ((appMode !== 'playing' && appMode !== 'onlinePlaying') || hasBlockingModal()) return '';
+  // Al terminar la partida solo (game over / clear) la pantalla de resultados se dibuja
+  // todavía en appMode 'playing'. Los controles táctiles ya no sirven y su barra fija
+  // tapaba el botón "Reportar" abajo; los ocultamos en cuanto la corrida es terminal.
+  if (appMode === 'playing' && terminalLabel(state.status)) return '';
   if (touchControlsHidden) {
     return `
       <button class="touch-controls-toggle touch-controls-restore" type="button" data-ui-action="toggle-touch-controls">
@@ -5411,7 +5415,7 @@ function renderReportBlock(): string {
   const label = sent ? '✓ ¡Gracias! Reporte enviado'
     : sending ? 'Enviando…'
     : reportButtonState === 'error' ? '⚠ No se pudo enviar — reintentar'
-    : '📨 Reportar problema de rendimiento';
+    : '📨 Reportar problema';
   const btnClass = `solo-results-btn solo-results-btn--ghost report-block-btn${sent ? ' is-sent' : ''}${reportButtonState === 'error' ? ' is-error' : ''}`;
   const disabledAttr = sending || sent ? ' disabled' : '';
   return `

@@ -318,7 +318,10 @@ export class SoundEngine {
     const context = this.getContext();
     if (!context) return;
     const bus = context.createGain();
-    bus.gain.value = 1;
+    // En móvil bajamos el bus combinado para dar headroom: así el limitador final
+    // apenas actúa (limitar fuerte distorsiona) y la suma música+efectos llega
+    // holgada al parlante chico, que es el que satura cuando lo exigís.
+    bus.gain.value = this.detectMobile() ? 0.7 : 1;
     const limiter = context.createDynamicsCompressor();
     limiter.threshold.value = MASTER_LIMITER_THRESHOLD;
     limiter.knee.value = 0;
