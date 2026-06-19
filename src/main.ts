@@ -606,11 +606,14 @@ interface PerfFrame {
   polled: boolean;     // se disparó un poll HTTP este frame
   clockSnapMs: number; // snap del reloj online este frame (0 = no hubo)
 }
-// Activo en DEV siempre; en PRODUCCIÓN solo bajo demanda con `?perf=1` en la URL (o
-// localStorage 'stack40.perf'='1'), para poder medir el lag real —p. ej. en multijugador—
-// sin spamear la consola a los usuarios normales. El flag se persiste en localStorage al
-// pasar `?perf=1` para que sobreviva a la navegación entre salas/recargas.
-const perfEnabled = ((): boolean => {
+// IMPORTANTE: la CAPTURA de datos de perf (perfSession/perfEvents/errores) está SIEMPRE
+// activa — el overhead es trivial (unos performance.now() por frame) y así el botón
+// "Reportar" de la pantalla de resultados tiene datos de jank completos AUNQUE el jugador
+// no haya entrado con ?perf=1. Lo único que el flag controla es si además se IMPRIME en la
+// consola (`[perf:spike]`/`[perf:longtask]`), para no ensuciarle la consola al usuario común.
+// Activo en DEV siempre; en PRODUCCIÓN bajo demanda con `?perf=1` (persiste en localStorage
+// 'stack40.perf'; `?perf=0` lo apaga).
+const perfLogEnabled = ((): boolean => {
   if (import.meta.env.DEV) return true;
   try {
     const params = new URLSearchParams(window.location.search);
@@ -648,13 +651,63 @@ interface PerfSession {
   // Peor frame de toda la sesión, con su desglose (aunque no haya llegado a spike).
   worst: (PerfFrame & { dur: number; mode: string }) | null;
 }
-const perfSession: PerfSession | null = perfEnabled
-  ? { startedAt: Date.now(), frames: 0, spikes: 0, longtasks: 0, snaps: 0, b33: 0, b50: 0, b100: 0, b200: 0, maxLoopMs: 0, maxLongtaskMs: 0, maxSnapMs: 0, worst: null }
-  : null;
+// Siempre activa (ver perfLogEnabled): el reporte necesita estos totales aunque no haya logging.
+const perfSession: PerfSession = { startedAt: Date.now(), frames: 0, spikes: 0, longtasks: 0, snaps: 0, b33: 0, b50: 0, b100: 0, b200: 0, maxLoopMs: 0, maxLongtaskMs: 0, maxSnapMs: 0, worst: null };
 function pushPerfEvent(event: PerfEvent): void {
   perfEvents.push(event);
   if (perfEvents.length > PERF_EVENTS_MAX) perfEvents.shift();
 }
+
+// Captura de ERRORES en runtime para el reporte: errores no atrapados, promesas rechazadas y
+// los errores por-frame que el loop ya traga. Siempre activa (no depende de ?perf=1) porque el
+// botón "Reportar" debe incluir "si detecta algún error" para cualquier jugador.
+interface PerfErrorEntry {
+  t: number;            // ms desde la carga de la página
+  kind: 'error' | 'unhandledrejection' | 'loop' | 'console';
+  message: string;
+  source?: string;      // archivo:línea:columna cuando lo da el navegador
+  stack?: string;       // recortado, para no inflar el reporte
+  mode: string;         // appMode al momento del error
+}
+const PERF_ERRORS_MAX = 30;
+const perfErrors: PerfErrorEntry[] = [];
+function recordPerfError(kind: PerfErrorEntry['kind'], message: string, opts: { source?: string; stack?: unknown } = {}): void {
+  const stack = typeof opts.stack === 'string' ? opts.stack.slice(0, 1200) : undefined;
+  perfErrors.push({ t: Math.round(performance.now()), kind, message: String(message).slice(0, 500), source: opts.source, stack, mode: appMode });
+  if (perfErrors.length > PERF_ERRORS_MAX) perfErrors.shift();
+}
+function installErrorCapture(): void {
+  try {
+    window.addEventListener('error', (e) => {
+      const where = e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : undefined;
+      recordPerfError('error', e.message || 'Error', { source: where, stack: e.error instanceof Error ? e.error.stack : undefined });
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const reason = e.reason;
+      const msg = reason instanceof Error ? reason.message : String(reason);
+      recordPerfError('unhandledrejection', msg, { stack: reason instanceof Error ? reason.stack : undefined });
+    });
+    // Envolvemos console.error para que cualquier error que el código ya loguea (p. ej. el
+    // `[loop]`, reintentos de fetch de Luna Negra, fallos de red online) quede en el reporte.
+    // Best-effort y acotado: si recordPerfError fallara, NO debemos romper el console.error real.
+    const nativeError = console.error.bind(console);
+    console.error = (...args: unknown[]): void => {
+      try {
+        const msg = args.map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : safeStringify(a))).join(' ');
+        const stack = args.find((a): a is Error => a instanceof Error)?.stack;
+        recordPerfError('console', msg, { stack });
+      } catch { /* no romper el log real */ }
+      nativeError(...args);
+    };
+  } catch { /* sin window: nada que capturar */ }
+}
+function safeStringify(value: unknown): string {
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+// Estado del botón "Reportar" de la pantalla de resultados + comentario del jugador.
+let reportComment = '';
+let reportButtonState: 'idle' | 'sending' | 'sent' | 'error' = 'idle';
 
 // Observa longtasks del navegador: tareas que bloquearon el main thread ≥50ms, las reporte
 // quien las reporte (GC, microtask del poll, parseo JSON, layout). Son la causa más probable
@@ -662,18 +715,18 @@ function pushPerfEvent(event: PerfEvent): void {
 // caer ENTRE dos rAF (no dentro del cronómetro de loop()). Best-effort: no todos los
 // navegadores soportan 'longtask'.
 function installLongTaskObserver(): void {
-  if (!perfEnabled || typeof PerformanceObserver === 'undefined') return;
+  if (typeof PerformanceObserver === 'undefined') return;
   try {
     const obs = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
         const ms = entry.duration;
-        if (perfSession) {
-          perfSession.longtasks += 1;
-          if (ms > perfSession.maxLongtaskMs) perfSession.maxLongtaskMs = ms;
-        }
+        perfSession.longtasks += 1;
+        if (ms > perfSession.maxLongtaskMs) perfSession.maxLongtaskMs = ms;
         pushPerfEvent({ t: Math.round(entry.startTime), kind: 'longtask', mode: appMode, ms: Math.round(ms), attr: entry.name });
-        // eslint-disable-next-line no-console
-        console.warn(`[perf:longtask] ${appMode} ${ms.toFixed(0)}ms bloqueó el main thread (atribución=${entry.name})`);
+        if (perfLogEnabled) {
+          // eslint-disable-next-line no-console
+          console.warn(`[perf:longtask] ${appMode} ${ms.toFixed(0)}ms bloqueó el main thread (atribución=${entry.name})`);
+        }
       }
     });
     obs.observe({ entryTypes: ['longtask'] });
@@ -682,7 +735,6 @@ function installLongTaskObserver(): void {
 
 // Cierra la contabilidad del frame: totales de sesión, peor frame y log inmediato del pico.
 function perfEndFrame(dur: number, frame: PerfFrame): void {
-  if (!perfSession) return;
   perfSession.frames += 1;
   if (dur > perfSession.maxLoopMs) perfSession.maxLoopMs = dur;
   if (dur > 200) perfSession.b200 += 1;
@@ -701,12 +753,14 @@ function perfEndFrame(dur: number, frame: PerfFrame): void {
       sync: Math.round(frame.syncMs), render: Math.round(frame.renderMs), ticks: frame.ticks,
       poll: frame.polled || undefined, snapMs: frame.clockSnapMs ? Math.round(frame.clockSnapMs) : undefined,
     });
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[perf:spike] ${appMode} frame=${dur.toFixed(0)}ms `
-      + `sync=${frame.syncMs.toFixed(1)} render=${frame.renderMs.toFixed(1)} ticks=${frame.ticks}`
-      + `${frame.polled ? ' poll' : ''}${frame.clockSnapMs ? ` clockSnap=${frame.clockSnapMs.toFixed(0)}ms` : ''}`,
-    );
+    if (perfLogEnabled) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[perf:spike] ${appMode} frame=${dur.toFixed(0)}ms `
+        + `sync=${frame.syncMs.toFixed(1)} render=${frame.renderMs.toFixed(1)} ticks=${frame.ticks}`
+        + `${frame.polled ? ' poll' : ''}${frame.clockSnapMs ? ` clockSnap=${frame.clockSnapMs.toFixed(0)}ms` : ''}`,
+      );
+    }
   }
 }
 
@@ -747,12 +801,36 @@ function runPerfReport(): Record<string, unknown> {
   }
   return report;
 }
+
+// Envía el reporte al backend (/api/report → webhook de Discord del dev). Lo dispara el botón
+// "Reportar" de la pantalla de resultados. El estado (reportButtonState) lo refleja el render
+// del overlay, que se reconstruye cada frame. No relanzamos si ya está en vuelo o ya se envió.
+async function sendPerfReport(): Promise<void> {
+  if (reportButtonState === 'sending' || reportButtonState === 'sent') return;
+  reportButtonState = 'sending';
+  try {
+    const report = buildPerfReport();
+    const response = await fetch('/api/report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(report),
+    });
+    reportButtonState = response.ok ? 'sent' : 'error';
+    if (!response.ok) {
+      console.error(`[report] el server rechazó el reporte (HTTP ${response.status})`);
+    }
+  } catch (error) {
+    reportButtonState = 'error';
+    console.error('[report] no se pudo enviar el reporte', error);
+  }
+}
 function buildPerfReport(): Record<string, unknown> {
   const nav = navigator;
   return {
     generatedAt: new Date().toISOString(),
-    perfEnabled,
-    note: perfEnabled ? undefined : 'Perf desactivado: recargá con ?perf=1 y reproducí el lag antes de exportar.',
+    perfLogEnabled,
+    comment: reportComment.trim() ? reportComment.trim().slice(0, 400) : null,
+    url: (() => { try { return window.location.href; } catch { return null; } })(),
     device: {
       userAgent: nav.userAgent,
       cores: nav.hardwareConcurrency ?? null,
@@ -766,8 +844,9 @@ function buildPerfReport(): Record<string, unknown> {
       players: onlineRoom?.players?.length ?? null,
       isHost: onlineRoom ? isOnlineHost() : null,
     },
-    session: perfSession ? { ...perfSession, durationMs: Date.now() - perfSession.startedAt } : null,
+    session: { ...perfSession, durationMs: Date.now() - perfSession.startedAt },
     events: perfEvents.slice(),
+    errors: perfErrors.slice(),
   };
 }
 
@@ -775,14 +854,16 @@ function buildPerfReport(): Record<string, unknown> {
 // agendar el siguiente. Antes, una excepción en cualquier paso por-frame mataba el
 // bucle entero de forma permanente y silenciosa (juego congelado, sin error visible).
 function loop(): void {
-  const t0 = perfEnabled ? performance.now() : 0;
-  if (perfEnabled) { perfFrame = freshPerfFrame(); onlineClockSnapMsThisFrame = 0; }
+  const t0 = performance.now();
+  perfFrame = freshPerfFrame();
+  onlineClockSnapMsThisFrame = 0;
   try {
     loopBody();
   } catch (error) {
     console.error('[loop] error en el frame; continúo con el siguiente', error);
+    recordPerfError('loop', error instanceof Error ? error.message : String(error), { stack: error instanceof Error ? error.stack : undefined });
   } finally {
-    if (perfEnabled && perfFrame) perfEndFrame(performance.now() - t0, perfFrame);
+    if (perfFrame) perfEndFrame(performance.now() - t0, perfFrame);
     scheduleNextFrame(loop);
   }
 }
@@ -898,9 +979,9 @@ function loopBody(): void {
     }
   }
 
-  const syncStart = perfEnabled ? performance.now() : 0;
+  const syncStart = performance.now();
   syncOnline();
-  if (perfEnabled && perfFrame) {
+  if (perfFrame) {
     perfFrame.syncMs = performance.now() - syncStart;
     // syncOnlineClock() corre dentro de syncOnline(); recogemos el snap que haya disparado.
     perfFrame.clockSnapMs = onlineClockSnapMsThisFrame;
@@ -921,9 +1002,9 @@ function loopBody(): void {
     if (focus && focusState) {
       // Render primero (refresca la geometría del tablero), luego el juice del rival
       // observado: partículas/flashes/popups/sonido como si fuera su propia partida.
-      const specRenderStart = perfEnabled ? performance.now() : 0;
+      const specRenderStart = performance.now();
       renderer.render(focusState);
-      if (perfEnabled && perfFrame) perfFrame.renderMs = performance.now() - specRenderStart;
+      if (perfFrame) perfFrame.renderMs = performance.now() - specRenderStart;
       driveSpectatorJuice(focusState, focus.id);
     }
   } else {
@@ -934,9 +1015,9 @@ function loopBody(): void {
     // de resultados, animación de muerte, cuenta regresiva). El juice/shake igual corren
     // a tasa de refresco dentro de render() para que partículas y temblor sigan suaves.
     const boardChanged = gameFrame !== frameBefore || state.status !== 'playing';
-    const renderStart = perfEnabled ? performance.now() : 0;
+    const renderStart = performance.now();
     renderer.render(state, boardChanged);
-    if (perfEnabled && perfFrame) {
+    if (perfFrame) {
       // ticks del motor (>1 = catch-up de varios frames de golpe = posible pico) y costo del
       // render, para atribuir el spike en perfEndFrame.
       perfFrame.ticks = Math.max(0, gameFrame - frameBefore);
@@ -1043,6 +1124,7 @@ function onlineLocalPlacementLabel(): string {
   return myIndex >= 0 ? `${myIndex + 1}° de ${ranked.length}` : '';
 }
 
+installErrorCapture();
 installLongTaskObserver();
 loop();
 
@@ -1302,6 +1384,7 @@ function handleOverlayInput(event: Event): void {
     // El nombre ya no se edita acá: siempre se usa el que da Luna Negra.
     if (field === 'join-code') onlineJoinCode = normalizeRoomId(target.value);
     if (field === 'bet-stake') onlineStakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
+    if (field === 'report-comment') reportComment = target.value.slice(0, 400);
     const customKey = parseCustomSettingKey(target.dataset.customSetting);
     if (customKey && target.value !== '') {
       customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.type === 'checkbox' ? target.checked : target.value));
@@ -1381,6 +1464,10 @@ function handleOverlayClick(event: MouseEvent): void {
   }
   if (action === 'luna-launch-cancel') {
     cancelPendingLunaLaunchRequest();
+    return;
+  }
+  if (action === 'report-perf') {
+    void sendPerfReport();
     return;
   }
   if (hasBlockingModal()) return;
@@ -1744,6 +1831,10 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   lastLines = 0;
   lastStatus = engine.getState().status;
   runMaxCombo = 0;
+  // Reseteamos el botón "Reportar" de la pantalla de resultados para la ronda nueva: así se
+  // puede mandar un reporte fresco cada partida (y no queda pegado en "enviado"). El comentario
+  // SÍ se conserva entre rondas a propósito (el jugador puede tipearlo mientras juega).
+  reportButtonState = 'idle';
   if (nextMode === 'playing') {
     const isE2E = !!(window as any).__E2E__ || navigator.webdriver;
     if (isE2E) {
@@ -4847,6 +4938,7 @@ function renderSoloResultsOverlay(state: GameState): string {
           <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="export-replay">Guardar replay</button>
           <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="main-menu">Menú</button>
         </div>
+        ${renderReportBlock()}
       </div>
     </div>
   `;
@@ -5286,10 +5378,34 @@ function renderOnlineResultsOverlay(state: GameState): string {
             ? `<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="replay-last-seconds">Ver mis últimos ${DEATH_REPLAY_SECONDS}s</button>`
             : ''}
         </div>
+        ${renderReportBlock()}
         <div class="online-results-next">
           <button class="solo-results-btn solo-results-btn--next" type="button" data-ui-action="online-results-menu">Siguiente</button>
         </div>
       </div>
+    </div>
+  `;
+}
+
+// Bloque "Reportar problema" de las pantallas de resultados (solo + online). Siempre visible.
+// Manda al dev un reporte de performance completo (jank/lag/snaps/longtasks + errores de runtime
+// + device + contexto de sala) con un comentario opcional del jugador. El estado del botón refleja
+// el envío en curso/hecho/fallido; el overlay se reconstruye cada frame, así que se actualiza solo.
+function renderReportBlock(): string {
+  const sending = reportButtonState === 'sending';
+  const sent = reportButtonState === 'sent';
+  const label = sent ? '✓ ¡Gracias! Reporte enviado'
+    : sending ? 'Enviando…'
+    : reportButtonState === 'error' ? '⚠ No se pudo enviar — reintentar'
+    : '📨 Reportar problema de rendimiento';
+  const btnClass = `solo-results-btn solo-results-btn--ghost report-block-btn${sent ? ' is-sent' : ''}${reportButtonState === 'error' ? ' is-error' : ''}`;
+  const disabledAttr = sending || sent ? ' disabled' : '';
+  return `
+    <div class="report-block">
+      <input type="text" class="report-comment" maxlength="400" value="${escapeHtml(reportComment)}"
+        data-online-field="report-comment" autocomplete="off"
+        placeholder="¿Qué pasó? (lag, tirones, se trabó…) — opcional"${sent ? ' disabled' : ''} />
+      <button class="${btnClass}" type="button" data-ui-action="report-perf"${disabledAttr}>${label}</button>
     </div>
   `;
 }

@@ -6,6 +6,7 @@ import * as roomsAction from './api/rooms/[action]';
 import * as betsAction from './api/bets/[action]';
 import * as leaderboard from './api/leaderboard';
 import * as survival from './api/survival';
+import * as report from './api/report';
 
 type LocalApiHandler = (request: Request) => Response | Promise<Response>;
 type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
@@ -46,6 +47,7 @@ const localApiHandlers = new Map<string, LocalApiModule>([
 
   ['/api/leaderboard', leaderboard],
   ['/api/survival', survival],
+  ['/api/report', report],
 ]);
 
 export default defineConfig({
