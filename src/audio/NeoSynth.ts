@@ -153,6 +153,17 @@ export class NeoSynth {
     switch (cue) {
       case 'move': {
         const pan = rp();
+        if (this.mobile) {
+          // El tick de mover llevaba un sub-bass (190→52 Hz) que el parlante del celular
+          // distorsiona por excursión, sobre todo al moverse rápido: los ticks se solapan
+          // y la energía grave se acumula → "saturado". En móvil el tick es sólo un click
+          // agudo + un blip corto de medios, SIN sub: el parlante lo reproduce limpio y
+          // se puede repetir rapidísimo sin acumular graves. (Reporte real: peak 0.735 sin
+          // recorte digital → la distorsión es física del parlante, no de la señal.)
+          this.crunch({ filter: 'highpass', freq: 4400, q: 0.7, dur: 0.012, gain: 0.10 * BRIGHT * CRUNCH, drive: DRIVE * 0.6, pan });
+          this.voice({ type: 'triangle', freq: 330, freqEnd: 230, glide: 'exp', dur: 0.025, gain: 0.05, attack: 0.001, pan });
+          break;
+        }
         this.crunch({ filter: 'highpass', freq: 4400, q: 0.7, dur: 0.01, gain: 0.08 * BRIGHT * CRUNCH, drive: DRIVE * 0.6, pan });
         this.sub({ freq: 190, freqEnd: 52, glide: 'exp', dur: 0.07, gain: 0.30, attack: 0.001, harm: false });
         this.voice({ type: 'triangle', freq: 130, freqEnd: 48, glide: 'exp', dur: 0.03, gain: 0.08, attack: 0.001, drive: DRIVE });
