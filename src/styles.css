@@ -4783,6 +4783,40 @@ canvas {
   border: 1px solid var(--dash-border);
 }
 
+/* Toggle de "listo" integrado en la tarjeta del propio jugador. */
+.dash-player-ready-btn {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 5px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  background: linear-gradient(135deg, #00f5ff, #0aa6cc);
+  color: #05070f;
+  border: 1px solid transparent;
+  box-shadow: 0 3px 12px rgba(0, 245, 255, 0.3);
+  transition: filter 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.dash-player-ready-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 5px 16px rgba(0, 245, 255, 0.4);
+}
+
+.dash-player-ready-btn.is-ready {
+  background: rgba(57, 212, 154, 0.14);
+  color: var(--dash-success);
+  border: 1px solid rgba(57, 212, 154, 0.4);
+  box-shadow: none;
+}
+
+.dash-player-ready-btn.is-ready:hover:not(:disabled) {
+  background: rgba(57, 212, 154, 0.22);
+}
+
 .dash-invite-section {
   display: flex;
   align-items: center;
@@ -4878,6 +4912,22 @@ canvas {
   opacity: 0.4;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+/* Barra compacta de invitación arriba del todo (sala activa). */
+.dash-invite-bar {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.dash-invite-btn--sm {
+  flex: 1 1 0;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+  border-radius: 9px;
+  box-shadow: 0 3px 12px rgba(157, 78, 221, 0.3);
 }
 
 .dash-room-actions-group {

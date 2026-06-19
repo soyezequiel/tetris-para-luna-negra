@@ -7298,7 +7298,6 @@ function renderDashboardRoomPanel(): string {
 
   // Cuando hay una sala activa
   const host = room.hostPlayerId === onlinePlayer.id;
-  const player = currentOnlinePlayer();
   const readyCount = room.players.filter((candidate) => candidate.ready).length;
   const matchText = matchTypeLabel(room.matchType);
   const statusText = roomStatusLabel(room.status);
@@ -7324,16 +7323,31 @@ function renderDashboardRoomPanel(): string {
           </div>
         </div>
         <div class="dash-player-actions">
-          ${isReady 
-            ? '<span class="dash-player-ready-indicator ready">Listo</span>' 
-            : '<span class="dash-player-ready-indicator waiting">Sin listo</span>'}
-          ${host && !isSelf 
+          ${isSelf && room.status === 'lobby'
+            ? (isReady
+              ? '<button class="dash-player-ready-btn is-ready" type="button" data-ui-action="online-unready">Listo ✓</button>'
+              : '<button class="dash-player-ready-btn" type="button" data-ui-action="online-ready">Marcar listo</button>')
+            : (isReady
+              ? '<span class="dash-player-ready-indicator ready">Listo</span>'
+              : '<span class="dash-player-ready-indicator waiting">Sin listo</span>')}
+          ${host && !isSelf
             ? `<button class="dash-copy-btn dash-kick-btn" type="button" data-ui-action="online-kick" data-target-player-id="${escapeHtml(candidate.id)}">Sacar</button>`
             : ''}
         </div>
       </div>
     `;
   }).join('');
+
+  const compactInviteHtml = `
+    <div class="dash-invite-bar" aria-label="Invitar a la sala">
+      <button class="dash-invite-btn dash-invite-btn--sm" type="button" data-ui-action="online-copy-invite-link">
+        ${roomInviteLinkRecentlyCopied() ? '¡Link copiado!' : 'Copiar link'}
+      </button>
+      ${inviteUnavailable
+        ? `<button class="dash-invite-btn dash-invite-btn--sm" type="button" data-ui-action="luna-login"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}</button>`
+        : `<button class="dash-invite-btn dash-invite-btn--sm" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}</button>`}
+    </div>
+  `;
 
   return `
     <div class="dash-room-header dash-room-header-active">
@@ -7351,6 +7365,8 @@ function renderDashboardRoomPanel(): string {
         <span>listos</span>
       </div>
     </div>
+
+    ${compactInviteHtml}
 
     <div class="dash-room-status-line">
       <span>${escapeHtml(matchText)}</span>
@@ -7394,16 +7410,11 @@ function renderDashboardRoomPanel(): string {
       </div>
     </section>
 
-    ${inviteSectionHtml}
-
     ${renderOnlineBetPanel(host)}
 
     <div class="dash-room-actions-group">
       ${room.status === 'lobby'
-        ? `${player?.ready
-          ? '<button class="dash-action-btn" type="button" data-ui-action="online-unready">No listo</button>'
-          : '<button class="dash-action-btn accent" type="button" data-ui-action="online-ready">Listo</button>'}
-          ${host ? `<span class="dash-room-start-hint" style="align-self: center; color: var(--dash-text-dim); font-size: 12px; font-weight: 600;">El host arranca con el botón central</span>` : ''}`
+        ? (host ? `<span class="dash-room-start-hint" style="align-self: center; color: var(--dash-text-dim); font-size: 12px; font-weight: 600;">El host arranca con el botón central</span>` : '')
         : '<button class="dash-action-btn" type="button" disabled>Ronda en curso…</button>'}
       <button class="dash-action-btn danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
     </div>
