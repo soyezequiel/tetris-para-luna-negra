@@ -61,7 +61,11 @@ export async function POST(request: Request): Promise<Response> {
 
     const form = new FormData();
     form.append('payload_json', JSON.stringify({ content, embeds: [embed] }));
-    form.append('files[0]', new Blob([text], { type: 'application/json' }), `report-${stamp}.json`);
+    // Solo adjuntamos el archivo cuando el JSON NO entró entero en el bloque copiable del embed
+    // (truncado). Si entró completo, el adjunto sería una copia exacta y redundante del embed.
+    if (truncated) {
+      form.append('files[0]', new Blob([text], { type: 'application/json' }), `report-${stamp}.json`);
+    }
 
     const discord = await fetch(webhookUrl, { method: 'POST', body: form });
     if (!discord.ok) {
