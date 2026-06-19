@@ -725,9 +725,25 @@ function perfTransportLabel(): string {
 function runPerfReport(): Record<string, unknown> {
   const report = buildPerfReport();
   const json = JSON.stringify(report, null, 2);
-  try { void navigator.clipboard?.writeText(json); } catch { /* sin permiso de portapapeles */ }
-  // eslint-disable-next-line no-console
-  console.log(`[perf] reporte copiado al portapapeles (${perfEvents.length} eventos de jank). Pegámelo.`);
+  // Siempre dejamos el JSON crudo accesible: si el copiado falla (típico al llamarlo desde la
+  // consola de DevTools, que le saca el foco al documento → clipboard.writeText rechaza), el
+  // usuario puede recuperarlo con `copy(tetra.lastReportJson)` (helper `copy` de DevTools).
+  try { (window as unknown as { tetra?: { lastReportJson?: string } }).tetra!.lastReportJson = json; } catch { /* sin namespace aún */ }
+  const n = perfEvents.length;
+  const clip = navigator.clipboard;
+  if (clip?.writeText) {
+    // writeText es async y rechaza por promesa (no por throw): hay que manejar el rejection o
+    // queda un "Uncaught (in promise) NotAllowedError" en consola.
+    void clip.writeText(json).then(
+      // eslint-disable-next-line no-console
+      () => console.log(`[perf] reporte copiado al portapapeles (${n} eventos de jank). Pegámelo.`),
+      // eslint-disable-next-line no-console
+      () => console.log(`[perf] no pude copiar al portapapeles (consola sin foco). Corré: copy(tetra.lastReportJson) — o copiá el objeto de arriba.`),
+    );
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(`[perf] portapapeles no disponible. Corré: copy(tetra.lastReportJson) para copiar el reporte (${n} eventos).`);
+  }
   return report;
 }
 function buildPerfReport(): Record<string, unknown> {
