@@ -4486,8 +4486,16 @@ canvas {
 .dash-room-code-wrapper {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
   min-width: 0;
+}
+
+.dash-room-code-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .dash-room-identity-line {
@@ -4914,21 +4922,6 @@ canvas {
   box-shadow: none;
 }
 
-/* Barra compacta de invitación arriba del todo (sala activa). */
-.dash-invite-bar {
-  display: flex;
-  gap: 8px;
-  margin: 8px 0 4px;
-}
-
-.dash-invite-btn--sm {
-  flex: 1 1 0;
-  height: 32px;
-  padding: 0 10px;
-  font-size: 11px;
-  border-radius: 9px;
-  box-shadow: 0 3px 12px rgba(157, 78, 221, 0.3);
-}
 
 .dash-room-actions-group {
   position: sticky;

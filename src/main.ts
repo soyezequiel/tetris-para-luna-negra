@@ -7338,15 +7338,11 @@ function renderDashboardRoomPanel(): string {
     `;
   }).join('');
 
-  const compactInviteHtml = `
-    <div class="dash-invite-bar" aria-label="Invitar a la sala">
-      <button class="dash-invite-btn dash-invite-btn--sm" type="button" data-ui-action="online-copy-invite-link">
-        ${roomInviteLinkRecentlyCopied() ? '¡Link copiado!' : 'Copiar link'}
-      </button>
-      ${inviteUnavailable
-        ? `<button class="dash-invite-btn dash-invite-btn--sm" type="button" data-ui-action="luna-login"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}</button>`
-        : `<button class="dash-invite-btn dash-invite-btn--sm" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}</button>`}
-    </div>
+  const inviteButtonsHtml = `
+    <button class="dash-copy-btn" type="button" data-ui-action="online-copy-invite-link">${roomInviteLinkRecentlyCopied() ? '¡Link copiado!' : 'Copiar link'}</button>
+    ${inviteUnavailable
+      ? `<button class="dash-copy-btn" type="button" data-ui-action="luna-login"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}</button>`
+      : `<button class="dash-copy-btn" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}</button>`}
   `;
 
   return `
@@ -7357,7 +7353,10 @@ function renderDashboardRoomPanel(): string {
             <span class="dash-room-eyebrow">${escapeHtml(room.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')}</span>
             <h2 class="dash-room-code">${escapeHtml(room.id)}</h2>
           </div>
-          <button class="dash-copy-btn" type="button" data-ui-action="online-copy-code" data-code="${escapeHtml(room.id)}">Copiar</button>
+          <div class="dash-room-code-actions">
+            <button class="dash-copy-btn" type="button" data-ui-action="online-copy-code" data-code="${escapeHtml(room.id)}">Copiar</button>
+            ${inviteButtonsHtml}
+          </div>
         </div>
       </div>
       <div class="dash-ready-stack">
@@ -7365,8 +7364,6 @@ function renderDashboardRoomPanel(): string {
         <span>listos</span>
       </div>
     </div>
-
-    ${compactInviteHtml}
 
     <div class="dash-room-status-line">
       <span>${escapeHtml(matchText)}</span>
