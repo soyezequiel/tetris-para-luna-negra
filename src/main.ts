@@ -411,6 +411,10 @@ let onlineServerOffsetMs = Date.now() - performance.now();
 let onlineServerOffsetTargetMs = onlineServerOffsetMs;
 let onlineClockSynced = false;       // primer sync con el server → snap directo
 let onlineClockLastSlewAt = 0;       // performance.now() del último slew (ver slewOnlineClock)
+// Diagnóstico de lag MP: cada snap del reloj (salto > ONLINE_CLOCK_SNAP_MS) es un "momento
+// de lag" PERCIBIDO —el motor se adelanta/congela de golpe— aunque el frame sea barato y no
+// aparezca en loop max. El probe los cuenta para delatarlos (ver perfFlush / perf:spike).
+let onlineClockSnapMsThisFrame = 0;  // |Δ| del snap ocurrido en este frame (0 = no hubo)
 // Desfase (ms) a partir del cual snapeamos en vez de suavizar (pestaña en segundo plano,
 // reanudación tras congelarse rAF): por debajo, slew exponencial suave.
 const ONLINE_CLOCK_SNAP_MS = 150;
@@ -582,15 +586,34 @@ let scheduleNextFrame: (cb: FrameRequestCallback) => void = (cb) => {
   requestAnimationFrame(cb);
 };
 
-// Probe de performance (solo DEV): cada ~1s loguea en la consola del navegador FPS real,
-// frames de motor por segundo, y el costo en ms del frame completo y del render. Sirve
-// para diagnosticar lag en monitores de alta tasa de refresco: si `fps` << refresco del
-// monitor y `render max` es alto, el render no llega a sostener el refresco (el input se
-// siente con retraso). `rebuilds=X/Y` muestra cuántos rAF reconstruyeron el tablero (X)
-// del total (Y); a 180Hz, con la optimización, debería ser ~1/3.
+// Probe de performance: cada ~1s loguea en la consola del navegador FPS real, frames de
+// motor por segundo, y el costo en ms del frame completo y del render. Pero el promedio de
+// 1s ESCONDE el jank puntual: a 180fps un único frame congelado de 150ms se diluye y "todo
+// se ve excelente" aunque los rivales sientan tirones específicos. Por eso el probe además:
+//  - lleva un HISTOGRAMA de cola (frames >33/>50/>100/>200ms) que el avg no muestra;
+//  - loguea CADA pico al instante (`[perf:spike]`) con el desglose de en qué se fue el
+//    frame (sync/red vs render) y qué pasó (poll, snap de reloj, catch-up de N frames);
+//  - observa `longtask` del navegador (`[perf:longtask]`): bloqueos del main thread >50ms
+//    vengan de donde vengan (GC, parseo del poll, layout), INCLUSO entre frames de rAF, que
+//    el cronómetro del propio loop nunca ve.
+const PERF_SPIKE_MS = 50; // un frame ≥50ms (<20fps instantáneo) = tirón perceptible
+// Breakdown del frame en curso: lo llena loopBody/syncOnline para atribuir los picos.
+interface PerfFrame {
+  syncMs: number;      // costo de syncOnline() (red / host-authority / attacks)
+  renderMs: number;    // costo de renderer.render() (0 si se saltó el rebuild)
+  ticks: number;       // frames de motor avanzados este loop (>1 = catch-up de golpe)
+  polled: boolean;     // se disparó un poll HTTP este frame
+  clockSnapMs: number; // snap del reloj online este frame (0 = no hubo)
+}
 interface PerfProbe {
   since: number; rafs: number; ticks: number; full: number; skip: number;
   loopMs: number; loopMax: number; renderMs: number; renderMax: number; longLoops: number;
+  // Histograma de cola: frames lentos por tramo (el avg los oculta).
+  b33: number; b50: number; b100: number; b200: number;
+  snaps: number; maxSnapMs: number;          // snaps del reloj online en la ventana
+  longtasks: number; maxLongtaskMs: number;  // longtasks del navegador (PerformanceObserver)
+  // Peor frame de la ventana, con su desglose, para el resumen periódico.
+  worst: (PerfFrame & { dur: number; mode: string }) | null;
 }
 // Activo en DEV siempre; en PRODUCCIÓN solo bajo demanda con `?perf=1` en la URL (o
 // localStorage 'stack40.perf'='1'), para poder medir el lag real —p. ej. en multijugador—
@@ -608,9 +631,71 @@ const perfEnabled = ((): boolean => {
     return localStorage.getItem('stack40.perf') === '1';
   } catch { return false; }
 })();
-const perf: PerfProbe | null = perfEnabled
-  ? { since: performance.now(), rafs: 0, ticks: 0, full: 0, skip: 0, loopMs: 0, loopMax: 0, renderMs: 0, renderMax: 0, longLoops: 0 }
+function freshPerfProbe(now: number): PerfProbe {
+  return {
+    since: now, rafs: 0, ticks: 0, full: 0, skip: 0,
+    loopMs: 0, loopMax: 0, renderMs: 0, renderMax: 0, longLoops: 0,
+    b33: 0, b50: 0, b100: 0, b200: 0,
+    snaps: 0, maxSnapMs: 0, longtasks: 0, maxLongtaskMs: 0, worst: null,
+  };
+}
+const perf: PerfProbe | null = perfEnabled ? freshPerfProbe(performance.now()) : null;
+// Desglose del frame en curso (reiniciado al arranque de cada loop()).
+let perfFrame: PerfFrame | null = null;
+function freshPerfFrame(): PerfFrame {
+  return { syncMs: 0, renderMs: 0, ticks: 0, polled: false, clockSnapMs: 0 };
+}
+
+// Buffer circular de eventos de jank + totales acumulados de TODA la sesión (los contadores
+// de `perf` se vacían cada flush de 1s). Sirve para `stack40.perfReport()`: un amigo con
+// ?perf=1 te manda el reporte completo sin tener que copiar la consola a mano.
+interface PerfEvent {
+  t: number;        // ms desde la carga de la página (performance.now redondeado)
+  kind: 'spike' | 'longtask';
+  mode: string;
+  ms: number;       // duración del frame (spike) o del longtask
+  sync?: number; render?: number; ticks?: number; poll?: boolean; snapMs?: number; attr?: string;
+}
+const PERF_EVENTS_MAX = 80; // últimos N eventos (anti-spam de memoria en sesiones largas)
+const perfEvents: PerfEvent[] = [];
+interface PerfSession {
+  startedAt: number; frames: number; spikes: number; longtasks: number; snaps: number;
+  b33: number; b50: number; b100: number; b200: number;
+  maxLoopMs: number; maxLongtaskMs: number; maxSnapMs: number;
+}
+const perfSession: PerfSession | null = perfEnabled
+  ? { startedAt: Date.now(), frames: 0, spikes: 0, longtasks: 0, snaps: 0, b33: 0, b50: 0, b100: 0, b200: 0, maxLoopMs: 0, maxLongtaskMs: 0, maxSnapMs: 0 }
   : null;
+function pushPerfEvent(event: PerfEvent): void {
+  perfEvents.push(event);
+  if (perfEvents.length > PERF_EVENTS_MAX) perfEvents.shift();
+}
+
+// Observa longtasks del navegador: tareas que bloquearon el main thread ≥50ms, las reporte
+// quien las reporte (GC, microtask del poll, parseo JSON, layout). Son la causa más probable
+// de "momentos de lag muy específicos" en MP que el avg de fps no detecta, porque pueden
+// caer ENTRE dos rAF (no dentro del cronómetro de loop()). Best-effort: no todos los
+// navegadores soportan 'longtask'.
+function installLongTaskObserver(): void {
+  if (!perf || typeof PerformanceObserver === 'undefined') return;
+  try {
+    const obs = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const ms = entry.duration;
+        perf.longtasks += 1;
+        if (ms > perf.maxLongtaskMs) perf.maxLongtaskMs = ms;
+        if (perfSession) {
+          perfSession.longtasks += 1;
+          if (ms > perfSession.maxLongtaskMs) perfSession.maxLongtaskMs = ms;
+        }
+        pushPerfEvent({ t: Math.round(entry.startTime), kind: 'longtask', mode: appMode, ms: Math.round(ms), attr: entry.name });
+        // eslint-disable-next-line no-console
+        console.warn(`[perf:longtask] ${appMode} ${ms.toFixed(0)}ms bloqueó el main thread (atribución=${entry.name})`);
+      }
+    });
+    obs.observe({ entryTypes: ['longtask'] });
+  } catch { /* longtask no soportado: seguimos con el resto del probe */ }
+}
 
 function perfFlush(now: number): void {
   if (!perf) return;
@@ -620,16 +705,111 @@ function perfFlush(now: number): void {
   const engineFps = perf.ticks / (dt / 1000);
   const loopAvg = perf.loopMs / Math.max(1, perf.rafs);
   const renderAvg = perf.renderMs / Math.max(1, perf.full);
+  const w = perf.worst;
   // eslint-disable-next-line no-console
   console.log(
     `[perf] ${appMode} fps=${fps.toFixed(0)} engineFps=${engineFps.toFixed(0)} | `
     + `loop avg=${loopAvg.toFixed(2)} max=${perf.loopMax.toFixed(2)}ms | `
     + `render avg=${renderAvg.toFixed(2)} max=${perf.renderMax.toFixed(2)}ms | `
-    + `rebuilds=${perf.full}/${perf.rafs} skip=${perf.skip} slowFrames=${perf.longLoops} | `
+    + `rebuilds=${perf.full}/${perf.rafs} skip=${perf.skip} | `
+    // Cola: estos delatan el jank que el avg esconde. En MP sanos deberían ser todos 0.
+    + `slow>33=${perf.b33} >50=${perf.b50} >100=${perf.b100} >200=${perf.b200} | `
+    + `snaps=${perf.snaps}(max=${perf.maxSnapMs.toFixed(0)}ms) longtasks=${perf.longtasks}(max=${perf.maxLongtaskMs.toFixed(0)}ms) | `
+    + (w ? `worst=${w.dur.toFixed(0)}ms[${w.mode} sync=${w.syncMs.toFixed(0)} render=${w.renderMs.toFixed(0)} ticks=${w.ticks}${w.polled ? ' poll' : ''}${w.clockSnapMs ? ` snap=${w.clockSnapMs.toFixed(0)}` : ''}] | ` : '')
     + `dpr=${(window.devicePixelRatio || 1).toFixed(2)} vp=${window.innerWidth}x${window.innerHeight}`,
   );
   perf.since = now; perf.rafs = 0; perf.ticks = 0; perf.full = 0; perf.skip = 0;
   perf.loopMs = 0; perf.loopMax = 0; perf.renderMs = 0; perf.renderMax = 0; perf.longLoops = 0;
+  perf.b33 = 0; perf.b50 = 0; perf.b100 = 0; perf.b200 = 0;
+  perf.snaps = 0; perf.maxSnapMs = 0; perf.longtasks = 0; perf.maxLongtaskMs = 0; perf.worst = null;
+}
+
+// Cierra la contabilidad del frame: histograma de cola, peor frame y log inmediato del pico.
+function perfEndFrame(dur: number, frame: PerfFrame): void {
+  if (!perf) return;
+  perf.rafs += 1;
+  perf.loopMs += dur;
+  perf.ticks += frame.ticks;
+  if (dur > perf.loopMax) perf.loopMax = dur;
+  if (dur > 1000 / 90) perf.longLoops += 1;
+  if (dur > 200) perf.b200 += 1;
+  else if (dur > 100) perf.b100 += 1;
+  else if (dur > 50) perf.b50 += 1;
+  else if (dur > 33) perf.b33 += 1;
+  if (frame.clockSnapMs > 0) { perf.snaps += 1; if (frame.clockSnapMs > perf.maxSnapMs) perf.maxSnapMs = frame.clockSnapMs; }
+  if (!perf.worst || dur > perf.worst.dur) perf.worst = { ...frame, dur, mode: appMode };
+  // Totales acumulados de toda la sesión (para el reporte exportable; perf se vacía cada 1s).
+  if (perfSession) {
+    perfSession.frames += 1;
+    if (dur > perfSession.maxLoopMs) perfSession.maxLoopMs = dur;
+    if (dur > 200) perfSession.b200 += 1;
+    else if (dur > 100) perfSession.b100 += 1;
+    else if (dur > 50) perfSession.b50 += 1;
+    else if (dur > 33) perfSession.b33 += 1;
+    if (frame.clockSnapMs > 0) { perfSession.snaps += 1; if (frame.clockSnapMs > perfSession.maxSnapMs) perfSession.maxSnapMs = frame.clockSnapMs; }
+  }
+  // Pico perceptible: lo logueamos AL INSTANTE (no esperamos al resumen de 1s) con la
+  // atribución, para correlacionarlo con lo que el jugador sintió. Un snap grande de reloj
+  // también cuenta como tirón aunque el frame en sí haya sido barato.
+  if (dur >= PERF_SPIKE_MS || frame.clockSnapMs >= ONLINE_CLOCK_SNAP_MS) {
+    if (perfSession) perfSession.spikes += 1;
+    pushPerfEvent({
+      t: Math.round(performance.now()), kind: 'spike', mode: appMode, ms: Math.round(dur),
+      sync: Math.round(frame.syncMs), render: Math.round(frame.renderMs), ticks: frame.ticks,
+      poll: frame.polled || undefined, snapMs: frame.clockSnapMs ? Math.round(frame.clockSnapMs) : undefined,
+    });
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[perf:spike] ${appMode} frame=${dur.toFixed(0)}ms `
+      + `sync=${frame.syncMs.toFixed(1)} render=${frame.renderMs.toFixed(1)} ticks=${frame.ticks}`
+      + `${frame.polled ? ' poll' : ''}${frame.clockSnapMs ? ` clockSnap=${frame.clockSnapMs.toFixed(0)}ms` : ''}`,
+    );
+  }
+}
+
+// Reporte de perf exportable: lo arma `stack40.perfReport()`. Devuelve un objeto JSON-able
+// con device + totales de sesión + los últimos eventos de jank. La idea es que un amigo con
+// ?perf=1 lo llame, se copie al portapapeles, y te lo pegue — sin tener que leer la consola.
+// Etiqueta de transporte online para el reporte (sin acoplar a partyClient): el override de
+// runtime ?transport= manda; si no, el default de build VITE_ONLINE_TRANSPORT.
+function perfTransportLabel(): string {
+  try {
+    const override = new URLSearchParams(window.location.search).get('transport');
+    if (override) return `${override}(override)`;
+  } catch { /* sin window.location */ }
+  return import.meta.env.VITE_ONLINE_TRANSPORT ?? 'default';
+}
+// Arma el reporte, lo copia al portapapeles y lo devuelve. Lo expone tetra.perfReport().
+function runPerfReport(): Record<string, unknown> {
+  const report = buildPerfReport();
+  const json = JSON.stringify(report, null, 2);
+  try { void navigator.clipboard?.writeText(json); } catch { /* sin permiso de portapapeles */ }
+  // eslint-disable-next-line no-console
+  console.log(`[perf] reporte copiado al portapapeles (${perfEvents.length} eventos de jank). Pegámelo.`);
+  return report;
+}
+function buildPerfReport(): Record<string, unknown> {
+  const nav = navigator;
+  return {
+    generatedAt: new Date().toISOString(),
+    perfEnabled,
+    note: perfEnabled ? undefined : 'Perf desactivado: recargá con ?perf=1 y reproducí el lag antes de exportar.',
+    device: {
+      userAgent: nav.userAgent,
+      cores: nav.hardwareConcurrency ?? null,
+      dpr: window.devicePixelRatio || 1,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      transport: perfTransportLabel(),
+    },
+    context: {
+      appMode,
+      roomId: onlineRoom?.id ?? null,
+      players: onlineRoom?.players?.length ?? null,
+      isHost: onlineRoom ? isOnlineHost() : null,
+    },
+    session: perfSession ? { ...perfSession, durationMs: Date.now() - perfSession.startedAt } : null,
+    events: perfEvents.slice(),
+  };
 }
 
 // Envoltorio resiliente: si un frame lanza, lo registramos pero SIEMPRE volvemos a
@@ -637,17 +817,15 @@ function perfFlush(now: number): void {
 // bucle entero de forma permanente y silenciosa (juego congelado, sin error visible).
 function loop(): void {
   const t0 = perf ? performance.now() : 0;
+  if (perf) { perfFrame = freshPerfFrame(); onlineClockSnapMsThisFrame = 0; }
   try {
     loopBody();
   } catch (error) {
     console.error('[loop] error en el frame; continúo con el siguiente', error);
   } finally {
-    if (perf) {
+    if (perf && perfFrame) {
       const dur = performance.now() - t0;
-      perf.rafs += 1;
-      perf.loopMs += dur;
-      if (dur > perf.loopMax) perf.loopMax = dur;
-      if (dur > 1000 / 90) perf.longLoops += 1; // frame que excede ~11ms => cae por debajo de 90fps
+      perfEndFrame(dur, perfFrame);
       perfFlush(performance.now());
     }
     scheduleNextFrame(loop);
@@ -765,7 +943,13 @@ function loopBody(): void {
     }
   }
 
+  const syncStart = perf ? performance.now() : 0;
   syncOnline();
+  if (perf && perfFrame) {
+    perfFrame.syncMs = performance.now() - syncStart;
+    // syncOnlineClock() corre dentro de syncOnline(); recogemos el snap que haya disparado.
+    perfFrame.clockSnapMs = onlineClockSnapMsThisFrame;
+  }
   if (import.meta.env.DEV) devBotMatch?.frame(); // BOT DEV: avanza al oponente simulado
   syncRivalDangerCues(); // sonido cuando un rival vivo entra en peligro crítico
   syncRivalDeathSounds(); // sonido de derrota de un rival (espectador y en juego)
@@ -782,7 +966,13 @@ function loopBody(): void {
     if (focus && focusState) {
       // Render primero (refresca la geometría del tablero), luego el juice del rival
       // observado: partículas/flashes/popups/sonido como si fuera su propia partida.
+      const specRenderStart = perf ? performance.now() : 0;
       renderer.render(focusState);
+      if (perf && perfFrame) {
+        const rd = performance.now() - specRenderStart;
+        perfFrame.renderMs = rd;
+        perf.full += 1; perf.renderMs += rd; if (rd > perf.renderMax) perf.renderMax = rd;
+      }
       driveSpectatorJuice(focusState, focus.id);
     }
   } else {
@@ -795,9 +985,12 @@ function loopBody(): void {
     const boardChanged = gameFrame !== frameBefore || state.status !== 'playing';
     const renderStart = perf ? performance.now() : 0;
     renderer.render(state, boardChanged);
-    if (perf) {
+    if (perf && perfFrame) {
       const rd = performance.now() - renderStart;
-      perf.ticks += Math.max(0, gameFrame - frameBefore);
+      // ticks del motor en perfFrame: perfEndFrame los suma a perf.ticks (no acumular acá
+      // también, sería doble-conteo). >1 = catch-up de varios frames de golpe = posible pico.
+      perfFrame.ticks = Math.max(0, gameFrame - frameBefore);
+      perfFrame.renderMs = rd;
       if (boardChanged) { perf.full += 1; perf.renderMs += rd; if (rd > perf.renderMax) perf.renderMax = rd; }
       else perf.skip += 1;
     }
@@ -902,6 +1095,7 @@ function onlineLocalPlacementLabel(): string {
   return myIndex >= 0 ? `${myIndex + 1}° de ${ranked.length}` : '';
 }
 
+installLongTaskObserver();
 loop();
 
 Object.assign(window, {
@@ -931,6 +1125,11 @@ Object.assign(window, {
       return multiReplay.snapshot();
     },
     getAppMode: () => appMode,
+    // Reporte de lag exportable: copia el JSON al portapapeles y lo devuelve. Para que un
+    // amigo con ?perf=1 lo mande sin leer la consola: jugar → sentir el lag → tetra.perfReport().
+    // `perReport` es alias por si se tipea sin la 'f'.
+    perfReport: () => runPerfReport(),
+    perReport: () => runPerfReport(),
     getPendingConfirmAction: () => pendingConfirmAction,
     getInputSettings: () => cloneInputSettings(inputSettings),
     getCustomSettings: () => cloneCustomSettings(customSettings),
@@ -981,6 +1180,12 @@ Object.assign(window, {
     } : {}),
   },
 });
+
+// `tetra` es el namespace de debug de cara al usuario (ej. tetra.perfReport() para exportar
+// el reporte de lag). Apunta al MISMO objeto que `stack40` —el nombre histórico que usan los
+// tests/e2e—, así ambos quedan disponibles sin duplicar API.
+(window as unknown as { tetra: unknown; stack40: unknown }).tetra =
+  (window as unknown as { stack40: unknown }).stack40;
 
 void bootstrapOnlineStartup();
 
@@ -3447,7 +3652,7 @@ function syncOnline(): void {
   const now = performance.now();
   // Suaviza el reloj del server cada frame (el frame del motor se ancla a él en online).
   slewOnlineClock();
-  if (shouldPollOnline(now)) pollOnlineRoom();
+  if (shouldPollOnline(now)) { if (perfFrame) perfFrame.polled = true; pollOnlineRoom(); }
   if (appMode === 'onlineCountdown') {
     // Mismo sonido de cuenta regresiva que el solo, dirigido por el reloj del
     // servidor (compartido por todos los jugadores de la sala).
@@ -8065,7 +8270,10 @@ function syncOnlineClock(serverNowMs: number): void {
   // motor a tirones), solo movemos el objetivo y dejamos que slewOnlineClock() lo alcance.
   onlineServerOffsetTargetMs = serverNowMs - performance.now();
   // Primer sync, o desfase grande (segundo plano / reanudación): snap directo, sin slew.
-  if (!onlineClockSynced || Math.abs(onlineServerOffsetTargetMs - onlineServerOffsetMs) > ONLINE_CLOCK_SNAP_MS) {
+  const snapDelta = Math.abs(onlineServerOffsetTargetMs - onlineServerOffsetMs);
+  if (!onlineClockSynced || snapDelta > ONLINE_CLOCK_SNAP_MS) {
+    // Solo cuentan como "lag" los snaps en marcha (no el primer sync, que es esperable).
+    if (onlineClockSynced) onlineClockSnapMsThisFrame = snapDelta;
     onlineServerOffsetMs = onlineServerOffsetTargetMs;
     onlineClockSynced = true;
     onlineClockLastSlewAt = performance.now();
