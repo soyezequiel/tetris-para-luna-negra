@@ -47,15 +47,9 @@ const OUTPUT_TRIM = 0.82;        // trim de salida: headroom para que el saturad
 //     ya no se ahoga reproduciendo graves que no puede;
 //   · suavizamos el saturador del master (curva más mansa) → menos áspero;
 //   · bajamos el trim de salida → más headroom antes del limitador.
-const MOBILE_OUTPUT_TRIM = 0.5;  // más headroom: el saturador/compresor/limitador
-                                 // apenas tocan la mezcla → casi nada de distorsión
-                                 // añadida (la causa real del "saturado" en celular)
+const MOBILE_OUTPUT_TRIM = 0.66;
 const MOBILE_HP_HZ = 130;        // corte del high-pass de sub-bass en móvil
-const MOBILE_LP_HZ = 11000;      // roll-off de agudos en móvil: el parlante chico
-                                 // convierte el brillo/crunch en "fizz" que suena a
-                                 // saturación; cortamos arriba de ~11 kHz
-const MOBILE_SAT_K = 0.8;        // saturador del master casi LINEAL en móvil (vs 2.4):
-                                 // no queremos "saturar" a propósito en ese hardware
+const MOBILE_SAT_K = 1.4;        // saturador del master más suave en móvil (vs 2.4)
 const DESKTOP_SAT_K = 2.4;
 const REVERB_SECONDS = 2.4;
 const REVERB_DECAY = 3.0;
@@ -80,16 +74,7 @@ export class NeoSynth {
   private reverb: ConvolverNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
   private driveCurves: Record<string, Float32Array<ArrayBuffer>> = {};
-  // Contexto y bus de salida COMPARTIDOS con SoundEngine (la música). Si están
-  // seteados, NeoSynth no crea su propio AudioContext ni va directo a
-  // destination: usa este contexto y enchufa su limitador al bus común. Así
-  // música + efectos pasan por UN único limitador final y la suma real que llega
-  // al parlante nunca recorta (dos contextos separados se sumaban en el hardware
-  // del celular y saturaban juntos). Ver attachOutput().
-  private extCtx: AudioContext | null = null;
-  private extDest: AudioNode | null = null;
 
-  private mobile = false; // perfil móvil activo (lo fija ensure()); suaviza el drive
   private muted: boolean;
   private vol: number;   // 0..1 volumen SFX
   private bass: number;  // 0..1 intensidad de sub-bass
@@ -130,14 +115,6 @@ export class NeoSynth {
     this.duck = clamp01(factor);
     if (this.ctx && this.master) this.master.gain.setTargetAtTime(this.gate(), this.ctx.currentTime, 0.15);
   }
-  /** Comparte el AudioContext y el bus de salida del SoundEngine para que TODO
-   * (música + efectos) atraviese un único limitador final. Llamar ANTES del
-   * primer sonido (antes de que ensure() cree un contexto propio). */
-  attachOutput(ctx: AudioContext, destination: AudioNode): void {
-    this.extCtx = ctx;
-    this.extDest = destination;
-  }
-
   /** Llamar en el primer gesto del usuario (pointerdown/keydown). */
   async unlock(): Promise<void> {
     const ctx = this.ensure();
@@ -410,9 +387,7 @@ export class NeoSynth {
   }
 
   destroy(): void {
-    // Sólo cerramos el contexto si es NUESTRO; si es el compartido con la música
-    // (extCtx), cerrarlo mataría también la música — lo dejamos vivo.
-    if (this.ctx && !this.extCtx) { try { void this.ctx.close(); } catch { /* noop */ } }
+    if (this.ctx) { try { void this.ctx.close(); } catch { /* noop */ } }
     this.ctx = null; this.master = null; this.reverb = null; this.noiseBuf = null;
   }
 
@@ -623,22 +598,15 @@ export class NeoSynth {
 
   private ensure(): AudioContext | null {
     if (this.ctx) return this.ctx;
-    let ctx = this.extCtx;
-    if (!ctx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return null;
-      ctx = new AC();
-    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    const ctx = new AC();
     const mobile = this.detectMobile();
-    this.mobile = mobile;
     this.outputTrim = mobile ? MOBILE_OUTPUT_TRIM : OUTPUT_TRIM;
     const master = ctx.createGain(); master.gain.value = this.gate();
     const sat = ctx.createWaveShaper(); sat.curve = this.makeSatCurve(mobile ? MOBILE_SAT_K : DESKTOP_SAT_K); sat.oversample = '2x';
     const comp = ctx.createDynamicsCompressor();
-    // En móvil el compresor es más manso (umbral alto + ratio bajo): comprimir
-    // fuerte "aplasta" la mezcla y eso, en el parlante chico, también suena a
-    // saturación/pumping. En desktop sigue firme.
-    comp.threshold.value = mobile ? -8 : -14; comp.knee.value = 18; comp.ratio.value = mobile ? 2 : 3.2; comp.attack.value = 0.003; comp.release.value = 0.18;
+    comp.threshold.value = -14; comp.knee.value = 18; comp.ratio.value = 3.2; comp.attack.value = 0.003; comp.release.value = 0.18;
     // Limitador brick-wall final: techo duro para que NINGÚN pico llegue a recortar
     // en el hardware (el parlante del celular no perdona). El compresor de arriba es
     // suave y deja pasar picos >0 dB; este los frena en seco a ~-1 dBFS.
@@ -653,16 +621,10 @@ export class NeoSynth {
     if (mobile) {
       const hp1 = ctx.createBiquadFilter(); hp1.type = 'highpass'; hp1.frequency.value = MOBILE_HP_HZ; hp1.Q.value = 0.5;
       const hp2 = ctx.createBiquadFilter(); hp2.type = 'highpass'; hp2.frequency.value = MOBILE_HP_HZ; hp2.Q.value = 0.5;
-      // …y un low-pass que recorta el extremo agudo (el "fizz" del crunch que el
-      // parlante chico no reproduce limpio y termina sonando a saturación).
-      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = MOBILE_LP_HZ; lp.Q.value = 0.5;
-      hp1.connect(hp2); hp2.connect(lp); lp.connect(sat);
+      hp1.connect(hp2); hp2.connect(sat);
       satIn = hp1;
     }
-    // Si hay bus compartido (música), el limitador propio va a ese bus —que tiene
-    // su propio limitador final—; si no, va directo a la salida del dispositivo.
-    const dest: AudioNode = this.extDest ?? ctx.destination;
-    master.connect(satIn); sat.connect(comp); comp.connect(limiter); limiter.connect(dest);
+    master.connect(satIn); sat.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
     reverb.connect(reverbReturn); reverbReturn.connect(sat);
     this.noiseBuf = this.makeNoise(ctx, 1.0);
     this.ctx = ctx; this.master = master; this.reverb = reverb;
@@ -670,15 +632,9 @@ export class NeoSynth {
   }
 
   private driveCurve(a: number): Float32Array<ArrayBuffer> {
-    // En móvil aplanamos el drive hacia lineal (a→1): el waveshaper por voz —sobre
-    // todo el del crunch (drive 4)— es la distorsión que el parlante del celular
-    // vuelve "saturada". Se aplica acá una vez porque TODO el drive pasa por driveCurve.
-    // Es independiente del volumen (va antes del master) → por eso bajar el volumen
-    // no quitaba la saturación. En desktop queda intacto el crunch original.
-    const eff = this.mobile ? 1 + (a - 1) * 0.25 : a;
-    const key = eff.toFixed(2); if (this.driveCurves[key]) return this.driveCurves[key];
-    const n = 1024, c = new Float32Array(n), d = Math.tanh(eff) || 1;
-    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(eff * x) / d; }
+    const key = a.toFixed(2); if (this.driveCurves[key]) return this.driveCurves[key];
+    const n = 1024, c = new Float32Array(n), d = Math.tanh(a) || 1;
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(a * x) / d; }
     this.driveCurves[key] = c; return c;
   }
   private makeSatCurve(k: number): Float32Array<ArrayBuffer> {
