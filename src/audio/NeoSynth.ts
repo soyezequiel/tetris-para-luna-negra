@@ -74,6 +74,14 @@ export class NeoSynth {
   private reverb: ConvolverNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
   private driveCurves: Record<string, Float32Array<ArrayBuffer>> = {};
+  // Contexto y bus de salida COMPARTIDOS con SoundEngine (la música). Si están
+  // seteados, NeoSynth no crea su propio AudioContext ni va directo a
+  // destination: usa este contexto y enchufa su limitador al bus común. Así
+  // música + efectos pasan por UN único limitador final y la suma real que llega
+  // al parlante nunca recorta (dos contextos separados se sumaban en el hardware
+  // del celular y saturaban juntos). Ver attachOutput().
+  private extCtx: AudioContext | null = null;
+  private extDest: AudioNode | null = null;
 
   private muted: boolean;
   private vol: number;   // 0..1 volumen SFX
@@ -115,6 +123,14 @@ export class NeoSynth {
     this.duck = clamp01(factor);
     if (this.ctx && this.master) this.master.gain.setTargetAtTime(this.gate(), this.ctx.currentTime, 0.15);
   }
+  /** Comparte el AudioContext y el bus de salida del SoundEngine para que TODO
+   * (música + efectos) atraviese un único limitador final. Llamar ANTES del
+   * primer sonido (antes de que ensure() cree un contexto propio). */
+  attachOutput(ctx: AudioContext, destination: AudioNode): void {
+    this.extCtx = ctx;
+    this.extDest = destination;
+  }
+
   /** Llamar en el primer gesto del usuario (pointerdown/keydown). */
   async unlock(): Promise<void> {
     const ctx = this.ensure();
@@ -387,7 +403,9 @@ export class NeoSynth {
   }
 
   destroy(): void {
-    if (this.ctx) { try { void this.ctx.close(); } catch { /* noop */ } }
+    // Sólo cerramos el contexto si es NUESTRO; si es el compartido con la música
+    // (extCtx), cerrarlo mataría también la música — lo dejamos vivo.
+    if (this.ctx && !this.extCtx) { try { void this.ctx.close(); } catch { /* noop */ } }
     this.ctx = null; this.master = null; this.reverb = null; this.noiseBuf = null;
   }
 
@@ -598,9 +616,12 @@ export class NeoSynth {
 
   private ensure(): AudioContext | null {
     if (this.ctx) return this.ctx;
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    const ctx = new AC();
+    let ctx = this.extCtx;
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+    }
     const mobile = this.detectMobile();
     this.outputTrim = mobile ? MOBILE_OUTPUT_TRIM : OUTPUT_TRIM;
     const master = ctx.createGain(); master.gain.value = this.gate();
@@ -624,7 +645,10 @@ export class NeoSynth {
       hp1.connect(hp2); hp2.connect(sat);
       satIn = hp1;
     }
-    master.connect(satIn); sat.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
+    // Si hay bus compartido (música), el limitador propio va a ese bus —que tiene
+    // su propio limitador final—; si no, va directo a la salida del dispositivo.
+    const dest: AudioNode = this.extDest ?? ctx.destination;
+    master.connect(satIn); sat.connect(comp); comp.connect(limiter); limiter.connect(dest);
     reverb.connect(reverbReturn); reverbReturn.connect(sat);
     this.noiseBuf = this.makeNoise(ctx, 1.0);
     this.ctx = ctx; this.master = master; this.reverb = reverb;

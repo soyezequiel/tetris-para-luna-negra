@@ -42,6 +42,17 @@ const DEFAULT_MUSIC_VOLUME = 0.5;
 const DEFAULT_REVERB_MODE: ReverbMode = 'medium';
 const MUSIC_OUTPUT_GAIN = 0.34;
 
+// Bus maestro compartido: música + efectos (NeoSynth) confluyen acá y pasan por
+// UN solo limitador brick-wall antes de la salida del dispositivo. Antes cada
+// uno tenía su propio AudioContext yendo directo a destination; el hardware del
+// celular sumaba ambas señales y el resultado recortaba (sonaba "saturado")
+// aunque cada una por separado estuviera por debajo de 0 dBFS.
+const MASTER_LIMITER_THRESHOLD = -1.5;  // techo del limitador final (dBFS)
+// En móvil el parlante diminuto distorsiona por excursión al reproducir graves
+// que no puede mover; drenamos el sub-bass de la música con un high-pass suave
+// (1 etapa) para que la música no "sature" en el celular.
+const MOBILE_MUSIC_HP_HZ = 90;
+
 const REVERB_DECAY = 4; // curva de caída exponencial del impulso (más alto = se va más rápido)
 const MUSIC_FADE_TIME = 0.18; // segundos en los que el dry baja a 0
 const MUSIC_FADE_IN_TIME = 1.4; // efecto de entrada: segundos en los que el dry sube de silencio a pleno
@@ -75,6 +86,11 @@ export class SoundEngine {
   private musicGraphReady = false;
   private musicTailTimer = 0;
   private reverbMode: ReverbMode;
+
+  // Bus maestro + limitador final compartidos por música y efectos (ver
+  // MASTER_LIMITER_THRESHOLD). Se arma una sola vez de forma perezosa.
+  private masterBus: GainNode | null = null;
+  private masterReady = false;
 
   constructor(
     muted: boolean,
@@ -262,6 +278,9 @@ export class SoundEngine {
 
   private unlock = async (): Promise<void> => {
     const context = this.getContext();
+    // Armamos el bus compartido y enchufamos NeoSynth a él ANTES de desbloquearlo,
+    // así sus efectos nacen ya enrutados por el limitador final común.
+    this.ensureMasterBus();
     void this.neo.unlock();
     if (context?.state === 'suspended') await context.resume();
     if (this.musicEnabled()) await this.startMusic();
@@ -277,6 +296,49 @@ export class SoundEngine {
     if (!AudioCtor) return null;
     this.context = new AudioCtor();
     return this.context;
+  }
+
+  // El parlante del celular no perdona picos ni graves: detectamos pantalla
+  // táctil/chica para activar el high-pass de música y el resto del perfil móvil.
+  private detectMobile(): boolean {
+    try {
+      if (window.matchMedia?.('(pointer: coarse)').matches) return true;
+      return Math.min(window.innerWidth, window.innerHeight) <= 760;
+    } catch {
+      return false;
+    }
+  }
+
+  // Arma (una vez) el bus maestro compartido: masterBus → limitador final →
+  // destination, y enchufa NeoSynth a ese bus. La música se conecta al mismo bus
+  // en ensureMusicGraph(). Resultado: un único limitador brick-wall gobierna la
+  // suma real que llega al parlante, así música + efectos no recortan juntos.
+  private ensureMasterBus(): void {
+    if (this.masterReady) return;
+    const context = this.getContext();
+    if (!context) return;
+    const bus = context.createGain();
+    bus.gain.value = 1;
+    const limiter = context.createDynamicsCompressor();
+    limiter.threshold.value = MASTER_LIMITER_THRESHOLD;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.05;
+    bus.connect(limiter);
+    limiter.connect(context.destination);
+    this.masterBus = bus;
+    this.masterReady = true;
+    // NeoSynth comparte este contexto y vuelca su salida al bus común.
+    this.neo.attachOutput(context, bus);
+  }
+
+  // Salida de la música: el bus compartido si ya existe, si no destination.
+  private musicDestination(): AudioNode | null {
+    this.ensureMasterBus();
+    if (this.masterBus) return this.masterBus;
+    const context = this.context;
+    return context ? context.destination : null;
   }
 
   private async startMusic(): Promise<void> {
@@ -319,6 +381,8 @@ export class SoundEngine {
     if (this.musicGraphReady) return;
     const context = this.getContext();
     if (!context) return;
+    const destination = this.musicDestination();
+    if (!destination) return;
     try {
       const source = context.createMediaElementSource(this.music);
       const dryGain = context.createGain();
@@ -328,11 +392,23 @@ export class SoundEngine {
       this.reverbConvolver = convolver;
       dryGain.gain.setValueAtTime(1, context.currentTime);
       wetGain.gain.setValueAtTime(0, context.currentTime);
-      source.connect(dryGain);
-      source.connect(convolver);
+      // En móvil drenamos el sub-bass de la música (high-pass suave) antes de
+      // ramificar a seco/reverb: el parlante chico distorsiona graves que no
+      // puede mover y eso es parte del sonido "saturado".
+      let tap: AudioNode = source;
+      if (this.detectMobile()) {
+        const hp = context.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = MOBILE_MUSIC_HP_HZ;
+        hp.Q.value = 0.5;
+        source.connect(hp);
+        tap = hp;
+      }
+      tap.connect(dryGain);
+      tap.connect(convolver);
       convolver.connect(wetGain);
-      dryGain.connect(context.destination);
-      wetGain.connect(context.destination);
+      dryGain.connect(destination);
+      wetGain.connect(destination);
       this.musicDryGain = dryGain;
       this.musicWetGain = wetGain;
       this.musicGraphReady = true;
