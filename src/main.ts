@@ -86,6 +86,7 @@ import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
 import { JuiceConductor } from './effects/JuiceConductor';
+import { celebratePayout } from './effects/PayoutCelebration';
 
 const root = document.getElementById('game-root');
 const overlay = document.getElementById('hud-overlay');
@@ -357,6 +358,10 @@ let onlineBetCreating = false;
 let onlineLastBetPollAt = 0;
 let onlineBetFastPollUntil = 0;
 let onlineBetRefreshQueued = false;
+// Guard de "festejo de pago una sola vez por apuesta": renderOnlineBetResult
+// corre en cada render, así que el festejo no se dispara ahí sino vía
+// maybeCelebratePayout() desde adoptOnlineRoom, marcando el betId ya festejado.
+let celebratedBetId: string | null = null;
 let onlineRoom: OnlineRoom | null = null;
 let onlinePublicRooms: OnlineRoomSummary[] = [];
 // Ranking mundial del sprint de 40 líneas (pantalla "Top mundial").
@@ -2954,6 +2959,7 @@ function resetOnlineRoomState(): void {
   onlineLastBetPollAt = 0;
   onlineBetFastPollUntil = 0;
   onlineBetRefreshQueued = false;
+  celebratedBetId = null;
   onlineResultSubmitted = false;
   onlineRunStarted = false;
   onlineSpectatorRound = false;
@@ -3003,6 +3009,24 @@ function adoptOnlineRoom(room: OnlineRoom): void {
   onlineActiveRoundId = nextRoundId;
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
   maybeSubmitOnlineWin(room);
+  maybeCelebratePayout();
+}
+
+// Festejo de "cobraste el pozo": cuando la apuesta queda liquidada (settled) con
+// payout > 0 para el jugador local, el pago ya está acreditado en su billetera
+// Lightning. Disparamos el overlay una sola vez por betId (el guard evita el
+// bucle, porque adoptOnlineRoom corre en cada poll). Ver renderOnlineBetResult,
+// que es la fuente de verdad del card "¡Cobraste el pozo!".
+function maybeCelebratePayout(): void {
+  const bet = onlineRoom?.bet;
+  if (!bet || bet.status !== 'settled') return;
+  if (celebratedBetId === bet.betId) return;
+  const myNpub = currentOnlinePlayer()?.npub;
+  const myEntry = myNpub ? bet.participants.find((e) => e.npub === myNpub) : undefined;
+  const myPayout = myEntry?.payoutSats ?? 0;
+  if (myPayout <= 0) return;
+  celebratedBetId = bet.betId;
+  celebratePayout({ sats: myPayout });
 }
 
 function onlineRoundKey(room: OnlineRoom): string {
