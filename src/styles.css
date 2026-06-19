@@ -3944,9 +3944,10 @@ canvas {
 .solo-results-hero {
   font-family: 'Arial Black', 'Exo 2', sans-serif;
   font-weight: 900;
-  font-size: 130px;
+  font-size: clamp(56px, 17vw, 130px);
   line-height: 1;
   letter-spacing: -2px;
+  max-width: 100%;
   background: linear-gradient(90deg, #00f5ff, #9d4edd, #00f5ff);
   background-size: 200% auto;
   -webkit-background-clip: text;
@@ -3960,8 +3961,8 @@ canvas {
 .solo-results-verdict {
   font-family: 'Arial Black', 'Exo 2', sans-serif;
   font-weight: 900;
-  font-size: 64px;
-  letter-spacing: 8px;
+  font-size: clamp(34px, 11vw, 64px);
+  letter-spacing: clamp(3px, 1.2vw, 8px);
   line-height: 1;
   margin-bottom: 8px;
 }
@@ -4107,6 +4108,35 @@ canvas {
 
 .solo-results-btn--danger:hover {
   background: rgba(235, 68, 90, 0.22);
+}
+
+/* En celular el panel de resultados desbordaba: el hero/verdict gigantes se cortaban
+   a lo ancho y, al ser más alto que la pantalla y estar centrado en el scrim, la parte
+   de arriba quedaba fuera de alcance. Acá lo dejamos scrollear y compactamos el layout. */
+@media (max-width: 560px), (max-height: 620px) {
+  .solo-results {
+    gap: 8px;
+    padding: 18px 14px;
+    max-height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .solo-results-stats {
+    gap: 10px;
+    margin: 8px 0 16px;
+  }
+  .solo-results-stat {
+    width: calc(50% - 5px);
+    padding: 12px 14px;
+  }
+  .solo-results-stat strong {
+    font-size: 26px;
+  }
+  .solo-results-btn {
+    height: 46px;
+    padding: 0 18px;
+    font-size: 13px;
+  }
 }
 
 /* ===== Botón "Reportar problema" (resultados solo + online) ===== */
@@ -4325,7 +4355,7 @@ canvas {
 .online-results-title {
   font-family: 'Arial Black', 'Exo 2', sans-serif;
   font-weight: 900;
-  font-size: 60px;
+  font-size: clamp(34px, 10vw, 60px);
   line-height: 1.05;
   letter-spacing: -1px;
   background: linear-gradient(90deg, #f59e0b, #39d49a, #f59e0b);
@@ -4458,7 +4488,14 @@ canvas {
 
 /* En pantallas angostas las 4 métricas no caben junto a la identidad: dejamos que la
    fila envuelva y las métricas pasen a una segunda línea, repartidas a lo ancho. */
-@media (max-width: 560px) {
+@media (max-width: 560px), (max-height: 620px) {
+  .online-results {
+    gap: 12px;
+    padding: 18px 14px;
+    max-height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   .online-results-row { flex-wrap: wrap; }
   .online-results-metrics {
     width: 100%;

@@ -40,6 +40,17 @@ const MAT = { ratios: [1, 2, 3, 4.2, 5.4], gains: [1, 0.45, 0.3, 0.17, 0.1], dec
 const OUTPUT_TRIM = 0.82;        // trim de salida: headroom para que el saturador
                                  // sólo muerda en picos reales y no en toda la mezcla
                                  // (sin esto, en el parlante del celular satura feo)
+// Perfil móvil: el parlante diminuto del celular no puede mover el sub-bass y, al
+// intentarlo, distorsiona por excursión y suena "saturado". Además el saturador del
+// bus, calibrado para auriculares/laptop, sobre ese hardware muerde de más. En móvil:
+//   · cortamos el sub-bass por debajo de ~130 Hz (high-pass de 2 etapas) → el parlante
+//     ya no se ahoga reproduciendo graves que no puede;
+//   · suavizamos el saturador del master (curva más mansa) → menos áspero;
+//   · bajamos el trim de salida → más headroom antes del limitador.
+const MOBILE_OUTPUT_TRIM = 0.66;
+const MOBILE_HP_HZ = 130;        // corte del high-pass de sub-bass en móvil
+const MOBILE_SAT_K = 1.4;        // saturador del master más suave en móvil (vs 2.4)
+const DESKTOP_SAT_K = 2.4;
 const REVERB_SECONDS = 2.4;
 const REVERB_DECAY = 3.0;
 
@@ -68,6 +79,7 @@ export class NeoSynth {
   private vol: number;   // 0..1 volumen SFX
   private bass: number;  // 0..1 intensidad de sub-bass
   private duck = 1;      // 0..1 atenuación de mezcla (modo espectador tras KO)
+  private outputTrim = OUTPUT_TRIM;   // trim de salida; ensure() lo baja en móvil
   private lastSoftDropAt = 0;
   // Paneo posicional de la emisión en curso (-1..1). Lo fija cada método público al
   // entrar y lo leen TODAS las primitivas de esa emisión: como la síntesis se agenda
@@ -573,15 +585,26 @@ export class NeoSynth {
 
   // ---------- infraestructura ----------
   private open(): boolean { return !this.muted && this.vol > 0; }
-  private gate(): number { return this.muted ? 0.0001 : this.vol * OUTPUT_TRIM * this.duck; }
+  private gate(): number { return this.muted ? 0.0001 : this.vol * this.outputTrim * this.duck; }
+
+  /** El parlante del celular no reproduce sub-bass sin distorsionar: detectamos
+   * pantalla táctil/chica para activar el perfil móvil (high-pass + saturador suave). */
+  private detectMobile(): boolean {
+    try {
+      if (window.matchMedia?.('(pointer: coarse)').matches) return true;
+      return Math.min(window.innerWidth, window.innerHeight) <= 760;
+    } catch { return false; }
+  }
 
   private ensure(): AudioContext | null {
     if (this.ctx) return this.ctx;
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
     const ctx = new AC();
+    const mobile = this.detectMobile();
+    this.outputTrim = mobile ? MOBILE_OUTPUT_TRIM : OUTPUT_TRIM;
     const master = ctx.createGain(); master.gain.value = this.gate();
-    const sat = ctx.createWaveShaper(); sat.curve = this.makeSatCurve(2.4); sat.oversample = '2x';
+    const sat = ctx.createWaveShaper(); sat.curve = this.makeSatCurve(mobile ? MOBILE_SAT_K : DESKTOP_SAT_K); sat.oversample = '2x';
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -14; comp.knee.value = 18; comp.ratio.value = 3.2; comp.attack.value = 0.003; comp.release.value = 0.18;
     // Limitador brick-wall final: techo duro para que NINGÚN pico llegue a recortar
@@ -591,7 +614,17 @@ export class NeoSynth {
     limiter.threshold.value = -1.5; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.001; limiter.release.value = 0.05;
     const reverb = ctx.createConvolver(); reverb.buffer = this.makeImpulse(ctx, REVERB_SECONDS, REVERB_DECAY);
     const reverbReturn = ctx.createGain(); reverbReturn.gain.value = 0.9;
-    master.connect(sat); sat.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
+    // En móvil insertamos un high-pass de 2 etapas (≈24 dB/oct) entre el bus y el
+    // saturador para drenar el sub-bass que el parlante no puede reproducir y que es
+    // la causa real del sonido "saturado". En desktop el bus va directo al saturador.
+    let satIn: AudioNode = sat;
+    if (mobile) {
+      const hp1 = ctx.createBiquadFilter(); hp1.type = 'highpass'; hp1.frequency.value = MOBILE_HP_HZ; hp1.Q.value = 0.5;
+      const hp2 = ctx.createBiquadFilter(); hp2.type = 'highpass'; hp2.frequency.value = MOBILE_HP_HZ; hp2.Q.value = 0.5;
+      hp1.connect(hp2); hp2.connect(sat);
+      satIn = hp1;
+    }
+    master.connect(satIn); sat.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
     reverb.connect(reverbReturn); reverbReturn.connect(sat);
     this.noiseBuf = this.makeNoise(ctx, 1.0);
     this.ctx = ctx; this.master = master; this.reverb = reverb;
