@@ -130,6 +130,64 @@ function cloneBindings(bindings: InputBindings): InputBindings {
   return out;
 }
 
+// ── Ayuda de controles en pantalla ───────────────────────────────────────────
+// Baja carga cognitiva: en vez de una tabla larga, mostramos 5 chips esenciales
+// (una sola tecla/botón por acción, las rotaciones juntas). El mismo formato se
+// usa en el setup y, más chico, durante la partida.
+const COMPACT_ROWS: ReadonlyArray<{ actions: (keyof InputBindings)[]; label: string }> = [
+  { actions: ['moveLeft', 'moveRight'], label: 'Mover' },
+  { actions: ['softDrop'], label: 'Bajar' },
+  { actions: ['hardDrop'], label: 'Caída' },
+  { actions: ['rotateCCW', 'rotateCW'], label: 'Girar' },
+  { actions: ['hold'], label: 'Guardar' },
+];
+
+// KeyboardEvent.code → etiqueta corta para mostrar la tecla real.
+const KEY_LABELS: Record<string, string> = {
+  KeyA: 'A', KeyD: 'D', KeyS: 'S', KeyW: 'W', KeyI: 'I', KeyJ: 'J', KeyK: 'K', KeyL: 'L',
+  Tab: 'Tab',
+  ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓',
+  Comma: ',', Period: '.', Slash: '/',
+  ShiftRight: 'Shift',
+  Numpad0: 'Num 0', Numpad1: 'Num 1', Numpad2: 'Num 2', Numpad3: 'Num 3',
+};
+
+function keyLabel(code: string): string {
+  return KEY_LABELS[code] ?? code.replace(/^(Key|Digit)/, '');
+}
+
+// Etiqueta de botón por acción para mando (standard gamepad, espejo de
+// BUTTON_ACTIONS en gamepad.ts). Combina PlayStation/Xbox porque mapeamos por
+// posición de botón, no por etiqueta impresa.
+const PAD_COMPACT: Record<string, string> = {
+  Mover: 'D-pad',
+  Bajar: '↓',
+  Caída: '↑',
+  Girar: '✕ ○',
+  Guardar: '□',
+};
+
+// Chips compactos (acción → tecla/botón) para el control elegido por un asiento.
+function compactChips(device: SeatDevice, seat: 1 | 2): Array<{ label: string; keys: string }> {
+  if (device !== 'keyboard') {
+    return COMPACT_ROWS.map((row) => ({ label: row.label, keys: PAD_COMPACT[row.label] }));
+  }
+  const bindings = seat === 1 ? SEAT1_BINDINGS : SEAT2_BINDINGS;
+  return COMPACT_ROWS.map((row) => ({
+    label: row.label,
+    // Una sola tecla por acción (la primaria) = menos para leer.
+    keys: row.actions.map((a) => (bindings[a] ?? [])[0]).filter(Boolean).map(keyLabel).join(' '),
+  }));
+}
+
+// HTML de los chips. `variant` ajusta el tamaño (setup grande / partida chico).
+function controlChipsHtml(device: SeatDevice, seat: 1 | 2, variant: 'setup' | 'play'): string {
+  const chips = compactChips(device, seat)
+    .map((chip) => `<span class="lv-chip"><span class="lv-chip-act">${chip.label}</span><kbd class="lv-chip-key">${escapeText(chip.keys)}</kbd></span>`)
+    .join('');
+  return `<div class="lv-controls lv-controls--${variant}">${chips}</div>`;
+}
+
 const SEAT_STORAGE_KEY = 'tetra:localVersus:seats:v1';
 const STAKE_STORAGE_KEY = 'tetra:localVersus:stake:v1';
 const DEFAULT_STAKE_SATS = 100;
@@ -356,7 +414,7 @@ class LocalVersusMatch {
           <button class="lv-btn lv-btn--ghost" type="button" data-lv="exit">Salir</button>
           <button class="lv-btn lv-btn--primary" type="button" data-lv="start"${this.seatsValid() ? '' : ' disabled'}>${this.betEnabled ? `Apostar y jugar · ${this.stakeSats} sats` : 'Comenzar'}</button>
         </div>
-        <p class="lv-hint">Mandos PlayStation, Xbox, Switch o Steam. Si compartís teclado: J1 = WASD + IJKL · J2 = Flechas + , . /</p>
+        <p class="lv-hint">Mandos PlayStation, Xbox, Switch o Steam. Los controles de cada jugador aparecen según el control que elija.</p>
       </div>
     `;
     this.wireSetupHandlers();
@@ -416,8 +474,15 @@ class LocalVersusMatch {
           ${option('keyboard', '⌨️ Teclado')}
           ${padOptions || '<span class="lv-no-pad">Conectá un mando para usarlo</span>'}
         </div>
+        ${this.renderSeatControls(seat, current)}
       </div>
     `;
+  }
+
+  // Chips de controles del control elegido por este asiento, para que cada jugador
+  // sepa qué usar de un vistazo (baja carga cognitiva).
+  private renderSeatControls(seat: 1 | 2, device: SeatDevice): string {
+    return controlChipsHtml(device, seat, 'setup');
   }
 
   private seatsValid(): boolean {
@@ -779,12 +844,14 @@ class LocalVersusMatch {
           <header class="lv-board-name">Jugador 1</header>
           <canvas class="lv-canvas" data-lv-canvas="1"></canvas>
           <div class="lv-pending" data-lv-pending="1"></div>
+          ${controlChipsHtml(this.seatConfig.seat1.device, 1, 'play')}
         </section>
         <div class="lv-center" data-lv-center></div>
         <section class="lv-board lv-board--2">
           <header class="lv-board-name">Jugador 2</header>
           <canvas class="lv-canvas" data-lv-canvas="2"></canvas>
           <div class="lv-pending" data-lv-pending="2"></div>
+          ${controlChipsHtml(this.seatConfig.seat2.device, 2, 'play')}
         </section>
       </div>
     `;
@@ -955,6 +1022,19 @@ function ensureStyles(): void {
     .lv-device.is-active { background: #00f5ff; color: #04060a; border-color: #00f5ff; font-weight: 700; }
     .lv-seat-card--2 .lv-device.is-active { background: #ff5d8f; border-color: #ff5d8f; }
     .lv-no-pad { font-size: 13px; opacity: .55; }
+    .lv-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    .lv-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; background: rgba(255,255,255,.05); }
+    .lv-chip-act { font-size: 12px; opacity: .65; }
+    .lv-chip-key { font-family: inherit; font-weight: 700; font-size: 13px; line-height: 1; padding: 3px 6px; border-radius: 5px; background: rgba(255,255,255,.12); white-space: nowrap; }
+    .lv-controls--setup { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.1); }
+    .lv-seat-card--1 .lv-chip-key { color: #00f5ff; }
+    .lv-seat-card--2 .lv-chip-key { color: #ff5d8f; }
+    .lv-controls--play { margin-top: 4px; max-width: min(92vw, 420px); opacity: .7; }
+    .lv-controls--play .lv-chip { padding: 2px 6px; gap: 4px; background: transparent; }
+    .lv-controls--play .lv-chip-act { font-size: 10px; }
+    .lv-controls--play .lv-chip-key { font-size: 11px; padding: 2px 5px; }
+    .lv-board--1 .lv-controls--play .lv-chip-key { color: #00f5ff; }
+    .lv-board--2 .lv-controls--play .lv-chip-key { color: #ff5d8f; }
     .lv-setup-actions, .lv-win-actions { display: flex; gap: 12px; justify-content: center; margin-top: 28px; flex-wrap: wrap; }
     .lv-btn { padding: 12px 26px; border-radius: 10px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: inherit; cursor: pointer; font-size: 16px; font-weight: 600; }
     .lv-btn--primary { background: #00f5ff; color: #04060a; border-color: #00f5ff; }
