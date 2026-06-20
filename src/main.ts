@@ -1742,6 +1742,11 @@ function handleOverlayClick(event: MouseEvent): void {
       if (next === 'survival') ensureSurvivalTopsLoaded();
     }
   }
+  if (action === 'select-room-mode') {
+    const next = parsePlayMode(control.dataset.mode);
+    if (next) void switchOnlineRoomMode(next);
+    return;
+  }
   if (action === 'start') startCustomRun();
   if (action === 'restart') restartCurrentRun();
   if (action === 'solo-menu') openModeMenu('soloMenu');
@@ -2891,6 +2896,55 @@ async function syncOnlineRoomRules(): Promise<void> {
 // online (tiene su propio botón), así que cae a 'custom'.
 function roomMatchTypeForSelectedMode(): OnlineMatchType {
   return selectedPlayMode === 'survival' ? 'battle' : 'custom';
+}
+
+// Modo actual de la sala derivado de su matchType (para resaltar la tarjeta activa
+// en el lobby). 'battle' = Supervivencia; 'custom' = Custom.
+function roomPlayMode(): PlayMode {
+  return onlineRoom?.matchType === 'battle' ? 'survival' : 'custom';
+}
+
+// El host puede cambiar la modalidad SIN salir de la sala: re-configura el
+// matchType (y por ende las reglas) en el server. Reusa el mismo updateRoomSettings
+// que la sincronización de reglas custom. 1v1 local no es online → sale de la sala
+// y arranca el duelo local.
+async function switchOnlineRoomMode(mode: PlayMode): Promise<void> {
+  if (mode === 'local1v1') {
+    selectedPlayMode = 'local1v1';
+    leaveOnlineRoom();
+    startLocalVersusMode();
+    return;
+  }
+  if (!onlineRoom || !isOnlineHost() || onlineRoom.status !== 'lobby') return;
+  selectedPlayMode = mode;
+  if (mode === 'survival') ensureSurvivalTopsLoaded();
+  const targetMatchType: OnlineMatchType = mode === 'survival' ? 'battle' : 'custom';
+  if (onlineRoom.matchType === targetMatchType) return; // ya está en ese modo
+  if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) {
+    onlineError = 'No se puede cambiar de modo con una apuesta activa.';
+    return;
+  }
+  if (onlineBusy) return;
+  const room = onlineRoom;
+  onlineBusy = true;
+  try {
+    const rules = targetMatchType === 'battle' ? battleRulesFromSettings(inputSettings) : onlineCustomRulesFromSettings();
+    const response = await onlineClient.updateRoomSettings({
+      roomId: room.id,
+      playerId: onlinePlayer.id,
+      visibility: room.visibility,
+      mode: 'custom',
+      matchType: targetMatchType,
+      rules,
+    });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    onlineError = null;
+  } catch (error) {
+    onlineError = onlineErrorText(error);
+  } finally {
+    onlineBusy = false;
+  }
 }
 
 async function createOnlineRoom(
@@ -7871,6 +7925,9 @@ function renderSmartPlayStage(): string {
   const hasOthers = onlineRoomHasOtherPlayers();
   const host = isOnlineHost();
   const ready = !!currentOnlinePlayer()?.ready;
+  // El host puede cambiar la modalidad sin salir de la sala (en el lobby). Para los
+  // invitados la modalidad la fija el host, así que solo ven el eyebrow.
+  const modeCardsHtml = host && onlineRoom!.status === 'lobby' ? renderRoomModeCards() : '';
   // En sala la modalidad ya quedó fijada por la sala (matchType): la mostramos en
   // el eyebrow para que se entienda bajo qué reglas se va a jugar.
   const roomModeName = matchTypeLabel(onlineRoom!.matchType).toUpperCase();
@@ -7940,6 +7997,7 @@ function renderSmartPlayStage(): string {
         <span class="dash-step-sep"></span>
         <span class="dash-step-pill is-active">2 · ${step2}</span>
       </div>
+      ${modeCardsHtml}
       <div class="dash-play-eyebrow">${eyebrow}</div>
       <h2 class="dash-play-title">${title}</h2>
       <p class="dash-play-subtitle">${subtitle}</p>
@@ -7980,13 +8038,24 @@ function playModeMeta(mode: PlayMode): { eyebrow: string; title: string; subtitl
   };
 }
 
-function renderModeCard(mode: PlayMode, active: boolean): string {
+function renderModeCard(mode: PlayMode, active: boolean, action = 'select-play-mode'): string {
   const meta = playModeMeta(mode);
   return `
-    <button class="dash-mode-card ${active ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active}" data-ui-action="select-play-mode" data-mode="${mode}">
+    <button class="dash-mode-card ${active ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active}" data-ui-action="${action}" data-mode="${mode}">
       <span class="dash-mode-card-icon" aria-hidden="true">${meta.icon}</span>
       <span class="dash-mode-card-text"><strong>${meta.title}</strong><small>${escapeHtml(meta.eyebrow)}</small></span>
     </button>`;
+}
+
+// Tarjetas de modalidad dentro de la sala (solo host, en lobby): cambiar de tarjeta
+// re-configura el matchType de la sala vía switchOnlineRoomMode. La tarjeta activa
+// refleja el matchType actual de la sala (no selectedPlayMode).
+function renderRoomModeCards(): string {
+  const current = roomPlayMode();
+  const cards = (['survival', 'custom', 'local1v1'] as PlayMode[])
+    .map((m) => renderModeCard(m, m === current, 'select-room-mode'))
+    .join('');
+  return `<div class="dash-mode-cards" role="tablist">${cards}</div>`;
 }
 
 function renderModeSelectStage(): string {
