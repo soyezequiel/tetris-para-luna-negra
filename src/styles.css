@@ -5449,6 +5449,11 @@ canvas {
     border-left: none;
     border-top: 1px solid var(--dash-border);
     max-height: none;
+    /* En la pila vertical el grid de altura fija comprimía esta área: con
+       overflow-y:auto su min-height es 0 y el track se encogía a ~146px,
+       dejando el panel social inusable. Con overflow visible el track toma
+       la altura real del contenido y la pila entera scrollea. */
+    overflow: visible;
   }
 }
 
