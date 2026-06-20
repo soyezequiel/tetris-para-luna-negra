@@ -170,9 +170,16 @@ function buildRoomBet(
   const prevByNpub = new Map((previous?.participants ?? []).map((p) => [p.npub, p]));
   const participants: RoomBetParticipant[] = npubs.map((npub) => {
     const d = detailByNpub.get(npub);
+    const previousParticipant = prevByNpub.get(npub);
+    const payoutStatus = asPayoutStatus(d?.payoutStatus);
+    // Un retiro pendiente representa el mismo cobro hasta que vence o se reclama.
+    // Conservamos el primer handle válido: servidores viejos podían re-firmar el
+    // token en cada GET, cambiando el LNURL y obligando a regenerar/parpadear el QR.
+    const preserveWithdrawHandle = payoutStatus === 'withdraw_pending'
+      && previousParticipant?.payoutStatus === 'withdraw_pending';
     // playerId: 1) el del bet previo (estable, sobrevive a npubs efímeros de invitado),
     // 2) el mapeo explícito del create, 3) match por npub real en la sala.
-    const playerId = prevByNpub.get(npub)?.playerId
+    const playerId = previousParticipant?.playerId
       ?? playerIdByNpub?.get(npub)
       ?? room.players.find((candidate) => candidate.npub === npub)?.id
       ?? null;
@@ -185,9 +192,13 @@ function buildRoomBet(
       payUrl: typeof d?.payUrl === 'string' ? d.payUrl : null,
       depositError: typeof d?.depositError === 'string' ? d.depositError : null,
       payoutSats: typeof d?.payoutSats === 'number' ? d.payoutSats : null,
-      payoutStatus: asPayoutStatus(d?.payoutStatus),
-      withdrawLnurl: typeof d?.withdrawLnurl === 'string' ? d.withdrawLnurl : null,
-      withdrawUrl: typeof d?.withdrawUrl === 'string' ? d.withdrawUrl : null,
+      payoutStatus,
+      withdrawLnurl: preserveWithdrawHandle && previousParticipant.withdrawLnurl
+        ? previousParticipant.withdrawLnurl
+        : (typeof d?.withdrawLnurl === 'string' ? d.withdrawLnurl : null),
+      withdrawUrl: preserveWithdrawHandle && previousParticipant.withdrawUrl
+        ? previousParticipant.withdrawUrl
+        : (typeof d?.withdrawUrl === 'string' ? d.withdrawUrl : null),
     };
   });
   // El detalle viene fresco (Cache-Control: no-store) y es la fuente de verdad:

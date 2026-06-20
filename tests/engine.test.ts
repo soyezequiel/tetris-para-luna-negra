@@ -54,7 +54,7 @@ import {
   winnerBetNpubsFromRoom,
 } from '../src/online/roomService';
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
-import { createBetForRoom, maybeReportRoomBetResult, settleRoomBet } from '../src/online/lunaNegraBets';
+import { createBetForRoom, maybeReportRoomBetResult, refreshRoomBet, settleRoomBet } from '../src/online/lunaNegraBets';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
 import { GET as lunaNegraApiGet } from '../api/luna-negra/[action]';
 import { decidePeerKoAction } from '../src/online/peerKoAuthority';
@@ -1797,6 +1797,93 @@ describe('core stacker engine', () => {
       delete process.env.LUNA_NEGRA_BASE_URL;
       delete process.env.LUNA_NEGRA_API_KEY;
       delete process.env.LUNA_NEGRA_GAME_ID;
+    }
+  });
+
+  it('keeps a pending withdrawal handle stable across bet refreshes', async () => {
+    const store = new MemoryRoomStore();
+    let room = await createRoom(store, { playerId: 'host-player-q', name: 'Anonymous Host', visibility: 'public' }, 1000);
+    room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-q', name: 'Anonymous Guest' }, 1010);
+    room.bet = {
+      betId: 'bet-stable-qr',
+      status: 'settled',
+      stakeSats: 25,
+      potSats: 50,
+      potTargetSats: 50,
+      feeSats: 1,
+      feePct: 2,
+      netPayoutSats: 49,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [
+        {
+          npub: 'npub-host-eph-q',
+          playerId: 'host-player-q',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          depositError: null,
+          payoutSats: 49,
+          payoutStatus: 'withdraw_pending',
+          withdrawLnurl: 'LNURL1STABLE',
+          withdrawUrl: 'https://luna.example/withdraw/stable',
+        },
+        {
+          npub: 'npub-guest-eph-q',
+          playerId: 'guest-player-q',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          depositError: null,
+          payoutSats: null,
+          payoutStatus: 'none',
+          withdrawLnurl: null,
+          withdrawUrl: null,
+        },
+      ],
+      winnerNpubs: ['npub-host-eph-q'],
+      resultReported: true,
+      settlementError: null,
+      createdByPlayerId: 'host-player-q',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1020,
+    };
+    await store.saveRoom(room);
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      betId: 'bet-stable-qr',
+      status: 'settled',
+      participants: [
+        {
+          npub: 'npub-host-eph-q',
+          depositStatus: 'paid',
+          payoutSats: 49,
+          payoutStatus: 'withdraw_pending',
+          withdrawLnurl: 'LNURL1ROTATED',
+          withdrawUrl: 'https://luna.example/withdraw/rotated',
+        },
+        {
+          npub: 'npub-guest-eph-q',
+          depositStatus: 'paid',
+          payoutStatus: 'none',
+        },
+      ],
+    })));
+
+    try {
+      const refreshed = await refreshRoomBet(store, room.id, 1030, { reportResult: false });
+      const winner = refreshed.bet?.participants.find((entry) => entry.playerId === 'host-player-q');
+      expect(winner?.withdrawLnurl).toBe('LNURL1STABLE');
+      expect(winner?.withdrawUrl).toBe('https://luna.example/withdraw/stable');
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env.LUNA_NEGRA_BASE_URL;
+      delete process.env.LUNA_NEGRA_API_KEY;
     }
   });
 
