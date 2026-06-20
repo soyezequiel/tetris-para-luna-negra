@@ -2908,11 +2908,20 @@ function roomPlayMode(): PlayMode {
 // matchType (y por ende las reglas) en el server. Reusa el mismo updateRoomSettings
 // que la sincronización de reglas custom. 1v1 local no es online → sale de la sala
 // y arranca el duelo local.
+// Sale de la sala online y arranca el duelo local. Es la acción que confirma el
+// usuario al elegir "Duelo local" desde dentro de una sala.
+function leaveRoomAndStartLocalVersus(): void {
+  selectedPlayMode = 'local1v1';
+  leaveOnlineRoom();
+  startLocalVersusMode();
+}
+
 async function switchOnlineRoomMode(mode: PlayMode): Promise<void> {
   if (mode === 'local1v1') {
-    selectedPlayMode = 'local1v1';
-    leaveOnlineRoom();
-    startLocalVersusMode();
+    // El duelo local no es una sala online: pasar a él te saca de la sala. Si hay
+    // sala, pedimos confirmación antes (la acción confirma con leaveRoomAndStartLocalVersus).
+    if (onlineRoom) { requestRunConfirmation('leave-room-for-local'); return; }
+    leaveRoomAndStartLocalVersus();
     return;
   }
   if (!onlineRoom || !isOnlineHost() || onlineRoom.status !== 'lobby') return;
@@ -5605,6 +5614,7 @@ function confirmPendingAction(): void {
   if (action === 'main-menu') goToMenu();
   if (action === 'import-replay') openReplayFilePicker();
   if (action === 'online-leave') leaveOnlineRoom();
+  if (action === 'leave-room-for-local') leaveRoomAndStartLocalVersus();
   if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
 }
 
@@ -7273,12 +7283,14 @@ function confirmTitle(action: DestructiveRunAction): string {
   if (action === 'restart') return 'Restart run?';
   if (action === 'main-menu') return 'Exit run?';
   if (action === 'online-leave') return 'Leave online room?';
+  if (action === 'leave-room-for-local') return '¿Pasar al duelo local?';
   return 'Import replay and abandon current run?';
 }
 
 function confirmMeta(action: DestructiveRunAction): string {
   if (action === 'import-replay') return 'The current board and timer will be discarded if a replay is loaded.';
   if (action === 'online-leave') return 'Your local online run will stop on this device.';
+  if (action === 'leave-room-for-local') return 'El duelo local es en esta misma compu: esta acción te sacará de la sala online.';
   return 'The current board and timer will be discarded.';
 }
 

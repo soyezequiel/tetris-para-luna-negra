@@ -22,7 +22,7 @@ export type AppMode =
   | 'onlinePlaying'
   | 'onlineResults'
   | 'soloCountdown';
-export type DestructiveRunAction = 'restart' | 'main-menu' | 'import-replay' | 'online-leave';
+export type DestructiveRunAction = 'restart' | 'main-menu' | 'import-replay' | 'online-leave' | 'leave-room-for-local';
 
 export function canAdvanceGame(mode: AppMode, status: GameState['status']): boolean {
   return (mode === 'playing' || mode === 'onlinePlaying') && status === 'playing';
