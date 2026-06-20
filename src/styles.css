@@ -2143,80 +2143,237 @@ canvas {
   bottom: max(14px, env(safe-area-inset-bottom));
   left: max(14px, env(safe-area-inset-left));
   z-index: 3;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: 14px;
-  align-items: end;
+  flex-direction: column;
+  gap: 12px;
   pointer-events: auto;
   touch-action: none;
   user-select: none;
 }
 
-.touch-cluster {
-  display: grid;
+/* ---- fila de utilidades (esquema · pausa · vibración · ocultar) ---------- */
+.touch-utility {
+  display: flex;
+  align-items: center;
   gap: 8px;
-}
-
-.touch-cluster-move {
-  grid-template-columns: repeat(2, minmax(58px, 76px));
-  justify-content: start;
-}
-
-.touch-cluster-move .touch-button-softDrop {
-  grid-column: 1 / -1;
-}
-
-.touch-cluster-system {
-  grid-template-columns: minmax(58px, 74px);
-  justify-content: center;
-}
-
-.touch-cluster-actions {
-  grid-template-columns: repeat(3, minmax(58px, 76px));
-  justify-content: end;
-}
-
-.touch-button-hardDrop {
-  grid-column: 1 / -1;
-}
-
-.touch-button,
-.touch-controls-toggle {
-  min-width: 58px;
-  min-height: 54px;
-  padding: 0 12px;
-  border: 2px solid rgba(247, 247, 242, 0.82);
-  border-radius: 8px;
-  background: rgba(4, 5, 7, 0.74);
-  color: #f7f7f2;
-  cursor: pointer;
-  font-family: "Arial Black", Arial, sans-serif;
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0;
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.34);
+  align-self: center;
+  padding: 5px;
+  border-radius: 16px;
+  background: rgba(4, 7, 13, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
   backdrop-filter: blur(8px);
+}
+
+.touch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #aebbcd;
+  font-family: "Exo 2", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: none;
 }
 
-.touch-button-hardDrop {
-  border-color: #39d49a;
-  background: rgba(57, 212, 154, 0.18);
+.touch-chip.is-on {
+  color: #04140d;
+  background: linear-gradient(180deg, #5bf0b6, #23c98c);
+  box-shadow: 0 0 18px rgba(57, 212, 154, 0.5);
 }
 
-.touch-button-pause,
-.touch-controls-toggle {
-  color: rgba(247, 247, 242, 0.78);
-  font-size: 11px;
+.touch-chip-scheme {
+  color: #eaf6ff;
+  box-shadow: inset 0 0 0 1.2px rgba(0, 245, 255, 0.4);
 }
 
+.touch-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--scheme-accent, #00f5ff);
+  box-shadow: 0 0 8px var(--scheme-accent, #00f5ff);
+}
+
+.touch-scheme-pro     { --scheme-accent: #39d49a; }
+.touch-scheme-reduced { --scheme-accent: #00f5ff; }
+.touch-scheme-dpad    { --scheme-accent: #9d4edd; }
+
+/* ---- contenedor principal: dos pulgares -------------------------------- */
+.touch-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.touch-side {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.touch-side-right { align-items: flex-end; }
+
+.touch-pair { display: flex; gap: 9px; align-items: flex-end; }
+.touch-pair-rot { align-items: center; }
+
+/* =============================================================================
+ *  BOTÓN BASE + FEEDBACK NEÓN
+ *  Acento por acción vía --accent; el estado activo pulsa el glow.
+ * ========================================================================== */
+.touch-button {
+  --accent: #00f5ff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 78px;
+  min-height: 78px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 20px;
+  color: #eaf6ff;
+  background: linear-gradient(180deg, rgba(20, 28, 40, 0.92), rgba(10, 15, 23, 0.92));
+  box-shadow:
+    inset 0 0 0 1.6px color-mix(in srgb, var(--accent) 38%, transparent),
+    0 8px 20px rgba(0, 0, 0, 0.5);
+  font-family: "Exo 2", "Arial Black", sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  user-select: none;
+  transition: transform 0.07s ease, box-shadow 0.07s ease, background 0.07s ease;
+}
+
+.touch-button small {
+  font-size: 10px;
+  letter-spacing: 1px;
+  font-weight: 800;
+  opacity: 0.85;
+}
+
+/* --- presión: aplasta + glow que pulsa --- */
 .touch-button:active,
 .touch-button-active {
-  transform: translateY(2px);
-  border-color: #d94ae8;
-  background: rgba(217, 74, 232, 0.24);
+  transform: scale(0.9);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 34%, transparent),
+    color-mix(in srgb, var(--accent) 16%, transparent));
+  animation: touchPulse 0.85s ease-in-out infinite;
 }
 
+@keyframes touchPulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 2px var(--accent),
+      0 0 22px var(--accent),
+      0 0 44px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 2px var(--accent),
+      0 0 34px var(--accent),
+      0 0 72px color-mix(in srgb, var(--accent) 68%, transparent);
+  }
+}
+
+/* rotación: el botón gira un toque al presionarse */
+.touch-button-rotateCW:active,  .touch-button-rotateCW.touch-button-active  { transform: scale(0.9) rotate(12deg); }
+.touch-button-rotateCCW:active, .touch-button-rotateCCW.touch-button-active { transform: scale(0.9) rotate(-12deg); }
+
+/* --- acentos por acción --- */
+.touch-button-moveLeft,
+.touch-button-moveRight,
+.touch-button-softDrop { --accent: #00f5ff; }            /* movimiento: cian   */
+.touch-button-rotateCW,
+.touch-button-rotateCCW,
+.touch-button-rotate180 { --accent: #9d4edd; color: #f0e4ff; } /* rotación: violeta */
+.touch-button-hold { --accent: #ffd166; color: #ffe9b0; }      /* hold: ámbar        */
+.touch-button-hardDrop { --accent: #39d49a; }                  /* drop: verde        */
+
+/* --- variantes de tamaño / forma --- */
+.touch-wide { min-width: 168px; flex-direction: row; gap: 6px; min-height: 46px; font-size: 13px; font-weight: 800; letter-spacing: 1.5px; }
+.touch-big  { min-width: 90px; min-height: 90px; font-size: 33px; }
+.touch-round { border-radius: 50%; }
+.touch-rotate-main { min-width: 104px; min-height: 82px; font-size: 30px; }
+.touch-rotate-main small { display: block; margin-top: 2px; }
+
+.touch-drop {
+  color: #053826;
+  font-weight: 900;
+  background: linear-gradient(180deg, #5bf0b6, #1fc888);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 8px 22px rgba(0, 0, 0, 0.5);
+}
+.touch-drop:active,
+.touch-drop.touch-button-active { color: #053826; }
+
+/* pausa como chip pequeño en la fila de utilidades */
+.touch-button-pause.touch-chip {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: #aebbcd;
+  background: rgba(255, 255, 255, 0.05);
+  flex-direction: row;
+}
+.touch-button-pause.touch-chip:active { transform: scale(0.92); animation: none; }
+
+/* =============================================================================
+ *  ESQUEMA D-PAD: cruceta de movimiento + abanico de acciones
+ * ========================================================================== */
+.touch-scheme-dpad .touch-dpad {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 42%, rgba(0, 245, 255, 0.08), rgba(8, 14, 22, 0) 70%);
+  box-shadow: inset 0 0 0 1.5px rgba(0, 245, 255, 0.18);
+}
+.touch-scheme-dpad .touch-dpad .touch-button {
+  position: absolute;
+  min-width: 60px;
+  min-height: 60px;
+  font-size: 26px;
+}
+.touch-scheme-dpad .dpad-left  { left: 6px;  top: 54px; border-radius: 20px 8px 8px 20px; }
+.touch-scheme-dpad .dpad-right { right: 6px; top: 54px; border-radius: 8px 20px 20px 8px; }
+.touch-scheme-dpad .dpad-down  { left: 54px; bottom: 6px; border-radius: 8px 8px 20px 20px; }
+.touch-scheme-dpad .dpad-hub {
+  position: absolute;
+  left: 54px;
+  top: 54px;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 12, 20, 0.9);
+  box-shadow: inset 0 0 0 1.2px rgba(0, 245, 255, 0.2);
+  color: #3a4a60;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  pointer-events: none;
+}
+.touch-scheme-dpad .touch-fan .touch-button { min-width: 64px; min-height: 64px; font-size: 26px; }
+.touch-scheme-dpad .touch-fan .touch-big { min-width: 76px; min-height: 76px; font-size: 30px; }
+
+/* =============================================================================
+ *  Restaurar (cuando está oculto)
+ * ========================================================================== */
 .touch-controls-restore {
   position: fixed;
   right: max(14px, env(safe-area-inset-right));
@@ -2224,12 +2381,22 @@ canvas {
   z-index: 3;
   width: auto;
   min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(4, 7, 13, 0.78);
+  color: #eaf6ff;
+  font-family: "Exo 2", sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  box-shadow: inset 0 0 0 1.2px rgba(0, 245, 255, 0.35);
+  backdrop-filter: blur(8px);
   pointer-events: auto;
 }
 
 @media (pointer: coarse), (max-width: 760px) {
   .touch-controls {
-    display: grid;
+    display: flex;
   }
 
   .touch-controls-toggle {
@@ -2241,6 +2408,13 @@ canvas {
   .help {
     display: none;
   }
+}
+
+/* Tableros chicos: bajá un poco los tamaños para que entre cómodo. */
+@media (max-width: 380px) {
+  .touch-button { min-width: 68px; min-height: 68px; }
+  .touch-wide { min-width: 146px; }
+  .touch-big { min-width: 80px; min-height: 80px; }
 }
 
 @media (max-width: 760px) {
@@ -2445,107 +2619,28 @@ canvas {
   }
 }
 
-@media (pointer: coarse) and (orientation: landscape) {
+/* Landscape: poca altura. Subimos los controles para que no tapen el tablero y
+ * achicamos los botones (incluidos los anchos y el d-pad) para que entren. */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
   .touch-controls {
-    top: 82px;
-    bottom: max(12px, env(safe-area-inset-bottom));
-    grid-template-columns: 148px minmax(0, 1fr) 148px;
-    align-items: end;
-  }
-
-  .touch-cluster-move {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .touch-cluster-system {
-    grid-column: 1;
-    grid-row: 1;
-    align-self: start;
-  }
-
-  .touch-cluster-actions {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  .touch-cluster-move {
-    grid-template-columns: repeat(2, 58px);
-  }
-
-  .touch-cluster-actions {
-    grid-template-columns: repeat(3, 58px);
-  }
-
-  .touch-button,
-  .touch-controls-toggle {
-    min-width: 54px;
-    min-height: 46px;
-    padding: 0 8px;
-    font-size: 11px;
-  }
-}
-
-@media (pointer: coarse) and (max-width: 420px) {
-  .touch-controls {
+    top: 70px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    justify-content: flex-end;
     gap: 8px;
   }
 
-  .touch-cluster {
-    gap: 6px;
-  }
+  .touch-button { min-width: 60px; min-height: 56px; font-size: 22px; }
+  .touch-big { min-width: 70px; min-height: 70px; font-size: 26px; }
+  .touch-wide { min-width: 134px; min-height: 42px; font-size: 12px; }
 
-  .touch-cluster-move {
-    grid-template-columns: repeat(2, minmax(52px, 1fr));
-  }
-
-  .touch-cluster-actions {
-    grid-template-columns: repeat(3, minmax(52px, 1fr));
-  }
-
-  .touch-button,
-  .touch-controls-toggle {
-    min-width: 50px;
-    min-height: 50px;
-    padding: 0 8px;
-    font-size: 11px;
-  }
-}
-
-@media (orientation: portrait) and (max-width: 760px) {
-  .touch-controls {
-    grid-template-columns: 1fr 1fr;
-    grid-template-areas:
-      "system system"
-      "move actions";
-    gap: 10px;
-    align-items: end;
-  }
-
-  .touch-cluster-system {
-    grid-area: system;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    justify-content: stretch;
-  }
-
-  .touch-cluster-move {
-    grid-area: move;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    justify-content: stretch;
-  }
-
-  .touch-cluster-actions {
-    grid-area: actions;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    justify-content: stretch;
-  }
-
-  .touch-button,
-  .touch-controls-toggle {
-    min-width: 0;
-    width: 100%;
-    padding: 0 4px;
-  }
+  .touch-scheme-dpad .touch-dpad { width: 142px; height: 142px; }
+  .touch-scheme-dpad .touch-dpad .touch-button { min-width: 50px; min-height: 50px; }
+  .touch-scheme-dpad .dpad-left  { top: 46px; }
+  .touch-scheme-dpad .dpad-right { top: 46px; }
+  .touch-scheme-dpad .dpad-down  { left: 46px; }
+  .touch-scheme-dpad .dpad-hub { left: 46px; top: 46px; width: 50px; height: 50px; }
+  .touch-scheme-dpad .touch-fan .touch-button { min-width: 54px; min-height: 54px; }
+  .touch-scheme-dpad .touch-fan .touch-big { min-width: 64px; min-height: 64px; }
 }
 
 @media (max-height: 520px) {

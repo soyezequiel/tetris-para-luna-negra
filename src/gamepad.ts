@@ -67,6 +67,10 @@ export interface GamepadControllerOptions {
     lastName: string | null,
     change: 'connected' | 'disconnected',
   ) => void;
+  // Filtro de mandos: en el duelo local en una misma compu cada asiento escucha
+  // SOLO su mando (por índice), para que el mando del jugador 1 no mueva la pieza
+  // del jugador 2. Sin filtro (default), escucha todos los mandos conectados.
+  padFilter?: (pad: Gamepad) => boolean;
 }
 
 export class GamepadController {
@@ -74,6 +78,7 @@ export class GamepadController {
   private readonly getGamepads: () => Array<Gamepad | null>;
   private readonly eventTarget: GamepadControllerOptions['eventTarget'];
   private readonly onConnectionChange?: GamepadControllerOptions['onConnectionChange'];
+  private readonly padFilter?: GamepadControllerOptions['padFilter'];
   // Acciones activas en el último poll (para detectar flancos: nueva = press, ida = release).
   private active = new Set<ControlAction>();
   private connectedCount = 0;
@@ -88,6 +93,7 @@ export class GamepadController {
       ? (typeof window === 'undefined' ? null : window)
       : options.eventTarget;
     this.onConnectionChange = options.onConnectionChange;
+    this.padFilter = options.padFilter;
     this.eventTarget?.addEventListener('gamepadconnected', this.onConnected as EventListener);
     this.eventTarget?.addEventListener('gamepaddisconnected', this.onDisconnected as EventListener);
   }
@@ -121,6 +127,7 @@ export class GamepadController {
     const pads = this.getGamepads();
     for (const pad of pads) {
       if (!pad) continue;
+      if (this.padFilter && !this.padFilter(pad)) continue;
       this.collectButtonActions(pad, next);
       this.collectAxisActions(pad, next);
     }

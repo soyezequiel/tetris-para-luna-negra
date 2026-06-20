@@ -1,5 +1,9 @@
 import type { ReverbMode } from './audio/SoundEngine';
 
+// Esquema de control táctil elegido por el usuario.
+export type TouchScheme = 'pro' | 'reduced' | 'dpad';
+const TOUCH_SCHEMES: TouchScheme[] = ['pro', 'reduced', 'dpad'];
+
 export interface LocalRecord {
   soundMuted: boolean;
   sfxMuted: boolean;
@@ -8,6 +12,10 @@ export interface LocalRecord {
   musicVolume: number;
   musicReverb: ReverbMode;
   touchControlsHidden: boolean;
+  // Esquema de control táctil elegido por el usuario.
+  touchScheme: TouchScheme;
+  // Vibración (navigator.vibrate) al presionar / fijar piezas.
+  touchHaptics: boolean;
   // Audio posicional: el paneo estéreo de cada sonido sigue la posición en pantalla
   // de su fuente (tu tablero centrado, los mini-tableros rivales de la grilla, etc.).
   positionalAudio: boolean;
@@ -69,6 +77,18 @@ export function saveTouchControlsHidden(touchControlsHidden: boolean): LocalReco
   return record;
 }
 
+export function saveTouchScheme(touchScheme: TouchScheme): LocalRecord {
+  const record = { ...loadRecord(), touchScheme };
+  localStorage.setItem(KEY, JSON.stringify(record));
+  return record;
+}
+
+export function saveTouchHaptics(touchHaptics: boolean): LocalRecord {
+  const record = { ...loadRecord(), touchHaptics };
+  localStorage.setItem(KEY, JSON.stringify(record));
+  return record;
+}
+
 export function savePositionalAudio(positionalAudio: boolean): LocalRecord {
   const record = { ...loadRecord(), positionalAudio };
   localStorage.setItem(KEY, JSON.stringify(record));
@@ -96,6 +116,10 @@ function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
     musicVolume: normalizeVolume(record.musicVolume, DEFAULT_MUSIC_VOLUME),
     musicReverb: normalizeReverb(record.musicReverb),
     touchControlsHidden: record.touchControlsHidden ?? false,
+    touchScheme: TOUCH_SCHEMES.includes(record.touchScheme as TouchScheme)
+      ? (record.touchScheme as TouchScheme)
+      : 'pro',
+    touchHaptics: record.touchHaptics ?? true,
     positionalAudio: record.positionalAudio ?? true,
     royaltyFreeOnly: record.royaltyFreeOnly ?? false,
     backgroundMotion: record.backgroundMotion ?? true,

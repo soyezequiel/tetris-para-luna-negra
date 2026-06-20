@@ -49,6 +49,7 @@ import { displayedElapsedFrames } from './game/timing';
 import type { ActivePiece, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
 import { GamepadController } from './gamepad';
+import { startLocalVersus, type LocalVersusSession } from './app/localVersus';
 import {
   applyHandlingPreset,
   CONTROL_ACTION_LABELS,
@@ -83,7 +84,7 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, SurvivalEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden } from './storage';
+import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
@@ -335,12 +336,17 @@ let selectedHistoryEntryId: string | null = null;
 let libraryError: string | null = null;
 let pendingConfirmAction: DestructiveRunAction | null = null;
 let touchControlsHidden = best.touchControlsHidden;
+let touchScheme: TouchScheme = best.touchScheme;        // 'pro' | 'reduced' | 'dpad'
+let touchHapticsEnabled: boolean = best.touchHaptics;   // navigator.vibrate on/off
 let autoPlayEnabled = false; // TRUCO AUTOPLAY: el bot juega solo al activarse
 let autoPlayAccessGranted = false; // TRUCO AUTOPLAY: habilitado solo con llave local hasheada
 let ignoreNextAutoPlayClick = false; // TRUCO AUTOPLAY: pointerdown ya hizo el toggle
 // BOT DEV: oponente simulado para ver el flujo multijugador completo en modo dev
 // (ver src/dev/devBotOpponent.ts). Solo existe detrás de import.meta.env.DEV.
 let devBotMatch: import('./dev/devBotOpponent').DevBotOpponent | null = null;
+// DUELO LOCAL: sesión del modo 1v1 en la misma compu (overlay propio). Mientras
+// está activa, el loop principal queda en pausa (ver loopBody).
+let localVersusSession: LocalVersusSession | null = null;
 let lastDevBotOverlayHtml = '';
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
@@ -860,6 +866,29 @@ function buildPerfReport(): Record<string, unknown> {
 // Envoltorio resiliente: si un frame lanza, lo registramos pero SIEMPRE volvemos a
 // agendar el siguiente. Antes, una excepción en cualquier paso por-frame mataba el
 // bucle entero de forma permanente y silenciosa (juego congelado, sin error visible).
+// DUELO LOCAL: monta el overlay del modo 1v1 local. El módulo es autocontenido
+// (motores, input, render); acá sólo le pasamos los sonidos compartidos y el
+// colorblind, y soltamos el input del juego principal mientras dure.
+function startLocalVersusMode(): void {
+  if (localVersusSession) return;
+  input.releaseAll();
+  gamepad.releaseAll();
+  localVersusSession = startLocalVersus({
+    colorBlind: customSettings.colorBlindMode,
+    onExit: () => {
+      // Al cerrar, el loop principal retoma el render del menú en el próximo frame.
+      localVersusSession = null;
+      input.releaseAll();
+    },
+    audio: {
+      countdownTick: () => sound.play('countdownTick'),
+      countdownGo: () => sound.play('countdownGo'),
+      gameOver: () => sound.play('gameOver'),
+      win: () => sound.play('finish'),
+    },
+  });
+}
+
 function loop(): void {
   const t0 = performance.now();
   perfFrame = freshPerfFrame();
@@ -876,6 +905,14 @@ function loop(): void {
 }
 
 function loopBody(): void {
+  if (localVersusSession) {
+    // DUELO LOCAL: corre su propio loop/overlay y motores. El juego principal queda
+    // en pausa total (sin música, sin avanzar, sin recolectar input ni redibujar)
+    // hasta que el overlay se cierra. Su propio InputController/GamepadController
+    // maneja a los dos jugadores.
+    sound.setMusicAllowed(false);
+    return;
+  }
   // La música sólo suena en partida/repetición; los menús (incluido el principal)
   // quedan en silencio. setMusicAllowed es idempotente, así que llamarlo cada frame
   // sólo dispara play/pause en la transición real de modo.
@@ -959,6 +996,10 @@ function loopBody(): void {
     // playImmediateInputSounds, así que aquí solo el lock "natural".
     const lockedPiece = state.stats.pieces > beforeTickState.stats.pieces;
     const didHardDrop = gameInputs.some((event) => event.action === 'hardDrop');
+    // Line clear = patrón propio (más fuerte que el lock). Tiene prioridad sobre el
+    // lock simple para que limpiar líneas se sienta distinto a solo fijar la pieza.
+    if (state.stats.lines > beforeTickState.stats.lines) vibrate([12, 30, 18]);
+    else if (lockedPiece) vibrate(didHardDrop ? 30 : 14); // "lock distinto" marcado
     if (lockedPiece && !didHardDrop) juice.onLock();
     // Estela vertical de neón del hard drop: de donde estaba la pieza (active) a
     // donde aterriza (su ghost, en la misma columna/rotación), por cada columna.
@@ -1452,6 +1493,14 @@ function handleOverlayClick(event: MouseEvent): void {
     toggleTouchControls();
     return;
   }
+  if (action === 'cycle-touch-scheme') {
+    cycleTouchScheme();
+    return;
+  }
+  if (action === 'toggle-touch-haptics') {
+    toggleTouchHaptics();
+    return;
+  }
   if (action === 'toggle-autoplay') { // TRUCO AUTOPLAY
     if (ignoreNextAutoPlayClick) {
       ignoreNextAutoPlayClick = false;
@@ -1526,6 +1575,7 @@ function handleOverlayClick(event: MouseEvent): void {
     return;
   }
 
+  if (action === 'local-versus') { startLocalVersusMode(); return; }
   if (action === 'start') startCustomRun();
   if (action === 'restart') restartCurrentRun();
   if (action === 'solo-menu') openModeMenu('soloMenu');
@@ -1733,6 +1783,67 @@ function parseHandlingPreset(value: string | undefined): HandlingPreset | null {
   return HANDLING_PRESET_ORDER.find((preset) => preset === value) ?? null;
 }
 
+// Intensidad de vibración MARCADA POR ACCIÓN: mover = toque suave, rotar = medio,
+// hard drop = fuerte, 180° = doble pulso. lock/clear se disparan aparte (en el tick).
+const TOUCH_HAPTICS: Record<ControlAction, number | number[]> = {
+  moveLeft: 7,
+  moveRight: 7,
+  softDrop: 5,
+  rotateCW: 11,
+  rotateCCW: 11,
+  rotate180: [10, 28, 10],
+  hardDrop: 24,
+  hold: 9,
+  retry: 0,
+  pause: 0,
+};
+
+// Vibra respetando el toggle y la disponibilidad del API (silencioso en desktop).
+function vibrate(pattern: number | number[]): void {
+  if (!touchHapticsEnabled) return;
+  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+  try {
+    navigator.vibrate(pattern);
+  } catch {
+    // Algunos navegadores bloquean vibrate sin gesto de usuario; lo ignoramos.
+  }
+}
+
+function triggerTouchHaptic(action: ControlAction): void {
+  const p = TOUCH_HAPTICS[action];
+  if (Array.isArray(p) ? p.length > 0 : p > 0) vibrate(p);
+}
+
+// Esquemas de control táctil intercambiables (chip en la fila de utilidades).
+const TOUCH_SCHEME_ORDER: TouchScheme[] = ['pro', 'reduced', 'dpad'];
+const TOUCH_SCHEME_LABELS: Record<TouchScheme, string> = {
+  pro: 'Pro',
+  reduced: 'Simple',
+  dpad: 'D-pad',
+};
+
+function releaseActiveTouches(): void {
+  for (const active of activeTouchInputs.values()) {
+    input.releaseControl(active.sourceId);
+    active.control.classList.remove('touch-button-active');
+  }
+  activeTouchInputs.clear();
+}
+
+function cycleTouchScheme(): void {
+  const i = TOUCH_SCHEME_ORDER.indexOf(touchScheme);
+  touchScheme = TOUCH_SCHEME_ORDER[(i + 1) % TOUCH_SCHEME_ORDER.length];
+  best = saveTouchScheme(touchScheme);
+  releaseActiveTouches(); // evita botones "pegados" al recambiar el layout
+  vibrate(8);
+}
+
+function toggleTouchHaptics(): void {
+  touchHapticsEnabled = !touchHapticsEnabled;
+  best = saveTouchHaptics(touchHapticsEnabled);
+  if (touchHapticsEnabled) vibrate(14); // confirmación al encender
+}
+
 function handleTouchControlPointerDown(event: PointerEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
@@ -1743,6 +1854,7 @@ function handleTouchControlPointerDown(event: PointerEvent): void {
   const sourceId = touchSourceId(event.pointerId);
   activeTouchInputs.set(event.pointerId, { sourceId, control });
   input.pressControl(sourceId, action);
+  triggerTouchHaptic(action);
   control.classList.add('touch-button-active');
   try {
     control.setPointerCapture(event.pointerId);
@@ -1943,11 +2055,7 @@ function goToMenu(): void {
 function toggleTouchControls(): void {
   touchControlsHidden = !touchControlsHidden;
   best = saveTouchControlsHidden(touchControlsHidden);
-  for (const active of activeTouchInputs.values()) {
-    input.releaseControl(active.sourceId);
-    active.control.classList.remove('touch-button-active');
-  }
-  activeTouchInputs.clear();
+  releaseActiveTouches();
 }
 
 function openReplayLibrary(): void {
@@ -4992,41 +5100,111 @@ function renderTouchControls(state: GameState): string {
   // todavía en appMode 'playing'. Los controles táctiles ya no sirven y su barra fija
   // tapaba el botón "Reportar" abajo; los ocultamos en cuanto la corrida es terminal.
   if (appMode === 'playing' && terminalLabel(state.status)) return '';
+
   if (touchControlsHidden) {
     return `
       <button class="touch-controls-toggle touch-controls-restore" type="button" data-ui-action="toggle-touch-controls">
-        Touch controls
+        Controles
       </button>
     `;
   }
 
+  const hapticsOn = touchHapticsEnabled;
+  const utility = `
+    <div class="touch-utility">
+      <button class="touch-chip touch-chip-scheme" type="button" data-ui-action="cycle-touch-scheme" aria-label="Cambiar esquema de control">
+        <span class="touch-chip-dot"></span>${TOUCH_SCHEME_LABELS[touchScheme]}
+      </button>
+      <button class="touch-button touch-button-pause touch-chip" type="button" data-touch-action="pause" aria-label="${CONTROL_ACTION_LABELS.pause}">II</button>
+      <button class="touch-chip ${hapticsOn ? 'is-on' : ''}" type="button" data-ui-action="toggle-touch-haptics" aria-label="Vibración">
+        ${hapticsOn ? '✸ Vibra' : '✷ Vibra'}
+      </button>
+      <button class="touch-chip" type="button" data-ui-action="toggle-touch-controls" aria-label="Ocultar controles">Ocultar</button>
+    </div>
+  `;
+
   return `
-    <nav class="touch-controls" aria-label="Touch controls">
-      <div class="touch-cluster touch-cluster-move">
-        ${renderTouchButton('moveLeft', 'Left')}
-        ${renderTouchButton('moveRight', 'Right')}
-        ${renderTouchButton('softDrop', 'Down')}
-      </div>
-      <div class="touch-cluster touch-cluster-system">
-        ${renderTouchButton('hold', 'Hold')}
-        ${renderTouchButton('pause', 'Pause')}
-        <button class="touch-controls-toggle" type="button" data-ui-action="toggle-touch-controls">Hide</button>
-      </div>
-      <div class="touch-cluster touch-cluster-actions">
-        ${renderTouchButton('rotateCCW', 'CCW')}
-        ${renderTouchButton('rotate180', '180')}
-        ${renderTouchButton('rotateCW', 'CW')}
-        ${renderTouchButton('hardDrop', 'Drop')}
+    <nav class="touch-controls touch-scheme-${touchScheme}" aria-label="Controles táctiles">
+      ${utility}
+      <div class="touch-main">
+        ${touchScheme === 'pro' ? renderProScheme()
+          : touchScheme === 'reduced' ? renderReducedScheme()
+          : renderDpadScheme()}
       </div>
     </nav>
   `;
 }
 
-function renderTouchButton(action: ControlAction, label: string): string {
+// Un botón táctil con su acento por acción (mantiene el contrato data-touch-action).
+function renderTouchButton(action: ControlAction, glyph: string, extra = ''): string {
   return `
-    <button class="touch-button touch-button-${action}" type="button" data-touch-action="${action}" aria-label="${CONTROL_ACTION_LABELS[action]}">
-      ${label}
+    <button class="touch-button touch-button-${action} ${extra}" type="button"
+            data-touch-action="${action}" aria-label="${CONTROL_ACTION_LABELS[action]}">
+      ${glyph}
     </button>
+  `;
+}
+
+// Pro: ergonomía a dos pulgares, hard drop primario. (recomendado)
+function renderProScheme(): string {
+  return `
+    <div class="touch-side touch-side-left">
+      ${renderTouchButton('hold', 'HOLD', 'touch-wide')}
+      <div class="touch-pair">
+        ${renderTouchButton('moveLeft', '◀')}
+        ${renderTouchButton('moveRight', '▶')}
+      </div>
+      ${renderTouchButton('softDrop', 'SOFT ▾', 'touch-wide')}
+    </div>
+    <div class="touch-side touch-side-right">
+      <div class="touch-pair touch-pair-rot">
+        ${renderTouchButton('rotateCCW', '↺')}
+        ${renderTouchButton('rotateCW', '↻', 'touch-big')}
+      </div>
+      ${renderTouchButton('hardDrop', '⤓ DROP', 'touch-wide touch-drop')}
+    </div>
+  `;
+}
+
+// Simple: mínima carga cognitiva. Un solo botón de rotación, sin 180.
+function renderReducedScheme(): string {
+  return `
+    <div class="touch-side touch-side-left">
+      <div class="touch-pair">
+        ${renderTouchButton('moveLeft', '◀')}
+        ${renderTouchButton('moveRight', '▶')}
+      </div>
+      ${renderTouchButton('softDrop', '▾ SOFT', 'touch-wide')}
+    </div>
+    <div class="touch-side touch-side-right">
+      <div class="touch-pair">
+        ${renderTouchButton('rotateCW', '↻<small>ROTAR</small>', 'touch-rotate-main')}
+        ${renderTouchButton('hold', 'HOLD')}
+      </div>
+      ${renderTouchButton('hardDrop', '⤓ DROP', 'touch-wide touch-drop')}
+    </div>
+  `;
+}
+
+// D-pad: cruceta de movimiento + abanico de acciones redondas.
+function renderDpadScheme(): string {
+  return `
+    <div class="touch-dpad">
+      ${renderTouchButton('moveLeft', '◀', 'dpad-left')}
+      ${renderTouchButton('moveRight', '▶', 'dpad-right')}
+      ${renderTouchButton('softDrop', '▼', 'dpad-down')}
+      <span class="dpad-hub">MOVE</span>
+    </div>
+    <div class="touch-side touch-side-right touch-fan">
+      <div class="touch-pair touch-pair-rot">
+        ${renderTouchButton('rotateCCW', '↺', 'touch-round')}
+        ${renderTouchButton('rotateCW', '↻', 'touch-round touch-big')}
+      </div>
+      <div class="touch-pair">
+        ${renderTouchButton('hold', 'HOLD', 'touch-round')}
+        ${renderTouchButton('hardDrop', '⤓', 'touch-round touch-drop')}
+      </div>
+    </div>
   `;
 }
 
@@ -7284,6 +7462,7 @@ function renderSmartPlayStage(): string {
         <span class="dash-mode-toggle-track"><span class="dash-mode-toggle-knob"></span></span>
         <span class="dash-mode-toggle-label">Modo Supervivencia <strong>${survival ? 'ON' : 'OFF'}</strong></span>
       </button>
+      <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="local-versus">🎮 Duelo local (1v1)</button>
       <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar partida</button>`;
   } else if (ctx === 'waiting') {
     accent = '#ffb627'; eyebrow = 'SALA · ESPERANDO'; step2 = 'ESPERÁ RIVALES';

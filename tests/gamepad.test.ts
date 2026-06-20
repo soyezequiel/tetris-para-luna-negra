@@ -136,3 +136,25 @@ describe('GamepadController mapeo estándar', () => {
     }
   });
 });
+
+describe('GamepadController padFilter (duelo local por asiento)', () => {
+  function padAt(index: number, buttons: Record<number, number>): Gamepad {
+    return { ...makePad({ buttons }), index } as Gamepad;
+  }
+
+  it('un asiento que filtra por índice ignora el mando del otro jugador', () => {
+    const input = new InputController(DEFAULT_INPUT_SETTINGS, null);
+    const pads: Array<Gamepad | null> = [padAt(0, { 15: 1 }), padAt(1, { 14: 1 })];
+    // Asiento 1 escucha SOLO el mando índice 0 (que pulsa D-pad derecha → moveRight).
+    const seat = new GamepadController(input, {
+      getGamepads: () => pads,
+      eventTarget: null,
+      padFilter: (pad) => pad.index === 0,
+    });
+    seat.poll();
+    input.advanceFrame(1);
+    const acts = input.collect(1).map((i) => i.action);
+    expect(acts).toContain('moveRight'); // del mando 0
+    expect(acts).not.toContain('moveLeft'); // el mando 1 (índice 1) queda filtrado
+  });
+});
