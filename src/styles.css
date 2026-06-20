@@ -3558,11 +3558,17 @@ canvas {
   grid-area: main;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  /* `safe center` conserva el centrado cuando entra todo, pero evita que un
+     contenido alto (por ejemplo un top largo) desborde hacia arriba y oculte
+     las tarjetas de modalidad. */
+  justify-content: flex-start;
+  justify-content: safe center;
   align-items: center;
   padding: 30px;
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Full-bleed hero card (dashboard / screen 01) */
@@ -3831,6 +3837,11 @@ canvas {
   animation: dash-fade-up 0.5s ease 0.3s both;
 }
 .dash-survival-tops .leaderboard-tabs { margin-bottom: 12px; }
+.dash-survival-tops .leaderboard-rows {
+  /* El top embebido no debe apropiarse de toda la altura del hero. Sus filas
+     tienen scroll propio para que las tarjetas, el título y JUGAR sigan a la vista. */
+  max-height: min(32dvh, 300px);
+}
 .dash-survival-tops .dash-action-btn { margin-top: 14px; }
 
 @media (max-width: 560px) {

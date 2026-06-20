@@ -61,6 +61,48 @@ test.describe('TETRA browser flows', () => {
     await expect.poll(() => page.evaluate(() => window.stack40.getState().stats.targetLines)).toBeNull();
   });
 
+  test('keeps the mode buttons visible when the embedded leaderboard has many players', async ({ page }) => {
+    await page.setViewportSize({ width: 1312, height: 893 });
+    await page.route('**/api/leaderboard**', async (route) => {
+      const entries = Array.from({ length: 20 }, (_, index) => ({
+        playerId: `leader-${index + 1}`,
+        npub: null,
+        name: `Jugador ${index + 1}`,
+        avatarUrl: null,
+        wins: 40 - index,
+        createdAtServerMs: Date.now() - index,
+      }));
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ entries, serverNowMs: Date.now() }),
+      });
+    });
+
+    await openFreshApp(page);
+    await action(page, 'play-menu').click();
+    await expect(page.locator('.leaderboard-row')).toHaveCount(20);
+    await expect(page.locator('.dash-mode-card')).toHaveCount(3);
+
+    const layout = await page.evaluate(() => {
+      const hero = document.querySelector<HTMLElement>('.dash-hero');
+      const modeCards = document.querySelector<HTMLElement>('.dash-mode-cards');
+      const rows = document.querySelector<HTMLElement>('.dash-survival-tops .leaderboard-rows');
+      const heroRect = hero?.getBoundingClientRect();
+      const modeCardsRect = modeCards?.getBoundingClientRect();
+      return {
+        modeCardsStartInsideHero: !!heroRect && !!modeCardsRect && modeCardsRect.top >= heroRect.top,
+        modeCardsEndInsideHero: !!heroRect && !!modeCardsRect && modeCardsRect.bottom <= heroRect.bottom,
+        leaderboardScrolls: !!rows && rows.scrollHeight > rows.clientHeight,
+        heroScrollTop: hero?.scrollTop ?? -1,
+      };
+    });
+
+    expect(layout.modeCardsStartInsideHero).toBe(true);
+    expect(layout.modeCardsEndInsideHero).toBe(true);
+    expect(layout.leaderboardScrolls).toBe(true);
+    expect(layout.heroScrollTop).toBe(0);
+  });
+
   test('rebinds input settings and resets them to defaults', async ({ page }) => {
     await openFreshApp(page);
 
