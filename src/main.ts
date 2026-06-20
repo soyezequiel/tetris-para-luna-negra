@@ -1771,7 +1771,7 @@ function handleOverlayClick(event: MouseEvent): void {
     void claimOnlineBetWithExtension(control.dataset.lnurl ?? '');
   }
   if (action === 'online-bet-open-wallet') {
-    openLightningWallet(control.dataset.lnurl ?? '');
+    openLightningWallet(control.dataset.lightning ?? control.dataset.lnurl ?? '');
   }
   if (action === 'online-bet-copy') {
     copyToClipboard(control.dataset.copy ?? '');
@@ -3345,8 +3345,8 @@ async function claimOnlineBetWithExtension(lnurl: string): Promise<void> {
 // Abre el handler `lightning:` del sistema. En Android/iOS permite elegir una
 // wallet instalada compatible con LNURL-withdraw (por ejemplo Wallet of Satoshi)
 // sin necesitar extensión WebLN ni otro dispositivo para escanear el QR.
-function openLightningWallet(lnurl: string): void {
-  const normalized = lnurl.trim();
+function openLightningWallet(lightningPayload: string): void {
+  const normalized = lightningPayload.trim();
   if (!normalized) return;
   recordBetWithdrawalTrace('withdraw-render', onlineRoom, 'open-mobile-wallet');
   window.location.href = `lightning:${normalized.toUpperCase()}`;
@@ -6322,11 +6322,15 @@ function renderOnlineBetPanel(host: boolean): string {
   `).join('');
 
   const myDepositPending = !!myEntry && myEntry.depositStatus === 'pending';
-  const myHasPayHandles = !!(myEntry && (myEntry.bolt11 || myEntry.payUrl));
+  const myHasPayHandles = !!(myEntry && (myEntry.bolt11 || myEntry.lnurl || myEntry.payUrl));
+  const myLightningDepositPayload = myEntry?.bolt11 || myEntry?.lnurl || '';
   const myDeposit = myDepositPending && myHasPayHandles
     ? `
       <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        ${myLightningDepositPayload
+          ? `<button class="dash-action-btn success online-bet-wallet-link" type="button" data-ui-action="online-bet-open-wallet" data-lightning="${escapeHtml(myLightningDepositPayload)}">📱 Abrir wallet Lightning</button>`
+          : ''}
         ${myEntry!.bolt11 ? renderBetInvoiceQr(myEntry!.bolt11) : ''}
         <div class="online-bet-deposit-actions">
           ${myEntry!.bolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myEntry!.bolt11)}"${onlineBetPaying ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : ''}

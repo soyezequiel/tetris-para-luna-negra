@@ -3,8 +3,8 @@
 // SIN interferir con el juego online (/api/*, WebSockets, cross-origin).
 
 // Subir esta versiÃ³n invalida el shell/assets de instalaciones PWA anteriores.
-// v2: fuerza la entrega del UI de cobro mÃ³vil y evita JS/CSS stale.
-const VERSION = 'v2';
+// v3: fuerza la entrega del botÃ³n de wallet tambiÃ©n durante el depÃ³sito.
+const VERSION = 'v3';
 const CACHE = `tetra-${VERSION}`;
 
 // Shell mínimo. Los assets con hash de Vite se cachean en runtime

@@ -508,6 +508,28 @@ test.describe('TETRA browser flows', () => {
     await expect(page.getByText(/depositos 0\/2/).first()).toBeVisible();
   });
 
+  test('shows the system Lightning wallet button before the deposit QR on mobile', async ({ page }) => {
+    await mockOnlineApi(page, { lunaBetRoom: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?inviteToken=fake-token&room=bet12345');
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+
+    const mobileWalletButton = action(page, 'online-bet-open-wallet');
+    await expect(mobileWalletButton).toBeVisible();
+    await expect(mobileWalletButton).toBeInViewport();
+    await expect(mobileWalletButton).toHaveAttribute('data-lightning', 'lnbcpubkey-host-luna');
+
+    const buttonBox = await mobileWalletButton.boundingBox();
+    const qrBox = await page.locator('img[alt="QR de la invoice Lightning"]').boundingBox();
+    expect(buttonBox).not.toBeNull();
+    expect(qrBox).not.toBeNull();
+    expect(buttonBox!.y).toBeLessThan(qrBox!.y);
+  });
+
   test('creates a Luna Negra bet from the visible stake', async ({ page }) => {
     const requests = await mockOnlineApi(page, { lunaGuestRoom: true });
     await page.addInitScript(() => {
