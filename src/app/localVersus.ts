@@ -281,6 +281,7 @@ class LocalVersusMatch {
   private betPollTimer = 0;
   private readonly qrCache = new Map<string, string>();
   private readonly qrPending = new Set<string>();
+  private qrZoomEl: HTMLElement | null = null;
 
   constructor(options: LocalVersusOptions) {
     this.options = options;
@@ -300,6 +301,7 @@ class LocalVersusMatch {
     this.destroyed = true;
     cancelAnimationFrame(this.rafId);
     window.clearTimeout(this.betPollTimer);
+    this.closeQrZoom();
     this.overlay.removeEventListener('keydown', this.onKeyDown);
     this.teardownSeats();
     this.overlay.remove();
@@ -314,6 +316,7 @@ class LocalVersusMatch {
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.code === 'Escape') {
       event.preventDefault();
+      if (this.qrZoomEl) { this.closeQrZoom(); return; }
       if (this.phase === 'seatSetup') this.exit();
       else if (this.phase === 'betDeposit') void this.cancelBetAndBack();
       else this.backToSeatSetup();
@@ -570,7 +573,7 @@ class LocalVersusMatch {
     if (paid) {
       body = '<div class="lv-deposit-ok">✅ Depósito recibido</div>';
     } else if (p?.bolt11) {
-      body = `${this.renderQr(p.bolt11)}<span class="lv-qr-hint">Escaneá con tu billetera Lightning</span>`;
+      body = `${this.renderQr(p.bolt11)}<span class="lv-qr-hint">Escaneá con tu billetera · tocá para agrandar</span>`;
     } else if (p?.depositError) {
       body = `<p class="lv-bet-note lv-bet-warn">⚠️ ${escapeText(p.depositError)} · reintentando…</p>`;
     } else {
@@ -589,19 +592,26 @@ class LocalVersusMatch {
         const action = el.dataset.lv;
         if (action === 'bet-cancel' || action === 'bet-back') void this.cancelBetAndBack();
         else if (action === 'bet-retry') void this.startBetDeposit();
+        else if (action === 'qr-zoom' && el.dataset.qr) this.openQrZoom(el.dataset.qr);
       });
     });
   }
 
   // Genera (y cachea) el data-URL del QR de un invoice/LNURL. Devuelve el <img> si
   // ya está listo, o un placeholder; al resolver, repinta la vista actual.
+  //
+  // Optimizado para escanear de lejos en un stand: corrección de error 'L' (menos
+  // módulos = cada módulo más grande = se lee más fácil) y escala alta para que se
+  // vea nítido grande. El QR es clickeable: lo agranda a pantalla completa.
   private renderQr(value: string): string {
     const cached = this.qrCache.get(value);
-    if (cached) return `<img class="lv-qr" src="${cached}" alt="QR Lightning" decoding="async" />`;
+    if (cached) {
+      return `<img class="lv-qr" src="${cached}" alt="QR Lightning" decoding="async" data-lv="qr-zoom" data-qr="${escapeAttr(value)}" title="Tocá para agrandar" />`;
+    }
     if (!this.qrPending.has(value)) {
       this.qrPending.add(value);
       void QRCode.toDataURL(`lightning:${value.toUpperCase()}`, {
-        errorCorrectionLevel: 'M', margin: 3, scale: 6, color: { dark: '#000000', light: '#ffffff' },
+        errorCorrectionLevel: 'L', margin: 2, scale: 12, color: { dark: '#000000', light: '#ffffff' },
       }).then((url) => {
         this.qrCache.set(value, url);
         this.qrPending.delete(value);
@@ -611,6 +621,29 @@ class LocalVersusMatch {
       }).catch(() => { this.qrPending.delete(value); });
     }
     return '<div class="lv-qr lv-qr-loading">Generando QR…</div>';
+  }
+
+  // Modal a pantalla completa con el QR enorme, para que entre de un escaneo aunque
+  // el celular esté lejos del monitor. Se cierra tocando en cualquier lado.
+  private openQrZoom(value: string): void {
+    const url = this.qrCache.get(value);
+    if (!url) return;
+    this.closeQrZoom();
+    const zoom = document.createElement('div');
+    zoom.className = 'lv-qr-zoom';
+    zoom.innerHTML = `
+      <img class="lv-qr-zoom-img" src="${url}" alt="QR Lightning ampliado" />
+      <span class="lv-qr-zoom-hint">Tocá para cerrar</span>`;
+    zoom.addEventListener('click', () => this.closeQrZoom());
+    // Va al body, NO al overlay: el overlay se reescribe entero en cada repintado
+    // (p. ej. el poll del depósito cada 2 s) y se llevaría puesto el modal.
+    document.body.appendChild(zoom);
+    this.qrZoomEl = zoom;
+  }
+
+  private closeQrZoom(): void {
+    this.qrZoomEl?.remove();
+    this.qrZoomEl = null;
   }
 
   // ── Fase 2-3: cuenta regresiva y partida ───────────────────────────────────
@@ -821,6 +854,7 @@ class LocalVersusMatch {
         if (action === 'exit') this.exit();
         else if (action === 'setup') this.backToSeatSetup();
         else if (action === 'rematch') { this.bet = null; this.teardownSeats(); this.beginCountdown(); }
+        else if (action === 'qr-zoom' && el.dataset.qr) this.openQrZoom(el.dataset.qr);
       });
     });
     this.overlay.focus();
@@ -840,7 +874,7 @@ class LocalVersusMatch {
         <div class="lv-bet-payout">
           <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${winner.payoutSats ?? bet.netPayoutSats} sats</strong>. Escaneá para cobrar:</p>
           ${this.renderQr(winner.withdrawLnurl)}
-          <span class="lv-qr-hint">QR de retiro · Lightning</span>
+          <span class="lv-qr-hint">QR de retiro · tocá para agrandar</span>
         </div>`;
     }
     if (winner?.payoutStatus === 'paid' || winner?.payoutStatus === 'claimed') {
@@ -870,6 +904,10 @@ function isPayoutResolved(bet: LocalBetView): boolean {
 
 function escapeText(value: string): string {
   return value.replace(/[<>&]/g, (c) => (c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;'));
+}
+
+function escapeAttr(value: string): string {
+  return escapeText(value).replace(/"/g, '&quot;');
 }
 
 function randomHoleSeed(): number {
@@ -938,12 +976,16 @@ function ensureStyles(): void {
     .lv-bet-pot-bar { height: 8px; border-radius: 6px; background: rgba(255,255,255,.12); overflow: hidden; }
     .lv-bet-pot-bar span { display: block; height: 100%; background: #ffb627; transition: width .3s; }
     .lv-bet-pot-meta { display: flex; justify-content: space-between; font-size: 12px; opacity: .7; margin-top: 6px; }
-    .lv-qr { width: 200px; height: 200px; border-radius: 10px; display: block; margin: 6px auto; background: #fff; }
-    .lv-qr-loading { width: 200px; height: 200px; display: flex; align-items: center; justify-content: center; margin: 6px auto; border: 1px dashed rgba(255,255,255,.3); border-radius: 10px; font-size: 13px; opacity: .6; }
+    .lv-qr { width: clamp(220px, 30vw, 320px); height: auto; aspect-ratio: 1; border-radius: 12px; display: block; margin: 6px auto; background: #fff; padding: 10px; box-sizing: border-box; cursor: zoom-in; image-rendering: pixelated; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+    .lv-qr:hover { outline: 2px solid rgba(255,255,255,.5); }
+    .lv-qr-loading { width: clamp(220px, 30vw, 320px); aspect-ratio: 1; height: auto; display: flex; align-items: center; justify-content: center; margin: 6px auto; border: 1px dashed rgba(255,255,255,.3); border-radius: 12px; font-size: 13px; opacity: .6; cursor: default; }
     .lv-qr-hint { display: block; text-align: center; font-size: 12px; opacity: .6; }
     .lv-deposit-ok { font-size: 18px; font-weight: 700; color: #4dd07a; padding: 70px 0; }
     .lv-bet-payout { margin: 18px auto 8px; }
     .lv-bet-win { font-size: 17px; margin-bottom: 6px; }
+    .lv-qr-zoom { position: fixed; inset: 0; z-index: 70; background: rgba(2,4,8,.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; cursor: zoom-out; }
+    .lv-qr-zoom-img { width: min(86vw, 86vh); height: min(86vw, 86vh); background: #fff; padding: clamp(12px, 3vw, 28px); border-radius: 16px; box-sizing: border-box; image-rendering: pixelated; }
+    .lv-qr-zoom-hint { font-size: 15px; opacity: .75; }
   `;
   document.head.appendChild(style);
 }
