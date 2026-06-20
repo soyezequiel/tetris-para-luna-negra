@@ -8077,32 +8077,21 @@ function renderModeSelectStage(): string {
     .map((m) => renderModeCard(m, m === mode))
     .join('');
 
-  let primaryActionHtml = '';
   let extraHtml = '';
   if (mode === 'survival') {
-    primaryActionHtml = `
-      <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="sidebar-play" aria-label="Jugar Supervivencia">
-        <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
-        <span class="dash-smart-play-text"><strong>JUGAR</strong><small>Supervivencia · al instante</small></span>
-      </button>`;
     extraHtml = renderSurvivalTopsEmbed();
   } else if (mode === 'custom') {
-    primaryActionHtml = `
-      <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="sidebar-play" aria-label="Jugar Custom">
-        <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
-        <span class="dash-smart-play-text"><strong>JUGAR</strong><small>Custom · al instante</small></span>
-      </button>`;
     extraHtml = `
       <div class="dash-play-secondary">
         <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar partida</button>
       </div>`;
-  } else {
-    primaryActionHtml = `
-      <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="local-versus" aria-label="Iniciar duelo local 1v1">
-        <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
-        <span class="dash-smart-play-text"><strong>INICIAR DUELO</strong><small>1v1 en misma pantalla</small></span>
-      </button>`;
   }
+  const primaryAction = mode === 'local1v1' ? 'local-versus' : 'sidebar-play';
+  const primaryActionHtml = `
+    <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="${primaryAction}" aria-label="Jugar">
+      <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
+      <span class="dash-smart-play-text"><strong>JUGAR</strong></span>
+    </button>`;
 
   return `
     <div class="dash-play-stage dash-play-stage--mode-select" style="--stage-accent: #00f5ff;">
