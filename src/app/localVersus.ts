@@ -597,42 +597,51 @@ class LocalVersusMatch {
     });
   }
 
-  // Genera (y cachea) el data-URL del QR de un invoice/LNURL. Devuelve el <img> si
-  // ya está listo, o un placeholder; al resolver, repinta la vista actual.
-  //
-  // Optimizado para escanear de lejos en un stand: corrección de error 'L' (menos
-  // módulos = cada módulo más grande = se lee más fácil) y escala alta para que se
-  // vea nítido grande. El QR es clickeable: lo agranda a pantalla completa.
+  // Genera (y cachea) el QR de un invoice/LNURL como SVG VECTORIAL. Vectorial =
+  // bordes perfectos a cualquier tamaño (sin interpolación ni módulos desparejos
+  // que confunden al escáner), que es lo que más acelera la lectura. Además:
+  // corrección de error 'L' (menos módulos = cada uno más grande) y bolt11 en
+  // MAYÚSCULAS (modo alfanumérico del QR = menos módulos todavía). Clickeable: lo
+  // agranda a pantalla completa.
   private renderQr(value: string): string {
     const cached = this.qrCache.get(value);
     if (cached) {
-      return `<img class="lv-qr" src="${cached}" alt="QR Lightning" decoding="async" data-lv="qr-zoom" data-qr="${escapeAttr(value)}" title="Tocá para agrandar" />`;
+      return `<div class="lv-qr" data-lv="qr-zoom" data-qr="${escapeAttr(value)}" title="Tocá para agrandar">${cached}</div>`;
     }
     if (!this.qrPending.has(value)) {
       this.qrPending.add(value);
-      void QRCode.toDataURL(`lightning:${value.toUpperCase()}`, {
-        errorCorrectionLevel: 'L', margin: 2, scale: 12, color: { dark: '#000000', light: '#ffffff' },
-      }).then((url) => {
-        this.qrCache.set(value, url);
+      void QRCode.toString(`lightning:${value.toUpperCase()}`, {
+        type: 'svg', errorCorrectionLevel: 'L', margin: 2, color: { dark: '#000000', light: '#ffffff' },
+      }).then((svg) => {
+        // `crispEdges` mata el anti-aliasing entre módulos (bordes duros) y el
+        // viewBox del lib deja que el SVG escale a cualquier tamaño sin perder
+        // nitidez. Le sacamos el width/height fijos para que llene el contenedor.
+        const processed = svg
+          .replace(/<svg /, '<svg shape-rendering="crispEdges" preserveAspectRatio="xMidYMid meet" ')
+          // Solo el width/height del <svg> (espacio delante); NO toca stroke-width.
+          .replace(/\s(width|height)="[^"]*"/g, ' ');
+        this.qrCache.set(value, processed);
         this.qrPending.delete(value);
         if (this.destroyed) return;
         if (this.phase === 'betDeposit') this.renderBetDeposit();
         else if (this.phase === 'finished') this.renderFinished();
+        if (this.qrZoomEl?.dataset.qr === value) this.openQrZoom(value); // refresca el zoom abierto
       }).catch(() => { this.qrPending.delete(value); });
     }
     return '<div class="lv-qr lv-qr-loading">Generando QR…</div>';
   }
 
-  // Modal a pantalla completa con el QR enorme, para que entre de un escaneo aunque
-  // el celular esté lejos del monitor. Se cierra tocando en cualquier lado.
+  // Modal a pantalla completa con el QR enorme (vectorial, nítido), para que entre
+  // de un escaneo aunque el celular esté lejos del monitor. Cierra al tocar.
   private openQrZoom(value: string): void {
-    const url = this.qrCache.get(value);
-    if (!url) return;
+    const svg = this.qrCache.get(value);
+    if (!svg) return;
     this.closeQrZoom();
     const zoom = document.createElement('div');
     zoom.className = 'lv-qr-zoom';
+    zoom.dataset.qr = value;
     zoom.innerHTML = `
-      <img class="lv-qr-zoom-img" src="${url}" alt="QR Lightning ampliado" />
+      <div class="lv-qr-zoom-box">${svg}</div>
       <span class="lv-qr-zoom-hint">Tocá para cerrar</span>`;
     zoom.addEventListener('click', () => this.closeQrZoom());
     // Va al body, NO al overlay: el overlay se reescribe entero en cada repintado
@@ -976,15 +985,17 @@ function ensureStyles(): void {
     .lv-bet-pot-bar { height: 8px; border-radius: 6px; background: rgba(255,255,255,.12); overflow: hidden; }
     .lv-bet-pot-bar span { display: block; height: 100%; background: #ffb627; transition: width .3s; }
     .lv-bet-pot-meta { display: flex; justify-content: space-between; font-size: 12px; opacity: .7; margin-top: 6px; }
-    .lv-qr { width: clamp(220px, 30vw, 320px); height: auto; aspect-ratio: 1; border-radius: 12px; display: block; margin: 6px auto; background: #fff; padding: 10px; box-sizing: border-box; cursor: zoom-in; image-rendering: pixelated; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+    .lv-qr { width: clamp(220px, 30vw, 320px); aspect-ratio: 1; border-radius: 12px; margin: 6px auto; background: #fff; padding: 10px; box-sizing: border-box; cursor: zoom-in; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+    .lv-qr svg { display: block; width: 100%; height: 100%; }
     .lv-qr:hover { outline: 2px solid rgba(255,255,255,.5); }
-    .lv-qr-loading { width: clamp(220px, 30vw, 320px); aspect-ratio: 1; height: auto; display: flex; align-items: center; justify-content: center; margin: 6px auto; border: 1px dashed rgba(255,255,255,.3); border-radius: 12px; font-size: 13px; opacity: .6; cursor: default; }
+    .lv-qr-loading { width: clamp(220px, 30vw, 320px); aspect-ratio: 1; display: flex; align-items: center; justify-content: center; margin: 6px auto; border: 1px dashed rgba(255,255,255,.3); border-radius: 12px; font-size: 13px; opacity: .6; cursor: default; }
     .lv-qr-hint { display: block; text-align: center; font-size: 12px; opacity: .6; }
     .lv-deposit-ok { font-size: 18px; font-weight: 700; color: #4dd07a; padding: 70px 0; }
     .lv-bet-payout { margin: 18px auto 8px; }
     .lv-bet-win { font-size: 17px; margin-bottom: 6px; }
-    .lv-qr-zoom { position: fixed; inset: 0; z-index: 70; background: rgba(2,4,8,.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; cursor: zoom-out; }
-    .lv-qr-zoom-img { width: min(86vw, 86vh); height: min(86vw, 86vh); background: #fff; padding: clamp(12px, 3vw, 28px); border-radius: 16px; box-sizing: border-box; image-rendering: pixelated; }
+    .lv-qr-zoom { position: fixed; inset: 0; z-index: 70; background: rgba(2,4,8,.94); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; cursor: zoom-out; }
+    .lv-qr-zoom-box { width: min(92vw, 92vh); height: min(92vw, 92vh); background: #fff; padding: clamp(16px, 4vw, 40px); border-radius: 16px; box-sizing: border-box; }
+    .lv-qr-zoom-box svg { display: block; width: 100%; height: 100%; }
     .lv-qr-zoom-hint { font-size: 15px; opacity: .75; }
   `;
   document.head.appendChild(style);

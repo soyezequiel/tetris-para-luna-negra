@@ -65,6 +65,8 @@ export class BackgroundFX {
   private danger = 0;
   private dangerTarget = 0;
   private dangerCritical = false;
+  // Freeze de perf (móvil en juego): congela el repintado por movimiento ambiente. Ver setPerfFreeze.
+  private perfFreeze = false;
 
   private readonly onResize = () => this.resize();
 
@@ -132,6 +134,17 @@ export class BackgroundFX {
 
   setMotion(enabled: boolean): void { this.motion = enabled; this.dirty = true; }
 
+  // Congela el MOVIMIENTO ambiente a un cuadro estático (sin avanzar this.t ni repintar por
+  // animación). Para móvil en juego activo: un canvas estático se re-compone barato (textura
+  // cacheada en GPU); lo caro es re-rasterizar+subir el fondo fullscreen ~30×/s, y eso es lo
+  // que atrasa el rAF/compositor → jitter de pacing. El crossfade de semilla (partida nueva)
+  // y el oscurecido por peligro NO se congelan: son transiciones puntuales y relevantes.
+  setPerfFreeze(freeze: boolean): void {
+    if (freeze === this.perfFreeze) return;
+    this.perfFreeze = freeze;
+    this.dirty = true; // un último repintado para asentar el cuadro al entrar/salir del freeze
+  }
+
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     this.dirty = true;
@@ -193,7 +206,10 @@ export class BackgroundFX {
     // Si solo está activo "reducir movimiento" del sistema, NO lo congelamos: el fondo
     // es difuso y lento (no es el tipo de animación que marea), así que lo dejamos
     // derivar a una fracción de la velocidad en vez de quedar estático.
-    if (this.motion) this.t += this.reducedMotion ? dt * 0.3 : dt;
+    // perfFreeze (móvil en juego) congela SOLO el movimiento ambiente: no avanza this.t ni
+    // dispara repintados por animación. El crossfade de semilla y el peligro siguen vivos.
+    const motionLive = this.motion && !this.perfFreeze;
+    if (motionLive) this.t += this.reducedMotion ? dt * 0.3 : dt;
     // Suavizado del peligro hacia su objetivo (~constante de tiempo de ~0.25s).
     this.danger += (this.dangerTarget - this.danger) * Math.min(1, dt * 4);
     if (this.transStyle) {
@@ -207,8 +223,8 @@ export class BackgroundFX {
     // Con el movimiento apagado y sin peligro el fondo es estático: repintar gradientes
     // radiales a pantalla completa 30×/s sería costo puro tirado (caro en Firefox).
     const dangerLive = Math.abs(this.dangerTarget - this.danger) > 0.002
-      || (this.danger > 0.01 && this.dangerCritical && this.motion);
-    const animating = this.motion || this.transStyle !== null || dangerLive;
+      || (this.danger > 0.01 && this.dangerCritical && motionLive);
+    const animating = motionLive || this.transStyle !== null || dangerLive;
     // Throttle del fondo a ~30fps (ver drawInterval). El loop de rAF sigue a 60 para
     // mantener this.t suave, pero solo repintamos cada ~33ms.
     if (this.enabled && (this.dirty || animating) && now - this.lastDraw >= this.drawInterval - 4) {

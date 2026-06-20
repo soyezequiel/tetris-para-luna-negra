@@ -1069,6 +1069,9 @@ function loopBody(): void {
   syncRivalPieceSounds(); // sonidos atenuados de pieza de los rivales mientras juego
   syncOnlineDeathPhase(state);
   syncSoloDeathPhase(state);
+  // Perfil móvil de render: durante el juego activo congela el repintado del fondo (no-op en
+  // desktop). Atacar el costo de composición es lo que reduce el jitter de pacing en celular.
+  renderer.setGameplayActive(appMode === 'playing' || appMode === 'onlinePlaying');
   // Ya morí y terminó la animación de derrota: paso a espectador. En vez de ocultar
   // el canvas dibujo en él la partida del rival enfocado (líder o el que elija), así
   // se ve como si siguiera jugando una partida normal en vez de una vista aparte.

@@ -9,6 +9,15 @@ import { DEFAULT_RULES } from '../game/rules';
 import { displayedElapsedFrames } from '../game/timing';
 import type { GameState, PieceType } from '../game/types';
 
+// Perfil móvil de render (espejo del mobileProfile de audio en NeoSynth): en pantallas
+// táctiles el costo de COMPOSICIÓN del canvas (alta-dpr + antialias + 2da superficie de
+// BackgroundFX) atrasa el rAF → jitter de pacing (~1 stutter/seg) aunque la CPU del juego
+// esté holgada (medido: gap33/gap50 altos con 0 picos de loop). Bajamos ese costo de GPU.
+// Se decide una sola vez al cargar (no cambia en runtime); coarse = sin mouse fino = táctil.
+const COARSE_POINTER = ((): boolean => {
+  try { return window.matchMedia?.('(pointer: coarse)').matches ?? false; } catch { return false; }
+})();
+
 const GRID_LINE = 0x2f3338;
 const GHOST_FILL = 0x07090b;
 const GHOST_LINE = 0x525a60;
@@ -110,8 +119,11 @@ export class PixiGameRenderer {
     this.app = new Application({
       resizeTo: window,
       backgroundAlpha: 0,
-      antialias: true,
-      resolution: Math.min(devicePixelRatio, 2),
+      // Móvil: sin MSAA (caro en GPUs móviles a pantalla completa; los bloques de neón son
+      // rects alineados al eje, así que el costo visual es mínimo) y techo de resolución más
+      // bajo (1.5 vs 2) para pintar ~44% menos píxeles por frame en un dpr3.
+      antialias: !COARSE_POINTER,
+      resolution: Math.min(devicePixelRatio, COARSE_POINTER ? 1.5 : 2),
       autoDensity: true,
       powerPreference: 'high-performance',
     });
@@ -201,6 +213,13 @@ export class PixiGameRenderer {
   setBackgroundMotion(enabled: boolean): void { this.backgroundFX.setMotion(enabled); }
 
   setBackgroundEnabled(enabled: boolean): void { this.backgroundFX.setEnabled(enabled); }
+
+  // En móvil, congela el repintado del fondo durante el juego activo (perfil móvil de render):
+  // un canvas estático se re-compone barato; lo caro es re-rasterizarlo 30×/s, que atrasa el
+  // rAF/compositor. En desktop no se toca (su costo de composición no ahoga el frame).
+  setGameplayActive(active: boolean): void {
+    if (COARSE_POINTER) this.backgroundFX.setPerfFreeze(active);
+  }
 
   getJuice(): JuiceFX {
     return this.juice;
