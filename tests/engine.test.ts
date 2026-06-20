@@ -3133,6 +3133,99 @@ describe('core stacker engine', () => {
     expect(reopened.players.every((player) => player.ready && player.status === 'ready' && player.alive)).toBe(true);
   });
 
+  it('keeps a finished room and its bet while an anonymous winner still has to withdraw', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createRoom(store, {
+      playerId: 'player-withdraw-host',
+      name: 'Host',
+      visibility: 'private',
+      mode: 'custom',
+      matchType: 'custom',
+    }, 1000);
+    await joinRoom(store, { roomId: room.id, playerId: 'player-withdraw-guest', name: 'Guest' }, 1100);
+    const started = await startRoom(store, { roomId: room.id, playerId: 'player-withdraw-host' }, 1200);
+    const finished = await eliminatePlayer(store, {
+      roomId: room.id,
+      authorityPlayerId: 'player-withdraw-host',
+      playerId: 'player-withdraw-guest',
+      seed: started.seed,
+      frame: 600,
+      lines: 3,
+      pieces: 9,
+      elapsedFrames: 600,
+    }, 1300);
+    finished.bet = {
+      betId: 'bet-withdraw-pending',
+      status: 'settled',
+      stakeSats: 25,
+      potSats: 50,
+      potTargetSats: 50,
+      feeSats: 1,
+      feePct: 2,
+      netPayoutSats: 49,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [
+        {
+          npub: 'npub-withdraw-host',
+          playerId: 'player-withdraw-host',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          depositError: null,
+          payoutSats: 49,
+          payoutStatus: 'withdraw_pending',
+          withdrawLnurl: 'LNURL1KEEPVISIBLE',
+          withdrawUrl: 'https://luna.example/withdraw/keep-visible',
+        },
+        {
+          npub: 'npub-withdraw-guest',
+          playerId: 'player-withdraw-guest',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          depositError: null,
+          payoutSats: null,
+          payoutStatus: 'none',
+          withdrawLnurl: null,
+          withdrawUrl: null,
+        },
+      ],
+      winnerNpubs: ['npub-withdraw-host'],
+      resultReported: true,
+      settlementError: null,
+      createdByPlayerId: 'player-withdraw-host',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1300,
+    };
+    await store.saveRoom(finished);
+
+    await expect(restartRoom(
+      store,
+      { roomId: room.id, playerId: 'player-withdraw-host' },
+      1350,
+    )).rejects.toThrow('Todavía hay un cobro o reembolso pendiente.');
+
+    const blocked = await reopenRoom(store, { roomId: room.id, playerId: 'player-withdraw-host' }, 1400);
+    expect(blocked.status).toBe('finished');
+    expect(blocked.bet?.participants[0]?.withdrawLnurl).toBe('LNURL1KEEPVISIBLE');
+
+    blocked.bet!.participants[0] = {
+      ...blocked.bet!.participants[0]!,
+      payoutStatus: 'claimed',
+      withdrawLnurl: null,
+      withdrawUrl: null,
+    };
+    await store.saveRoom(blocked);
+
+    const reopened = await reopenRoom(store, { roomId: room.id, playerId: 'player-withdraw-host' }, 1500);
+    expect(reopened.status).toBe('lobby');
+    expect(reopened.bet).toBeNull();
+  });
+
   it('changes only the visibility with a visibilityOnly settings update', async () => {
     const store = new MemoryRoomStore();
     const room = await createRoom(store, {

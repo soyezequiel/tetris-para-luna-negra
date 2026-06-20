@@ -567,7 +567,7 @@ test.describe('TETRA browser flows', () => {
   });
 
   test('shows the LNURL withdrawal controls to a settled winner', async ({ page }) => {
-    await mockOnlineApi(page, { lunaWithdrawRoom: true });
+    const requests = await mockOnlineApi(page, { lunaWithdrawRoom: true });
     await page.addInitScript(() => {
       window.localStorage.clear();
     });
@@ -578,6 +578,13 @@ test.describe('TETRA browser flows', () => {
     await expect(page.getByText(/Cobrá escaneando el QR/)).toBeVisible();
     await expect(action(page, 'online-bet-claim-webln')).toBeVisible();
     await expect(page.getByText('Acreditados en tu billetera Lightning.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Cobrá antes de continuar' })).toBeDisabled();
+
+    // La apuesta sigue consultándose después de `settled` para detectar el claim,
+    // pero el QR debe permanecer montado y visible durante esos polls.
+    requests.betRefreshCount = 0;
+    await expect.poll(() => requests.betRefreshCount, { timeout: 5000 }).toBeGreaterThan(0);
+    await expect(page.locator('img[alt="QR de retiro Lightning"]')).toBeVisible();
   });
 
   test('does not claim wallet credit while a withdrawal handle is missing', async ({ page }) => {

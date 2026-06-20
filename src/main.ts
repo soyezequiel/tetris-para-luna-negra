@@ -81,7 +81,7 @@ import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayM
 import { OnlineReplayCollector } from './app/multiplayerReplay';
 import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlaybackSnapshot, type MultiReplayPlayerSnapshot } from './app/multiReplayPlayback';
 import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
-import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
+import { hasUnresolvedRoomBetPayout, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, SurvivalEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
@@ -3034,9 +3034,11 @@ function closeOnlineResults(): void {
 async function reopenOnlineRoom(): Promise<void> {
   if (!onlineRoom || !isOnlineHost() || onlineRoomReopenInFlight) return;
   if (onlineRoom.status !== 'finished') return;
-  // No reabrimos hasta que la apuesta termine de liquidarse: el server la borra
-  // al reabrir y se perdería el reintento de pago al ganador.
+  // No reabrimos hasta que la apuesta y sus pagos terminen. `settled` puede incluir
+  // un ganador invitado con retiro pendiente; borrar la apuesta haría desaparecer
+  // su QR. El servidor repite esta validación para proteger contra otros clientes.
   if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) return;
+  if (onlineRoom.bet && hasUnresolvedRoomBetPayout(onlineRoom.bet)) return;
   onlineRoomReopenInFlight = true;
   try {
     const response = await onlineClient.reopenRoom({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
@@ -4080,7 +4082,13 @@ function maybeRefreshBet(): void {
 }
 
 function isRefreshableRoomBet(bet: RoomBet | null | undefined): bet is RoomBet {
-  return !!bet && (bet.status === 'pending_deposits' || bet.status === 'funded');
+  return !!bet && (
+    bet.status === 'pending_deposits'
+    || bet.status === 'funded'
+    // Después de resolver seguimos consultando mientras haya un retiro/pago
+    // pendiente, para detectar `claimed` sin que el usuario recargue la página.
+    || hasUnresolvedRoomBetPayout(bet)
+  );
 }
 
 function hasOwnPendingDeposit(bet: RoomBet): boolean {
@@ -5582,6 +5590,9 @@ function renderOnlineResultsOverlay(state: GameState): string {
   const room = onlineRoom;
   const ranked = room ? rankPlayers(room.players) : [];
   const bet = room?.bet;
+  const mustClaimBeforeLeaving = bet
+    ? myBetEntry(bet)?.payoutStatus === 'withdraw_pending'
+    : false;
   const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded') ? bet.netPayoutSats : null;
   // Frame en que terminó la partida = el del último rival eliminado. El ganador sigue
   // vivo, así que su elapsedFrames quedó congelado en su último snapshot y puede ser
@@ -5632,7 +5643,9 @@ function renderOnlineResultsOverlay(state: GameState): string {
         </div>
         ${renderReportBlock()}
         <div class="online-results-next">
-          <button class="solo-results-btn solo-results-btn--next" type="button" data-ui-action="online-results-menu">Siguiente</button>
+          ${mustClaimBeforeLeaving
+            ? '<button class="solo-results-btn solo-results-btn--next" type="button" disabled title="Cobrá el retiro antes de continuar">Cobrá antes de continuar</button>'
+            : '<button class="solo-results-btn solo-results-btn--next" type="button" data-ui-action="online-results-menu">Siguiente</button>'}
         </div>
       </div>
     </div>

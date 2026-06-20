@@ -361,6 +361,9 @@ async function restartRoomOnce(
     if (!isTerminalRoomBetStatus(room.bet.status)) {
       throw new OnlineRoomError('La apuesta todavía no terminó de liquidarse.', 409);
     }
+    if (hasUnresolvedRoomBetPayout(room.bet)) {
+      throw new OnlineRoomError('Todavía hay un cobro o reembolso pendiente.', 409);
+    }
     room.bet = null;
   }
   room.matchResultId = null;
@@ -385,6 +388,10 @@ async function reopenRoomOnce(
   if (room.hostPlayerId !== request.playerId) throw new OnlineRoomError('Only the host can reopen the room.', 403);
   if (room.status !== 'finished') return room;
   if (room.bet && !isTerminalRoomBetStatus(room.bet.status)) return room;
+  // `settled` solo significa que Luna resolvió el resultado. Un ganador invitado
+  // puede seguir en `withdraw_pending`; borrar la apuesta acá elimina su QR antes
+  // de que alcance a cobrar. La sala se conserva hasta claimed/paid/forfeited.
+  if (room.bet && hasUnresolvedRoomBetPayout(room.bet)) return room;
   room.bet = null;
   room.status = 'lobby';
   room.startsAtServerMs = null;
@@ -1556,6 +1563,23 @@ function normalizeBetStatus(value: unknown): RoomBetStatus {
 
 export function isTerminalRoomBetStatus(status: RoomBetStatus): boolean {
   return status === 'settled' || status === 'cancelled' || status === 'expired' || status === 'refunded';
+}
+
+/** Cobros/reembolsos que todavía requieren conservar la apuesta y sus handles. */
+export function hasUnresolvedRoomBetPayout(bet: RoomBet): boolean {
+  return bet.participants.some((participant) => {
+    if (
+      participant.payoutStatus === 'pending'
+      || participant.payoutStatus === 'failed'
+      || participant.payoutStatus === 'withdraw_pending'
+    ) return true;
+
+    const hasAssignedPayout = (participant.payoutSats ?? 0) > 0;
+    return hasAssignedPayout
+      && participant.payoutStatus !== 'paid'
+      && participant.payoutStatus !== 'claimed'
+      && participant.payoutStatus !== 'forfeited';
+  });
 }
 
 function normalizeBetDepositStatus(value: unknown): RoomBetParticipant['depositStatus'] {
