@@ -106,15 +106,32 @@ test.describe('TETRA browser flows', () => {
       const rect = element.getBoundingClientRect();
       return { top: Math.round(rect.top), left: Math.round(rect.left) };
     });
+    const playButtonPosition = async () => page.locator('.dash-mode-primary-action').evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        top: Math.round(rect.top),
+        left: Math.round(rect.left),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        right: style.right,
+        bottom: style.bottom,
+      };
+    });
     const survivalPosition = await selectorPosition();
+    const survivalPlayPosition = await playButtonPosition();
+    expect(survivalPlayPosition.right).toBe('48px');
+    expect(survivalPlayPosition.bottom).toBe('48px');
 
     await page.locator('.dash-mode-card[data-mode="custom"]').click();
     await expect(page.getByRole('heading', { name: 'Partida custom' })).toBeVisible();
     expect(await selectorPosition()).toEqual(survivalPosition);
+    expect(await playButtonPosition()).toEqual(survivalPlayPosition);
 
     await page.locator('.dash-mode-card[data-mode="local1v1"]').click();
     await expect(page.getByRole('heading', { name: 'Duelo local (1v1)' })).toBeVisible();
     expect(await selectorPosition()).toEqual(survivalPosition);
+    expect(await playButtonPosition()).toEqual(survivalPlayPosition);
   });
 
   test('rebinds input settings and resets them to defaults', async ({ page }) => {

@@ -8077,25 +8077,27 @@ function renderModeSelectStage(): string {
     .map((m) => renderModeCard(m, m === mode))
     .join('');
 
-  let detailHtml = '';
+  let primaryActionHtml = '';
+  let extraHtml = '';
   if (mode === 'survival') {
-    detailHtml = `
+    primaryActionHtml = `
       <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="sidebar-play" aria-label="Jugar Supervivencia">
         <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
         <span class="dash-smart-play-text"><strong>JUGAR</strong><small>Supervivencia · al instante</small></span>
-      </button>
-      ${renderSurvivalTopsEmbed()}`;
+      </button>`;
+    extraHtml = renderSurvivalTopsEmbed();
   } else if (mode === 'custom') {
-    detailHtml = `
+    primaryActionHtml = `
       <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="sidebar-play" aria-label="Jugar Custom">
         <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
         <span class="dash-smart-play-text"><strong>JUGAR</strong><small>Custom · al instante</small></span>
-      </button>
+      </button>`;
+    extraHtml = `
       <div class="dash-play-secondary">
         <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar partida</button>
       </div>`;
   } else {
-    detailHtml = `
+    primaryActionHtml = `
       <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="local-versus" aria-label="Iniciar duelo local 1v1">
         <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
         <span class="dash-smart-play-text"><strong>INICIAR DUELO</strong><small>1v1 en misma pantalla</small></span>
@@ -8110,7 +8112,8 @@ function renderModeSelectStage(): string {
         <div class="dash-play-eyebrow">${meta.eyebrow}</div>
         <h2 class="dash-play-title">${meta.title}</h2>
         <p class="dash-play-subtitle">${meta.subtitle}</p>
-        <div class="dash-play-cta">${detailHtml}</div>
+        <div class="dash-play-cta dash-mode-primary-action">${primaryActionHtml}</div>
+        ${extraHtml}
       </div>
     </div>
   `;

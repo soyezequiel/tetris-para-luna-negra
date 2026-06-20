@@ -3739,6 +3739,21 @@ canvas {
     margin: 0 auto;
     padding-top: 18px;
   }
+
+  .dash-mode-primary-action {
+    /* Acción persistente en la esquina marcada: no depende de la altura del
+       título, la configuración o el ranking del modo activo. */
+    position: absolute;
+    right: 48px;
+    bottom: 48px;
+    z-index: 4;
+    animation: none;
+  }
+
+  .dash-mode-primary-action .dash-smart-play {
+    width: 314px;
+    justify-content: center;
+  }
 }
 
 .dash-play-stage--mode-select > .dash-play-eyebrow,
