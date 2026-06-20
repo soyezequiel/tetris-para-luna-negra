@@ -1880,6 +1880,9 @@ function cycleTouchScheme(): void {
   touchScheme = TOUCH_SCHEME_ORDER[(i + 1) % TOUCH_SCHEME_ORDER.length];
   best = saveTouchScheme(touchScheme);
   releaseActiveTouches(); // evita botones "pegados" al recambiar el layout
+  // El nuevo esquema reacomoda los botones (alto distinto) sin disparar un resize de
+  // ventana: invalidamos el inset cacheado para que el tablero se reajuste enseguida.
+  renderer.markLayoutDirty();
   vibrate(20);
 }
 

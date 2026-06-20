@@ -114,6 +114,16 @@ export class PixiGameRenderer {
   // Marca un resize pendiente: fuerza una reconstrucción completa en el próximo render
   // aunque el motor no haya avanzado (ver render(), parámetro `changed`).
   private layoutDirty = false;
+  // Caché del inset de controles táctiles. Medirlo (querySelector + getBoundingClientRect)
+  // fuerza un reflow sincrónico; hacerlo CADA frame en móvil (donde layout() corre por frame
+  // a 60Hz) era el principal generador de microcortes de cadencia (gap33). Sólo lo remedimos
+  // cuando cambia el viewport, se invalida el layout (resize/cambio de esquema táctil) o pasa
+  // un umbral de tiempo como red de seguridad.
+  private cachedTouchInset = 0;
+  private lastTouchMeasureMs = 0;
+  private measuredViewportW = 0;
+  private measuredViewportH = 0;
+  private touchInsetDirty = true;
 
   constructor(root: HTMLElement) {
     this.app = new Application({
@@ -189,7 +199,7 @@ export class PixiGameRenderer {
     );
     this.stage.addChild(this.bg, this.sideLayer, this.boardLayer, this.pieceLayer, this.effectLayer, this.juiceLayer, this.labelLayer, this.hudText);
     this.app.stage.addChild(this.stage);
-    window.addEventListener('resize', () => { this.layoutDirty = true; this.layout(); });
+    window.addEventListener('resize', () => { this.markLayoutDirty(); this.layout(); });
     this.layout();
   }
 
@@ -333,6 +343,39 @@ export class PixiGameRenderer {
     this.pieceLayer.endFill();
   }
 
+  // Invalida el inset cacheado de controles táctiles: lo llama main.ts cuando cambia el
+  // esquema (Pro/Simple/D-pad) o se ocultan/muestran los controles, ya que eso reacomoda el
+  // DOM sin disparar un resize de ventana.
+  markLayoutDirty(): void {
+    this.layoutDirty = true;
+    this.touchInsetDirty = true;
+  }
+
+  // Inset de los controles táctiles, cacheado. La medición real (querySelector +
+  // getBoundingClientRect) fuerza un reflow sincrónico; sólo la hacemos cuando el viewport
+  // cambió, se invalidó el layout, o pasaron >250ms (red de seguridad por si el DOM de
+  // controles cambió sin avisar). En estado estable devuelve el valor cacheado sin tocar el DOM.
+  private touchControlsInset(): number {
+    const now = performance.now();
+    const viewportChanged = this.width !== this.measuredViewportW || this.height !== this.measuredViewportH;
+    if (this.touchInsetDirty || viewportChanged || now - this.lastTouchMeasureMs > 250) {
+      const touchEl = document.querySelector('.touch-controls') as HTMLElement | null;
+      if (touchEl && touchEl.offsetHeight > 0) {
+        this.cachedTouchInset = Math.max(0, this.height - touchEl.getBoundingClientRect().top) + 8;
+      } else if (document.querySelector('.touch-controls-restore')) {
+        // Controles ocultos: sólo el botón chico "Controles" abajo a la derecha.
+        this.cachedTouchInset = 64;
+      } else {
+        this.cachedTouchInset = 0;
+      }
+      this.lastTouchMeasureMs = now;
+      this.measuredViewportW = this.width;
+      this.measuredViewportH = this.height;
+      this.touchInsetDirty = false;
+    }
+    return this.cachedTouchInset;
+  }
+
   private layout(state?: GameState): void {
     this.boardColumns = state?.stats.boardWidth ?? this.boardColumns;
     this.visibleRows = state?.stats.visibleRows ?? this.visibleRows;
@@ -342,16 +385,9 @@ export class PixiGameRenderer {
     // Reservamos para los controles táctiles EXACTAMENTE el alto que ocupan, medido del
     // DOM real, para que el tablero no quede tapado. El layout de los botones cambia con
     // el esquema (Pro/Simple/D-pad) y la orientación, así que un inset fijo se quedaba
-    // corto (Pro tapaba el tablero). `height - rect.top` = espacio que ocupan abajo
-    // (incluye el offset de safe-area). Sólo medimos si están realmente visibles.
-    let touchControlsInset = 0;
-    const touchEl = document.querySelector('.touch-controls') as HTMLElement | null;
-    if (touchEl && touchEl.offsetHeight > 0) {
-      touchControlsInset = Math.max(0, this.height - touchEl.getBoundingClientRect().top) + 8;
-    } else if (document.querySelector('.touch-controls-restore')) {
-      // Controles ocultos: sólo el botón chico "Controles" abajo a la derecha.
-      touchControlsInset = 64;
-    }
+    // corto (Pro tapaba el tablero). La medición fuerza un reflow, así que la cacheamos y
+    // sólo remedimos cuando algo pudo cambiarla (ver measureTouchControlsInset).
+    const touchControlsInset = this.touchControlsInset();
     const availableHeight = Math.max(360, this.height - touchControlsInset);
 
     // En pantallas angostas los paneles laterales se compactan para dejar más espacio al tablero.
