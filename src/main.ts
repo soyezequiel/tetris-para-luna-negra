@@ -998,8 +998,8 @@ function loopBody(): void {
     const didHardDrop = gameInputs.some((event) => event.action === 'hardDrop');
     // Line clear = patrón propio (más fuerte que el lock). Tiene prioridad sobre el
     // lock simple para que limpiar líneas se sienta distinto a solo fijar la pieza.
-    if (state.stats.lines > beforeTickState.stats.lines) vibrate([12, 30, 18]);
-    else if (lockedPiece) vibrate(didHardDrop ? 30 : 14); // "lock distinto" marcado
+    if (state.stats.lines > beforeTickState.stats.lines) vibrate([20, 40, 25]);
+    else if (lockedPiece) vibrate(didHardDrop ? 45 : 22); // "lock distinto" marcado
     if (lockedPiece && !didHardDrop) juice.onLock();
     // Estela vertical de neón del hard drop: de donde estaba la pieza (active) a
     // donde aterriza (su ghost, en la misma columna/rotación), por cada columna.
@@ -1785,27 +1785,42 @@ function parseHandlingPreset(value: string | undefined): HandlingPreset | null {
 
 // Intensidad de vibración MARCADA POR ACCIÓN: mover = toque suave, rotar = medio,
 // hard drop = fuerte, 180° = doble pulso. lock/clear se disparan aparte (en el tick).
+//
+// IMPORTANTE: los motores hápticos de los teléfonos (ERM/LRA) tardan ~15-25ms en
+// arrancar, así que pulsos < ~15ms son imperceptibles (no llega a moverse el motor).
+// Por eso las duraciones cortas se sentían como "no vibra". Acá usamos un piso de
+// ~14ms y escalamos hacia arriba; la API básica no controla amplitud, así que la
+// "intensidad" se logra con más duración / patrones de varios pulsos.
 const TOUCH_HAPTICS: Record<ControlAction, number | number[]> = {
-  moveLeft: 7,
-  moveRight: 7,
-  softDrop: 5,
-  rotateCW: 11,
-  rotateCCW: 11,
-  rotate180: [10, 28, 10],
-  hardDrop: 24,
-  hold: 9,
+  moveLeft: 16,
+  moveRight: 16,
+  softDrop: 14,
+  rotateCW: 22,
+  rotateCCW: 22,
+  rotate180: [18, 30, 18],
+  hardDrop: 40,
+  hold: 20,
   retry: 0,
   pause: 0,
 };
 
 // Vibra respetando el toggle y la disponibilidad del API (silencioso en desktop).
-function vibrate(pattern: number | number[]): void {
-  if (!touchHapticsEnabled) return;
-  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+// `navigator.vibrate` devuelve false si el navegador/SO la rechazó (config del sistema,
+// modo silencio, falta de gesto). Guardamos el último resultado para el diagnóstico.
+let lastVibrateResult: boolean | null = null;
+function vibrate(pattern: number | number[]): boolean {
+  if (!touchHapticsEnabled) return false;
+  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') {
+    lastVibrateResult = null;
+    return false;
+  }
   try {
-    navigator.vibrate(pattern);
+    lastVibrateResult = navigator.vibrate(pattern);
+    return lastVibrateResult;
   } catch {
     // Algunos navegadores bloquean vibrate sin gesto de usuario; lo ignoramos.
+    lastVibrateResult = false;
+    return false;
   }
 }
 
@@ -1835,13 +1850,16 @@ function cycleTouchScheme(): void {
   touchScheme = TOUCH_SCHEME_ORDER[(i + 1) % TOUCH_SCHEME_ORDER.length];
   best = saveTouchScheme(touchScheme);
   releaseActiveTouches(); // evita botones "pegados" al recambiar el layout
-  vibrate(8);
+  vibrate(20);
 }
 
 function toggleTouchHaptics(): void {
   touchHapticsEnabled = !touchHapticsEnabled;
   best = saveTouchHaptics(touchHapticsEnabled);
-  if (touchHapticsEnabled) vibrate(14); // confirmación al encender
+  // Confirmación bien notoria al encender: doble pulso. Si NO se siente esto, el
+  // problema no son las duraciones sino el SO/navegador (config de vibración, modo
+  // silencio o contexto no seguro), no el código.
+  if (touchHapticsEnabled) vibrate([30, 40, 30]);
 }
 
 function handleTouchControlPointerDown(event: PointerEvent): void {

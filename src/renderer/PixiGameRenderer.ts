@@ -320,9 +320,19 @@ export class PixiGameRenderer {
     this.hiddenRows = state?.stats.hiddenRows ?? this.hiddenRows;
     this.width = window.innerWidth;
     this.height = window.innerHeight;
-    const touchControlsInset = window.matchMedia('(pointer: coarse)').matches
-      ? this.width > this.height ? 96 : 164
-      : 0;
+    // Reservamos para los controles táctiles EXACTAMENTE el alto que ocupan, medido del
+    // DOM real, para que el tablero no quede tapado. El layout de los botones cambia con
+    // el esquema (Pro/Simple/D-pad) y la orientación, así que un inset fijo se quedaba
+    // corto (Pro tapaba el tablero). `height - rect.top` = espacio que ocupan abajo
+    // (incluye el offset de safe-area). Sólo medimos si están realmente visibles.
+    let touchControlsInset = 0;
+    const touchEl = document.querySelector('.touch-controls') as HTMLElement | null;
+    if (touchEl && touchEl.offsetHeight > 0) {
+      touchControlsInset = Math.max(0, this.height - touchEl.getBoundingClientRect().top) + 8;
+    } else if (document.querySelector('.touch-controls-restore')) {
+      // Controles ocultos: sólo el botón chico "Controles" abajo a la derecha.
+      touchControlsInset = 64;
+    }
     const availableHeight = Math.max(360, this.height - touchControlsInset);
 
     // En pantallas angostas los paneles laterales se compactan para dejar más espacio al tablero.
