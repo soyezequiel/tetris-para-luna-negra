@@ -11,7 +11,7 @@ import {
 } from '../input/settings';
 import { drawBoardToCanvas, sizeBoardCanvas } from '../renderer/boardCanvas';
 import QRCode from 'qrcode';
-import type { GameInput, GameState, InputAction } from '../game/types';
+import type { GameEvent, GameInput, GameState, InputAction } from '../game/types';
 // Solo tipos: el módulo de apuesta vive del lado server (usa la API key); el
 // cliente le pega por HTTP a /api/local-bet/*. `import type` se borra al compilar,
 // así que NO arrastra código de servidor al bundle del navegador.
@@ -45,6 +45,15 @@ export interface LocalVersusAudioHooks {
   countdownGo?(): void;
   gameOver?(seat: 1 | 2): void;
   win?(seat: 1 | 2): void;
+  // Arranque de un duelo (nueva semilla): resetea los drivers de audio por asiento
+  // y desbloquea los AudioContext. Recibe el estado inicial de cada motor.
+  matchStart?(state1: GameState, state2: GameState): void;
+  // Efectos de juego de un asiento, una vez por frame de motor: cues de input,
+  // colocación/limpieza, capa rica (combo/ataque/garbage) y latido de peligro.
+  seatFrame?(seat: 1 | 2, state: GameState, events: GameEvent[], inputs: InputAction[]): void;
+  // Fin del duelo: corta los latidos de peligro que pudieran seguir sonando (el
+  // tablero del ganador queda congelado en 'playing' y no recibe más frames).
+  matchEnd?(): void;
 }
 
 export interface LocalVersusOptions {
@@ -287,10 +296,14 @@ class Seat {
     this.gamepad.poll();
   }
 
-  advance(frame: number): void {
+  // Avanza un frame y devuelve lo que pasó ese frame (eventos del motor + acciones
+  // de juego), para que el audio reconstruya los efectos sin re-leer el estado.
+  advance(frame: number): { events: GameEvent[]; inputs: InputAction[] } {
     this.input.advanceFrame(frame);
-    const inputs = this.input.collect(frame);
-    this.state = this.engine.tick(frame, toGameInputs(inputs));
+    const collected = this.input.collect(frame);
+    const gameInputs = toGameInputs(collected);
+    this.state = this.engine.tick(frame, gameInputs);
+    return { events: this.engine.drainEvents(), inputs: gameInputs.map((i) => i.action) };
   }
 
   destroy(): void {
@@ -301,11 +314,17 @@ class Seat {
 
 export interface LocalVersusSession {
   destroy(): void;
+  // El duelo quiere música sonando (cuenta regresiva + partida); en los menús
+  // (setup/depósito/resultados) devuelve false para que el loop la silencie.
+  wantsMusic(): boolean;
 }
 
 export function startLocalVersus(options: LocalVersusOptions): LocalVersusSession {
   const match = new LocalVersusMatch(options);
-  return { destroy: () => match.destroy() };
+  return {
+    destroy: () => match.destroy(),
+    wantsMusic: () => match.wantsMusic(),
+  };
 }
 
 class LocalVersusMatch {
@@ -365,7 +384,14 @@ class LocalVersusMatch {
     this.overlay.remove();
   }
 
+  wantsMusic(): boolean {
+    return this.phase === 'countdown' || this.phase === 'playing';
+  }
+
   private teardownSeats(): void {
+    // Silencia los latidos de peligro y restaura la mezcla aunque se salga a mitad
+    // de partida (Escape): los drivers de audio viven fuera de este módulo.
+    if (this.seats) this.options.audio?.matchEnd?.();
     this.seats?.seat1.destroy();
     this.seats?.seat2.destroy();
     this.seats = null;
@@ -733,6 +759,9 @@ class LocalVersusMatch {
     this.outcome = 'playing';
     this.frame = 0;
     this.phase = 'countdown';
+    // Resetea los drivers de audio por asiento al estado inicial (sin disparar
+    // sonidos) y desbloquea los AudioContext para la música y los efectos.
+    this.options.audio?.matchStart?.(this.seats.seat1.state, this.seats.seat2.state);
     this.countdownStart = performance.now();
     this.lastCountdownNumber = COUNTDOWN_SECONDS + 1;
     this.renderStage();
@@ -780,8 +809,8 @@ class LocalVersusMatch {
   private advanceOneFrame(frame: number): void {
     if (!this.seats) return;
     const { seat1, seat2 } = this.seats;
-    seat1.advance(frame);
-    seat2.advance(frame);
+    const step1 = seat1.advance(frame);
+    const step2 = seat2.advance(frame);
 
     // Intercambio de basura: lo que cada uno mandó este frame le cae al rival.
     const attacks = pendingAttacks(this.prevSent, seat1.state.stats.sentGarbage, seat2.state.stats.sentGarbage);
@@ -797,6 +826,11 @@ class LocalVersusMatch {
     seat1.state = seat1.engine.getState();
     seat2.state = seat2.engine.getState();
 
+    // Sonido por asiento (cues de input + colocación/limpieza + capa rica + peligro).
+    // Va antes de finishMatch para que el frame que mata dispare su KO/transición.
+    this.options.audio?.seatFrame?.(1, seat1.state, step1.events, step1.inputs);
+    this.options.audio?.seatFrame?.(2, seat2.state, step2.events, step2.inputs);
+
     const outcome = decideOutcome(seat1.state.status, seat2.state.status);
     if (outcome !== 'playing') this.finishMatch(outcome);
   }
@@ -804,6 +838,7 @@ class LocalVersusMatch {
   private finishMatch(outcome: Outcome): void {
     this.outcome = outcome;
     this.phase = 'finished';
+    this.options.audio?.matchEnd?.();
     if (outcome === 'seat1') { this.options.audio?.gameOver?.(2); this.options.audio?.win?.(1); }
     else if (outcome === 'seat2') { this.options.audio?.gameOver?.(1); this.options.audio?.win?.(2); }
     this.renderFinished();

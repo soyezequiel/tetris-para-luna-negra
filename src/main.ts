@@ -50,6 +50,7 @@ import type { ActivePiece, GameEngineSnapshot, GameEvent, GameInput, GameRules, 
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
 import { GamepadController } from './gamepad';
 import { startLocalVersus, type LocalVersusSession } from './app/localVersus';
+import { BoardAudio } from './audio/BoardAudio';
 import {
   applyHandlingPreset,
   CONTROL_ACTION_LABELS,
@@ -982,6 +983,13 @@ function buildPerfReport(): Record<string, unknown> {
 // DUELO LOCAL: monta el overlay del modo 1v1 local. El módulo es autocontenido
 // (motores, input, render); acá sólo le pasamos los sonidos compartidos y el
 // colorblind, y soltamos el input del juego principal mientras dure.
+// Drivers de audio por asiento del duelo local. Reusan las dos capas JuiceAudio del
+// juego principal (que están ociosas mientras dura el duelo): juiceAudio para el
+// asiento 1, rivalDangerAudio para el 2, así cada tablero tiene su propio latido de
+// peligro (un único loop por instancia). Se recrean en cada matchStart con el paneo
+// según la posición del tablero (izquierda/derecha) y el ajuste de audio posicional.
+let localVersusAudio: { seat1: BoardAudio; seat2: BoardAudio } | null = null;
+
 function startLocalVersusMode(): void {
   if (localVersusSession) return;
   input.releaseAll();
@@ -991,6 +999,7 @@ function startLocalVersusMode(): void {
     onExit: () => {
       // Al cerrar, el loop principal retoma el render del menú en el próximo frame.
       localVersusSession = null;
+      localVersusAudio = null;
       input.releaseAll();
     },
     audio: {
@@ -998,6 +1007,29 @@ function startLocalVersusMode(): void {
       countdownGo: () => sound.play('countdownGo'),
       gameOver: () => sound.play('gameOver'),
       win: () => sound.play('finish'),
+      matchStart: (state1, state2) => {
+        // Desbloquea las capas JuiceAudio (el SoundEngine ya se desbloqueó con el
+        // gesto que abrió el duelo) y crea los drivers con el paneo del tablero
+        // (J1 a la izquierda, J2 a la derecha).
+        unlockJuiceAudio();
+        const pan = isPositionalAudio() ? 0.6 : 0;
+        localVersusAudio = {
+          seat1: new BoardAudio(sound, juiceAudio, -pan),
+          seat2: new BoardAudio(sound, rivalDangerAudio, pan),
+        };
+        localVersusAudio.seat1.reset(state1);
+        localVersusAudio.seat2.reset(state2);
+      },
+      seatFrame: (seat, state, events, inputs) => {
+        const driver = seat === 1 ? localVersusAudio?.seat1 : localVersusAudio?.seat2;
+        driver?.frame(state, events, inputs, true);
+      },
+      matchEnd: () => {
+        // Corta los latidos de peligro (el tablero del ganador queda congelado en
+        // 'playing') y deshace el atenuado que el KO del perdedor dejó en las capas
+        // JuiceAudio compartidas, que el juego principal vuelve a usar al salir.
+        for (const layer of juiceLayers) { layer.setDanger(0); layer.resetMix(); }
+      },
     },
   });
 }
@@ -1025,10 +1057,11 @@ function loop(): void {
 function loopBody(): void {
   if (localVersusSession) {
     // DUELO LOCAL: corre su propio loop/overlay y motores. El juego principal queda
-    // en pausa total (sin música, sin avanzar, sin recolectar input ni redibujar)
-    // hasta que el overlay se cierra. Su propio InputController/GamepadController
-    // maneja a los dos jugadores.
-    sound.setMusicAllowed(false);
+    // en pausa total (sin avanzar, sin recolectar input ni redibujar) hasta que el
+    // overlay se cierra. Su propio InputController/GamepadController maneja a los dos
+    // jugadores. La música SÍ suena durante el duelo (cuenta regresiva + partida); el
+    // overlay decide cuándo vía wantsMusic() (silencio en setup/depósito/resultados).
+    sound.setMusicAllowed(!document.hidden && localVersusSession.wantsMusic());
     return;
   }
   // La música sólo suena en partida/repetición; los menús (incluido el principal)
