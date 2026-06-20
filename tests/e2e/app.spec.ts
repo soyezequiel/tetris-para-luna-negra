@@ -568,6 +568,7 @@ test.describe('TETRA browser flows', () => {
 
   test('shows the LNURL withdrawal controls to a settled winner', async ({ page }) => {
     const requests = await mockOnlineApi(page, { lunaWithdrawRoom: true, dropWithdrawBetOnRefresh: true });
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.addInitScript(() => {
       window.localStorage.clear();
     });
@@ -575,8 +576,10 @@ test.describe('TETRA browser flows', () => {
     await page.goto('/?inviteToken=fake-token&room=withdraw1');
 
     await expect(page.getByText('¡Ganaste el pozo!')).toBeVisible();
-    await expect(page.getByText(/Cobrá escaneando el QR/)).toBeVisible();
+    await expect(page.getByText(/abrí tu wallet Lightning/)).toBeVisible();
     await expect(action(page, 'online-bet-claim-webln')).toBeVisible();
+    await expect(page.locator('a.online-bet-wallet-link')).toHaveAttribute('href', 'lightning:LNURL1MOCKWITHDRAW');
+    await expect(page.locator('[data-tetra-payout]')).toHaveCount(0);
     await expect(page.getByText('Acreditados en tu billetera Lightning.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Cobrá antes de continuar' })).toBeDisabled();
 
@@ -586,8 +589,6 @@ test.describe('TETRA browser flows', () => {
     await expect.poll(() => requests.betRefreshCount, { timeout: 5000 }).toBeGreaterThan(0);
     await expect(page.locator('img[alt="QR de retiro Lightning"]')).toBeVisible();
 
-    const payoutContinue = page.getByRole('button', { name: 'Continuar', exact: true });
-    if (await payoutContinue.isVisible()) await payoutContinue.click();
     await action(page, 'report-perf').click();
     await expect.poll(() => requests.lastReport).not.toBeNull();
     expect(requests.lastReport?.betWithdrawal).toMatchObject({

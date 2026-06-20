@@ -3618,19 +3618,16 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   maybeCelebratePayout();
 }
 
-// Festejo de "cobraste el pozo": cuando la apuesta queda liquidada (settled) con
-// payout > 0 para el jugador local, el pago ya está acreditado en su billetera
-// Lightning. Disparamos el overlay una sola vez por betId (el guard evita el
-// bucle, porque adoptOnlineRoom corre en cada poll). Ver renderOnlineBetResult,
-// que es la fuente de verdad del card "¡Cobraste el pozo!".
+// Festejo de "cobraste el pozo": solo cuando el pago realmente terminó. Un
+// `withdraw_pending` ya tiene monto asignado, pero todavía necesita que el ganador
+// abra su wallet y reclame; festejar antes bloquea justamente esos controles.
 function maybeCelebratePayout(): void {
   const bet = onlineRoom?.bet;
   if (!bet || bet.status !== 'settled') return;
   if (celebratedBetId === bet.betId) return;
-  const myNpub = currentOnlinePlayer()?.npub;
-  const myEntry = myNpub ? bet.participants.find((e) => e.npub === myNpub) : undefined;
+  const myEntry = myBetEntry(bet);
   const myPayout = myEntry?.payoutSats ?? 0;
-  if (myPayout <= 0) return;
+  if (myPayout <= 0 || (myEntry?.payoutStatus !== 'paid' && myEntry?.payoutStatus !== 'claimed')) return;
   celebratedBetId = bet.betId;
   celebratePayout({ sats: myPayout });
 }
@@ -6476,16 +6473,19 @@ function amILocalBetWinner(bet: RoomBet): boolean {
 function renderOnlineBetWithdraw(entry: RoomBetParticipant, bet: RoomBet): string {
   const amount = entry.payoutSats ?? bet.netPayoutSats;
   const lnurl = entry.withdrawLnurl!;
+  const lightningWithdrawUri = `lightning:${lnurl.toUpperCase()}`;
   return `
     <div class="bet-settle bet-settle--paid">
       <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Ganaste el pozo!</span></div>
       <div class="bet-settle-amount">+${amount.toLocaleString('es-AR')} <small>sats</small></div>
-      <p class="bet-settle-hint">Cobrá escaneando el QR con tu billetera, o con tu extensión Lightning.</p>
+      <p class="bet-settle-hint">En el celular, abrí tu wallet Lightning. También podés escanear el QR desde otro dispositivo.</p>
       ${renderBetWithdrawQr(lnurl)}
       <div class="online-bet-deposit-actions">
+        <a class="dash-action-btn success online-bet-wallet-link" href="${escapeHtml(lightningWithdrawUri)}">📱 Abrir wallet Lightning</a>
         <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-claim-webln" data-lnurl="${escapeHtml(lnurl)}"${onlineBetPaying ? ' disabled' : ''}>⚡ Cobrar con extensión</button>
         <button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(lnurl)}">Copiar LNURL</button>
       </div>
+      <p class="bet-settle-hint">Compatible con Wallet of Satoshi y otras wallets que acepten enlaces Lightning/LNURL.</p>
     </div>
   `;
 }
