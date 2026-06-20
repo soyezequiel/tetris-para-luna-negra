@@ -1678,6 +1678,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-webln') {
     void payOnlineBetWithExtension(control.dataset.invoice ?? '');
   }
+  if (action === 'online-bet-claim-webln') {
+    void claimOnlineBetWithExtension(control.dataset.lnurl ?? '');
+  }
   if (action === 'online-bet-copy') {
     copyToClipboard(control.dataset.copy ?? '');
     wakeUpBetDetection();
@@ -3180,6 +3183,8 @@ async function copyToClipboard(text: string): Promise<void> {
 interface WebLNProvider {
   enable(): Promise<void>;
   sendPayment(bolt11: string): Promise<{ preimage: string }>;
+  // LNURL-withdraw (cobro del ganador invitado). Alby lo implementa como webln.lnurl().
+  lnurl?(lnurl: string): Promise<unknown>;
 }
 
 function getWebLNProvider(): WebLNProvider | null {
@@ -3208,6 +3213,31 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
     onlineError = error instanceof Error && error.message
       ? `No se pudo pagar con la extensión: ${error.message}`
       : 'No se pudo pagar con la extensión.';
+  } finally {
+    onlineBetPaying = false;
+  }
+}
+
+// Cobra el pozo del ganador invitado con la extensión WebLN (LNURL-withdraw). El
+// éxito se confirma por el polling normal (payoutStatus → claimed); acá solo
+// disparamos el retiro y aceleramos la detección.
+async function claimOnlineBetWithExtension(lnurl: string): Promise<void> {
+  if (!lnurl || onlineBetPaying) return;
+  const provider = getWebLNProvider();
+  if (!provider || typeof provider.lnurl !== 'function') {
+    onlineError = 'No se detectó una extensión Lightning (instalá Alby) o no soporta LNURL-withdraw.';
+    return;
+  }
+  onlineBetPaying = true;
+  try {
+    await provider.enable();
+    await provider.lnurl(lnurl);
+    onlineError = null;
+    wakeUpBetDetection();
+  } catch (error) {
+    onlineError = error instanceof Error && error.message
+      ? `No se pudo cobrar con la extensión: ${error.message}`
+      : 'No se pudo cobrar con la extensión.';
   } finally {
     onlineBetPaying = false;
   }
@@ -4054,9 +4084,7 @@ function isRefreshableRoomBet(bet: RoomBet | null | undefined): bet is RoomBet {
 }
 
 function hasOwnPendingDeposit(bet: RoomBet): boolean {
-  const mine = currentOnlinePlayer();
-  if (!mine?.npub) return false;
-  return bet.participants.some((entry) => entry.npub === mine.npub && entry.depositStatus === 'pending');
+  return myBetEntry(bet)?.depositStatus === 'pending';
 }
 
 function armOnlineBetFastPolling(): void {
@@ -6011,10 +6039,19 @@ function isLunaNegraRoom(): boolean {
 function lunaNegraBettingBlockedReason(): string {
   if (!onlineRoom) return '';
   if (onlineRoom.players.length < 2) return 'Necesitás al menos 2 jugadores en la sala para apostar.';
-  if (!onlineRoom.players.every((player) => !!player.npub)) {
-    return 'Todos los jugadores deben haber entrado con su cuenta Luna Negra.';
-  }
+  // Ya no hace falta que todos tengan cuenta: los invitados depositan por QR y, si
+  // ganan, cobran por LNURL-withdraw (los que tienen cuenta cobran a su billetera).
   return '';
+}
+
+// Mi participante en la apuesta. Mapeo por playerId (estable en pozos mixtos: el
+// invitado tiene un npub efímero ≠ al suyo), con fallback a npub para apuestas
+// 100% con cuenta y compatibilidad con estados viejos sin playerId.
+function myBetEntry(bet: RoomBet): RoomBetParticipant | undefined {
+  const mine = currentOnlinePlayer();
+  const byPlayer = bet.participants.find((entry) => entry.playerId && entry.playerId === onlinePlayer.id);
+  if (byPlayer) return byPlayer;
+  return mine?.npub ? bet.participants.find((entry) => entry.npub === mine.npub) : undefined;
 }
 
 function betStatusLabel(status: RoomBet['status']): string {
@@ -6087,8 +6124,7 @@ function renderOnlineBetPanel(host: boolean): string {
     `;
   }
 
-  const mine = currentOnlinePlayer();
-  const myEntry = mine?.npub ? bet.participants.find((entry) => entry.npub === mine.npub) : undefined;
+  const myEntry = myBetEntry(bet);
   const rows = bet.participants.map((entry) => `
     <div class="online-bet-row">
       <span>${escapeHtml(betParticipantName(entry))}</span>
@@ -6193,26 +6229,45 @@ function renderBetInvoiceQr(bolt11: string): string {
 }
 
 function ensureBetInvoiceQr(bolt11: string): string | null {
-  const cached = betQrDataUrls.get(bolt11);
+  return ensureBetQr(bolt11, `lightning:${bolt11.toUpperCase()}`);
+}
+
+// QR del LNURL-withdraw del ganador invitado: lo escanea con su billetera para
+// llevarse el pozo (no tiene wallet asociada a la que pagarle automático).
+function renderBetWithdrawQr(lnurl: string): string {
+  const dataUrl = ensureBetQr(lnurl, lnurl.toUpperCase());
+  if (!dataUrl) return '<div class="online-bet-qr online-bet-qr-loading">Generando QR…</div>';
+  return `
+    <div class="online-bet-qr-wrap">
+      <img class="online-bet-qr" src="${dataUrl}" alt="QR de retiro Lightning" decoding="async" />
+      <span class="online-bet-qr-hint">Escaneá con tu billetera Lightning para cobrar</span>
+    </div>
+  `;
+}
+
+// Genera (y cachea) el QR de un payload Lightning. `key` identifica el handle
+// (bolt11/lnurl) para cachear; `payload` es lo que se codifica en el QR.
+function ensureBetQr(key: string, payload: string): string | null {
+  const cached = betQrDataUrls.get(key);
   if (cached) return cached;
-  if (betQrPending.has(bolt11)) return null;
-  betQrPending.add(bolt11);
-  void QRCode.toDataURL(`lightning:${bolt11.toUpperCase()}`, {
+  if (betQrPending.has(key)) return null;
+  betQrPending.add(key);
+  void QRCode.toDataURL(payload, {
     errorCorrectionLevel: 'M',
     margin: 4,
     scale: 8,
     color: { dark: '#000000', light: '#ffffff' },
   })
     .then((url) => {
-      betQrDataUrls.set(bolt11, url);
+      betQrDataUrls.set(key, url);
       // El overlay se regenera solo cuando cambia el HTML; forzamos el repintado.
       lastOverlayHtml = '';
     })
     .catch(() => {
-      // Sin QR quedan los botones de pagar/copiar.
+      // Sin QR quedan los botones de cobrar/copiar.
     })
     .finally(() => {
-      betQrPending.delete(bolt11);
+      betQrPending.delete(key);
     });
   return null;
 }
@@ -6222,13 +6277,37 @@ const BET_SPINNER = '<span class="bet-spinner" aria-hidden="true"></span>';
 
 // ¿El jugador local es el ganador del pozo? Antes de liquidar nos basamos en el
 // ranking de la sala; ya liquidada, en quién recibió payout (fuente de verdad).
-function amILocalBetWinner(bet: RoomBet, myNpub: string | null | undefined): boolean {
+// Un ganador invitado puede tener payoutSats=null con cobro `withdraw_pending`,
+// así que también cuenta como ganador si su payout está en curso de retiro.
+function amILocalBetWinner(bet: RoomBet): boolean {
   if (bet.status === 'settled') {
-    const myEntry = myNpub ? bet.participants.find((e) => e.npub === myNpub) : undefined;
-    return (myEntry?.payoutSats ?? 0) > 0;
+    const myEntry = myBetEntry(bet);
+    if (!myEntry) return false;
+    return (myEntry.payoutSats ?? 0) > 0
+      || myEntry.payoutStatus === 'withdraw_pending'
+      || myEntry.payoutStatus === 'claimed';
   }
   const winner = onlineRoom ? rankPlayers(onlineRoom.players)[0] : null;
   return !!winner && winner.id === onlinePlayer.id;
+}
+
+// Cobro del ganador INVITADO (sin billetera): QR de retiro LNURL + botón de
+// extensión, espejando el modo local 1v1. El que tiene cuenta cobra automático.
+function renderOnlineBetWithdraw(entry: RoomBetParticipant, bet: RoomBet): string {
+  const amount = entry.payoutSats ?? bet.netPayoutSats;
+  const lnurl = entry.withdrawLnurl!;
+  return `
+    <div class="bet-settle bet-settle--paid">
+      <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Ganaste el pozo!</span></div>
+      <div class="bet-settle-amount">+${amount.toLocaleString('es-AR')} <small>sats</small></div>
+      <p class="bet-settle-hint">Cobrá escaneando el QR con tu billetera, o con tu extensión Lightning.</p>
+      ${renderBetWithdrawQr(lnurl)}
+      <div class="online-bet-deposit-actions">
+        <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-claim-webln" data-lnurl="${escapeHtml(lnurl)}"${onlineBetPaying ? ' disabled' : ''}>⚡ Cobrar con extensión</button>
+        <button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(lnurl)}">Copiar LNURL</button>
+      </div>
+    </div>
+  `;
 }
 
 // Card de liquidación: dos pasos (reportar → liquidar) con el activo animado y el
@@ -6256,18 +6335,23 @@ function renderBetSettlementCard(reportDone: boolean, errorHtml: string): string
 function renderOnlineBetResult(): string {
   const bet = onlineRoom?.bet;
   if (!bet) return '';
-  const myNpub = currentOnlinePlayer()?.npub;
-  const amIWinner = amILocalBetWinner(bet, myNpub);
+  const myEntry = myBetEntry(bet);
+  const amIWinner = amILocalBetWinner(bet);
+
+  // Ganador invitado (sin billetera): cobra el pozo por QR de retiro / extensión.
+  // Vale para cualquier estado en cuanto Luna expone el LNURL-withdraw.
+  if (myEntry?.payoutStatus === 'withdraw_pending' && myEntry.withdrawLnurl) {
+    return renderOnlineBetWithdraw(myEntry, bet);
+  }
 
   if (bet.status === 'settled') {
-    const myEntry = myNpub ? bet.participants.find((e) => e.npub === myNpub) : undefined;
     const myPayout = myEntry?.payoutSats ?? 0;
-    if (myPayout > 0) {
+    if (myPayout > 0 || myEntry?.payoutStatus === 'claimed') {
       return `
         <div class="bet-settle bet-settle--paid">
           <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Cobraste el pozo!</span></div>
-          <div class="bet-settle-amount">+${myPayout.toLocaleString('es-AR')} <small>sats</small></div>
-          <p class="bet-settle-hint">Acreditados en tu billetera Lightning.</p>
+          <div class="bet-settle-amount">+${(myPayout || bet.netPayoutSats).toLocaleString('es-AR')} <small>sats</small></div>
+          <p class="bet-settle-hint">${myEntry?.payoutStatus === 'claimed' ? 'Retiro cobrado.' : 'Acreditados en tu billetera Lightning.'}</p>
         </div>
       `;
     }

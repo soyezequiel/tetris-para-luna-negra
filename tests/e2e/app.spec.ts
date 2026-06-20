@@ -1198,6 +1198,9 @@ function createMockBet(room: MockRoom, now: number): RoomBet {
       payUrl: `https://pay.example/${player.id}`,
       depositError: null,
       payoutSats: null,
+      payoutStatus: 'none' as const,
+      withdrawLnurl: null,
+      withdrawUrl: null,
     }));
   const stakeSats = 10;
   const potTargetSats = stakeSats * participants.length;

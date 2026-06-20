@@ -3,7 +3,7 @@ import {
   isTerminalRoomBetStatus,
   OnlineRoomError,
   setRoomBet,
-  winnerNpubsFromRoom,
+  winnerBetNpubsFromRoom,
   type RoomStore,
 } from './roomService.js';
 import type {
@@ -11,6 +11,7 @@ import type {
   RoomBet,
   RoomBetDepositStatus,
   RoomBetParticipant,
+  RoomBetPayoutStatus,
   RoomBetStatus,
 } from './protocol';
 
@@ -42,12 +43,20 @@ interface LunaBetDetail extends LunaEconomics {
   participants?: Array<{
     npub: string;
     depositStatus?: string;
+    payoutStatus?: string;
     payoutSats?: number | null;
     bolt11?: string | null;
     lnurl?: string | null;
     payUrl?: string | null;
+    withdrawLnurl?: string | null;
+    withdrawUrl?: string | null;
     depositError?: string | null;
   }>;
+}
+
+interface LunaBetCreateWithSeats extends LunaBetCreate {
+  /** Mapeo asiento→npub que devuelve Luna cuando hay invitados (anónima/mixta). */
+  participants?: Array<{ seat: number; npub: string }>;
 }
 
 export const LUNA_NEGRA_MIN_STAKE_SATS = 1;
@@ -118,6 +127,9 @@ const BET_STATUSES: RoomBetStatus[] = [
   'pending_deposits', 'funded', 'settled', 'cancelled', 'expired', 'refunded',
 ];
 const DEPOSIT_STATUSES: RoomBetDepositStatus[] = ['pending', 'paid', 'refunded', 'failed'];
+const PAYOUT_STATUSES: RoomBetPayoutStatus[] = [
+  'none', 'pending', 'paid', 'failed', 'withdraw_pending', 'claimed', 'forfeited',
+];
 
 // Luna Negra reporta un único vocabulario canónico (igual a nuestros enums), así
 // que solo estrechamos el tipo: si llegara algo fuera del set, caemos al fallback.
@@ -129,6 +141,12 @@ function asDepositStatus(value: unknown): RoomBetDepositStatus {
   return DEPOSIT_STATUSES.includes(value as RoomBetDepositStatus)
     ? (value as RoomBetDepositStatus)
     : 'pending';
+}
+
+function asPayoutStatus(value: unknown): RoomBetPayoutStatus {
+  return PAYOUT_STATUSES.includes(value as RoomBetPayoutStatus)
+    ? (value as RoomBetPayoutStatus)
+    : 'none';
 }
 
 function isTerminalBetStatus(status: RoomBetStatus | undefined | null): boolean {
@@ -143,20 +161,33 @@ function buildRoomBet(
   previous: RoomBet | null,
   createdByPlayerId: string,
   nowMs: number,
+  // Mapeo explícito asiento→jugador, presente solo al CREAR la apuesta. Para los
+  // invitados el npub es efímero (≠ npub del jugador), así que no se puede mapear
+  // por npub: hay que fijarlo acá y luego preservarlo (carry-forward del previo).
+  playerIdByNpub: Map<string, string | null> | null = null,
 ): RoomBet {
   const detailByNpub = new Map((detail?.participants ?? []).map((p) => [p.npub, p]));
+  const prevByNpub = new Map((previous?.participants ?? []).map((p) => [p.npub, p]));
   const participants: RoomBetParticipant[] = npubs.map((npub) => {
     const d = detailByNpub.get(npub);
-    const player = room.players.find((candidate) => candidate.npub === npub);
+    // playerId: 1) el del bet previo (estable, sobrevive a npubs efímeros de invitado),
+    // 2) el mapeo explícito del create, 3) match por npub real en la sala.
+    const playerId = prevByNpub.get(npub)?.playerId
+      ?? playerIdByNpub?.get(npub)
+      ?? room.players.find((candidate) => candidate.npub === npub)?.id
+      ?? null;
     return {
       npub,
-      playerId: player?.id ?? null,
+      playerId,
       depositStatus: asDepositStatus(d?.depositStatus),
       bolt11: typeof d?.bolt11 === 'string' ? d.bolt11 : null,
       lnurl: typeof d?.lnurl === 'string' ? d.lnurl : null,
       payUrl: typeof d?.payUrl === 'string' ? d.payUrl : null,
       depositError: typeof d?.depositError === 'string' ? d.depositError : null,
       payoutSats: typeof d?.payoutSats === 'number' ? d.payoutSats : null,
+      payoutStatus: asPayoutStatus(d?.payoutStatus),
+      withdrawLnurl: typeof d?.withdrawLnurl === 'string' ? d.withdrawLnurl : null,
+      withdrawUrl: typeof d?.withdrawUrl === 'string' ? d.withdrawUrl : null,
     };
   });
   // El detalle viene fresco (Cache-Control: no-store) y es la fuente de verdad:
@@ -217,29 +248,48 @@ export async function createBetForRoom(
   if (room.players.length < 2) throw new OnlineRoomError('Se necesitan al menos 2 jugadores para apostar.', 409);
   const gameId = room.lunaGameId?.trim() || (process.env.LUNA_NEGRA_GAME_ID ?? '').trim();
   if (!gameId) throw new OnlineRoomError('No se pudo determinar el gameId de Luna Negra para esta sala.', 409);
-  const npubs = room.players.map((player) => player.npub);
-  if (npubs.some((npub) => !npub)) {
-    throw new OnlineRoomError('Todos los jugadores deben tener cuenta Luna Negra (npub) para apostar.', 409);
-  }
   const stakeSats = Math.floor(Number(input.stakeSats));
   if (!Number.isFinite(stakeSats) || stakeSats < LUNA_NEGRA_MIN_STAKE_SATS || stakeSats > LUNA_NEGRA_MAX_STAKE_SATS) {
     throw new OnlineRoomError('Monto de apuesta inválido.', 400);
   }
-  const participants = npubs as string[];
 
-  const create = await lunaFetch<LunaBetCreate>(config, '/api/v1/bets', {
+  // Pozo MIXTO: por cada jugador, su npub real si entró con cuenta Luna; si es
+  // invitado (sin npub), un placeholder `{ guest: true }` que Luna convierte en
+  // una identidad efímera. Así el de cuenta cobra a su billetera y el invitado
+  // cobra por LNURL-withdraw. El orden se conserva para mapear asiento→jugador.
+  const players = room.players;
+  const spec: Array<string | { guest: true }> = players.map(
+    (player) => (player.npub ? player.npub : { guest: true }),
+  );
+
+  const create = await lunaFetch<LunaBetCreateWithSeats>(config, '/api/v1/bets', {
     method: 'POST',
     body: {
       gameId,
-      participants,
+      participants: spec,
       stakeSats,
       victoryCondition: input.victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
       roomId: room.id,
       metadata: { roomId: room.id },
     },
   });
+
+  // Si hubo invitados, Luna devuelve el mapeo asiento→npub (en el mismo orden que
+  // mandamos), así que zippeamos seat i ↔ players[i]. Si fue 100% con cuenta, no
+  // viene el mapeo y los npubs son los de los jugadores (mapeo directo por npub).
+  let npubs: string[];
+  const playerIdByNpub = new Map<string, string | null>();
+  if (create.participants && create.participants.length) {
+    const sorted = [...create.participants].sort((a, b) => a.seat - b.seat);
+    npubs = sorted.map((s) => s.npub);
+    sorted.forEach((s, index) => playerIdByNpub.set(s.npub, players[index]?.id ?? null));
+  } else {
+    npubs = players.map((player) => player.npub as string);
+    players.forEach((player) => playerIdByNpub.set(player.npub as string, player.id));
+  }
+
   const detail = await getBetDetail(config, create.betId);
-  const bet = buildRoomBet(room, participants, create, detail, null, input.playerId, nowMs);
+  const bet = buildRoomBet(room, npubs, create, detail, null, input.playerId, nowMs, playerIdByNpub);
   return setRoomBet(store, room.id, bet, nowMs);
 }
 
@@ -264,11 +314,13 @@ export async function syncBetParticipantsWithRoom(
   const anyDeposit = bet.depositsReceived > 0
     || bet.participants.some((participant) => participant.depositStatus === 'paid');
   if (anyDeposit) return room;
-  const roomNpubs = room.players.map((player) => player.npub);
-  if (roomNpubs.some((npub) => !npub)) return room;
-  const desired = [...new Set(roomNpubs as string[])].sort();
-  const current = [...new Set(bet.participants.map((participant) => participant.npub))].sort();
-  if (desired.length === current.length && desired.every((npub, index) => npub === current[index])) return room;
+  // Comparamos por jugador de la sala (playerId), no por npub: los invitados no
+  // tienen npub propio (es efímero), así que el conjunto estable es el de jugadores.
+  const desired = [...new Set(room.players.map((player) => player.id))].sort();
+  const current = [...new Set(
+    bet.participants.map((participant) => participant.playerId).filter((id): id is string => !!id),
+  )].sort();
+  if (desired.length === current.length && desired.every((id, index) => id === current[index])) return room;
   if (desired.length < 2) return room;
 
   try {
@@ -418,7 +470,10 @@ export async function maybeReportRoomBetResult(
   let winners = bet.winnerNpubs;
   let updatedRoom = room;
   if (!winners) {
-    winners = winnerNpubsFromRoom(room);
+    // Mapeamos el ganador por playerId al npub de SU participante en la apuesta
+    // (real o efímero de invitado); winnerNpubsFromRoom no sirve porque el
+    // invitado no tiene npub en la sala. Vacío = empate/anulación → reembolso.
+    winners = winnerBetNpubsFromRoom(room);
     const reportedBet: RoomBet = { ...bet, winnerNpubs: winners, updatedAtServerMs: nowMs };
     updatedRoom = await setRoomBet(store, room.id, reportedBet, nowMs);
   }

@@ -51,9 +51,10 @@ import {
   submitResult,
   updateRoomSettings,
   updateProgress,
+  winnerBetNpubsFromRoom,
 } from '../src/online/roomService';
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
-import { maybeReportRoomBetResult, settleRoomBet } from '../src/online/lunaNegraBets';
+import { createBetForRoom, maybeReportRoomBetResult, settleRoomBet } from '../src/online/lunaNegraBets';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
 import { GET as lunaNegraApiGet } from '../api/luna-negra/[action]';
 import { decidePeerKoAction } from '../src/online/peerKoAuthority';
@@ -1623,6 +1624,9 @@ describe('core stacker engine', () => {
           payUrl: null,
           depositError: null,
           payoutSats: null,
+          payoutStatus: 'none',
+          withdrawLnurl: null,
+          withdrawUrl: null,
         },
         {
           npub: 'npub-guest-r',
@@ -1633,6 +1637,9 @@ describe('core stacker engine', () => {
           payUrl: null,
           depositError: null,
           payoutSats: null,
+          payoutStatus: 'none',
+          withdrawLnurl: null,
+          withdrawUrl: null,
         },
       ],
       winnerNpubs: null,
@@ -1679,6 +1686,62 @@ describe('core stacker engine', () => {
     delete process.env.LUNA_NEGRA_API_KEY;
   });
 
+  it('creates a MIXED pool (account + guest) mapping seats to players, and reports the guest winner by ephemeral npub', async () => {
+    const store = new MemoryRoomStore();
+    let room = await createRoom(store, { playerId: 'host-player-m', npub: 'npub-host-m', name: 'Host', visibility: 'public' }, 1000);
+    // Invitado: entra SIN npub (sin cuenta Nostr).
+    room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-m', name: 'Guest' }, 1010);
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    process.env.LUNA_NEGRA_GAME_ID = 'game-m';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (url.endsWith('/api/v1/bets') && method === 'POST') {
+        // Luna devuelve el mapeo seat→npub (en el orden enviado): el invitado
+        // recibió una identidad efímera distinta a cualquier npub de la sala.
+        return Response.json({
+          betId: 'bet-mixed',
+          stakeSats: 50,
+          potTargetSats: 100,
+          netPayoutSats: 99,
+          participants: [
+            { seat: 1, npub: 'npub-host-m' },
+            { seat: 2, npub: 'npub-guest-eph' },
+          ],
+        });
+      }
+      if (url.includes('/result')) return Response.json({ ok: true });
+      return Response.json({
+        betId: 'bet-mixed',
+        status: 'pending_deposits',
+        stakeSats: 50,
+        participants: [
+          { npub: 'npub-host-m', depositStatus: 'pending', bolt11: 'lnbchost' },
+          { npub: 'npub-guest-eph', depositStatus: 'pending', bolt11: 'lnbcguest' },
+        ],
+      });
+    }));
+
+    const withBet = await createBetForRoom(store, { roomId: room.id, playerId: 'host-player-m', stakeSats: 50 }, 1020);
+    const host = withBet.bet?.participants.find((p) => p.playerId === 'host-player-m');
+    const guest = withBet.bet?.participants.find((p) => p.playerId === 'guest-player-m');
+    // El asiento del host quedó atado a su npub real; el del invitado, al efímero.
+    expect(host?.npub).toBe('npub-host-m');
+    expect(guest?.npub).toBe('npub-guest-eph');
+    expect(guest?.bolt11).toBe('lnbcguest');
+
+    // El ganador invitado se reporta por SU npub efímero (no tiene npub propio).
+    withBet.winnerPlayerId = 'guest-player-m';
+    expect(winnerBetNpubsFromRoom(withBet)).toEqual(['npub-guest-eph']);
+
+    vi.unstubAllGlobals();
+    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_API_KEY;
+    delete process.env.LUNA_NEGRA_GAME_ID;
+  });
+
   it('surfaces Luna Negra settlement errors from the manual settle action', async () => {
     const store = new MemoryRoomStore();
     let room = await createRoom(store, { playerId: 'host-player-s', npub: 'npub-host-s', name: 'Host', visibility: 'public' }, 1000);
@@ -1706,6 +1769,9 @@ describe('core stacker engine', () => {
           payUrl: null,
           depositError: null,
           payoutSats: null,
+          payoutStatus: 'none',
+          withdrawLnurl: null,
+          withdrawUrl: null,
         },
         {
           npub: 'npub-guest-s',
@@ -1716,6 +1782,9 @@ describe('core stacker engine', () => {
           payUrl: null,
           depositError: null,
           payoutSats: null,
+          payoutStatus: 'none',
+          withdrawLnurl: null,
+          withdrawUrl: null,
         },
       ],
       winnerNpubs: null,

@@ -1563,6 +1563,14 @@ function normalizeBetDepositStatus(value: unknown): RoomBetParticipant['depositS
   return 'pending';
 }
 
+function normalizeBetPayoutStatus(value: unknown): RoomBetParticipant['payoutStatus'] {
+  if (
+    value === 'pending' || value === 'paid' || value === 'failed'
+    || value === 'withdraw_pending' || value === 'claimed' || value === 'forfeited'
+  ) return value;
+  return 'none';
+}
+
 function normalizeNullableString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
@@ -1589,6 +1597,9 @@ function normalizeBet(value: unknown): RoomBet | null {
         payUrl: normalizeNullableString(entry.payUrl),
         depositError: normalizeNullableString(entry.depositError),
         payoutSats: normalizeNullableSats(entry.payoutSats),
+        payoutStatus: normalizeBetPayoutStatus(entry.payoutStatus),
+        withdrawLnurl: normalizeNullableString(entry.withdrawLnurl),
+        withdrawUrl: normalizeNullableString(entry.withdrawUrl),
       }))
     : [];
   const winnerNpubs = Array.isArray(value.winnerNpubs)
@@ -1640,6 +1651,20 @@ export function winnerNpubsFromRoom(room: OnlineRoom): string[] {
   if (!room.winnerPlayerId) return [];
   const winner = room.players.find((player) => player.id === room.winnerPlayerId);
   return winner?.npub ? [winner.npub] : [];
+}
+
+/**
+ * npub del ganador en términos de la APUESTA (vacío = empate/anulación → reembolso).
+ * Resuelve por el participante cuyo `playerId` coincide con el ganador de la sala,
+ * porque en un pozo mixto el invitado no tiene npub propio: el suyo es el efímero
+ * que Luna le asignó y quedó guardado en `bet.participants`. Si no hay apuesta o
+ * el ganador no es participante, cae a `winnerNpubsFromRoom` (npub real de la sala).
+ */
+export function winnerBetNpubsFromRoom(room: OnlineRoom): string[] {
+  if (!room.winnerPlayerId) return [];
+  const entry = room.bet?.participants.find((p) => p.playerId === room.winnerPlayerId);
+  if (entry?.npub) return [entry.npub];
+  return winnerNpubsFromRoom(room);
 }
 
 function lunaNegraPlayerFromInvite(invite: VerifiedLunaNegraInvite): LunaNegraPlayer {

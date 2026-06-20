@@ -101,6 +101,15 @@ export type RoomBetStatus =
 
 export type RoomBetDepositStatus = 'pending' | 'paid' | 'refunded' | 'failed';
 
+export type RoomBetPayoutStatus =
+  | 'none'
+  | 'pending'
+  | 'paid'
+  | 'failed'
+  | 'withdraw_pending'
+  | 'claimed'
+  | 'forfeited';
+
 export interface RoomBetParticipant {
   npub: string;
   /** pubkey del jugador en la sala, si pudo mapearse. */
@@ -119,6 +128,16 @@ export interface RoomBetParticipant {
   depositError: string | null;
   /** Pago recibido por este participante (si ganó), en sats. */
   payoutSats: number | null;
+  /**
+   * Estado del cobro del ganador. Un ganador con cuenta/billetera cobra automático
+   * (`paid`); un ganador invitado (sin billetera) cae en `withdraw_pending` y cobra
+   * escaneando `withdrawLnurl` (LNURL-withdraw) o con la extensión.
+   */
+  payoutStatus: RoomBetPayoutStatus;
+  /** LNURL de retiro del ganador invitado (solo en `withdraw_pending`). */
+  withdrawLnurl: string | null;
+  /** URL web del retiro (alternativa al LNURL). */
+  withdrawUrl: string | null;
 }
 
 /** Estado de la apuesta de la sala, sincronizado desde Luna Negra. */
