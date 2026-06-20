@@ -1,5 +1,5 @@
 import { cellsFor, PIECE_COLORS, PIECE_COLORS_COLORBLIND } from '../game/pieces';
-import type { GameState } from '../game/types';
+import type { GameState, PieceType } from '../game/types';
 
 // Renderer Canvas2D autónomo de un tablero, con el MISMO look que el juego real
 // (bloques con relieve/bevel, ghost, grilla) — ver PixiGameRenderer.drawBlockAt.
@@ -28,7 +28,19 @@ const paletteCache = new Map<number, BlockPalette>();
 
 export interface BoardCanvasOptions {
   colorBlind?: boolean;
+  // Dibuja los paneles laterales del juego real (HOLD a la izquierda, NEXT a la
+  // derecha) y la barra de basura entrante pegada al tablero. Cuando está activo el
+  // canvas debe ser más ancho (≈18 celdas de ancho × 20 de alto) para que entren.
+  panels?: boolean;
+  // Cuántas piezas de la cola NEXT mostrar (default: las que traiga el estado).
+  nextCount?: number;
 }
+
+const LABEL_COLOR = 'rgba(247, 247, 242, 0.66)';
+const CARD_BG = 'rgba(255, 255, 255, 0.035)';
+const CARD_LINE = 'rgba(255, 255, 255, 0.10)';
+const NEXT_ACCENT = 'rgba(0, 245, 255, 0.45)';
+const GARBAGE_BAR = '#ff4d4d';
 
 // Dibuja el estado en el canvas. Asume que el canvas ya tiene el tamaño en píxeles
 // de dispositivo correcto (ver sizeBoardCanvas); escala el dibujo a sus dimensiones.
@@ -40,13 +52,23 @@ export function drawBoardToCanvas(canvas: HTMLCanvasElement, state: GameState, o
   const hiddenRows = state.stats.hiddenRows;
   const widthPx = canvas.width;
   const heightPx = canvas.height;
-  const cell = Math.min(widthPx / columns, heightPx / visibleRows);
+  // Con paneles reservamos un canalón a cada lado (HOLD izq, NEXT der). El cálculo
+  // de la celda incluye esos canalones para que el tablero no se desborde.
+  const sideUnits = opts.panels ? 4.4 : 0;
+  const totalCols = columns + sideUnits * 2;
+  const cell = Math.min(widthPx / totalCols, heightPx / visibleRows);
   const boardW = cell * columns;
   const boardH = cell * visibleRows;
-  const originX = Math.round((widthPx - boardW) / 2);
+  const totalW = cell * totalCols;
+  const originX = Math.round((widthPx - totalW) / 2 + sideUnits * cell);
   const originY = Math.round((heightPx - boardH) / 2);
 
   ctx.clearRect(0, 0, widthPx, heightPx);
+  if (opts.panels) {
+    const colors = opts.colorBlind ? PIECE_COLORS_COLORBLIND : PIECE_COLORS;
+    const nextCount = opts.nextCount ?? state.next.length;
+    drawSidePanels(ctx, state, colors, { cell, sideUnits, originX, originY, boardW, boardH }, nextCount);
+  }
   // Fondo y grilla del tablero.
   ctx.fillStyle = BOARD_BG;
   ctx.fillRect(originX, originY, boardW, boardH);
@@ -109,6 +131,134 @@ export function drawBoardToCanvas(canvas: HTMLCanvasElement, state: GameState, o
   ctx.strokeStyle = PANEL_LINE;
   ctx.lineWidth = Math.max(2, cell * 0.08);
   ctx.strokeRect(originX, originY, boardW, boardH);
+}
+
+interface PanelGeom {
+  cell: number;
+  sideUnits: number;
+  originX: number;
+  originY: number;
+  boardW: number;
+  boardH: number;
+}
+
+// Dibuja las tarjetas HOLD (izquierda) y NEXT (derecha) más la barra de basura
+// entrante pegada al borde izquierdo del tablero, replicando el look de
+// PixiGameRenderer (drawCard / drawCenteredPiece) pero en Canvas2D para que el
+// visor multi-tablero comparta la misma interfaz que el juego real.
+function drawSidePanels(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  colors: Record<PieceType, number>,
+  g: PanelGeom,
+  nextCount: number,
+): void {
+  const { cell, sideUnits, originX, originY, boardW, boardH } = g;
+  const cardW = (sideUnits - 0.8) * cell;
+  const radius = Math.max(4, cell * 0.18);
+
+  // HOLD: tarjeta arriba a la izquierda con la pieza centrada.
+  const holdH = cell * 3.6;
+  const holdX = originX - 0.4 * cell - cardW;
+  drawCard(ctx, holdX, originY, cardW, holdH, radius);
+  drawCardLabel(ctx, 'HOLD', holdX + cell * 0.45, originY + cell * 0.6, cell);
+  if (state.hold) {
+    drawPreviewPiece(ctx, state.hold, colors[state.hold], holdX + cardW / 2, originY + holdH * 0.62, cell * 0.7);
+  }
+
+  // NEXT: tarjeta a la derecha; la primera pieza va resaltada en una sub-celda turquesa.
+  const count = Math.max(1, Math.min(nextCount, state.next.length));
+  const nextX = originX + boardW + 0.4 * cell;
+  const nextH = Math.min(cell * (1.5 + count * 2.25), boardH);
+  drawCard(ctx, nextX, originY, cardW, nextH, radius);
+  drawCardLabel(ctx, 'NEXT', nextX + cell * 0.45, originY + cell * 0.6, cell);
+  const previewSize = cell * 0.7;
+  for (let i = 0; i < count; i += 1) {
+    const piece = state.next[i];
+    if (!piece) break;
+    const cy = originY + cell * (1.95 + i * 2.25);
+    if (cy + cell > originY + nextH) break;
+    if (i === 0) {
+      const hx = nextX + cell * 0.35;
+      const hw = cardW - cell * 0.7;
+      const hy = originY + cell * 1.0;
+      const hh = cell * 1.9;
+      roundRectPath(ctx, hx, hy, hw, hh, Math.max(4, cell * 0.28));
+      ctx.fillStyle = 'rgba(0, 245, 255, 0.07)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, cell * 0.04);
+      ctx.strokeStyle = NEXT_ACCENT;
+      ctx.stroke();
+    }
+    drawPreviewPiece(ctx, piece, colors[piece], nextX + cardW / 2, cy, previewSize);
+  }
+
+  // Basura entrante: barra roja vertical pegada al borde izquierdo del tablero,
+  // creciendo desde abajo (estilo TETR.IO) según las líneas pendientes.
+  const pending = state.stats.pendingGarbage;
+  if (pending > 0) {
+    const barW = Math.max(3, cell * 0.28);
+    const barX = originX - barW - cell * 0.06;
+    const filled = Math.min(pending, state.stats.visibleRows);
+    const barH = (filled / state.stats.visibleRows) * boardH;
+    ctx.fillStyle = GARBAGE_BAR;
+    ctx.fillRect(barX, originY + boardH - barH, barW, barH);
+  }
+}
+
+function drawCard(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  roundRectPath(ctx, x, y, w, h, r);
+  ctx.fillStyle = CARD_BG;
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, r * 0.2);
+  ctx.strokeStyle = CARD_LINE;
+  ctx.stroke();
+}
+
+// Cabecera de tarjeta: puntito turquesa + etiqueta en gris (HOLD / NEXT).
+function drawCardLabel(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, cell: number): void {
+  const dot = Math.max(2, cell * 0.11);
+  ctx.fillStyle = NEXT_ACCENT;
+  ctx.beginPath();
+  ctx.arc(x + dot, y, dot, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = LABEL_COLOR;
+  ctx.font = `600 ${Math.round(cell * 0.42)}px system-ui, -apple-system, sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillText(text, x + dot * 2 + cell * 0.18, y + dot * 0.1);
+}
+
+// Dibuja una pieza centrada (horizontal y vertical) alrededor de (centerX, centerY).
+function drawPreviewPiece(
+  ctx: CanvasRenderingContext2D,
+  piece: PieceType,
+  color: number,
+  centerX: number,
+  centerY: number,
+  size: number,
+): void {
+  const cells = cellsFor(piece, 0);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const c of cells) {
+    minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x);
+    minY = Math.min(minY, c.y); maxY = Math.max(maxY, c.y);
+  }
+  const wCells = maxX - minX + 1, hCells = maxY - minY + 1;
+  const ox = centerX - (wCells * size) / 2 - minX * size;
+  const oy = centerY - (hCells * size) / 2 - minY * size;
+  for (const c of cells) drawBlock(ctx, ox + c.x * size, oy + c.y * size, size, color);
+}
+
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
 }
 
 // Réplica Canvas2D de PixiGameRenderer.drawBlockAt: relleno + línea exterior,

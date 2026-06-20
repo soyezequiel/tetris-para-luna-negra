@@ -84,7 +84,7 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LeaderboardEntry, SurvivalEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchControlsHidden, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
+import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
@@ -335,7 +335,9 @@ let libraryFilter: LibraryFilter = 'all';
 let selectedHistoryEntryId: string | null = null;
 let libraryError: string | null = null;
 let pendingConfirmAction: DestructiveRunAction | null = null;
-let touchControlsHidden = best.touchControlsHidden;
+// "Ocultar controles" se quitó de la UI: los controles táctiles ahora se muestran
+// siempre durante la partida (el esquema/vibración se ajustan desde Configuración).
+let touchControlsHidden = false;
 let touchScheme: TouchScheme = best.touchScheme;        // 'pro' | 'reduced' | 'dpad'
 let touchHapticsEnabled: boolean = best.touchHaptics;   // navigator.vibrate on/off
 let autoPlayEnabled = false; // TRUCO AUTOPLAY: el bot juega solo al activarse
@@ -1521,10 +1523,6 @@ function handleOverlayClick(event: MouseEvent): void {
   if (!control) return;
 
   const action = control.dataset.uiAction;
-  if (action === 'toggle-touch-controls') {
-    toggleTouchControls();
-    return;
-  }
   if (action === 'cycle-touch-scheme') {
     cycleTouchScheme();
     return;
@@ -2100,12 +2098,6 @@ function goToMenu(): void {
   libraryError = null;
   runHistory = loadRunHistory();
   input.releaseAll();
-}
-
-function toggleTouchControls(): void {
-  touchControlsHidden = !touchControlsHidden;
-  best = saveTouchControlsHidden(touchControlsHidden);
-  releaseActiveTouches();
 }
 
 function openReplayLibrary(): void {
@@ -5151,31 +5143,11 @@ function renderTouchControls(state: GameState): string {
   // tapaba el botón "Reportar" abajo; los ocultamos en cuanto la corrida es terminal.
   if (appMode === 'playing' && terminalLabel(state.status)) return '';
 
-  if (touchControlsHidden) {
-    return `
-      <button class="touch-controls-toggle touch-controls-restore" type="button" data-ui-action="toggle-touch-controls">
-        Controles
-      </button>
-    `;
-  }
-
-  const hapticsOn = touchHapticsEnabled;
-  const utility = `
-    <div class="touch-utility">
-      <button class="touch-chip touch-chip-scheme" type="button" data-ui-action="cycle-touch-scheme" aria-label="Cambiar esquema de control">
-        <span class="touch-chip-dot"></span>${TOUCH_SCHEME_LABELS[touchScheme]}
-      </button>
-      <button class="touch-button touch-button-pause touch-chip" type="button" data-touch-action="pause" aria-label="${CONTROL_ACTION_LABELS.pause}">II</button>
-      <button class="touch-chip ${hapticsOn ? 'is-on' : ''}" type="button" data-ui-action="toggle-touch-haptics" aria-label="Vibración">
-        ${hapticsOn ? '✸ Vibra' : '✷ Vibra'}
-      </button>
-      <button class="touch-chip" type="button" data-ui-action="toggle-touch-controls" aria-label="Ocultar controles">Ocultar</button>
-    </div>
-  `;
-
+  // El esquema (Pro/Simple/D-pad), la vibración y la pausa ya no viven en una barra
+  // sobre los botones: el esquema y la vibración se ajustan desde Configuración
+  // (engranaje) y la pausa en solo es el propio engranaje. Así el tablero gana alto.
   return `
     <nav class="touch-controls touch-scheme-${touchScheme}" aria-label="Controles táctiles">
-      ${utility}
       <div class="touch-main">
         ${touchScheme === 'pro' ? renderProScheme()
           : touchScheme === 'reduced' ? renderReducedScheme()
@@ -7212,6 +7184,7 @@ function renderSettingsPanelContent(): string {
             ${renderRoyaltyFreeToggleRow()}
           </div>
         </section>
+        ${renderTouchSettingsSection()}
         <div class="panel-actions" style="display: flex; gap: 12px; margin-top: 24px;">
           <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="settings-back">Volver</button>
           <button class="dash-action-btn danger" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="settings-reset">Restablecer</button>
@@ -8239,6 +8212,25 @@ function renderRoyaltyFreeToggleRow(): string {
       <span class="custom-toggle-knob"></span>
     </button>
   `);
+}
+
+// Sección "Controles táctiles" del panel de Configuración: selector de esquema
+// (Pro/Simple/D-pad) + vibración. Antes vivían en una barra de chips sobre los
+// botones táctiles; se movieron acá para liberar alto de tablero en celular. Sólo
+// tiene sentido en dispositivos táctiles, así que se omite con puntero fino.
+function renderTouchSettingsSection(): string {
+  if (typeof window === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return '';
+  const hapticsOn = touchHapticsEnabled;
+  return renderCustomSection('Controles táctiles', [
+    renderCustomRow('Esquema', `
+      <button class="binding-button" type="button" data-ui-action="cycle-touch-scheme" aria-label="Cambiar esquema de control táctil">${TOUCH_SCHEME_LABELS[touchScheme]}</button>
+    `),
+    renderCustomRow('Vibración', `
+      <button class="custom-toggle ${hapticsOn ? 'custom-toggle-on' : 'custom-toggle-off'}" type="button" role="switch" aria-checked="${hapticsOn}" aria-label="Vibración" data-ui-action="toggle-touch-haptics">
+        <span class="custom-toggle-knob"></span>
+      </button>
+    `),
+  ]);
 }
 
 // Tarjeta compacta de volumen para el modo relax (arriba a la derecha, bajo el

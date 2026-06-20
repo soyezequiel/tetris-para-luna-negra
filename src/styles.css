@@ -2438,14 +2438,10 @@ canvas {
     width: 118px;
   }
 
+  /* En celular el panel de volumen SFX/BGM tapaba el tablero arriba a la derecha.
+     El audio sigue disponible desde Configuración (engranaje → Audio). */
   .relax-audio {
-    top: 70px;
-    right: 14px;
-    padding: 6px 10px;
-  }
-
-  .relax-audio .volume-control {
-    width: 132px;
+    display: none;
   }
 
   .help {

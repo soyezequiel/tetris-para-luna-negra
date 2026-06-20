@@ -798,18 +798,21 @@ class LocalVersusMatch {
     const colorBlind = this.options.colorBlind ?? false;
     this.sizeCanvas(this.canvas1);
     this.sizeCanvas(this.canvas2);
-    drawBoardToCanvas(this.canvas1, this.seats.seat1.state, { colorBlind });
-    drawBoardToCanvas(this.canvas2, this.seats.seat2.state, { colorBlind });
+    drawBoardToCanvas(this.canvas1, this.seats.seat1.state, { colorBlind, panels: true });
+    drawBoardToCanvas(this.canvas2, this.seats.seat2.state, { colorBlind, panels: true });
     this.drawPending(1, this.seats.seat1.state);
     this.drawPending(2, this.seats.seat2.state);
     this.drawCenter();
   }
 
   private sizeCanvas(canvas: HTMLCanvasElement): void {
-    // El tablero es 10×20; mantenemos esa proporción dentro del alto disponible.
+    // El tablero es 10×20, pero con los paneles HOLD/NEXT reservamos un canalón a
+    // cada lado (≈4.4 celdas), así que el lienzo es más ancho (10 + 4.4·2 = 18.8
+    // celdas de ancho × 20 de alto). Mantenemos esa proporción dentro del alto
+    // disponible para que los paneles entren sin recortar el tablero.
     const stageHeight = this.overlay.clientHeight || window.innerHeight;
     const cssHeight = Math.max(240, Math.min(stageHeight * 0.78, 760));
-    const cssWidth = cssHeight / 2;
+    const cssWidth = cssHeight * (18.8 / 20);
     sizeBoardCanvas(canvas, cssWidth, cssHeight);
   }
 

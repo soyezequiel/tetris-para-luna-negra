@@ -355,9 +355,11 @@ export class PixiGameRenderer {
     const availableHeight = Math.max(360, this.height - touchControlsInset);
 
     // En pantallas angostas los paneles laterales se compactan para dejar más espacio al tablero.
+    // En celular el tablero queda limitado por el ANCHO (board + 2 paneles), así que afinamos
+    // paneles y separación al mínimo legible para maximizar las celdas.
     const compact = this.width < 640;
-    this.sideUnits = compact ? 3.6 : 5.2;
-    this.gapUnits = compact ? 0.5 : 0.7;
+    this.sideUnits = compact ? 3.1 : 5.2;
+    this.gapUnits = compact ? 0.4 : 0.7;
 
     // El presupuesto horizontal debe contener el tablero MÁS los dos paneles laterales,
     // de lo contrario HOLD/NEXT se salen del viewport (se recortaban en móvil).
@@ -367,7 +369,10 @@ export class PixiGameRenderer {
     // Incluimos el buffer extra (topRows) en el alto para que el marco ampliado
     // entre completo en el viewport.
     const renderRows = this.visibleRows + this.topRows;
-    const verticalCell = availableHeight * 0.86 / renderRows;
+    // En celular ya no hay barra de chips sobre los botones ni panel de sonido encima,
+    // así que aprovechamos más alto disponible (sin que el marco toque la marca/controles).
+    const verticalFill = compact ? 0.94 : 0.86;
+    const verticalCell = availableHeight * verticalFill / renderRows;
     this.cell = Math.max(12, Math.min(34, horizontalCell, verticalCell));
 
     this.sideW = this.cell * this.sideUnits;
