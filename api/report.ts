@@ -82,6 +82,18 @@ interface ReportPayload {
   comment?: unknown;
   device?: { userAgent?: unknown; cores?: unknown; dpr?: unknown; viewport?: unknown; transport?: unknown };
   context?: { appMode?: unknown; roomId?: unknown; players?: unknown; isHost?: unknown };
+  betWithdrawal?: {
+    roomStatus?: unknown;
+    betId?: unknown;
+    betStatus?: unknown;
+    payoutStatus?: unknown;
+    hasWithdrawLnurl?: unknown;
+    withdrawHandleVersion?: unknown;
+    qrInDom?: unknown;
+    qrConnected?: unknown;
+    qrComplete?: unknown;
+    trace?: unknown[];
+  };
   session?: {
     frames?: unknown; spikes?: unknown; longtasks?: unknown; snaps?: unknown;
     b33?: unknown; b50?: unknown; b100?: unknown; b200?: unknown;
@@ -127,10 +139,18 @@ function buildDiscordSummary(report: ReportPayload): string {
     `📊 spikes=**${num(s.spikes)}** longtasks=**${num(s.longtasks)}** snaps=**${num(s.snaps)}** | cola >33=${num(s.b33)} >50=${num(s.b50)} >100=${num(s.b100)} >200=${num(s.b200)}`,
     `⏱️ peor frame=${worstStr} · maxLongtask=${num(s.maxLongtaskMs)}ms · frames=${num(s.frames)} en ${num(s.durationMs)}ms · errores=**${errors}**`,
     `🖥️ ${str(dev.viewport)} dpr=${num(dev.dpr)} cores=${num(dev.cores)} transport=${str(dev.transport)}`,
+    buildBetWithdrawalLine(report.betWithdrawal),
     buildAudioLine(report.audio),
     buildMarksLine(report.marks),
   ].filter((line): line is string => line !== null);
   return lines.join('\n').slice(0, 1990);
+}
+
+function buildBetWithdrawalLine(bet: ReportPayload['betWithdrawal']): string | null {
+  if (!bet || typeof bet !== 'object') return null;
+  const bool = (value: unknown): string => value === true ? 'sí' : value === false ? 'no' : '—';
+  const traceCount = Array.isArray(bet.trace) ? bet.trace.length : 0;
+  return `⚡ retiro: room=${str(bet.roomStatus)} bet=${str(bet.betStatus)} payout=${str(bet.payoutStatus)} LNURL=${bool(bet.hasWithdrawLnurl)} QR=${bool(bet.qrInDom)}/${bool(bet.qrConnected)} v=${str(bet.withdrawHandleVersion)} eventos=${traceCount}`;
 }
 
 // Atribución del trabajo fuera de rAF (mensajes peer / poll). Mostramos las 3 etiquetas que más

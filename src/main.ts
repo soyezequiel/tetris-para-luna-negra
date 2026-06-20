@@ -727,6 +727,74 @@ function safeStringify(value: unknown): string {
 // Estado del botón "Reportar" de la pantalla de resultados + comentario del jugador.
 let reportComment = '';
 let reportButtonState: 'idle' | 'sending' | 'sent' | 'error' = 'idle';
+type BetWithdrawalTraceSource =
+  | 'room-action'
+  | 'room-poll'
+  | 'bet-refresh'
+  | 'bet-refresh-error'
+  | 'withdraw-render'
+  | 'withdraw-regression'
+  | 'withdraw-resolved';
+interface BetWithdrawalTraceEvent {
+  t: number;
+  source: BetWithdrawalTraceSource;
+  note: string | null;
+  roomId: string | null;
+  roomStatus: string | null;
+  roomUpdatedAt: number | null;
+  betId: string | null;
+  betStatus: string | null;
+  payoutStatus: string | null;
+  payoutSats: number | null;
+  hasWithdrawLnurl: boolean;
+  withdrawHandleVersion: number;
+}
+const BET_WITHDRAWAL_TRACE_MAX = 80;
+const betWithdrawalTrace: BetWithdrawalTraceEvent[] = [];
+const lastWithdrawalTraceSignatureBySource = new Map<BetWithdrawalTraceSource, string>();
+let lastObservedWithdrawHandle: string | null = null;
+let withdrawHandleVersion = 0;
+
+function roomBetEntryForLocalPlayer(room: OnlineRoom | null): RoomBetParticipant | undefined {
+  const bet = room?.bet;
+  if (!bet) return undefined;
+  const byPlayer = bet.participants.find((entry) => entry.playerId === onlinePlayer.id);
+  if (byPlayer) return byPlayer;
+  const npub = room.players.find((player) => player.id === onlinePlayer.id)?.npub;
+  return npub ? bet.participants.find((entry) => entry.npub === npub) : undefined;
+}
+
+function recordBetWithdrawalTrace(
+  source: BetWithdrawalTraceSource,
+  room: OnlineRoom | null = onlineRoom,
+  note: string | null = null,
+): void {
+  const entry = roomBetEntryForLocalPlayer(room);
+  const handle = entry?.withdrawLnurl ?? null;
+  if (handle && handle !== lastObservedWithdrawHandle) {
+    lastObservedWithdrawHandle = handle;
+    withdrawHandleVersion += 1;
+  }
+  const event: BetWithdrawalTraceEvent = {
+    t: Math.round(performance.now()),
+    source,
+    note,
+    roomId: room?.id ?? null,
+    roomStatus: room?.status ?? null,
+    roomUpdatedAt: room?.updatedAtServerMs ?? null,
+    betId: room?.bet?.betId ?? null,
+    betStatus: room?.bet?.status ?? null,
+    payoutStatus: entry?.payoutStatus ?? null,
+    payoutSats: entry?.payoutSats ?? null,
+    hasWithdrawLnurl: !!handle,
+    withdrawHandleVersion,
+  };
+  const signature = JSON.stringify({ ...event, t: 0, note: null });
+  if (!note && signature === lastWithdrawalTraceSignatureBySource.get(source)) return;
+  lastWithdrawalTraceSignatureBySource.set(source, signature);
+  betWithdrawalTrace.push(event);
+  if (betWithdrawalTrace.length > BET_WITHDRAWAL_TRACE_MAX) betWithdrawalTrace.shift();
+}
 
 // Observa longtasks del navegador: tareas que bloquearon el main thread ≥50ms, las reporte
 // quien las reporte (GC, microtask del poll, parseo JSON, layout). Son la causa más probable
@@ -857,6 +925,8 @@ async function sendPerfReport(): Promise<void> {
 }
 function buildPerfReport(): Record<string, unknown> {
   const nav = navigator;
+  const localBetEntry = roomBetEntryForLocalPlayer(onlineRoom);
+  const withdrawQr = overlayElement.querySelector<HTMLImageElement>('img[alt="QR de retiro Lightning"]');
   return {
     generatedAt: new Date().toISOString(),
     perfLogEnabled,
@@ -874,6 +944,25 @@ function buildPerfReport(): Record<string, unknown> {
       roomId: onlineRoom?.id ?? null,
       players: onlineRoom?.players?.length ?? null,
       isHost: onlineRoom ? isOnlineHost() : null,
+    },
+    betWithdrawal: {
+      roomStatus: onlineRoom?.status ?? null,
+      roomUpdatedAtServerMs: onlineRoom?.updatedAtServerMs ?? null,
+      betId: onlineRoom?.bet?.betId ?? null,
+      betStatus: onlineRoom?.bet?.status ?? null,
+      payoutStatus: localBetEntry?.payoutStatus ?? null,
+      payoutSats: localBetEntry?.payoutSats ?? null,
+      hasWithdrawLnurl: !!localBetEntry?.withdrawLnurl,
+      withdrawHandleVersion,
+      qrInDom: !!withdrawQr,
+      qrConnected: withdrawQr?.isConnected ?? false,
+      qrComplete: withdrawQr?.complete ?? false,
+      qrCacheEntries: betQrDataUrls.size,
+      onlineBetBusy,
+      onlineBetPaying,
+      onlineRoomReopenInFlight,
+      lastBetPollAt: Math.round(onlineLastBetPollAt),
+      trace: betWithdrawalTrace.slice(),
     },
     // Diagnóstico de audio: para entender el "se escucha mal en el celular" (perfil
     // móvil activo o no, recorte real medido, volúmenes/mutes, PWA). Ver SoundEngine.
@@ -3157,9 +3246,14 @@ async function refreshOnlineBet(
   try {
     const result = await requestOnlineBetRefresh(onlineRoom.id, onlinePlayer.id);
     syncOnlineClock(result.payload.serverNowMs);
-    adoptOnlineRoom(result.payload.room);
+    adoptOnlineRoom(result.payload.room, 'bet-refresh');
     if (!silent) onlineError = null;
   } catch (error) {
+    recordBetWithdrawalTrace(
+      'bet-refresh-error',
+      onlineRoom,
+      error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+    );
     if (!silent) onlineError = onlineErrorText(error);
   } finally {
     onlineBetBusy = false;
@@ -3437,19 +3531,90 @@ function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
   else appMode = preferredMode;
 }
 
-function adoptOnlineRoom(room: OnlineRoom): void {
+function preserveVisiblePendingWithdrawal(previousRoom: OnlineRoom | null, incomingRoom: OnlineRoom): OnlineRoom {
+  const previousBet = previousRoom?.bet;
+  const previousEntry = roomBetEntryForLocalPlayer(previousRoom);
+  if (
+    !previousRoom
+    || previousRoom.id !== incomingRoom.id
+    || !previousBet
+    || previousEntry?.payoutStatus !== 'withdraw_pending'
+    || !previousEntry.withdrawLnurl
+  ) return incomingRoom;
+
+  const incomingBet = incomingRoom.bet;
+  const incomingEntry = roomBetEntryForLocalPlayer(incomingRoom);
+  if (
+    incomingBet?.betId === previousBet.betId
+    && incomingEntry
+    && (
+      incomingEntry.payoutStatus === 'claimed'
+      || incomingEntry.payoutStatus === 'paid'
+      || incomingEntry.payoutStatus === 'forfeited'
+    )
+  ) {
+    recordBetWithdrawalTrace('withdraw-resolved', incomingRoom, incomingEntry.payoutStatus);
+    return incomingRoom;
+  }
+
+  if (incomingBet?.betId === previousBet.betId) {
+    const participants = incomingBet.participants.map((entry) => (
+      entry.playerId === previousEntry.playerId || entry.npub === previousEntry.npub
+        ? {
+            ...entry,
+            payoutSats: entry.payoutSats ?? previousEntry.payoutSats,
+            payoutStatus: 'withdraw_pending' as const,
+            withdrawLnurl: entry.withdrawLnurl || previousEntry.withdrawLnurl,
+            withdrawUrl: entry.withdrawUrl || previousEntry.withdrawUrl,
+          }
+        : entry
+    ));
+    if (incomingEntry?.payoutStatus !== 'withdraw_pending' || !incomingEntry.withdrawLnurl) {
+      recordBetWithdrawalTrace('withdraw-regression', incomingRoom, 'same-bet-withdraw-state-regressed');
+    }
+    return { ...incomingRoom, bet: { ...incomingBet, participants } };
+  }
+
+  // Defensa ante un backend/cliente viejo que reabre la sala y borra `room.bet`
+  // mientras el QR ya estaba visible. Conservamos resultados + apuesta localmente:
+  // perder sincronía de la próxima ronda es preferible a perder un cobro real.
+  recordBetWithdrawalTrace('withdraw-regression', incomingRoom, incomingBet ? 'bet-id-changed' : 'bet-removed');
+  return {
+    ...previousRoom,
+    // Avanzamos solo el sello monotónico para no aceptar después una respuesta
+    // realmente vieja; el estado de ronda/apuesta permanece congelado con el QR.
+    updatedAtServerMs: Math.max(previousRoom.updatedAtServerMs, incomingRoom.updatedAtServerMs),
+  };
+}
+
+function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' | 'bet-refresh' = 'room-action'): void {
   const previousRoom = onlineRoom;
   const previousRoundId = onlineActiveRoundId;
-  if (previousRoom && room.updatedAtServerMs < previousRoom.updatedAtServerMs) return;
-  const nextRoundId = onlineRoundKey(room);
+  const previousEntry = roomBetEntryForLocalPlayer(previousRoom);
+  const incomingEntry = roomBetEntryForLocalPlayer(room);
+  const resolvesPendingWithdrawal = previousRoom?.bet?.betId === room.bet?.betId
+    && previousEntry?.payoutStatus === 'withdraw_pending'
+    && !!previousEntry.withdrawLnurl
+    && (
+      incomingEntry?.payoutStatus === 'claimed'
+      || incomingEntry?.payoutStatus === 'paid'
+      || incomingEntry?.payoutStatus === 'forfeited'
+    );
+  if (previousRoom && room.updatedAtServerMs < previousRoom.updatedAtServerMs && !resolvesPendingWithdrawal) {
+    recordBetWithdrawalTrace(source, room, 'ignored-older-room');
+    return;
+  }
+  const protectedRoom = preserveVisiblePendingWithdrawal(previousRoom, room);
+  recordBetWithdrawalTrace(source, protectedRoom);
+  const nextRoundId = onlineRoundKey(protectedRoom);
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
-  const roomRestarted = previousRoom?.status === 'finished' && room.status === 'countdown';
-  onlineRoom = room;
-  saveOnlineRoomSession(room);
-  if (room.bet?.status !== 'pending_deposits') onlineBetFastPollUntil = 0;
+  const roomRestarted = previousRoom?.status === 'finished' && protectedRoom.status === 'countdown';
+  onlineRoom = protectedRoom;
+  saveOnlineRoomSession(protectedRoom);
+  if (protectedRoom.bet?.status !== 'pending_deposits') onlineBetFastPollUntil = 0;
   onlineActiveRoundId = nextRoundId;
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
-  maybeSubmitOnlineWin(room);
+  maybeSubmitOnlineWin(protectedRoom);
   maybeCelebratePayout();
 }
 
@@ -4003,7 +4168,7 @@ async function pollOnlineRoom(): Promise<void> {
     // Procesamiento sincrónico de la respuesta del poll: corre fuera del loop()/rAF (post-await),
     // así que el cronómetro por-frame no lo ve. Lo medimos aparte para atribuir el jank del cliente.
     const pollProcessStart = performance.now();
-    adoptOnlineRoom(response.room);
+    adoptOnlineRoom(response.room, 'room-poll');
     syncOnlinePeers(response.room);
     applyRoomAttacks(response.room);
     recordTask('poll:process', performance.now() - pollProcessStart);
@@ -5659,6 +5824,7 @@ function renderOnlineResultsOverlay(state: GameState): string {
 function renderReportBlock(): string {
   const sending = reportButtonState === 'sending';
   const sent = reportButtonState === 'sent';
+  const includesWithdrawDiagnostics = roomBetEntryForLocalPlayer(onlineRoom)?.payoutStatus === 'withdraw_pending';
   const label = sent ? '✓ ¡Gracias! Reporte enviado'
     : sending ? 'Enviando…'
     : reportButtonState === 'error' ? '⚠ No se pudo enviar — reintentar'
@@ -5671,6 +5837,9 @@ function renderReportBlock(): string {
         data-online-field="report-comment" autocomplete="off"
         placeholder="¿Qué pasó? (lag, tirones…) — opcional"${sent ? ' disabled' : ''} />
       <button class="${btnClass}" type="button" data-ui-action="report-perf"${disabledAttr}>${label}</button>
+      ${includesWithdrawDiagnostics
+        ? '<small class="bet-settle-hint">El reporte incluye el historial del QR, retiro y fuentes de actualización.</small>'
+        : ''}
     </div>
   `;
 }
@@ -6245,6 +6414,7 @@ function ensureBetInvoiceQr(bolt11: string): string | null {
 // QR del LNURL-withdraw del ganador invitado: lo escanea con su billetera para
 // llevarse el pozo (no tiene wallet asociada a la que pagarle automático).
 function renderBetWithdrawQr(lnurl: string): string {
+  recordBetWithdrawalTrace('withdraw-render');
   const dataUrl = ensureBetQr(lnurl, lnurl.toUpperCase());
   if (!dataUrl) return '<div class="online-bet-qr online-bet-qr-loading">Generando QR…</div>';
   return `

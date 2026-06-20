@@ -567,7 +567,7 @@ test.describe('TETRA browser flows', () => {
   });
 
   test('shows the LNURL withdrawal controls to a settled winner', async ({ page }) => {
-    const requests = await mockOnlineApi(page, { lunaWithdrawRoom: true });
+    const requests = await mockOnlineApi(page, { lunaWithdrawRoom: true, dropWithdrawBetOnRefresh: true });
     await page.addInitScript(() => {
       window.localStorage.clear();
     });
@@ -585,6 +585,19 @@ test.describe('TETRA browser flows', () => {
     requests.betRefreshCount = 0;
     await expect.poll(() => requests.betRefreshCount, { timeout: 5000 }).toBeGreaterThan(0);
     await expect(page.locator('img[alt="QR de retiro Lightning"]')).toBeVisible();
+
+    const payoutContinue = page.getByRole('button', { name: 'Continuar', exact: true });
+    if (await payoutContinue.isVisible()) await payoutContinue.click();
+    await action(page, 'report-perf').click();
+    await expect.poll(() => requests.lastReport).not.toBeNull();
+    expect(requests.lastReport?.betWithdrawal).toMatchObject({
+      payoutStatus: 'withdraw_pending',
+      hasWithdrawLnurl: true,
+      qrInDom: true,
+    });
+    expect(requests.lastReport?.betWithdrawal?.trace.some((event) => (
+      event.source === 'withdraw-regression' && event.note === 'bet-removed'
+    ))).toBe(true);
   });
 
   test('does not claim wallet credit while a withdrawal handle is missing', async ({ page }) => {
@@ -920,12 +933,18 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
     restartOnNextState: false,
     healthCount: 0,
     betRefreshCount: 0,
+    lastReport: null,
   };
   let room = createMockRoom('ROOM', 'private', now);
   const publicRoom = createMockRoom('PUB1', 'public', now);
 
   await page.route('**/api/health', async (route) => {
     requests.healthCount += 1;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+
+  await page.route('**/api/report', async (route) => {
+    requests.lastReport = route.request().postDataJSON() as MockReportPayload;
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
   });
 
@@ -963,6 +982,16 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
           status: 503,
           contentType: 'application/json',
           body: JSON.stringify({ error: 'Luna refresh timeout' }),
+        });
+        return;
+      }
+      if (options.dropWithdrawBetOnRefresh && room.bet?.status === 'settled') {
+        await fulfillRoom(route, {
+          ...room,
+          status: 'lobby',
+          winnerPlayerId: null,
+          bet: null,
+          updatedAtServerMs: Date.now() + 1000,
         });
         return;
       }
@@ -1219,6 +1248,7 @@ type MockOnlineApiOptions = {
   lunaGuestRoom?: boolean;
   lunaWithdrawRoom?: boolean;
   missingWithdrawHandle?: boolean;
+  dropWithdrawBetOnRefresh?: boolean;
   failBetRefresh?: boolean;
 };
 
@@ -1230,6 +1260,16 @@ type MockOnlineApiRequests = {
   restartOnNextState: boolean;
   healthCount: number;
   betRefreshCount: number;
+  lastReport: MockReportPayload | null;
+};
+
+type MockReportPayload = {
+  betWithdrawal?: {
+    payoutStatus?: string | null;
+    hasWithdrawLnurl?: boolean;
+    qrInDom?: boolean;
+    trace: Array<{ source?: string; note?: string | null }>;
+  };
 };
 
 function createMockRoom(
