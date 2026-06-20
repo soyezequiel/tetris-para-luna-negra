@@ -609,9 +609,15 @@ const PERF_SPIKE_MS = 50; // un frame ≥50ms (<20fps instantáneo) = tirón per
 interface PerfFrame {
   syncMs: number;      // costo de syncOnline() (red / host-authority / attacks)
   renderMs: number;    // costo de renderer.render() (0 si se saltó el rebuild)
+  engineMs: number;    // costo de advanceGameToFrame() (motor; 0 si no ticó este loop)
   ticks: number;       // frames de motor avanzados este loop (>1 = catch-up de golpe)
   polled: boolean;     // se disparó un poll HTTP este frame
   clockSnapMs: number; // snap del reloj online este frame (0 = no hubo)
+  // Intervalo de pared desde el ARRANQUE del loop anterior (cadencia real de rAF). A 60Hz
+  // debería ser ~16.7ms parejo; gaps de ~33ms = vsync perdido = jitter que el cronómetro
+  // del propio frame (dur) NUNCA ve, porque el tiempo se fue ENTRE callbacks (GC, paint,
+  // el rAF paralelo de BackgroundFX, throttle del navegador). 0 en el primer frame.
+  gapMs: number;
 }
 // IMPORTANTE: la CAPTURA de datos de perf (perfSession/perfEvents/errores) está SIEMPRE
 // activa — el overhead es trivial (unos performance.now() por frame) y así el botón
@@ -635,7 +641,7 @@ const perfLogEnabled = ((): boolean => {
 // Desglose del frame en curso (reiniciado al arranque de cada loop()).
 let perfFrame: PerfFrame | null = null;
 function freshPerfFrame(): PerfFrame {
-  return { syncMs: 0, renderMs: 0, ticks: 0, polled: false, clockSnapMs: 0 };
+  return { syncMs: 0, renderMs: 0, engineMs: 0, ticks: 0, polled: false, clockSnapMs: 0, gapMs: 0 };
 }
 
 // Buffer circular de eventos de jank + totales acumulados de TODA la sesión. Es la ÚNICA
@@ -647,19 +653,23 @@ interface PerfEvent {
   kind: 'spike' | 'longtask';
   mode: string;
   ms: number;       // duración del frame (spike) o del longtask
-  sync?: number; render?: number; ticks?: number; poll?: boolean; snapMs?: number; attr?: string;
+  sync?: number; render?: number; engine?: number; ticks?: number; poll?: boolean; snapMs?: number; gap?: number; attr?: string;
 }
 const PERF_EVENTS_MAX = 80; // últimos N eventos (anti-spam de memoria en sesiones largas)
 const perfEvents: PerfEvent[] = [];
 interface PerfSession {
   startedAt: number; frames: number; spikes: number; longtasks: number; snaps: number;
   b33: number; b50: number; b100: number; b200: number;
-  maxLoopMs: number; maxLongtaskMs: number; maxSnapMs: number;
+  maxLoopMs: number; maxLongtaskMs: number; maxSnapMs: number; maxEngineMs: number;
+  // Histograma de cadencia de rAF (gapMs): frames cuyo INTERVALO desde el anterior superó el
+  // umbral. gap33 ≈ un vsync de 60Hz perdido. Si gap33/frames es alto pero los spikes (dur≥50)
+  // son pocos, el problema es jitter de pacing (se siente "laggeado") y NO picos de CPU.
+  gap33: number; gap50: number; gap100: number; maxGapMs: number;
   // Peor frame de toda la sesión, con su desglose (aunque no haya llegado a spike).
   worst: (PerfFrame & { dur: number; mode: string }) | null;
 }
 // Siempre activa (ver perfLogEnabled): el reporte necesita estos totales aunque no haya logging.
-const perfSession: PerfSession = { startedAt: Date.now(), frames: 0, spikes: 0, longtasks: 0, snaps: 0, b33: 0, b50: 0, b100: 0, b200: 0, maxLoopMs: 0, maxLongtaskMs: 0, maxSnapMs: 0, worst: null };
+const perfSession: PerfSession = { startedAt: Date.now(), frames: 0, spikes: 0, longtasks: 0, snaps: 0, b33: 0, b50: 0, b100: 0, b200: 0, maxLoopMs: 0, maxLongtaskMs: 0, maxSnapMs: 0, maxEngineMs: 0, gap33: 0, gap50: 0, gap100: 0, maxGapMs: 0, worst: null };
 function pushPerfEvent(event: PerfEvent): void {
   perfEvents.push(event);
   if (perfEvents.length > PERF_EVENTS_MAX) perfEvents.shift();
@@ -749,6 +759,16 @@ function perfEndFrame(dur: number, frame: PerfFrame): void {
   else if (dur > 50) perfSession.b50 += 1;
   else if (dur > 33) perfSession.b33 += 1;
   if (frame.clockSnapMs > 0) { perfSession.snaps += 1; if (frame.clockSnapMs > perfSession.maxSnapMs) perfSession.maxSnapMs = frame.clockSnapMs; }
+  if (frame.engineMs > perfSession.maxEngineMs) perfSession.maxEngineMs = frame.engineMs;
+  // Cadencia de rAF: ignoramos gaps enormes (>1000ms = pestaña en segundo plano / suspensión,
+  // no jitter de juego) para no inflar el histograma ni el máximo con pausas del navegador.
+  const g = frame.gapMs;
+  if (g > 0 && g <= 1000) {
+    if (g > perfSession.maxGapMs) perfSession.maxGapMs = g;
+    if (g > 100) perfSession.gap100 += 1;
+    else if (g > 50) perfSession.gap50 += 1;
+    else if (g > 33) perfSession.gap33 += 1;
+  }
   if (!perfSession.worst || dur > perfSession.worst.dur) perfSession.worst = { ...frame, dur, mode: appMode };
   // Pico perceptible: lo logueamos AL INSTANTE, con la atribución, para correlacionarlo con
   // lo que el jugador sintió. Un snap grande de reloj también cuenta como tirón aunque el
@@ -757,15 +777,17 @@ function perfEndFrame(dur: number, frame: PerfFrame): void {
     perfSession.spikes += 1;
     pushPerfEvent({
       t: Math.round(performance.now()), kind: 'spike', mode: appMode, ms: Math.round(dur),
-      sync: Math.round(frame.syncMs), render: Math.round(frame.renderMs), ticks: frame.ticks,
+      sync: Math.round(frame.syncMs), render: Math.round(frame.renderMs), engine: Math.round(frame.engineMs), ticks: frame.ticks,
       poll: frame.polled || undefined, snapMs: frame.clockSnapMs ? Math.round(frame.clockSnapMs) : undefined,
+      gap: frame.gapMs ? Math.round(frame.gapMs) : undefined,
     });
     if (perfLogEnabled) {
       // eslint-disable-next-line no-console
       console.warn(
         `[perf:spike] ${appMode} frame=${dur.toFixed(0)}ms `
-        + `sync=${frame.syncMs.toFixed(1)} render=${frame.renderMs.toFixed(1)} ticks=${frame.ticks}`
-        + `${frame.polled ? ' poll' : ''}${frame.clockSnapMs ? ` clockSnap=${frame.clockSnapMs.toFixed(0)}ms` : ''}`,
+        + `sync=${frame.syncMs.toFixed(1)} render=${frame.renderMs.toFixed(1)} engine=${frame.engineMs.toFixed(1)} ticks=${frame.ticks}`
+        + `${frame.polled ? ' poll' : ''}${frame.clockSnapMs ? ` clockSnap=${frame.clockSnapMs.toFixed(0)}ms` : ''}`
+        + `${frame.gapMs ? ` gap=${frame.gapMs.toFixed(0)}ms` : ''}`,
       );
     }
   }
@@ -889,9 +911,14 @@ function startLocalVersusMode(): void {
   });
 }
 
+let lastLoopStartMs = 0; // arranque del loop anterior, para medir la cadencia real de rAF (gapMs)
 function loop(): void {
   const t0 = performance.now();
   perfFrame = freshPerfFrame();
+  // Intervalo de pared desde el frame anterior: la cadencia REAL con que el navegador nos
+  // llama. A 60Hz parejo ≈ 16.7ms; lo de más es jitter (vsync perdido) que dur no captura.
+  if (lastLoopStartMs > 0) perfFrame.gapMs = t0 - lastLoopStartMs;
+  lastLoopStartMs = t0;
   onlineClockSnapMsThisFrame = 0;
   try {
     loopBody();
@@ -988,7 +1015,9 @@ function loopBody(): void {
     sendOnlineInputsToHost(gameInputs);
     playImmediateInputSounds(gameInputs.map((event) => event.action));
     for (const event of gameInputs) recordInput(replay, event);
+    const engineStart = performance.now();
     state = advanceGameToFrame(candidateFrame, gameInputs);
+    if (perfFrame) perfFrame.engineMs = performance.now() - engineStart;
     const tickActions = gameInputs.map((event) => event.action);
     playAcceptedMoveSound(beforeTickState.active, state.active, tickActions);
     triggerWallImpact(beforeTickState.active, state.active, tickActions, state.board[0]?.length ?? 10);

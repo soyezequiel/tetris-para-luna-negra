@@ -4,6 +4,7 @@ import * as lunaNegraAction from './api/luna-negra/[action]';
 import * as lunaNegraEnter from './api/rooms/luna-negra/enter';
 import * as roomsAction from './api/rooms/[action]';
 import * as betsAction from './api/bets/[action]';
+import * as localBetAction from './api/local-bet/[action]';
 import * as leaderboard from './api/leaderboard';
 import * as survival from './api/survival';
 import * as report from './api/report';
@@ -44,6 +45,12 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/bets/cancel', betsAction],
   ['/api/bets/settle', betsAction],
   ['/api/bets/state', betsAction],
+
+  ['/api/local-bet/available', localBetAction],
+  ['/api/local-bet/create', localBetAction],
+  ['/api/local-bet/state', localBetAction],
+  ['/api/local-bet/result', localBetAction],
+  ['/api/local-bet/cancel', localBetAction],
 
   ['/api/leaderboard', leaderboard],
   ['/api/survival', survival],
