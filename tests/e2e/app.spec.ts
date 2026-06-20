@@ -529,6 +529,24 @@ test.describe('TETRA browser flows', () => {
     await expect(action(page, 'online-bet-pay')).toBeVisible();
   });
 
+  test('lets an anonymous room host create a bet', async ({ page }) => {
+    const requests = await mockOnlineApi(page, { createdLobbyGuestRoom: true });
+    await openFreshApp(page);
+
+    await action(page, 'online-create').click();
+    await expect.poll(() => appMode(page)).toBe('roomLobby');
+
+    await expect(page.locator('[data-online-field="bet-stake"]')).toBeVisible();
+    await page.locator('[data-online-field="bet-stake"]').fill('25');
+    await action(page, 'online-bet-create').click();
+
+    await expect.poll(() => requests.lastBetCreate).toMatchObject({
+      roomId: 'ROOM',
+      stakeSats: 25,
+    });
+    await expect(action(page, 'online-bet-pay')).toBeVisible();
+  });
+
   test('explains bet refresh failures after opening payment', async ({ page }) => {
     await mockOnlineApi(page, { lunaBetRoom: true, failBetRefresh: true });
     await page.addInitScript(() => {
@@ -1245,9 +1263,8 @@ function createMockRoom(
 
 function createMockBet(room: MockRoom, now: number): RoomBet {
   const participants = room.players
-    .filter((player) => player.npub)
     .map((player) => ({
-      npub: player.npub ?? '',
+      npub: player.npub ?? `npub-guest-${player.id}`,
       playerId: player.id,
       depositStatus: 'pending' as const,
       bolt11: `lnbc${player.id}`,

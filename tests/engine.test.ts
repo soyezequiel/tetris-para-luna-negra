@@ -1742,6 +1742,64 @@ describe('core stacker engine', () => {
     delete process.env.LUNA_NEGRA_GAME_ID;
   });
 
+  it('lets an anonymous host create an all-guest pool and maps every ephemeral seat', async () => {
+    const store = new MemoryRoomStore();
+    let room = await createRoom(store, { playerId: 'host-player-a', name: 'Anonymous Host', visibility: 'public' }, 1000);
+    room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-a', name: 'Anonymous Guest' }, 1010);
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    process.env.LUNA_NEGRA_GAME_ID = 'game-a';
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (url.endsWith('/api/v1/bets') && method === 'POST') {
+        const body = JSON.parse(String(init?.body)) as {
+          participants: Array<{ guest?: boolean }>;
+        };
+        expect(body.participants).toEqual([{ guest: true }, { guest: true }]);
+        return Response.json({
+          betId: 'bet-all-guests',
+          stakeSats: 25,
+          potTargetSats: 50,
+          netPayoutSats: 49,
+          participants: [
+            { seat: 1, npub: 'npub-host-eph' },
+            { seat: 2, npub: 'npub-guest-eph' },
+          ],
+        });
+      }
+      return Response.json({
+        betId: 'bet-all-guests',
+        status: 'pending_deposits',
+        stakeSats: 25,
+        participants: [
+          { npub: 'npub-host-eph', depositStatus: 'pending', bolt11: 'lnbchostguest' },
+          { npub: 'npub-guest-eph', depositStatus: 'pending', bolt11: 'lnbcguestguest' },
+        ],
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const withBet = await createBetForRoom(
+        store,
+        { roomId: room.id, playerId: 'host-player-a', stakeSats: 25 },
+        1020,
+      );
+
+      expect(withBet.bet?.participants).toEqual(expect.arrayContaining([
+        expect.objectContaining({ playerId: 'host-player-a', npub: 'npub-host-eph' }),
+        expect.objectContaining({ playerId: 'guest-player-a', npub: 'npub-guest-eph' }),
+      ]));
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env.LUNA_NEGRA_BASE_URL;
+      delete process.env.LUNA_NEGRA_API_KEY;
+      delete process.env.LUNA_NEGRA_GAME_ID;
+    }
+  });
+
   it('surfaces Luna Negra settlement errors from the manual settle action', async () => {
     const store = new MemoryRoomStore();
     let room = await createRoom(store, { playerId: 'host-player-s', npub: 'npub-host-s', name: 'Host', visibility: 'public' }, 1000);

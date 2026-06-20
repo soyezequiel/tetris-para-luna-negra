@@ -6030,12 +6030,6 @@ function renderLobbyPlayer(player: OnlinePlayer, viewerIsHost = false): string {
   `;
 }
 
-function isLunaNegraRoom(): boolean {
-  if (!onlineRoom) return false;
-  const host = onlineRoom.players.find((player) => player.id === onlineRoom!.hostPlayerId);
-  return !!host?.npub;
-}
-
 function lunaNegraBettingBlockedReason(): string {
   if (!onlineRoom) return '';
   if (onlineRoom.players.length < 2) return 'Necesitás al menos 2 jugadores en la sala para apostar.';
@@ -6099,7 +6093,10 @@ function renderOnlineBetPanel(host: boolean): string {
   const bet = onlineRoom.bet;
 
   if (!bet) {
-    if (!host || !isLunaNegraRoom()) return '';
+    // La apuesta pertenece a la sala, no a la identidad Nostr del host. Un host
+    // anónimo también puede crearla: Luna Negra asigna identidades efímeras a
+    // todos los jugadores sin npub y luego les ofrece retiro por LNURL.
+    if (!host) return '';
     // No mostramos el panel de crear apuesta hasta que haya con quién apostar:
     // con una sola persona en la sala no tiene sentido ofrecer el pozo.
     if (onlineRoom.players.length < 2) return '';
