@@ -8103,7 +8103,7 @@ function renderModeSelectStage(): string {
   }
 
   return `
-    <div class="dash-play-stage" style="--stage-accent: #00f5ff;">
+    <div class="dash-play-stage dash-play-stage--mode-select" style="--stage-accent: #00f5ff;">
       <div class="dash-play-eyebrow">1 · ELEGÍ CÓMO JUGAR</div>
       <div class="dash-mode-cards" role="tablist">${cards}</div>
       <div class="dash-mode-detail">

@@ -101,6 +101,20 @@ test.describe('TETRA browser flows', () => {
     expect(layout.modeCardsEndInsideHero).toBe(true);
     expect(layout.leaderboardScrolls).toBe(true);
     expect(layout.heroScrollTop).toBe(0);
+
+    const selectorPosition = async () => page.locator('.dash-mode-cards').evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { top: Math.round(rect.top), left: Math.round(rect.left) };
+    });
+    const survivalPosition = await selectorPosition();
+
+    await page.locator('.dash-mode-card[data-mode="custom"]').click();
+    await expect(page.getByRole('heading', { name: 'Partida custom' })).toBeVisible();
+    expect(await selectorPosition()).toEqual(survivalPosition);
+
+    await page.locator('.dash-mode-card[data-mode="local1v1"]').click();
+    await expect(page.getByRole('heading', { name: 'Duelo local (1v1)' })).toBeVisible();
+    expect(await selectorPosition()).toEqual(survivalPosition);
   });
 
   test('rebinds input settings and resets them to defaults', async ({ page }) => {

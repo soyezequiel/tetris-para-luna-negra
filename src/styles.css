@@ -3730,6 +3730,24 @@ canvas {
   text-align: center;
 }
 
+@media (min-width: 901px) {
+  .dash-play-stage--mode-select {
+    /* El selector ocupa siempre el mismo marco del hero. Así las tarjetas no
+       cambian de posición cuando el detalle inferior es más alto o más bajo. */
+    min-height: 100%;
+    box-sizing: border-box;
+    margin: 0 auto;
+    padding-top: 18px;
+  }
+}
+
+.dash-play-stage--mode-select > .dash-play-eyebrow,
+.dash-play-stage--mode-select > .dash-mode-cards {
+  /* El stage se vuelve a renderizar al elegir un modo. El selector es navegación
+     persistente, por lo que no debe repetir la animación de entrada en cada click. */
+  animation: none;
+}
+
 .dash-step-pills {
   display: flex;
   align-items: center;
