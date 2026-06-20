@@ -1770,6 +1770,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-claim-webln') {
     void claimOnlineBetWithExtension(control.dataset.lnurl ?? '');
   }
+  if (action === 'online-bet-open-wallet') {
+    openLightningWallet(control.dataset.lnurl ?? '');
+  }
   if (action === 'online-bet-copy') {
     copyToClipboard(control.dataset.copy ?? '');
     wakeUpBetDetection();
@@ -3337,6 +3340,16 @@ async function claimOnlineBetWithExtension(lnurl: string): Promise<void> {
   } finally {
     onlineBetPaying = false;
   }
+}
+
+// Abre el handler `lightning:` del sistema. En Android/iOS permite elegir una
+// wallet instalada compatible con LNURL-withdraw (por ejemplo Wallet of Satoshi)
+// sin necesitar extensión WebLN ni otro dispositivo para escanear el QR.
+function openLightningWallet(lnurl: string): void {
+  const normalized = lnurl.trim();
+  if (!normalized) return;
+  recordBetWithdrawalTrace('withdraw-render', onlineRoom, 'open-mobile-wallet');
+  window.location.href = `lightning:${normalized.toUpperCase()}`;
 }
 
 // Link de invitación universal: cualquiera que lo abra cae en ?join=<sala> y
@@ -6473,13 +6486,12 @@ function amILocalBetWinner(bet: RoomBet): boolean {
 function renderOnlineBetWithdraw(entry: RoomBetParticipant, bet: RoomBet): string {
   const amount = entry.payoutSats ?? bet.netPayoutSats;
   const lnurl = entry.withdrawLnurl!;
-  const lightningWithdrawUri = `lightning:${lnurl.toUpperCase()}`;
   return `
     <div class="bet-settle bet-settle--paid">
       <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Ganaste el pozo!</span></div>
       <div class="bet-settle-amount">+${amount.toLocaleString('es-AR')} <small>sats</small></div>
       <p class="bet-settle-hint">En el celular, abrí tu wallet Lightning. También podés escanear el QR desde otro dispositivo.</p>
-      <a class="dash-action-btn success online-bet-wallet-link" href="${escapeHtml(lightningWithdrawUri)}">📱 Abrir wallet Lightning</a>
+      <button class="dash-action-btn success online-bet-wallet-link" type="button" data-ui-action="online-bet-open-wallet" data-lnurl="${escapeHtml(lnurl)}">📱 Abrir wallet Lightning</button>
       ${renderBetWithdrawQr(lnurl)}
       <div class="online-bet-deposit-actions">
         <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-claim-webln" data-lnurl="${escapeHtml(lnurl)}"${onlineBetPaying ? ' disabled' : ''}>⚡ Cobrar con extensión</button>

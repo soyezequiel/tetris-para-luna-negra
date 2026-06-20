@@ -2,7 +2,9 @@
 // Objetivo: que la app sea instalable y cargue offline el "shell",
 // SIN interferir con el juego online (/api/*, WebSockets, cross-origin).
 
-const VERSION = 'v1';
+// Subir esta versiÃ³n invalida el shell/assets de instalaciones PWA anteriores.
+// v2: fuerza la entrega del UI de cobro mÃ³vil y evita JS/CSS stale.
+const VERSION = 'v2';
 const CACHE = `tetra-${VERSION}`;
 
 // Shell mínimo. Los assets con hash de Vite se cachean en runtime
@@ -66,7 +68,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Resto de assets mismo-origen: stale-while-revalidate.
+  // Los bundles de la app deben ser network-first. Servir un JS viejo durante la
+  // primera carga tras un deploy deja la PWA ejecutando una UI anterior (p. ej.
+  // sin el botÃ³n "Abrir wallet Lightning") hasta una segunda recarga.
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.status === 200 && res.type === 'basic') {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(req)),
+    );
+    return;
+  }
+
+  // ImÃ¡genes/manifest y otros recursos: stale-while-revalidate.
   event.respondWith(
     caches.match(req).then((cached) => {
       const network = fetch(req)

@@ -31,7 +31,16 @@
         const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
         if (!isLocal) {
           window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/sw.js').catch(() => {});
+            let reloadingForUpdate = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              if (reloadingForUpdate) return;
+              reloadingForUpdate = true;
+              location.reload();
+            });
+            navigator.serviceWorker
+              .register('/sw.js', { updateViaCache: 'none' })
+              .then((registration) => registration.update())
+              .catch(() => {});
           });
         }
       }
