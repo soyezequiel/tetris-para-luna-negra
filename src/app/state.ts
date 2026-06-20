@@ -2,6 +2,7 @@ import type { GameOverReason, GameState } from '../game/types';
 
 export type AppMode =
   | 'menu'
+  | 'playMenu'
   | 'soloMenu'
   | 'multiplayerMenu'
   | 'historyMenu'
@@ -69,6 +70,7 @@ export function requiresRunConfirmation(
   if (status !== 'playing') return false;
   if (
     mode === 'menu'
+    || mode === 'playMenu'
     || mode === 'soloMenu'
     || mode === 'multiplayerMenu'
     || mode === 'historyMenu'

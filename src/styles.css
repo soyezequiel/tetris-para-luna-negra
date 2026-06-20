@@ -3784,6 +3784,61 @@ canvas {
 .dash-play-cta { animation: dash-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.2s both; }
 .dash-play-secondary { margin-top: 22px; animation: dash-fade-up 0.5s ease 0.3s both; display: flex; flex-direction: column; align-items: center; gap: 14px; }
 
+/* Selector de modalidad (sección Jugar): tarjetas Supervivencia / Custom / 1v1 */
+.dash-mode-cards {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  margin: 6px 0 24px;
+  animation: dash-fade-up 0.5s ease 0.1s both;
+}
+.dash-mode-card {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dash-text-dim);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+.dash-mode-card:hover { background: rgba(255, 255, 255, 0.07); transform: translateY(-2px); }
+.dash-mode-card.is-active {
+  border-color: var(--dash-neon-cyan);
+  background: rgba(0, 245, 255, 0.12);
+  color: #f7f7f2;
+  box-shadow: 0 0 0 1px rgba(0, 245, 255, 0.35), 0 8px 22px rgba(0, 245, 255, 0.12);
+}
+.dash-mode-card-icon { font-size: 26px; line-height: 1; }
+.dash-mode-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dash-mode-card-text strong { font-size: 14px; font-weight: 800; }
+.dash-mode-card-text small { font-size: 9px; font-weight: 700; letter-spacing: 1px; opacity: 0.7; text-transform: uppercase; }
+
+.dash-mode-detail { display: flex; flex-direction: column; align-items: center; width: 100%; }
+
+/* Tops embebidos en la tarjeta Supervivencia */
+.dash-survival-tops {
+  margin-top: 24px;
+  width: 100%;
+  max-width: 440px;
+  text-align: left;
+  animation: dash-fade-up 0.5s ease 0.3s both;
+}
+.dash-survival-tops .leaderboard-tabs { margin-bottom: 12px; }
+.dash-survival-tops .dash-action-btn { margin-top: 14px; }
+
+@media (max-width: 560px) {
+  .dash-mode-card { padding: 12px 6px; }
+  .dash-mode-card-icon { font-size: 22px; }
+  .dash-mode-card-text strong { font-size: 12px; }
+}
+
 /* Toggle Supervivencia / Custom del botón inteligente */
 .dash-mode-toggle {
   display: inline-flex;

@@ -396,9 +396,13 @@ type SurvivalRunRank =
   | { status: 'unranked' }
   | { status: 'error' };
 let survivalRunRank: SurvivalRunRank | null = null;
-// Toggle del botón inteligente "Jugar" en solo: activado = Supervivencia (default),
-// desactivado = Custom. Decide qué arranca el botón ▶ cuando no hay rivales.
-let survivalModeSelected = true;
+// Modalidad elegida en la sección "Jugar": decide qué arranca el botón ▶ y, al
+// crear sala, su matchType. 'survival' = reglas fijas (solo→survival endless;
+// con sala→batalla online de reglas fijas, top justo). 'custom' = config propia
+// (solo→custom; con sala→batalla editable). 'local1v1' = duelo local en misma
+// pantalla (independiente de sala). Default 'survival'.
+type PlayMode = 'survival' | 'custom' | 'local1v1';
+let selectedPlayMode: PlayMode = 'survival';
 let localRunError: string | null = null;
 let onlineError: string | null = null;
 let onlineBusy = false;
@@ -1719,7 +1723,9 @@ function handleOverlayClick(event: MouseEvent): void {
       // Host e invitado: este botón alterna "listo". El host arranca la ronda
       // con la acción 'online-start' del botón central.
       void setOnlineReady(!currentOnlinePlayer()?.ready);
-    } else if (survivalModeSelected) {
+    } else if (selectedPlayMode === 'local1v1') {
+      startLocalVersusMode();
+    } else if (selectedPlayMode === 'survival') {
       startSurvivalRun();
     } else {
       startCustomRun();
@@ -1728,6 +1734,14 @@ function handleOverlayClick(event: MouseEvent): void {
   }
 
   if (action === 'local-versus') { startLocalVersusMode(); return; }
+  if (action === 'play-menu') openPlayMenu();
+  if (action === 'select-play-mode') {
+    const next = parsePlayMode(control.dataset.mode);
+    if (next) {
+      selectedPlayMode = next;
+      if (next === 'survival') ensureSurvivalTopsLoaded();
+    }
+  }
   if (action === 'start') startCustomRun();
   if (action === 'restart') restartCurrentRun();
   if (action === 'solo-menu') openModeMenu('soloMenu');
@@ -1739,7 +1753,6 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'leaderboard-tab-survival') setLeaderboardTab('survival');
   if (action === 'survival-top-open') openLeaderboard('survival');
   if (action === 'survival-start') startSurvivalRun();
-  if (action === 'toggle-survival') survivalModeSelected = !survivalModeSelected;
   if (action === 'config-menu') openModeMenu('configMenu');
   if (action === 'custom-open') openCustomMode();
   if (action === 'custom-back') goToMenu();
@@ -2178,6 +2191,9 @@ function startSurvivalRun(): void {
 function openCustomMode(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
+  // Configurar una partida custom implica elegir la modalidad Custom: así el botón ▶
+  // arranca custom (no survival) al volver del editor.
+  selectedPlayMode = 'custom';
   appMode = 'custom';
   settingsReturnMode = 'menu';
   input.releaseAll();
@@ -2780,9 +2796,9 @@ async function refreshPublicRooms(options: { silent?: boolean } = {}): Promise<v
 }
 
 function publicRoomFilters(): PublicRoomsFilters {
-  return {
-    matchType: 'custom',
-  };
+  // Sin filtro de matchType: listamos salas de ambas modalidades (Custom y
+  // Supervivencia/battle). Cada tarjeta muestra su etiqueta para distinguirlas.
+  return {};
 }
 
 async function setOnlineRoomVisibility(value: string | undefined): Promise<void> {
@@ -2825,6 +2841,9 @@ let onlineRulesSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 function canSyncOnlineRoomRules(): boolean {
   if (!onlineRoom || !isOnlineHost() || onlineRoom.status !== 'lobby') return false;
+  // Supervivencia (battle) tiene reglas fijas: no se sincroniza la config custom
+  // (además, hacerlo convertiría la sala a 'custom' en el server).
+  if (onlineRoom.matchType === 'battle') return false;
   // El server rechaza cambios de reglas con una apuesta activa; no spameamos.
   if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) return false;
   return true;
@@ -2867,13 +2886,25 @@ async function syncOnlineRoomRules(): Promise<void> {
   }
 }
 
-async function createOnlineRoom(visibility: RoomVisibility): Promise<void> {
+// La modalidad activa decide el tipo de sala: Supervivencia → 'battle' (reglas
+// fijas, top justo); Custom → 'custom' (reglas editables). 1v1 local no es una sala
+// online (tiene su propio botón), así que cae a 'custom'.
+function roomMatchTypeForSelectedMode(): OnlineMatchType {
+  return selectedPlayMode === 'survival' ? 'battle' : 'custom';
+}
+
+async function createOnlineRoom(
+  visibility: RoomVisibility,
+  matchType: OnlineMatchType = roomMatchTypeForSelectedMode(),
+): Promise<void> {
   if (onlineBusy) return;
   onlineBusy = true;
   try {
     // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
     await leaveCurrentRoomBeforeNew();
     onlinePlayer = saveOnlinePlayer({ ...onlinePlayer, name: onlineName });
+    // Supervivencia online = reglas fijas (BATTLE_RULES); todos compiten igual.
+    const rules = matchType === 'battle' ? battleRulesFromSettings(inputSettings) : onlineCustomRulesFromSettings();
     const response = await onlineClient.createRoom({
       playerId: onlinePlayer.id,
       npub: lunaIdentity?.npub ?? null,
@@ -2882,8 +2913,8 @@ async function createOnlineRoom(visibility: RoomVisibility): Promise<void> {
       avatarUrl: onlinePlayer.avatarUrl,
       visibility,
       mode: 'custom',
-      matchType: 'custom',
-      rules: onlineCustomRulesFromSettings(),
+      matchType,
+      rules,
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
@@ -3047,6 +3078,24 @@ function openLeaderboard(tab: 'wins' | 'survival' = 'wins'): void {
   void refreshSurvivalTop();
 }
 
+// Hub "Jugar": las tarjetas de modalidad. Si la modalidad activa es Supervivencia
+// precargamos los tops (se ven embebidos en su tarjeta).
+function openPlayMenu(): void {
+  openModeMenu('playMenu');
+  if (selectedPlayMode === 'survival') ensureSurvivalTopsLoaded();
+}
+
+// Carga los dos rankings (victorias + tiempo) que se muestran dentro de la tarjeta
+// Supervivencia. Cada refresh ya se autoprotege contra llamadas concurrentes.
+function ensureSurvivalTopsLoaded(): void {
+  void refreshLeaderboard();
+  void refreshSurvivalTop();
+}
+
+function parsePlayMode(value: string | undefined): PlayMode | null {
+  return value === 'survival' || value === 'custom' || value === 'local1v1' ? value : null;
+}
+
 function setLeaderboardTab(tab: 'wins' | 'survival'): void {
   leaderboardTab = tab;
   if (tab === 'wins' && leaderboardEntries.length === 0) void refreshLeaderboard();
@@ -3133,7 +3182,9 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
 
 // Cuando la sala termina conmigo coronado ganador, sumo una victoria al ranking
 // mundial — una sola vez por ronda (la clave de ronda evita el doble conteo del
-// polling). Solo cuenta el multijugador: las salas online siempre tienen rivales.
+// polling). El TOP de victorias solo cuenta salas 'battle' (modalidad
+// Supervivencia online, reglas fijas): así el ranking es justo. Las salas 'custom'
+// (reglas configurables) son casuales y NO suman al top global.
 function maybeSubmitOnlineWin(room: OnlineRoom): void {
   if (room.status !== 'finished' || room.winnerPlayerId !== onlinePlayer.id) return;
   const roundId = onlineRoundKey(room);
@@ -3142,10 +3193,11 @@ function maybeSubmitOnlineWin(room: OnlineRoom): void {
   // Sonido de victoria: el ganador online sobrevive (último en pie), así que su
   // motor local sigue en 'playing' y nunca pasa a 'finished' — la transición que
   // dispara juice.onWin() en solo. Lo gatillamos acá, donde la SALA me corona,
-  // para que suene igual que ganar en solo (una sola vez por ronda).
+  // para que suene igual que ganar en solo (una sola vez por ronda). Esto suena en
+  // toda victoria; lo que se gatea por modalidad es solo el registro en el ranking.
   juiceAudio.win();
   sound.play('finish');
-  void submitLeaderboardWin();
+  if (room.matchType === 'battle') void submitLeaderboardWin();
 }
 
 // Después de ver los resultados se vuelve al menú principal SIN salir de la
@@ -4175,7 +4227,7 @@ function onlineAuthorityTargetFrame(state: GameState): number {
 
 function shouldPollOnline(now: number): boolean {
   if (onlinePollInFlight) return false;
-  if (!['menu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'leaderboard', 'survivalTop', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults', 'onlineReplay', 'replayPlayback'].includes(appMode)) return false;
+  if (!['menu', 'playMenu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'leaderboard', 'survivalTop', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults', 'onlineReplay', 'replayPlayback'].includes(appMode)) return false;
   return now - onlineLastPollAt >= ONLINE_POLL_MS;
 }
 
@@ -5249,6 +5301,7 @@ function renderScreenOverlay(state: GameState): string {
   if (appMode === 'onlineReplay') return '';
   if (
     appMode === 'menu'
+    || appMode === 'playMenu'
     || appMode === 'soloMenu'
     || appMode === 'multiplayerMenu'
     || appMode === 'historyMenu'
@@ -6155,7 +6208,8 @@ function roomModeLabel(mode: OnlineRoomMode | undefined): string {
 }
 
 function matchTypeLabel(matchType: OnlineMatchType): string {
-  if (matchType === 'battle') return 'Battle';
+  // 'battle' = la modalidad Supervivencia online (reglas fijas, top justo).
+  if (matchType === 'battle') return 'Supervivencia';
   if (matchType === 'custom') return 'Custom';
   return 'Custom';
 }
@@ -7349,7 +7403,7 @@ function renderCustomPanelContent(): string {
         </div>
         <div class="custom-start-row">
           <div class="custom-music">Música aleatoria: tranquila</div>
-          <span class="custom-start-hint" style="color: var(--dash-text-dim); font-size: 13px; font-weight: 600;">Usá ▶ arriba para jugar</span>
+          <button class="dash-action-btn accent custom-start-btn" type="button" data-ui-action="sidebar-play" aria-label="Jugar custom">▶ Jugar</button>
         </div>
         <div class="custom-tabs" aria-label="Secciones de custom">
           ${CUSTOM_TABS.map((tab) => `
@@ -7682,6 +7736,7 @@ function renderPersistentMenuShell(panel: string, extraClass = ''): string {
 
 function isPersistentRoomPanelMode(mode: AppMode): boolean {
   return mode === 'menu'
+    || mode === 'playMenu'
     || mode === 'soloMenu'
     || mode === 'multiplayerMenu'
     || mode === 'historyMenu'
@@ -7730,15 +7785,15 @@ function renderDashboardMenu(state: GameState): string {
   const userDisplayName = onlineName.trim() || 'Jugador';
 
   const isHomeActive = appMode === 'menu';
+  // "Jugar" es el hub de modalidades; queda activo también en sus sub-vistas
+  // (config custom y los tops de supervivencia, que viven dentro de la modalidad).
+  const isPlayActive = appMode === 'playMenu' || appMode === 'custom' || appMode === 'leaderboard' || appMode === 'survivalTop';
   const isHistoryActive = appMode === 'historyMenu' || appMode === 'library';
-  // El Top está unificado (victorias + supervivencia); 'survivalTop' quedó como modo
-  // legado pero la pantalla activa es 'leaderboard'.
-  const isLeaderboardActive = appMode === 'leaderboard' || appMode === 'survivalTop';
   const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
 
   const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
+  const playClass = isPlayActive ? 'dash-sidebar-btn--active' : '';
   const historyClass = isHistoryActive ? 'dash-sidebar-btn--active' : '';
-  const leaderboardClass = isLeaderboardActive ? 'dash-sidebar-btn--active' : '';
   const settingsClass = isSettingsActive ? 'dash-sidebar-btn--active' : '';
 
   const showRightRoomPanel = true;
@@ -7765,13 +7820,13 @@ function renderDashboardMenu(state: GameState): string {
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
             Inicio
           </button>
+          <button class="dash-sidebar-btn ${playClass}" type="button" data-ui-action="play-menu">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z"/></svg>
+            Jugar
+          </button>
           <button class="dash-sidebar-btn ${historyClass}" type="button" data-ui-action="history-menu">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
             Historial
-          </button>
-          <button class="dash-sidebar-btn ${leaderboardClass}" type="button" data-ui-action="leaderboard-open">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 4h10v2h3a1 1 0 0 1 1 1v2a4 4 0 0 1-4 4 5 5 0 0 1-3 2.45V18h3v2H7v-2h3v-2.55A5 5 0 0 1 7 13a4 4 0 0 1-4-4V7a1 1 0 0 1 1-1h3V4zm10 4v3a2 2 0 0 0 2-2V8h-2zM5 8v1a2 2 0 0 0 2 2V8H5z"/></svg>
-            Top
           </button>
           <button class="dash-sidebar-btn ${settingsClass}" type="button" data-ui-action="settings">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
@@ -7809,45 +7864,31 @@ function renderSmartIconRocket(): string {
 
 function renderSmartPlayStage(): string {
   const hasRoom = !!onlineRoom;
-  const hasOthers = hasRoom && onlineRoomHasOtherPlayers();
+  // Sin sala: selector de modalidad (tarjetas). El modo elegido decide qué arranca
+  // el botón ▶ en solo y, al crear sala, su matchType.
+  if (!hasRoom) return renderModeSelectStage();
+
+  const hasOthers = onlineRoomHasOtherPlayers();
   const host = isOnlineHost();
   const ready = !!currentOnlinePlayer()?.ready;
+  // En sala la modalidad ya quedó fijada por la sala (matchType): la mostramos en
+  // el eyebrow para que se entienda bajo qué reglas se va a jugar.
+  const roomModeName = matchTypeLabel(onlineRoom!.matchType).toUpperCase();
 
   // Contexto = exactamente la lógica del botón inteligente (sidebar-play)
-  const ctx: 'solo' | 'waiting' | 'host' | 'guest' =
-    !hasRoom ? 'solo' : !hasOthers ? 'waiting' : host ? 'host' : 'guest';
+  const ctx: 'waiting' | 'host' | 'guest' =
+    !hasOthers ? 'waiting' : host ? 'host' : 'guest';
 
   let accent = '#00f5ff';
-  let eyebrow = 'MODO SOLO';
+  let eyebrow = 'SALA';
   let step2 = 'JUGÁ';
   let title = 'Listo para jugar';
   let subtitle = 'Tocá jugar y empezás una partida al instante.';
   let playHtml = '';
   let secondaryHtml = '';
 
-  if (ctx === 'solo') {
-    const survival = survivalModeSelected;
-    eyebrow = survival ? 'MODO SUPERVIVENCIA' : 'MODO CUSTOM';
-    title = survival ? 'Supervivencia' : 'Partida custom';
-    subtitle = survival
-      ? 'Mismo modo para todos: aguantá lo más posible y subí en el top mundial.'
-      : 'Jugá con tu configuración personalizada.';
-    playHtml = `
-      <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="sidebar-play" aria-label="Jugar">
-        <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
-        <span class="dash-smart-play-text"><strong>JUGAR</strong><small>${survival ? 'Supervivencia' : 'Custom'} · al instante</small></span>
-      </button>`;
-    // Toggle: activado = Supervivencia (default), desactivado = Custom. El botón ▶
-    // de arriba arranca el modo elegido acá.
-    secondaryHtml = `
-      <button class="dash-mode-toggle ${survival ? 'is-on' : ''}" type="button" role="switch" aria-checked="${survival}" data-ui-action="toggle-survival" title="Activado: Supervivencia · Desactivado: Custom">
-        <span class="dash-mode-toggle-track"><span class="dash-mode-toggle-knob"></span></span>
-        <span class="dash-mode-toggle-label">Modo Supervivencia <strong>${survival ? 'ON' : 'OFF'}</strong></span>
-      </button>
-      <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="local-versus">🎮 Duelo local (1v1)</button>
-      <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar partida</button>`;
-  } else if (ctx === 'waiting') {
-    accent = '#ffb627'; eyebrow = 'SALA · ESPERANDO'; step2 = 'ESPERÁ RIVALES';
+  if (ctx === 'waiting') {
+    accent = '#ffb627'; eyebrow = `SALA ${roomModeName} · ESPERANDO`; step2 = 'ESPERÁ RIVALES';
     title = 'Esperando a que lleguen';
     subtitle = 'Sos el único en la sala. Invitá amigos desde el panel de la derecha — la partida arranca cuando haya al menos 2 jugadores.';
     playHtml = `
@@ -7856,7 +7897,7 @@ function renderSmartPlayStage(): string {
         <span class="dash-smart-play-text"><strong>ESPERANDO JUGADORES</strong><small>Faltan rivales<span class="dash-dots"><i></i><i></i><i></i></span></small></span>
       </div>`;
   } else if (ctx === 'host') {
-    accent = '#c79bff'; eyebrow = 'SALA · SOS EL ANFITRIÓN'; step2 = 'EMPEZÁ';
+    accent = '#c79bff'; eyebrow = `SALA ${roomModeName} · SOS EL ANFITRIÓN`; step2 = 'EMPEZÁ';
     const total = onlineRoom!.players.length;
     const readyCount = onlineRoom!.players.filter((p) => p.ready).length;
     // El host arranca la ronda (acción 'online-start'). El server exige host listo
@@ -7879,7 +7920,7 @@ function renderSmartPlayStage(): string {
       </button>`;
   } else { // guest
     accent = ready ? '#39d49a' : '#ffb627';
-    eyebrow = 'SALA · ESPERANDO AL ANFITRIÓN';
+    eyebrow = `SALA ${roomModeName} · ESPERANDO AL ANFITRIÓN`;
     step2 = ready ? '¡LISTO!' : 'MARCÁ LISTO';
     title = ready ? 'Estás listo' : 'Marcá que estás listo';
     subtitle = ready
@@ -7892,13 +7933,12 @@ function renderSmartPlayStage(): string {
       </button>`;
   }
 
-  const step2Active = ctx !== 'solo' ? ' is-active' : '';
   return `
     <div class="dash-play-stage" style="--stage-accent: ${accent};">
       <div class="dash-step-pills">
         <span class="dash-step-pill is-active">1 · ELEGÍ CÓMO JUGAR</span>
         <span class="dash-step-sep"></span>
-        <span class="dash-step-pill${step2Active}">2 · ${step2}</span>
+        <span class="dash-step-pill is-active">2 · ${step2}</span>
       </div>
       <div class="dash-play-eyebrow">${eyebrow}</div>
       <h2 class="dash-play-title">${title}</h2>
@@ -7909,9 +7949,114 @@ function renderSmartPlayStage(): string {
   `;
 }
 
+// ─── Selector de modalidad (sin sala): tarjetas Supervivencia / Custom / 1v1 local ───
+// La tarjeta activa define qué arranca el botón ▶ en solo y el matchType al crear
+// sala. La de Supervivencia muestra además los tops embebidos.
+// Función (declaración hoisteada) en vez de const: el loop de render corre al
+// cargar el módulo y un `const` acá rompería con TDZ en el primer frame (ver
+// memoria main-ts-first-render-tdz).
+function playModeMeta(mode: PlayMode): { eyebrow: string; title: string; subtitle: string; icon: string } {
+  if (mode === 'custom') {
+    return {
+      eyebrow: 'MODO CUSTOM',
+      title: 'Partida custom',
+      subtitle: 'Jugá con tu configuración personalizada. Con sala, es una batalla online con tus reglas.',
+      icon: '⚙️',
+    };
+  }
+  if (mode === 'local1v1') {
+    return {
+      eyebrow: 'DUELO LOCAL 1V1',
+      title: 'Duelo local (1v1)',
+      subtitle: 'Dos jugadores en la misma compu, misma semilla, sin cuenta ni conexión.',
+      icon: '🎮',
+    };
+  }
+  return {
+    eyebrow: 'MODO SUPERVIVENCIA',
+    title: 'Supervivencia',
+    subtitle: 'Reglas fijas iguales para todos: aguantá lo más posible. Con sala, es batalla online de reglas fijas y el top de victorias es justo.',
+    icon: '🛡️',
+  };
+}
+
+function renderModeCard(mode: PlayMode, active: boolean): string {
+  const meta = playModeMeta(mode);
+  return `
+    <button class="dash-mode-card ${active ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active}" data-ui-action="select-play-mode" data-mode="${mode}">
+      <span class="dash-mode-card-icon" aria-hidden="true">${meta.icon}</span>
+      <span class="dash-mode-card-text"><strong>${meta.title}</strong><small>${escapeHtml(meta.eyebrow)}</small></span>
+    </button>`;
+}
+
+function renderModeSelectStage(): string {
+  const mode = selectedPlayMode;
+  const meta = playModeMeta(mode);
+  const cards = (['survival', 'custom', 'local1v1'] as PlayMode[])
+    .map((m) => renderModeCard(m, m === mode))
+    .join('');
+
+  let detailHtml = '';
+  if (mode === 'survival') {
+    detailHtml = `
+      <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="sidebar-play" aria-label="Jugar Supervivencia">
+        <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
+        <span class="dash-smart-play-text"><strong>JUGAR</strong><small>Supervivencia · al instante</small></span>
+      </button>
+      ${renderSurvivalTopsEmbed()}`;
+  } else if (mode === 'custom') {
+    detailHtml = `
+      <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="sidebar-play" aria-label="Jugar Custom">
+        <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
+        <span class="dash-smart-play-text"><strong>JUGAR</strong><small>Custom · al instante</small></span>
+      </button>
+      <div class="dash-play-secondary">
+        <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar partida</button>
+      </div>`;
+  } else {
+    detailHtml = `
+      <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="local-versus" aria-label="Iniciar duelo local 1v1">
+        <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
+        <span class="dash-smart-play-text"><strong>INICIAR DUELO</strong><small>1v1 en misma pantalla</small></span>
+      </button>`;
+  }
+
+  return `
+    <div class="dash-play-stage" style="--stage-accent: #00f5ff;">
+      <div class="dash-play-eyebrow">1 · ELEGÍ CÓMO JUGAR</div>
+      <div class="dash-mode-cards" role="tablist">${cards}</div>
+      <div class="dash-mode-detail">
+        <div class="dash-play-eyebrow">${meta.eyebrow}</div>
+        <h2 class="dash-play-title">${meta.title}</h2>
+        <p class="dash-play-subtitle">${meta.subtitle}</p>
+        <div class="dash-play-cta">${detailHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Tops embebidos en la tarjeta Supervivencia: reusa las pestañas y los cuerpos del
+// Top unificado (victorias + tiempo) sin el marco/acciones de la pantalla completa.
+function renderSurvivalTopsEmbed(): string {
+  const onSurvival = leaderboardTab === 'survival';
+  const loading = onSurvival ? survivalLoading : leaderboardLoading;
+  const body = onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody();
+  return `
+    <div class="dash-survival-tops">
+      <div class="panel-eyebrow">TOPS</div>
+      <div class="leaderboard-tabs" role="tablist">
+        <button class="leaderboard-tab ${!onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${!onSurvival}" data-ui-action="leaderboard-tab-wins">🏆 Multijugador</button>
+        <button class="leaderboard-tab ${onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${onSurvival}" data-ui-action="leaderboard-tab-survival">⏱️ Supervivencia</button>
+      </div>
+      ${body}
+      <button class="dash-action-btn" type="button" data-ui-action="leaderboard-refresh"${loading ? ' disabled' : ''}>${loading ? 'Actualizando…' : 'Actualizar'}</button>
+    </div>
+  `;
+}
+
 function renderDashboardCenterContent(_state: GameState): string {
   const mode = appMode;
-  if (mode === 'menu' || mode === 'onlineMenu' || mode === 'roomLobby') {
+  if (mode === 'menu' || mode === 'playMenu' || mode === 'onlineMenu' || mode === 'roomLobby') {
     return renderSmartPlayStage();
   }
   if (mode === 'soloMenu') {
@@ -8144,10 +8289,11 @@ function renderDashboardRoomPanel(): string {
 
       <div class="dash-empty-state">
         <div class="dash-field-group">
-          <label>Crear sala</label>
+          <label>Crear sala · ${escapeHtml(matchTypeLabel(roomMatchTypeForSelectedMode()))}</label>
           <div class="dash-buttons-row">
             <button class="dash-action-btn accent" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
           </div>
+          <small style="display:block; margin-top:6px; color: var(--dash-text-muted); font-size: 11px;">La modalidad la elegís en la sección <strong>Jugar</strong>.</small>
           ${import.meta.env.DEV ? `<div class="dash-buttons-row" style="margin-top: 6px;">
             <button class="dash-action-btn" type="button" data-ui-action="dev-bot-match"${onlineBusy ? ' disabled' : ''}>Partida vs bot (dev)</button>
           </div>` : ''}

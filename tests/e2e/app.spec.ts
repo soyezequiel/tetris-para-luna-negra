@@ -26,7 +26,7 @@ test.describe('TETRA browser flows', () => {
 
     await page.keyboard.press('Escape');
     await expect.poll(() => appMode(page)).toBe('paused');
-    await expect(page.locator('.panel-eyebrow')).toHaveText('PAUSED');
+    await expect(page.locator('.pause-badge-text')).toHaveText('Paused');
     await expect(action(page, 'resume')).toBeVisible();
 
     await action(page, 'resume').click();
@@ -37,6 +37,8 @@ test.describe('TETRA browser flows', () => {
   test('configures and starts a custom run from the visible menu', async ({ page }) => {
     await openFreshApp(page);
 
+    // En el nuevo hub "Jugar" la config custom se abre desde la tarjeta Custom.
+    await page.locator('.dash-mode-card[data-mode="custom"]').click();
     await action(page, 'custom-open').click();
     await expect.poll(() => appMode(page)).toBe('custom');
     await expect(page.getByRole('heading', { name: 'Custom' })).toBeVisible();
