@@ -548,6 +548,33 @@ test.describe('TETRA browser flows', () => {
     await expect(page.getByText(/Luna refresh timeout/)).toBeVisible();
   });
 
+  test('shows the LNURL withdrawal controls to a settled winner', async ({ page }) => {
+    await mockOnlineApi(page, { lunaWithdrawRoom: true });
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?inviteToken=fake-token&room=withdraw1');
+
+    await expect(page.getByText('¡Ganaste el pozo!')).toBeVisible();
+    await expect(page.getByText(/Cobrá escaneando el QR/)).toBeVisible();
+    await expect(action(page, 'online-bet-claim-webln')).toBeVisible();
+    await expect(page.getByText('Acreditados en tu billetera Lightning.')).toHaveCount(0);
+  });
+
+  test('does not claim wallet credit while a withdrawal handle is missing', async ({ page }) => {
+    await mockOnlineApi(page, { lunaWithdrawRoom: true, missingWithdrawHandle: true });
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+    });
+
+    await page.goto('/?inviteToken=fake-token&room=withdraw2');
+
+    await expect(page.getByText(/Tu retiro está pendiente/)).toBeVisible();
+    await expect(action(page, 'online-bet-refresh')).toBeVisible();
+    await expect(page.getByText('Acreditados en tu billetera Lightning.')).toHaveCount(0);
+  });
+
   test('enters a Luna Negra room from an accepted invite message in the open game', async ({ page }) => {
     await mockOnlineApi(page);
     await page.addInitScript(() => {
@@ -952,16 +979,44 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
         lunaGameId: 'tetra-game',
       };
       const host = { ...lunaRoom.players[0], npub: player.npub };
-      const players = options.lunaBetRoom || options.lunaGuestRoom
+      const players = options.lunaBetRoom || options.lunaGuestRoom || options.lunaWithdrawRoom
         ? [host, { ...createMockPlayer('pubkey-guest-luna', 'Nostr Guest', serverNowMs), npub: 'npub-guest-luna' }]
         : [host];
       lunaRoom = {
         ...lunaRoom,
         players,
       };
+      let bet = options.lunaBetRoom || options.lunaWithdrawRoom
+        ? createMockBet(lunaRoom, serverNowMs)
+        : null;
+      if (bet && options.lunaWithdrawRoom) {
+        bet = {
+          ...bet,
+          status: 'settled',
+          potSats: bet.potTargetSats,
+          depositsReceived: bet.depositsTotal,
+          resultReported: true,
+          winnerNpubs: [host.npub],
+          participants: bet.participants.map((entry) => entry.playerId === host.id
+            ? {
+                ...entry,
+                depositStatus: 'paid',
+                payoutSats: bet!.netPayoutSats,
+                payoutStatus: 'withdraw_pending',
+                withdrawLnurl: options.missingWithdrawHandle ? null : 'LNURL1MOCKWITHDRAW',
+                withdrawUrl: options.missingWithdrawHandle ? null : 'https://luna.example/api/escrow/lnurlw/mock',
+              }
+            : { ...entry, depositStatus: 'paid' }),
+        };
+        lunaRoom = {
+          ...lunaRoom,
+          status: 'finished',
+          winnerPlayerId: host.id,
+        };
+      }
       room = {
         ...lunaRoom,
-        bet: options.lunaBetRoom ? createMockBet(lunaRoom, serverNowMs) : null,
+        bet,
       };
       await route.fulfill({
         contentType: 'application/json',
@@ -1137,6 +1192,8 @@ type MockOnlineApiOptions = {
   createdLobbyGuestRoom?: boolean;
   lunaBetRoom?: boolean;
   lunaGuestRoom?: boolean;
+  lunaWithdrawRoom?: boolean;
+  missingWithdrawHandle?: boolean;
   failBetRefresh?: boolean;
 };
 

@@ -6337,24 +6337,67 @@ function renderOnlineBetResult(): string {
   if (!bet) return '';
   const myEntry = myBetEntry(bet);
   const amIWinner = amILocalBetWinner(bet);
+  const myAmount = (myEntry?.payoutSats ?? bet.netPayoutSats).toLocaleString('es-AR');
 
-  // Ganador invitado (sin billetera): cobra el pozo por QR de retiro / extensión.
-  // Vale para cualquier estado en cuanto Luna expone el LNURL-withdraw.
-  if (myEntry?.payoutStatus === 'withdraw_pending' && myEntry.withdrawLnurl) {
-    return renderOnlineBetWithdraw(myEntry, bet);
+  // Cobro del ganador, decidido por SU payoutStatus (no por payoutSats: un retiro
+  // pendiente, fallido o caducado también lleva payoutMsat). Así no le decimos
+  // "acreditado a tu billetera" a quien en realidad todavía no cobró. Se limita
+  // a apuestas resueltas y ganadas: los reembolsos usan los mismos payoutStatus.
+  if (bet.status === 'settled' && amIWinner) {
+    switch (myEntry?.payoutStatus) {
+      case 'withdraw_pending':
+        // Invitado sin billetera: cobra por LNURL-withdraw. Con handle → QR +
+        // extensión; sin handle todavía (deploy/relay) → aviso para reintentar.
+        if (myEntry.withdrawLnurl) return renderOnlineBetWithdraw(myEntry, bet);
+        return `
+          <div class="bet-settle">
+            <div class="bet-settle-title">${BET_SPINNER}<span>¡Ganaste el pozo!</span></div>
+            <div class="bet-settle-amount bet-settle-amount--pending">+${myAmount} <small>sats</small></div>
+            <p class="bet-settle-hint">Tu retiro está pendiente, pero el QR todavía no está disponible. Tocá «Actualizar».</p>
+            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button></div>
+          </div>
+        `;
+      case 'paid':
+        return `
+          <div class="bet-settle bet-settle--paid">
+            <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Cobraste el pozo!</span></div>
+            <div class="bet-settle-amount">+${myAmount} <small>sats</small></div>
+            <p class="bet-settle-hint">Acreditados en tu billetera Lightning.</p>
+          </div>
+        `;
+      case 'claimed':
+        return `
+          <div class="bet-settle bet-settle--paid">
+            <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Cobraste el pozo!</span></div>
+            <div class="bet-settle-amount">+${myAmount} <small>sats</small></div>
+            <p class="bet-settle-hint">Retiro cobrado.</p>
+          </div>
+        `;
+      case 'forfeited':
+        return `<div class="panel-note bet-settle-muted">⌛ Ganaste, pero venció el plazo de 60 min para cobrar el retiro y el pozo se perdió.</div>`;
+      case 'failed':
+        return `
+          <div class="bet-settle">
+            <div class="bet-settle-title bet-settle-title--win"><span>Ganaste el pozo (+${myAmount} sats)</span></div>
+            <p class="bet-settle-error">⚠️ El pago falló y Luna Negra lo reintentará automáticamente. Los sats siguen retenidos mientras tanto.</p>
+            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button></div>
+          </div>
+        `;
+      case 'pending':
+      case 'none':
+      default:
+        return `
+          <div class="bet-settle">
+            <div class="bet-settle-title">${BET_SPINNER}<span>Procesando tu cobro…</span></div>
+            <div class="bet-settle-amount bet-settle-amount--pending">+${myAmount} <small>sats</small></div>
+            <p class="bet-settle-hint">Todavía no figura como pagado. Tocá «Actualizar» para consultar el estado.</p>
+            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button></div>
+          </div>
+        `;
+    }
   }
 
   if (bet.status === 'settled') {
-    const myPayout = myEntry?.payoutSats ?? 0;
-    if (myPayout > 0 || myEntry?.payoutStatus === 'claimed') {
-      return `
-        <div class="bet-settle bet-settle--paid">
-          <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Cobraste el pozo!</span></div>
-          <div class="bet-settle-amount">+${(myPayout || bet.netPayoutSats).toLocaleString('es-AR')} <small>sats</small></div>
-          <p class="bet-settle-hint">${myEntry?.payoutStatus === 'claimed' ? 'Retiro cobrado.' : 'Acreditados en tu billetera Lightning.'}</p>
-        </div>
-      `;
-    }
     const winners = bet.participants.filter((entry) => (entry.payoutSats ?? 0) > 0);
     const names = winners.map((entry) => `${escapeHtml(betParticipantName(entry))} (+${entry.payoutSats!.toLocaleString('es-AR')} sats)`).join(', ');
     return `<div class="panel-note bet-settle-muted">💰 Apuesta pagada a ${names || `el ganador (${bet.netPayoutSats} sats)`}. Perdiste tu apuesta de ${bet.stakeSats} sats.</div>`;
