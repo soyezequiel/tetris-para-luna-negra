@@ -578,7 +578,10 @@ test.describe('TETRA browser flows', () => {
     await expect(page.getByText('¡Ganaste el pozo!')).toBeVisible();
     await expect(page.getByText(/abrí tu wallet Lightning/)).toBeVisible();
     await expect(action(page, 'online-bet-claim-webln')).toBeVisible();
-    await expect(page.locator('a.online-bet-wallet-link')).toHaveAttribute('href', 'lightning:LNURL1MOCKWITHDRAW');
+    const walletLink = page.locator('a.online-bet-wallet-link');
+    await expect(walletLink).toHaveAttribute('href', 'lightning:LNURL1MOCKWITHDRAW');
+    await expect(walletLink).toBeVisible();
+    await expect(walletLink).toBeInViewport();
     await expect(page.locator('[data-tetra-payout]')).toHaveCount(0);
     await expect(page.getByText('Acreditados en tu billetera Lightning.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Cobrá antes de continuar' })).toBeDisabled();

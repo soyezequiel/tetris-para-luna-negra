@@ -6479,9 +6479,9 @@ function renderOnlineBetWithdraw(entry: RoomBetParticipant, bet: RoomBet): strin
       <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Ganaste el pozo!</span></div>
       <div class="bet-settle-amount">+${amount.toLocaleString('es-AR')} <small>sats</small></div>
       <p class="bet-settle-hint">En el celular, abrí tu wallet Lightning. También podés escanear el QR desde otro dispositivo.</p>
+      <a class="dash-action-btn success online-bet-wallet-link" href="${escapeHtml(lightningWithdrawUri)}">📱 Abrir wallet Lightning</a>
       ${renderBetWithdrawQr(lnurl)}
       <div class="online-bet-deposit-actions">
-        <a class="dash-action-btn success online-bet-wallet-link" href="${escapeHtml(lightningWithdrawUri)}">📱 Abrir wallet Lightning</a>
         <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-claim-webln" data-lnurl="${escapeHtml(lnurl)}"${onlineBetPaying ? ' disabled' : ''}>⚡ Cobrar con extensión</button>
         <button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(lnurl)}">Copiar LNURL</button>
       </div>

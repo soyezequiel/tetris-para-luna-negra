@@ -1300,15 +1300,24 @@ canvas {
 }
 
 .online-bet-wallet-link.dash-action-btn {
-  flex: 1 1 190px;
+  width: 100%;
+  min-height: 46px;
+  margin: 2px 0 4px;
 }
 
 @media (pointer: coarse), (max-width: 760px) {
   .online-bet-wallet-link.dash-action-btn {
-    order: -1;
-    flex-basis: 100%;
-    min-height: 48px;
+    min-height: 52px;
     font-size: 14px;
+    box-shadow: 0 0 22px rgba(57, 212, 154, 0.42);
+  }
+
+  .bet-settle:has(.online-bet-wallet-link) .online-bet-qr-wrap {
+    margin-top: 2px;
+  }
+
+  .bet-settle:has(.online-bet-wallet-link) .online-bet-qr {
+    width: min(160px, 48vw);
   }
 }
 
