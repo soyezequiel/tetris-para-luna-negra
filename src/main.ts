@@ -5442,11 +5442,6 @@ function renderSoloResultsOverlay(state: GameState): string {
   const verdict = isClear
     ? '<div class="solo-results-verdict solo-results-verdict--clear">CLEAR</div>'
     : '<div class="solo-results-verdict solo-results-verdict--fail">TOP OUT</div>';
-  const retry = canRetryCurrentRun()
-    ? `<button class="solo-results-btn solo-results-btn--retry" type="button" data-ui-action="restart">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M17.65 6.35A8 8 0 1 0 19.73 14h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>Reintentar
-      </button>`
-    : '';
   return `
     <div class="menu-scrim solo-results-scrim">
       <div class="solo-results">
@@ -5462,11 +5457,10 @@ function renderSoloResultsOverlay(state: GameState): string {
           <div class="solo-results-stat"><span>COMBO MÁX</span><strong class="is-amber">×${combo}</strong></div>
         </div>
         <div class="solo-results-actions">
-          ${retry}
-          ${isSurvival ? '<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="survival-top-open">Ver Top</button>' : ''}
           ${canReplayLastSeconds(state) ? `<button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="replay-last-seconds">Ver últimos ${DEATH_REPLAY_SECONDS}s</button>` : ''}
-          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="export-replay">Guardar replay</button>
-          <button class="solo-results-btn solo-results-btn--ghost" type="button" data-ui-action="main-menu">Menú</button>
+        </div>
+        <div class="solo-results-actions solo-results-actions--next">
+          <button class="solo-results-btn solo-results-btn--next" type="button" data-ui-action="main-menu">Siguiente</button>
         </div>
         ${renderReportBlock()}
       </div>

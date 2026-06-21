@@ -4835,6 +4835,15 @@ canvas {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* La fila de "Siguiente" se separa del resto para leerse como acción destacada:
+   un divisor tenue arriba y aire extra la despegan de los botones secundarios. */
+.solo-results-actions--next {
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+}
+
 .solo-results-btn--next {
   color: #05070f;
   background: linear-gradient(135deg, #00f5ff, #0aa6cc);
