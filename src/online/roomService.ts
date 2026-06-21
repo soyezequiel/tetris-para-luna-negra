@@ -1357,12 +1357,16 @@ function normalizeRuleset(value: unknown, matchType: OnlineMatchType, strict = f
     if (strict) throw new OnlineRoomError('Invalid ruleset.');
     return fallback;
   }
-  const rulesetId = normalizeRulesetId(value.rulesetId, fallback.rulesetId, strict);
-  const rulesetVersion = normalizeRulesetVersion(value.rulesetVersion, fallback.rulesetVersion, strict);
-  const objective = normalizeObjective(value.objective, fallback.objective, strict);
-  const attackTable = normalizeAttackTable(value.attackTable, fallback.attackTable, strict);
-  const targeting = normalizeTargetingMode(value.targeting, strict, fallback.targeting);
-  return { rulesetId, rulesetVersion, objective, attackTable, targeting };
+  // Un campo AUSENTE conserva el default aunque strict esté activo; sólo un campo
+  // PRESENTE-pero-inválido lanza. Así un cliente puede mandar un parche parcial del
+  // ruleset (p. ej. sólo { royaltyFreeOnly }) sin tener que rearmar todo el objeto.
+  const rulesetId = value.rulesetId === undefined ? fallback.rulesetId : normalizeRulesetId(value.rulesetId, fallback.rulesetId, strict);
+  const rulesetVersion = value.rulesetVersion === undefined ? fallback.rulesetVersion : normalizeRulesetVersion(value.rulesetVersion, fallback.rulesetVersion, strict);
+  const objective = value.objective === undefined ? fallback.objective : normalizeObjective(value.objective, fallback.objective, strict);
+  const attackTable = value.attackTable === undefined ? fallback.attackTable : normalizeAttackTable(value.attackTable, fallback.attackTable, strict);
+  const targeting = value.targeting === undefined ? fallback.targeting : normalizeTargetingMode(value.targeting, strict, fallback.targeting);
+  const royaltyFreeOnly = typeof value.royaltyFreeOnly === 'boolean' ? value.royaltyFreeOnly : fallback.royaltyFreeOnly;
+  return { rulesetId, rulesetVersion, objective, attackTable, targeting, royaltyFreeOnly };
 }
 
 function defaultRuleset(matchType: OnlineMatchType): OnlineRuleset {
@@ -1373,6 +1377,9 @@ function defaultRuleset(matchType: OnlineMatchType): OnlineRuleset {
     objective: { type: 'lastStanding' },
     attackTable: 'modern',
     targeting: 'random',
+    // Por defecto la sala no fuerza música libre de derechos; el host puede
+    // activarlo y se propaga a todos los clientes vía updateRoomSettings.
+    royaltyFreeOnly: false,
   };
 }
 

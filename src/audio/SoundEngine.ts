@@ -278,6 +278,26 @@ export class SoundEngine {
     if (this.musicEnabled() && this.musicStarted) void this.startMusic();
   }
 
+  // Sincroniza la playlist Y la pista actual con una sala online: todos los clientes
+  // reciben la misma lista (filtro del host) y el mismo índice (derivado de la seed),
+  // y la pista arranca desde el principio para sonar al unísono. A diferencia de
+  // setMusicTracks(), acá NO intentamos conservar la pista que venía sonando: forzar
+  // el índice es lo que mantiene a todos en el mismo tema. Respeta el mute/volumen
+  // local: si la música está silenciada no suena, pero queda cargada y lista.
+  setSyncedPlaylist(tracks: MusicTrack[], index: number): void {
+    this.musicTracks = tracks;
+    if (!tracks.length) {
+      this.music.pause();
+      this.musicStarted = false;
+      return;
+    }
+    const i = ((Math.trunc(index) % tracks.length) + tracks.length) % tracks.length;
+    // loadMusicTrack setea src + load(), lo que reinicia currentTime a 0: así la
+    // pista suena desde el arranque en todos los clientes a la vez.
+    this.loadMusicTrack(i);
+    if (this.musicEnabled()) void this.startMusic();
+  }
+
   // Los efectos los sintetiza NeoSynth (paleta Neo: modelado modal + crunch). El
   // gate de mute/volumen se mantiene aquí y se refleja en `neo` con syncSfx().
   // `gain` escala el volumen de esta emisión (1 = normal; <1 atenúa, >1 refuerza).

@@ -19,6 +19,13 @@ export interface OnlineRuleset {
   objective: OnlineObjective;
   attackTable: OnlineAttackTable;
   targeting: TargetingMode;
+  /**
+   * Preferencia de música del HOST para la sala: si es true, todos los clientes
+   * reproducen sólo temas libres de derechos (prefijo 'ncc') durante la partida.
+   * Así suena la misma música en todos los clientes y la elige el host, no cada
+   * cliente con su ajuste local. Ver musicTracksFor() y maybeStartOnlineRun().
+   */
+  royaltyFreeOnly: boolean;
 }
 
 export interface OnlineGameSnapshot {

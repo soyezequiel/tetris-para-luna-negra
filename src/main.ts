@@ -113,7 +113,7 @@ import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlaybackS
 import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { hasUnresolvedRoomBetPayout, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
+import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRuleset, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
@@ -1765,6 +1765,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'toggle-royalty-free') {
     best = saveRoyaltyFreeOnly(!loadRecord().royaltyFreeOnly);
     sound.setMusicTracks(musicTracksFor(best.royaltyFreeOnly));
+    // Si soy el host y estoy en el lobby, propago la preferencia a la sala para que
+    // todos reproduzcan la misma música en la partida.
+    void syncOnlineRoomMusicPref();
   }
   if (action === 'toggle-bg-motion') {
     best = saveBackgroundMotion(!loadRecord().backgroundMotion);
@@ -2735,7 +2738,39 @@ async function syncOnlineRoomRules(): Promise<void> {
       visibility: room.visibility,
       mode: 'custom',
       matchType: 'custom',
+      ruleset: onlineRulesetPatch(),
       rules: onlineCustomRulesFromSettings(),
+    });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    onlineNetState.error = null;
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+  } finally {
+    onlineNetState.busy = false;
+  }
+}
+
+// El host cambió su preferencia de música libre-de-derechos estando en el lobby:
+// la re-enviamos a la sala (preservando matchType y reglas) para que la próxima
+// partida suene igual en todos los clientes. Sirve tanto para salas Custom como
+// Supervivencia/battle. Silencioso: si no soy host o no estoy en lobby, no hace nada.
+async function syncOnlineRoomMusicPref(): Promise<void> {
+  const room = roomState.current;
+  if (!room || !isOnlineHost() || room.status !== 'lobby' || onlineNetState.busy) return;
+  // El server rechaza cambios de ajustes con una apuesta activa: no insistimos.
+  if (room.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(room.bet.status)) return;
+  onlineNetState.busy = true;
+  try {
+    const rules = room.matchType === 'battle' ? battleRulesFromSettings(inputSettings) : onlineCustomRulesFromSettings();
+    const response = await onlineClient.updateRoomSettings({
+      roomId: room.id,
+      playerId: identityState.player.id,
+      visibility: room.visibility,
+      mode: 'custom',
+      matchType: room.matchType,
+      ruleset: onlineRulesetPatch(),
+      rules,
     });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
@@ -2800,6 +2835,7 @@ async function switchOnlineRoomMode(mode: PlayMode): Promise<void> {
       visibility: room.visibility,
       mode: 'custom',
       matchType: targetMatchType,
+      ruleset: onlineRulesetPatch(),
       rules,
     });
     syncOnlineClock(response.serverNowMs);
@@ -2833,6 +2869,7 @@ async function createOnlineRoom(
       visibility,
       mode: 'custom',
       matchType,
+      ruleset: onlineRulesetPatch(),
       rules,
     });
     syncOnlineClock(response.serverNowMs);
@@ -3506,6 +3543,7 @@ function resetOnlineRoomState(): void {
     devBotMatch = null;
   }
   clearOnlineRoomSession();
+  restoreLocalMusicPlaylist();
   peerState.broadcaster?.close();
   peerState.broadcaster = null;
   peerState.states = new Map();
@@ -4550,6 +4588,10 @@ function maybeStartOnlineRun(): void {
   if (!roomState.current?.startsAtServerMs || roundState.runStarted) return;
   if (onlineNowMs() < roomState.current.startsAtServerMs) return;
   roundState.runStarted = true;
+  // Música de sala: todos los clientes (jugadores y espectadores) saltan a la misma
+  // pista, elegida con el filtro libre-de-derechos del host y la seed compartida, así
+  // suena lo mismo en todas las pantallas durante la partida.
+  applyOnlineRoomMusic(roomState.current);
   // No estaba listo cuando arrancó la ronda: el servidor me dejó como espectador
   // (alive=false). No simulo tablero propio ni reporto nada; solo miro a los
   // rivales. Ver isOnlineSpectating() y los guards de syncOnline().
@@ -8723,6 +8765,38 @@ function onlineCustomRulesFromSettings(): GameRules {
     ...customRulesFromSettings(customSettings, inputSettings),
     targetLines: null,
   };
+}
+
+// Parche de ruleset que el HOST adjunta al crear o re-configurar la sala: lleva su
+// preferencia de música libre de derechos para que todos los clientes reproduzcan la
+// misma playlist durante la partida (ver maybeStartOnlineRun / applyOnlineRoomMusic).
+// Es un parche PARCIAL: el server completa el resto del ruleset con sus defaults.
+function onlineRulesetPatch(): Partial<OnlineRuleset> {
+  return { royaltyFreeOnly: loadRecord().royaltyFreeOnly };
+}
+
+// true mientras la playlist está reemplazada por la de la sala online. Al salir de la
+// sala restauramos la preferencia local del cliente (ver restoreLocalMusicPlaylist).
+let onlineMusicOverrideActive = false;
+
+// Aplica la música compartida de la sala: filtra la playlist por la preferencia del
+// HOST (royaltyFreeOnly del ruleset, no la del cliente) y fuerza la MISMA pista en
+// todos arrancándola desde el principio. El índice deriva de la seed de la sala, que
+// es idéntica en todos los clientes, así el tema coincide. Respeta el mute/volumen
+// local: si el cliente tiene la música silenciada, no suena (pero queda sincronizada).
+function applyOnlineRoomMusic(room: OnlineRoom): void {
+  const tracks = musicTracksFor(room.ruleset.royaltyFreeOnly);
+  if (!tracks.length) return; // host pidió libre-de-derechos pero no hay temas 'ncc'
+  const index = Math.abs(Math.trunc(room.seed)) % tracks.length;
+  sound.setSyncedPlaylist(tracks, index);
+  onlineMusicOverrideActive = true;
+}
+
+// Devuelve la playlist a la preferencia LOCAL del cliente tras dejar la sala online.
+function restoreLocalMusicPlaylist(): void {
+  if (!onlineMusicOverrideActive) return;
+  onlineMusicOverrideActive = false;
+  sound.setMusicTracks(musicTracksFor(loadRecord().royaltyFreeOnly));
 }
 
 function onlineRulesFromRoom(room = roomState.current): GameRules {

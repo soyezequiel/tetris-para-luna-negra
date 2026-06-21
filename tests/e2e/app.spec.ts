@@ -1684,6 +1684,7 @@ function defaultMockRuleset(): OnlineRuleset {
     objective: { type: 'lastStanding' },
     attackTable: 'simple',
     targeting: 'random',
+    royaltyFreeOnly: false,
   };
 }
 
