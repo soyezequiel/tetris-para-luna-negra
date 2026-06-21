@@ -1,8 +1,10 @@
 import './styles.css';
 import QRCode from 'qrcode';
-import { checkIcon, gearOutlineIcon, historyClockIcon, homeIcon, importIcon, playIcon, rocketIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon, tetrominoIcon } from './ui/icons';
-import { formatFrames, formatHistoryDate, escapeHtml } from './ui/format';
+import { checkIcon, gearOutlineIcon, historyClockIcon, homeIcon, playIcon, rocketIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon, tetrominoIcon } from './ui/icons';
+import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
+import { renderHistory } from './ui/dashboard/history';
+import { renderControls } from './ui/dashboard/controls';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -8514,49 +8516,17 @@ function renderDashboardCenterContent(_state: GameState): string {
     `;
   }
   if (mode === 'historyMenu') {
-    const entries = runHistory.slice(0, 12);
-    const list = entries.length === 0
-      ? `<p class="dash-history-empty">Todavía no tenés replays guardados. Jugá una partida o importá un replay para verlo acá.</p>`
-      : entries.map((entry) => {
-          const won = entry.status === 'finished';
-          return `
-            <div class="dash-history-row">
-              <span class="dash-history-time ${won ? 'is-clear' : 'is-topout'}">${escapeHtml(formatFrames(entry.elapsedFrames))}</span>
-              <span class="dash-history-label">${entry.lines}L · ${won ? 'clear' : 'top out'}</span>
-              <span class="dash-history-date">${escapeHtml(formatHistoryDate(entry.createdAt))}</span>
-              <button class="dash-history-view" type="button" data-ui-action="play-history-replay" data-history-id="${escapeHtml(entry.id)}">Ver</button>
-            </div>`;
-        }).join('');
-    return `
-      <div class="dash-history" style="width: 100%; max-width: 520px;">
-        <div class="panel-eyebrow">HISTORIAL</div>
-        <div class="dash-history-head">
-          <h1 class="dash-history-title">Tus replays</h1>
-          <button class="dash-history-import" type="button" data-ui-action="import-replay">${importIcon({ size: 15 })}Importar<span class="dash-history-import-extra"> replay</span></button>
-        </div>
-        <div class="dash-history-list">${list}</div>
-        ${entries.length > 0 ? '<button class="dash-history-library" type="button" data-ui-action="replay-library">Ver biblioteca completa</button>' : ''}
-      </div>
-    `;
+    return renderHistory(runHistory.slice(0, 12));
   }
   if (mode === 'configMenu') {
     const softDrop = inputSettings.softDropFactor >= INSTANT_SOFT_DROP_FACTOR
       ? '∞'
       : `${inputSettings.softDropFactor} G`;
-    const row = (label: string, value: string) =>
-      `<div class="dash-controls-row"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`;
-    return `
-      <div class="dash-controls" style="width: 100%; max-width: 460px;">
-        <div class="panel-eyebrow">AJUSTES</div>
-        <h1 class="dash-controls-title">Controles</h1>
-        <div class="dash-controls-list">
-          ${row('DAS', `${inputSettings.dasFrames} f`)}
-          ${row('ARR', `${inputSettings.arrFrames} f`)}
-          ${row('Soft drop', softDrop)}
-        </div>
-        <button class="dash-controls-edit" type="button" data-ui-action="settings">Ajustes de controles</button>
-      </div>
-    `;
+    return renderControls({
+      das: `${inputSettings.dasFrames} f`,
+      arr: `${inputSettings.arrFrames} f`,
+      softDrop,
+    });
   }
   if (mode === 'leaderboard' || mode === 'survivalTop') {
     return renderLeaderboardPanelContent();

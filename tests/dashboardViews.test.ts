@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { renderWelcome } from '../src/ui/dashboard/welcome';
+import { renderHistory } from '../src/ui/dashboard/history';
+import { renderControls } from '../src/ui/dashboard/controls';
+import type { RunHistoryEntry } from '../src/app/runHistory';
+
+// Construye una entrada de historial con solo los campos que la vista lee; el
+// resto se castea (no afectan el render).
+const histEntry = (over: Partial<RunHistoryEntry>): RunHistoryEntry =>
+  ({ id: 'r1', createdAt: '2026-06-21T00:00:00.000Z', status: 'finished', lines: 40, elapsedFrames: 3600, ...over } as unknown as RunHistoryEntry);
 
 // Red de regresión para las vistas del dashboard extraídas de main.ts (PR4).
 // Al ser módulos puros se pueden renderizar y verificar de forma aislada: estos
@@ -24,5 +32,37 @@ describe('renderWelcome', () => {
 
     const empty = renderWelcome({ bestFrames: null, avgPps: null, myWins: null });
     expect(empty.match(/>—</g)).toHaveLength(3);
+  });
+});
+
+describe('renderHistory', () => {
+  it('muestra el estado vacío sin filas ni botón de biblioteca', () => {
+    const html = renderHistory([]);
+    expect(html).toContain('class="dash-history-empty"');
+    expect(html).not.toContain('dash-history-row');
+    expect(html).not.toContain('Ver biblioteca completa');
+  });
+
+  it('renderiza una fila por entrada con tiempo, estado y botón de biblioteca', () => {
+    const html = renderHistory([
+      histEntry({ id: 'a', status: 'finished', elapsedFrames: 3600, lines: 40 }),
+      histEntry({ id: 'b', status: 'gameover', elapsedFrames: 1800, lines: 12 }),
+    ]);
+    expect(html.match(/class="dash-history-row"/g)).toHaveLength(2);
+    expect(html).toContain('1:00.000'); // 3600 frames con millis
+    expect(html).toContain('is-clear'); // finished
+    expect(html).toContain('is-topout'); // gameover
+    expect(html).toContain('Ver biblioteca completa');
+  });
+});
+
+describe('renderControls', () => {
+  it('renderiza las filas DAS/ARR/Soft drop con los valores provistos', () => {
+    const html = renderControls({ das: '10 f', arr: '2 f', softDrop: '∞' });
+    expect(html).toContain('<h1 class="dash-controls-title">Controles</h1>');
+    expect(html.match(/class="dash-controls-row"/g)).toHaveLength(3);
+    expect(html).toContain('>10 f<');
+    expect(html).toContain('>2 f<');
+    expect(html).toContain('>∞<');
   });
 });
