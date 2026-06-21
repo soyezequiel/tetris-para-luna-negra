@@ -8365,7 +8365,8 @@ function renderMobileModeSelect(): string {
   const extra = mode === 'survival' ? renderMobileTopsEmbed() : '';
   const customChips = mode === 'custom' ? renderMobileCustomChips() : '';
   const primaryAction = mode === 'local1v1' ? 'local-versus' : 'sidebar-play';
-  const primaryLabel = mode === 'local1v1' ? 'Iniciar duelo' : 'Jugar';
+  const primaryLabel = meta.solo;
+  const primarySub = meta.sub;
 
   return `
     <div class="mdash-jugar" style="--mode-accent: ${modeAccent(mode)};">
@@ -8380,9 +8381,9 @@ function renderMobileModeSelect(): string {
       </div>
       <div class="mdash-actions">
         ${mode === 'custom' ? `<button class="mdash-btn mdash-btn--ghost-purple" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>` : ''}
-        <button class="mdash-cta" type="button" data-ui-action="${primaryAction}" aria-label="${primaryLabel}">
+        <button class="mdash-cta" type="button" data-ui-action="${primaryAction}" aria-label="${escapeHtml(primaryLabel)}">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          <span>${primaryLabel}</span>
+          <span class="mdash-cta-text"><span class="mdash-cta-label">${escapeHtml(primaryLabel)}</span><span class="mdash-cta-sub">${escapeHtml(primarySub)}</span></span>
         </button>
         <button class="mdash-btn mdash-btn--create" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>+ Crear sala con amigos</button>
       </div>
@@ -8552,7 +8553,7 @@ function renderDashboardCenterContent(_state: GameState): string {
         <div class="panel-eyebrow">HISTORIAL</div>
         <div class="dash-history-head">
           <h1 class="dash-history-title">Tus replays</h1>
-          <button class="dash-history-import" type="button" data-ui-action="import-replay">${importIcon}Importar replay</button>
+          <button class="dash-history-import" type="button" data-ui-action="import-replay">${importIcon}Importar<span class="dash-history-import-extra"> replay</span></button>
         </div>
         <div class="dash-history-list">${list}</div>
         ${entries.length > 0 ? '<button class="dash-history-library" type="button" data-ui-action="replay-library">Ver biblioteca completa</button>' : ''}
