@@ -10,6 +10,8 @@ import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './u
 import { leaderboardState } from './state/leaderboardState';
 import { betState, DEFAULT_ONLINE_BET_STAKE_SATS } from './state/betState';
 import { lunaState, type PendingLunaLaunchRequest } from './state/lunaState';
+import { spectatorState } from './state/spectatorState';
+import { replayState, multiReplayState, type MultiReplayCard } from './state/replayState';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -328,18 +330,8 @@ let soloDeathSequenceDone = false;
 // frame y evitar el titileo del hover en sus botones.
 let lastHudOverlayHtml = '';
 let lastInviteOverlayHtml = '';
-let playback: ReplayPlayback | null = null;
-// Reloj del visor de repeticiones. El motor debe avanzar a 60 fps anclado al
-// tiempo real, NO una vez por rAF: en un monitor >60 Hz el rAF dispara más de 60
-// veces por segundo y la repetición corría a 2x/2.4x ("anda muy rápido"). Contamos
-// los frames de 60 Hz transcurridos y llamamos tick() esa cantidad de veces.
-let replayClockOriginMs = performance.now();
-let replayFramesAdvanced = 0;
-// A dónde volver al salir de la reproducción. null = al menú (replays importados/
-// del historial). Lo setea la repetición de "últimos 5s" para volver a resultados.
-let replayReturnMode: AppMode | null = null;
-let importedReplayName: string | null = null;
-let replayImportError: string | null = null;
+// El estado del visor de repetición de una partida vive ahora en
+// ./state/replayState (replayState; ver imports).
 let libraryFilter: LibraryFilter = 'all';
 let selectedHistoryEntryId: string | null = null;
 let libraryError: string | null = null;
@@ -416,47 +408,16 @@ let onlinePeerBroadcaster: OnlinePeerBroadcaster | null = null;
 // Recolector de replays multi-tablero: junta el log de cada jugador de la ronda
 // (el propio + los que llegan por WebRTC) para reproducir la partida completa.
 const onlineReplayCollector = new OnlineReplayCollector();
-// Mi log se difunde una sola vez por ronda, al terminar mi partida.
-let onlineReplayBroadcast = false;
-// Visor multi-tablero activo (appMode 'onlineReplay'). null fuera del visor.
-let multiReplay: MultiReplayPlayback | null = null;
-// Mientras miro una repetición dentro de una sala me marco NO listo para que el
-// host no arranque sin mí; el poll re-afirma el no-listo si el reopen me readyea.
-let holdNotReadyForReplay = false;
-// Sala desde la que se abrió el visor, para poder volver a los resultados.
-let multiReplayReturnRoomId: string | null = null;
-// Referencias persistentes a cada tarjeta/canvas del visor (creadas al abrir).
-interface MultiReplayCard {
-  playerId: string;
-  card: HTMLElement;
-  canvas: HTMLCanvasElement;
-  tag: HTMLElement;
-  stat: HTMLElement;
-}
-let multiReplayCards: MultiReplayCard[] = [];
+// El estado del visor multi-tablero (appMode 'onlineReplay') vive ahora en
+// ./state/replayState (multiReplayState + tipo MultiReplayCard; ver imports).
 let onlinePeerStates = new Map<string, string>();
 let onlinePeerDisplaySnapshots = new Map<string, OnlineGameSnapshot>();
 // Espectador: a qué rival estoy mirando en el tablero principal. null = automático
 // (sigo al líder de la ronda). El motor de espectador reconstruye su GameState a
 // partir del engine snapshot que difunde por WebRTC, para dibujarlo en el canvas
 // como si estuviera jugando esa partida.
-let spectatorFocusId: string | null = null;
-let spectatorEngine: GameEngine | null = null;
-let spectatorEngineSeed: number | null = null;
-// Juice (partículas/flashes/sonido) del tablero que estoy mirando como espectador.
-// Es un conductor aparte sobre el MISMO JuiceFX del canvas + el mismo audio: como
-// los snapshots del rival no traen eventos, los deduzco por diff entre snapshots
-// (líneas → line-clear, pending → garbage entrante, piezas → lock, status → KO/Win).
-let spectatorJuice: JuiceConductor | null = null;
-let spectatorJuiceId: string | null = null;
-let spectatorJuicePrev: {
-  lines: number;
-  pieces: number;
-  pending: number;
-  sent: number;
-  // Pieza activa del último snapshot, para deducir mover/girar por diff (x/rotation).
-  active: { type: string; x: number; rotation: number } | null;
-} | null = null;
+// El estado del dominio "espectador" (focus/engine/juice del rival enfocado) vive
+// ahora en ./state/spectatorState (ver spectatorState en los imports).
 // Rivales cuya derrota ya sonó. Evita repetir el jingle si vuelvo a enfocar a un
 // muerto; se limpia al revivir (reopen de ronda) en syncRivalDeathSounds.
 const spectatorDeathAnnounced = new Set<string>();
@@ -1058,23 +1019,23 @@ function loopBody(): void {
     updateSoloCountdown();
   }
 
-  if (appMode === 'replayPlayback' && playback) {
-    let snapshot = playback.snapshot();
-    for (let i = replayFramesDueThisLoop(); i > 0; i -= 1) snapshot = playback.tick();
+  if (appMode === 'replayPlayback' && replayState.playback) {
+    let snapshot = replayState.playback.snapshot();
+    for (let i = replayFramesDueThisLoop(); i > 0; i -= 1) snapshot = replayState.playback.tick();
     renderer.render(snapshot.state);
     renderOverlay(snapshot.state);
     // "Ver últimos 5s": al terminar la reproducción vuelve solo a los resultados
-    // (replayReturnMode != null distingue este caso del replay importado/historial,
+    // (replayState.returnMode != null distingue este caso del replay importado/historial,
     // donde el usuario se queda en la pantalla "Complete").
-    if (snapshot.done && replayReturnMode !== null) exitReplayPlayback();
+    if (snapshot.done && replayState.returnMode !== null) exitReplayPlayback();
     return;
   }
 
-  if (appMode === 'onlineReplay' && multiReplay) {
+  if (appMode === 'onlineReplay' && multiReplayState.playback) {
     // Visor multi-tablero: corre N motores y dibuja cada GameState en su canvas
     // (look real del juego). Vive en su capa persistente, no en el overlay general.
-    let snapshot = multiReplay.snapshot();
-    for (let i = replayFramesDueThisLoop(); i > 0; i -= 1) snapshot = multiReplay.tick();
+    let snapshot = multiReplayState.playback.snapshot();
+    for (let i = replayFramesDueThisLoop(); i > 0; i -= 1) snapshot = multiReplayState.playback.tick();
     drawMultiReplayFrame(snapshot);
     return;
   }
@@ -1315,15 +1276,15 @@ Object.assign(window, {
   stack40: {
     getState: () => engine.getState(),
     getReplay: () => replay,
-    getPlayback: () => playback?.snapshot() ?? null,
-    getMultiReplay: () => multiReplay?.snapshot() ?? null,
+    getPlayback: () => replayState.playback?.snapshot() ?? null,
+    getMultiReplay: () => multiReplayState.playback?.snapshot() ?? null,
     openMultiReplay: () => openMultiReplay(),
     // Solo test/preview: abre el visor multi-tablero con datos sintéticos para
     // poder verlo sin una partida online completa.
     openSampleMultiReplay: () => {
       const mkInputs = (period: number, count: number) =>
         Array.from({ length: count }, (_, i) => ({ frame: (i + 1) * period, action: 'hardDrop' as const }));
-      multiReplay = new MultiReplayPlayback({
+      multiReplayState.playback = new MultiReplayPlayback({
         version: 1, game: 'stack40', createdAt: new Date().toISOString(), roomId: 'DEMO', seed: 11,
         players: [
           { playerId: 'a', name: 'Ada', seed: 11, rules: gameRules, inputs: mkInputs(14, 8), garbage: [] },
@@ -1331,11 +1292,11 @@ Object.assign(window, {
           { playerId: 'c', name: 'Cleo', seed: 33, rules: gameRules, inputs: mkInputs(9, 16), garbage: [] },
         ],
       });
-      multiReplayReturnRoomId = 'DEMO';
+      multiReplayState.returnRoomId = 'DEMO';
       resetReplayClock();
-      buildMultiReplayDom(multiReplay.snapshot());
+      buildMultiReplayDom(multiReplayState.playback.snapshot());
       appMode = 'onlineReplay';
-      return multiReplay.snapshot();
+      return multiReplayState.playback.snapshot();
     },
     getAppMode: () => appMode,
     // Reporte de lag exportable: copia el JSON al portapapeles y lo devuelve. Para que un
@@ -1435,8 +1396,8 @@ function syncGameplayClockToCurrentFrame(): void {
 // Reancla el reloj del visor de repeticiones. Se llama al abrir cualquier visor
 // (single o multi) para que el primer loop no avance de golpe el tiempo previo.
 function resetReplayClock(): void {
-  replayClockOriginMs = performance.now();
-  replayFramesAdvanced = 0;
+  replayState.clockOriginMs = performance.now();
+  replayState.framesAdvanced = 0;
 }
 
 // Cuántas veces hay que llamar a tick() del visor en este loop, según el tiempo
@@ -1444,16 +1405,16 @@ function resetReplayClock(): void {
 // mayoría de los rAF de un monitor >60 Hz devuelve 0 y solo se redibuja el frame
 // actual; así la repetición corre a velocidad real en lugar de acelerarse.
 function replayFramesDueThisLoop(): number {
-  const targetFrames = Math.floor((performance.now() - replayClockOriginMs) / GAME_FRAME_MS);
-  const due = targetFrames - replayFramesAdvanced;
+  const targetFrames = Math.floor((performance.now() - replayState.clockOriginMs) / GAME_FRAME_MS);
+  const due = targetFrames - replayState.framesAdvanced;
   if (due <= 0) return 0;
   // Tope de catch-up: tras una pausa o la pestaña en segundo plano (rAF congelado)
   // no descargamos cientos de frames de golpe; reanclamos y seguimos suave.
   if (due > 4) {
-    replayFramesAdvanced = targetFrames;
+    replayState.framesAdvanced = targetFrames;
     return 1;
   }
-  replayFramesAdvanced = targetFrames;
+  replayState.framesAdvanced = targetFrames;
   return due;
 }
 
@@ -1588,7 +1549,7 @@ function handleOverlayPointerDown(event: PointerEvent): void {
   const spectate = target.closest<HTMLElement>('[data-ui-action="spectate-focus"]');
   if (spectate) {
     const id = spectate.dataset.playerId;
-    if (id) spectatorFocusId = id;
+    if (id) spectatorState.focusId = id;
     event.preventDefault();
     return;
   }
@@ -1844,20 +1805,20 @@ function handleOverlayClick(event: MouseEvent): void {
       libraryError = 'Replay entry was not found.';
     }
   }
-  if (action === 'replay-toggle') playback?.togglePaused();
-  if (action === 'replay-restart') playback?.restart();
+  if (action === 'replay-toggle') replayState.playback?.togglePaused();
+  if (action === 'replay-restart') replayState.playback?.restart();
   if (action === 'replay-exit') exitReplayPlayback();
   if (action === 'replay-speed') {
     const speed = Number(control.dataset.speed);
-    if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) playback?.setSpeed(speed as PlaybackSpeed);
+    if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) replayState.playback?.setSpeed(speed as PlaybackSpeed);
   }
   if (action === 'online-replay-open') openMultiReplay();
-  if (action === 'multi-replay-toggle') multiReplay?.togglePaused();
-  if (action === 'multi-replay-restart') multiReplay?.restart();
+  if (action === 'multi-replay-toggle') multiReplayState.playback?.togglePaused();
+  if (action === 'multi-replay-restart') multiReplayState.playback?.restart();
   if (action === 'multi-replay-exit') exitMultiReplay();
   if (action === 'multi-replay-speed') {
     const speed = Number(control.dataset.speed);
-    if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) multiReplay?.setSpeed(speed as MultiPlaybackSpeed);
+    if (REPLAY_SPEEDS.includes(speed as PlaybackSpeed)) multiReplayState.playback?.setSpeed(speed as MultiPlaybackSpeed);
   }
   if (action === 'main-menu') goToMenu();
   if (action === 'toggle-sound') {
@@ -2039,7 +2000,7 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
 
   if (inputs.some((event) => event.action === 'pause')) {
     if (appMode === 'replayPlayback') {
-      playback?.togglePaused();
+      replayState.playback?.togglePaused();
       input.releaseAll();
       return true;
     }
@@ -2050,7 +2011,7 @@ function handleControlInputs(inputs: ControlInput[]): boolean {
   }
 
   if (appMode === 'replayPlayback' && inputs.some((event) => event.action === 'retry')) {
-    playback?.restart();
+    replayState.playback?.restart();
     input.releaseAll();
     return true;
   }
@@ -2085,11 +2046,11 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   pendingConfirmAction = null;
   lastExportName = null;
   lastCustomExportName = null;
-  replayImportError = null;
+  replayState.importError = null;
   libraryError = null;
   localRunError = null;
-  importedReplayName = null;
-  playback = null;
+  replayState.importedName = null;
+  replayState.playback = null;
   currentRunKind = nextRunKind;
   // Online: main.ts conoce los tableros rivales y enruta el proyectil de ataque
   // hacia ellos (ver flyOnlineAttackProjectile). En solo, retroceso en tu borde.
@@ -2100,7 +2061,7 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   replay = createReplayLog(seed, gameRules);
   // Replay multi-tablero: nueva ronda = nueva semilla; reseteamos la recolección.
   onlineReplayCollector.reset(seed);
-  onlineReplayBroadcast = false;
+  multiReplayState.broadcast = false;
   gameFrame = 0;
   gameClockOriginMs = performance.now();
   savedRunHistoryEntry = false;
@@ -2206,8 +2167,8 @@ function goToMenu(): void {
   currentRunKind = 'custom';
   syncGameplayClockToCurrentFrame();
   settingsReturnMode = 'menu';
-  playback = null;
-  importedReplayName = null;
+  replayState.playback = null;
+  replayState.importedName = null;
   libraryError = null;
   runHistory = loadRunHistory();
   input.releaseAll();
@@ -3074,14 +3035,14 @@ async function setOnlineReadyQuiet(ready: boolean): Promise<void> {
 // hace nada (setOnlineReadyQuiet corta si no hay onlineRoom).
 function beginReplayReadyHold(): void {
   if (!onlineRoom) return;
-  holdNotReadyForReplay = true;
+  multiReplayState.holdNotReady = true;
   void setOnlineReadyQuiet(false);
 }
 
 // Al salir de la repetición vuelvo a listo (solo si lo había puesto en no-listo).
 function endReplayReadyHold(): void {
-  if (!holdNotReadyForReplay) return;
-  holdNotReadyForReplay = false;
+  if (!multiReplayState.holdNotReady) return;
+  multiReplayState.holdNotReady = false;
   void setOnlineReadyQuiet(true);
 }
 
@@ -3856,7 +3817,7 @@ async function handleReplayFileChange(): Promise<void> {
   try {
     importReplayText(await file.text(), file.name);
   } catch {
-    replayImportError = 'Replay file could not be read.';
+    replayState.importError = 'Replay file could not be read.';
     appMode = 'menu';
   }
 }
@@ -3864,7 +3825,7 @@ async function handleReplayFileChange(): Promise<void> {
 function importReplayText(raw: string, fileName = 'Imported replay.json'): boolean {
   const result = importReplayJson(raw);
   if (!result.ok) {
-    replayImportError = result.error;
+    replayState.importError = result.error;
     appMode = 'menu';
     return false;
   }
@@ -3877,10 +3838,10 @@ function startReplayPlayback(importedReplay: ExportedReplay, fileName: string): 
   bindingCapture = null;
   pendingConfirmAction = null;
   lastExportName = null;
-  replayImportError = null;
-  replayReturnMode = null; // replay importado/historial: al salir vuelvo al menú
-  importedReplayName = fileName;
-  playback = new ReplayPlayback(importedReplay);
+  replayState.importError = null;
+  replayState.returnMode = null; // replay importado/historial: al salir vuelvo al menú
+  replayState.importedName = fileName;
+  replayState.playback = new ReplayPlayback(importedReplay);
   resetReplayClock();
   appMode = 'replayPlayback';
   settingsReturnMode = 'menu';
@@ -3910,11 +3871,11 @@ function startDeathReplay(): void {
   input.releaseAll();
   bindingCapture = null;
   pendingConfirmAction = null;
-  replayImportError = null;
-  importedReplayName = `Últimos ${DEATH_REPLAY_SECONDS} segundos`;
-  playback = new ReplayPlayback(exported, { startFrame });
+  replayState.importError = null;
+  replayState.importedName = `Últimos ${DEATH_REPLAY_SECONDS} segundos`;
+  replayState.playback = new ReplayPlayback(exported, { startFrame });
   resetReplayClock();
-  replayReturnMode = appMode; // vuelvo a la pantalla de resultados de esta partida
+  replayState.returnMode = appMode; // vuelvo a la pantalla de resultados de esta partida
   appMode = 'replayPlayback';
   settingsReturnMode = 'menu';
   beginReplayReadyHold();
@@ -3924,14 +3885,14 @@ function startDeathReplay(): void {
 // la partida (el motor principal sigue intacto en gameover); si no, va al menú.
 function exitReplayPlayback(): void {
   endReplayReadyHold();
-  if (replayReturnMode === null) {
+  if (replayState.returnMode === null) {
     goToMenu();
     return;
   }
-  const returnMode = replayReturnMode;
-  replayReturnMode = null;
-  playback = null;
-  importedReplayName = null;
+  const returnMode = replayState.returnMode;
+  replayState.returnMode = null;
+  replayState.playback = null;
+  replayState.importedName = null;
   input.releaseAll();
   appMode = returnMode;
 }
@@ -4313,7 +4274,7 @@ async function pollOnlineRoom(): Promise<void> {
     recordTask('poll:process', performance.now() - pollProcessStart);
     // Estoy mirando una repetición y la sala reabrió al lobby readyeando a todos:
     // re-afirmo el NO listo para que el host no arranque sin mí mientras la veo.
-    if (holdNotReadyForReplay && response.room.status === 'lobby'
+    if (multiReplayState.holdNotReady && response.room.status === 'lobby'
       && response.room.players.find((player) => player.id === onlinePlayer.id)?.ready) {
       void setOnlineReadyQuiet(false);
     }
@@ -4837,11 +4798,11 @@ function broadcastOnlineSnapshot(state: GameState): void {
 // solo se vería el del perdedor. Los canales peer siguen abiertos hasta que la
 // sala cierra, así que muertos/espectadores también lo reciben.
 function maybeBroadcastOwnReplay(state: GameState): void {
-  if (currentRunKind !== 'online' || onlineReplayBroadcast) return;
+  if (currentRunKind !== 'online' || multiReplayState.broadcast) return;
   const localTerminal = state.status === 'gameover' || state.status === 'finished';
   const roundOver = onlineRoom?.status === 'finished';
   if (!localTerminal && !roundOver) return;
-  onlineReplayBroadcast = true;
+  multiReplayState.broadcast = true;
   const report: Omit<OnlinePeerReplayMessage, 'type'> = {
     playerId: onlinePlayer.id,
     name: onlinePlayer.name,
@@ -5248,7 +5209,7 @@ function renderOverlay(state: GameState): void {
     lastInviteOverlayHtml = inviteHtml;
   }
   document.body.classList.toggle('online-spectating', isOnlineSpectating());
-  if (appMode === 'replayPlayback' && playback) updateReplayOverlay(playback.snapshot());
+  if (appMode === 'replayPlayback' && replayState.playback) updateReplayOverlay(replayState.playback.snapshot());
 }
 
 function renderAutoPlayToggle(): string { // TRUCO AUTOPLAY
@@ -6020,19 +5981,19 @@ function openMultiReplay(): void {
     onlineError = 'No hay repeticiones disponibles para esta ronda.';
     return;
   }
-  multiReplay = new MultiReplayPlayback(pkg);
+  multiReplayState.playback = new MultiReplayPlayback(pkg);
   resetReplayClock();
-  multiReplayReturnRoomId = roomId;
+  multiReplayState.returnRoomId = roomId;
   onlineError = null;
-  buildMultiReplayDom(multiReplay.snapshot());
+  buildMultiReplayDom(multiReplayState.playback.snapshot());
   appMode = 'onlineReplay';
   beginReplayReadyHold();
 }
 
 function exitMultiReplay(): void {
   endReplayReadyHold();
-  multiReplay = null;
-  multiReplayCards = [];
+  multiReplayState.playback = null;
+  multiReplayState.cards = [];
   multiReplayOverlayElement.innerHTML = '';
   appMode = 'onlineResults';
 }
@@ -6060,7 +6021,7 @@ function buildMultiReplayDom(snapshot: MultiReplayPlaybackSnapshot): void {
     <div class="menu-scrim multi-replay-scrim">
       <div class="multi-replay-shell">
         <div class="multi-replay-head">
-          <div class="online-results-eyebrow">REPETICIÓN · SALA ${escapeHtml(multiReplayReturnRoomId ?? '')}</div>
+          <div class="online-results-eyebrow">REPETICIÓN · SALA ${escapeHtml(multiReplayState.returnRoomId ?? '')}</div>
           <div class="multi-replay-clock" data-mr-clock></div>
         </div>
         <div class="multi-replay-grid" data-mr-grid>${cards}</div>
@@ -6073,7 +6034,7 @@ function buildMultiReplayDom(snapshot: MultiReplayPlaybackSnapshot): void {
       </div>
     </div>
   `;
-  multiReplayCards = snapshot.players.map((player) => {
+  multiReplayState.cards = snapshot.players.map((player) => {
     const card = multiReplayOverlayElement.querySelector<HTMLElement>(`[data-mr-player="${cssAttrEscape(player.playerId)}"]`)!;
     return {
       playerId: player.playerId,
@@ -6102,7 +6063,7 @@ function multiReplayLayout(count: number): { columns: number; boardW: number; bo
 }
 
 function drawMultiReplayFrame(snapshot: MultiReplayPlaybackSnapshot): void {
-  if (multiReplayCards.length === 0) return;
+  if (multiReplayState.cards.length === 0) return;
   const layout = multiReplayLayout(snapshot.players.length);
   const grid = multiReplayOverlayElement.querySelector<HTMLElement>('[data-mr-grid]');
   if (grid) grid.style.gridTemplateColumns = `repeat(${layout.columns}, max-content)`;
@@ -6112,7 +6073,7 @@ function drawMultiReplayFrame(snapshot: MultiReplayPlaybackSnapshot): void {
     button.classList.toggle('button-active', Number(button.dataset.speed) === snapshot.speed);
   }
   const byId = new Map(snapshot.players.map((player) => [player.playerId, player]));
-  for (const entry of multiReplayCards) {
+  for (const entry of multiReplayState.cards) {
     const player = byId.get(entry.playerId);
     if (!player) continue;
     sizeBoardCanvas(entry.canvas, layout.boardW, layout.boardH);
@@ -6880,8 +6841,8 @@ function spectatorPeers(): OnlinePlayer[] {
 function spectatorFocusPlayer(): OnlinePlayer | null {
   const peers = spectatorPeers();
   if (peers.length === 0) return null;
-  if (spectatorFocusId) {
-    const manual = peers.find((player) => player.id === spectatorFocusId);
+  if (spectatorState.focusId) {
+    const manual = peers.find((player) => player.id === spectatorState.focusId);
     if (manual) return manual;
   }
   return peers[0];
@@ -6896,25 +6857,25 @@ function cycleSpectatorFocus(direction: 1 | -1): void {
   const index = current ? peers.findIndex((player) => player.id === current.id) : -1;
   const base = index >= 0 ? index : 0;
   const next = peers[(base + direction + peers.length) % peers.length];
-  spectatorFocusId = next.id;
+  spectatorState.focusId = next.id;
 }
 
 // Olvida la elección manual de foco y el motor de reconstrucción al cerrar/reabrir
 // la ronda, para no arrastrar a un jugador de la ronda anterior.
 function resetSpectatorFocus(): void {
-  spectatorFocusId = null;
-  spectatorEngine = null;
-  spectatorEngineSeed = null;
-  spectatorJuice = null;
-  spectatorJuiceId = null;
-  spectatorJuicePrev = null;
+  spectatorState.focusId = null;
+  spectatorState.engine = null;
+  spectatorState.engineSeed = null;
+  spectatorState.juice = null;
+  spectatorState.juiceId = null;
+  spectatorState.juicePrev = null;
   spectatorDeathAnnounced.clear();
 }
 
 // Dispara el sonido de derrota de un rival al caer, usando el estado autoritativo de
 // la sala (alive/status), no el snapshot reconstruido: el que muere deja de mandar
 // snapshots y el foco salta a otro, así que la transición a 'gameover' del motor del
-// rival casi nunca se observa y el KO de spectatorJuice.frame no dispara. Suena tanto
+// rival casi nunca se observa y el KO de spectatorState.juice.frame no dispara. Suena tanto
 // mientras juego (cualquier rival que caiga) como mirando como espectador (solo el
 // rival ENFOCADO: el foco salta y no queremos sonar una muerte vieja al re-enfocar).
 // Marca a todos los muertos como "anunciados" aunque no suenen, para no repetir; al
@@ -7033,16 +6994,16 @@ function spectatorFocusState(player: OnlinePlayer): GameState | null {
   const engineSnapshot = displaySnapshotForPlayer(player)?.engine;
   if (!engineSnapshot) return null;
   try {
-    if (!spectatorEngine || spectatorEngineSeed !== engineSnapshot.seed) {
+    if (!spectatorState.engine || spectatorState.engineSeed !== engineSnapshot.seed) {
       // Las dimensiones (boardWidth/visibleRows/hiddenRows) y opciones (ghost/hold/
       // next) las define la sala, no BATTLE_RULES: usar las reglas de la sala —igual
       // que mi propio motor online— para que el piso del tablero quede a la altura
       // correcta. Con BATTLE_RULES (hiddenRows 20 vs 10 de la sala) el piso subía.
-      spectatorEngine = new GameEngine(engineSnapshot.seed, onlineRulesFromRoom());
-      spectatorEngineSeed = engineSnapshot.seed;
+      spectatorState.engine = new GameEngine(engineSnapshot.seed, onlineRulesFromRoom());
+      spectatorState.engineSeed = engineSnapshot.seed;
     }
-    spectatorEngine.restoreSnapshot(engineSnapshot);
-    return spectatorEngine.getState();
+    spectatorState.engine.restoreSnapshot(engineSnapshot);
+    return spectatorState.engine.getState();
   } catch {
     return null;
   }
@@ -7056,23 +7017,23 @@ function spectatorFocusState(player: OnlinePlayer): GameState | null {
 // Entre snapshots el estado no cambia (mismo snapshot reconstruido), así que no se
 // generan eventos falsos; solo el peligro se actualiza suave cada frame.
 function driveSpectatorJuice(focusState: GameState, focusId: string): void {
-  if (!spectatorJuice) {
-    spectatorJuice = new JuiceConductor(renderer.getJuice(), juiceAudio);
-    spectatorJuice.setAttackRouting('auto');
+  if (!spectatorState.juice) {
+    spectatorState.juice = new JuiceConductor(renderer.getJuice(), juiceAudio);
+    spectatorState.juice.setAttackRouting('auto');
   }
   const stats = focusState.stats;
   const activeNow = focusState.active
     ? { type: focusState.active.type as string, x: focusState.active.x, rotation: focusState.active.rotation as number }
     : null;
   // Cambié de tablero (o primer frame): re-sincronizo sin disparar efectos.
-  if (focusId !== spectatorJuiceId) {
-    spectatorJuiceId = focusId;
-    spectatorJuice.prime(focusState);
-    spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
-    spectatorJuice.frame(focusState);
+  if (focusId !== spectatorState.juiceId) {
+    spectatorState.juiceId = focusId;
+    spectatorState.juice.prime(focusState);
+    spectatorState.juicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
+    spectatorState.juice.frame(focusState);
     return;
   }
-  const prev = spectatorJuicePrev ?? { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
+  const prev = spectatorState.juicePrev ?? { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
   const events: GameEvent[] = [];
   const clearedDelta = stats.lines - prev.lines;
   if (clearedDelta > 0) {
@@ -7096,12 +7057,12 @@ function driveSpectatorJuice(focusState: GameState, focusId: string): void {
   }
   const pendingDelta = stats.pendingGarbage - prev.pending;
   if (pendingDelta > 0) events.push({ type: 'incomingGarbage', frame: stats.frame, lines: pendingDelta });
-  spectatorJuice.handleEvents(focusState, events);
+  spectatorState.juice.handleEvents(focusState, events);
   // Paneo del tablero enfocado: también está centrado en el canvas, así que sigue la
   // columna de su pieza activa igual que el tablero propio.
   const focusPan = panForBoardColumn(focusState.active?.x);
   if (stats.pieces > prev.pieces) {
-    spectatorJuice.onLock();
+    spectatorState.juice.onLock();
     // Sonido de pieza colocada del rival observado. En la partida propia este "thud"
     // sale del handler de input (playImmediateInputSounds), que no corre para el
     // espectador; sin esto solo se oirían los eventos grandes (clears/ataques/KO) y
@@ -7117,8 +7078,8 @@ function driveSpectatorJuice(focusState: GameState, focusId: string): void {
     if (activeNow.rotation !== prev.active.rotation) sound.play('rotate', focusPan);
     else if (activeNow.x !== prev.active.x) sound.play('move', focusPan);
   }
-  spectatorJuice.frame(focusState);
-  spectatorJuicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
+  spectatorState.juice.frame(focusState);
+  spectatorState.juicePrev = { lines: stats.lines, pieces: stats.pieces, pending: stats.pendingGarbage, sent: stats.sentGarbage, active: activeNow };
 }
 
 // Tamaño automático de los tableros rivales (grilla lateral): con pocos enemigos se
@@ -7413,10 +7374,10 @@ function renderReplayOverlayShell(): string {
       </div>
       <div data-replay-validation>Validation pending</div>
     </div>
-      <section class="replay-panel" aria-label="Replay playback">
+      <section class="replay-panel" aria-label="Replay replayState.playback">
         <div class="panel-eyebrow">REPLAY PLAYBACK</div>
         <h1 data-replay-title>Playback</h1>
-        <p>${escapeHtml(importedReplayName ?? 'Imported replay')} - seed ${playback?.getReplay().seed ?? 0}</p>
+        <p>${escapeHtml(replayState.importedName ?? 'Imported replay')} - seed ${replayState.playback?.getReplay().seed ?? 0}</p>
         <div class="replay-progress" aria-hidden="true">
           <div data-replay-progress></div>
         </div>
@@ -7433,7 +7394,7 @@ function renderReplayOverlayShell(): string {
 
 function updateReplayOverlay(snapshot: ReplayPlaybackSnapshot): void {
   const validationText = replayValidationText(snapshot);
-  const title = snapshot.paused ? 'Paused' : snapshot.done ? 'Complete' : `${snapshot.speed}x playback`;
+  const title = snapshot.paused ? 'Paused' : snapshot.done ? 'Complete' : `${snapshot.speed}x replayState.playback`;
   setText('[data-replay-time]', `${formatFrames(snapshot.frame)} / ${formatFrames(snapshot.targetFrame)}`);
   setText('[data-replay-validation]', validationText);
   setText('[data-replay-title]', title);
@@ -7727,8 +7688,8 @@ function renderPausePanel(state: GameState): string {
 
   const exported = lastExportName
     ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
-  const importError = replayImportError
-    ? `<div class="panel-note panel-error">${escapeHtml(replayImportError)}</div>` : '';
+  const importError = replayState.importError
+    ? `<div class="panel-note panel-error">${escapeHtml(replayState.importError)}</div>` : '';
   const runError = localRunError
     ? `<div class="panel-note panel-error">${escapeHtml(localRunError)}</div>` : '';
 
