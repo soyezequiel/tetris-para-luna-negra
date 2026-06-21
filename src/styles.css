@@ -7805,3 +7805,135 @@ canvas {
   font-size: 14px;
   color: var(--dash-accent);
 }
+/* ═══════════════════════════════════════════════════════════════════════════
+   TETRA — Pulido del menú (drop-in)
+   ───────────────────────────────────────────────────────────────────────────
+   Overrides aditivos para el dashboard de escritorio. NO toca lógica ni móvil.
+   Cómo aplicar (elegí una):
+     A) Pegá este bloque al FINAL de src/styles.css.
+     B) Guardá como src/tetris-menu-polish.css y agregá  @import './tetris-menu-polish.css';
+        al final de src/styles.css (o importalo donde cargás los estilos).
+   Objetivo: subir el panel "Control de anfitrión" y las tarjetas de modo al nivel
+   de la referencia y del layout móvil (código de sala protagonista, sin apreturas).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1 · Código de sala protagonista (antes: Arial Black 22px, glow flojo) ──
+   Igual que el móvil (.mdash-room-code): Orbitron grande con glow fuerte. */
+.dash-room-code {
+  font-family: 'Orbitron', 'Arial Black', monospace !important;
+  font-size: 30px !important;
+  font-weight: 800 !important;
+  letter-spacing: 5px !important;
+  text-shadow: 0 0 16px rgba(0, 245, 255, 0.55) !important;
+  line-height: 1.05 !important;
+}
+.dash-room-eyebrow {
+  font-family: 'Orbitron', 'Exo 2', sans-serif !important;
+  font-size: 10px !important;
+  letter-spacing: 2px !important;
+}
+.dash-room-identity-line { gap: 4px !important; }
+
+/* ── 2 · Tarjetas de modo: nunca apretarse/encimar en el stage centrado del host ──
+   El stage del anfitrión centra a 560px; garantizamos columnas iguales y texto
+   que no desborda. */
+.dash-play-stage .dash-mode-cards,
+.dash-mode-cards {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+.dash-mode-card {
+  align-items: center !important;       /* ícono + texto centrados, más prolijo */
+  text-align: center !important;
+  gap: 8px !important;
+}
+.dash-mode-card-text { align-items: center !important; width: 100%; }
+.dash-mode-card-text strong {
+  font-size: 11.5px !important;
+  line-height: 1.2;
+  white-space: nowrap;                  /* "Supervivencia" entera en una línea */
+}
+.dash-mode-card-text small {
+  white-space: nowrap;
+  font-size: 8.5px !important;
+  letter-spacing: 0.6px;
+}
+
+/* ── 3 · Panel "Control de anfitrión": jerarquía y respiración ──
+   Más aire entre bloques y separadores sutiles, como la referencia. */
+.dash-room { gap: 16px !important; padding: 22px !important; }
+
+.dash-room-purpose {
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.dash-room-purpose-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.dash-room-purpose-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: rgba(157, 78, 221, 0.15);
+  border: 1px solid rgba(157, 78, 221, 0.4);
+  color: #c79bff;
+}
+.dash-room-purpose-top strong { font-size: 15px; font-weight: 800; }
+.dash-room-purpose-explainer {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dash-text-muted);
+}
+
+/* Badge de "listos" arriba a la derecha más legible (como la pastilla móvil). */
+.dash-ready-stack .dash-player-ready-indicator.ready {
+  font-family: 'Orbitron', 'Exo 2', sans-serif;
+  font-size: 13px;
+  padding: 4px 10px;
+}
+
+/* Acciones rápidas (Copiar / Copiar link / Iniciar sesión): que respiren y no
+   se amontonen contra el código. */
+.dash-room-code-wrapper { gap: 12px 12px !important; }
+.dash-room-code-actions { gap: 8px !important; }
+.dash-copy-btn {
+  border-radius: 9px !important;
+  padding: 7px 12px !important;
+  font-family: 'Exo 2', sans-serif !important;
+  font-size: 11.5px !important;
+  letter-spacing: 0.3px !important;
+}
+
+/* Chips Tipo / Visibilidad / Velocidad: un toque más altos y legibles. */
+.dash-room-summary-item { padding: 11px 12px !important; border-radius: 12px !important; }
+.dash-room-summary-item span { font-size: 9px; letter-spacing: 1px; }
+.dash-room-summary-item strong { font-size: 13px !important; margin-top: 4px !important; }
+
+/* Botón "Salir de la sala": más presencia (rojo de la referencia). */
+.dash-room-actions-group .dash-action-btn.danger {
+  border: 1px solid rgba(235, 68, 90, 0.45) !important;
+  background: rgba(235, 68, 90, 0.10) !important;
+  color: #ff6b81 !important;
+  font-weight: 800 !important;
+}
+
+/* ── 4 · Tops embebidos (Supervivencia): título con el mismo lenguaje que el móvil ── */
+.dash-survival-tops .panel-eyebrow {
+  font-family: 'Orbitron', 'Exo 2', sans-serif;
+  letter-spacing: 2px;
+}
+
+/* ── 5 · Host smart-play stage: que el título no grite ni aplaste las tarjetas ── */
+.dash-play-title {
+  font-size: clamp(26px, 3vw, 34px) !important;
+  line-height: 1.08 !important;
+  margin: 4px 0 8px !important;
+}
+.dash-play-subtitle { font-size: 14px !important; }
+.dash-play-eyebrow { letter-spacing: 2px; }
+.dash-play-stage { gap: 16px !important; }
