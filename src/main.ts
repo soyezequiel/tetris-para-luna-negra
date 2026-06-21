@@ -7,6 +7,7 @@ import { renderHistory } from './ui/dashboard/history';
 import { renderControls } from './ui/dashboard/controls';
 import type { PlayMode } from './ui/playMode';
 import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './ui/dashboard/modeCard';
+import { leaderboardState } from './state/leaderboardState';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -91,7 +92,7 @@ import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlaybackS
 import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { hasUnresolvedRoomBetPayout, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LeaderboardEntry, SurvivalEntry, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
+import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
@@ -382,28 +383,8 @@ let onlineBetRefreshQueued = false;
 let celebratedBetId: string | null = null;
 let onlineRoom: OnlineRoom | null = null;
 let onlinePublicRooms: OnlineRoomSummary[] = [];
-// Ranking mundial del sprint de 40 líneas (pantalla "Top mundial").
-let leaderboardEntries: LeaderboardEntry[] = [];
-let leaderboardLoading = false;
-let leaderboardError: string | null = null;
-// Top de supervivencia (modo "igual para todos"): mayor tiempo por jugador.
-let survivalEntries: SurvivalEntry[] = [];
-let survivalLoading = false;
-let survivalError: string | null = null;
-// Guard: cada partida de supervivencia envía su tiempo al top una sola vez.
-let submittedSurvivalRun = false;
-// Pestaña activa del Top mundial unificado: victorias multijugador o tiempo de
-// supervivencia. Ambos rankings viven ahora en la misma pantalla 'leaderboard'.
-let leaderboardTab: 'wins' | 'survival' = 'wins';
-// Puesto del jugador en el top de supervivencia tras la última partida (se calcula
-// al terminar, en game over, y se muestra en la pantalla de resultados).
-type SurvivalRunRank =
-  | { status: 'loading' }
-  | { status: 'ranked'; rank: number; total: number }
-  | { status: 'unranked' }
-  | { status: 'guest' }
-  | { status: 'error' };
-let survivalRunRank: SurvivalRunRank | null = null;
+// El estado del "Top mundial" (rankings de victorias y supervivencia) vive ahora
+// en ./state/leaderboardState — ver leaderboardState más abajo en los imports.
 // Modalidad elegida en la sección "Jugar": decide qué arranca el botón ▶ y, al
 // crear sala, su matchType. 'survival' = reglas fijas (solo→survival endless;
 // con sala→batalla online de reglas fijas, top justo). 'custom' = config propia
@@ -2150,8 +2131,8 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   gameFrame = 0;
   gameClockOriginMs = performance.now();
   savedRunHistoryEntry = false;
-  submittedSurvivalRun = false;
-  survivalRunRank = null;
+  leaderboardState.submittedSurvivalRun = false;
+  leaderboardState.survivalRunRank = null;
   runSplitTracker = new RunSplitTracker();
   lastPieces = 0;
   lastLines = 0;
@@ -3152,7 +3133,7 @@ async function startOnlineRoom(): Promise<void> {
 // ─────────────────────────── Top mundial (leaderboard) ───────────────────────────
 
 function openLeaderboard(tab: 'wins' | 'survival' = 'wins'): void {
-  leaderboardTab = tab;
+  leaderboardState.tab = tab;
   openModeMenu('leaderboard');
   // El Top está unificado: precargamos ambos rankings así cambiar de pestaña es
   // instantáneo (cada uno tiene su propio loading/error).
@@ -3179,27 +3160,27 @@ function parsePlayMode(value: string | undefined): PlayMode | null {
 }
 
 function setLeaderboardTab(tab: 'wins' | 'survival'): void {
-  leaderboardTab = tab;
-  if (tab === 'wins' && leaderboardEntries.length === 0) void refreshLeaderboard();
-  if (tab === 'survival' && survivalEntries.length === 0) void refreshSurvivalTop();
+  leaderboardState.tab = tab;
+  if (tab === 'wins' && leaderboardState.entries.length === 0) void refreshLeaderboard();
+  if (tab === 'survival' && leaderboardState.survivalEntries.length === 0) void refreshSurvivalTop();
 }
 
 // Actualiza solo el ranking de la pestaña visible (botón "Actualizar" del Top).
 function refreshActiveLeaderboard(): Promise<void> {
-  return leaderboardTab === 'survival' ? refreshSurvivalTop() : refreshLeaderboard();
+  return leaderboardState.tab === 'survival' ? refreshSurvivalTop() : refreshLeaderboard();
 }
 
 async function refreshLeaderboard(): Promise<void> {
-  if (leaderboardLoading) return;
-  leaderboardLoading = true;
-  leaderboardError = null;
+  if (leaderboardState.loading) return;
+  leaderboardState.loading = true;
+  leaderboardState.error = null;
   try {
     const response = await onlineClient.getLeaderboard(50);
-    leaderboardEntries = response.entries;
+    leaderboardState.entries = response.entries;
   } catch (error) {
-    leaderboardError = onlineErrorText(error);
+    leaderboardState.error = onlineErrorText(error);
   } finally {
-    leaderboardLoading = false;
+    leaderboardState.loading = false;
   }
 }
 
@@ -3221,16 +3202,16 @@ async function submitLeaderboardWin(): Promise<void> {
 // ─────────────────────── Top de supervivencia (por tiempo) ───────────────────────
 
 async function refreshSurvivalTop(): Promise<void> {
-  if (survivalLoading) return;
-  survivalLoading = true;
-  survivalError = null;
+  if (leaderboardState.survivalLoading) return;
+  leaderboardState.survivalLoading = true;
+  leaderboardState.survivalError = null;
   try {
     const response = await onlineClient.getSurvivalLeaderboard(50);
-    survivalEntries = response.entries;
+    leaderboardState.survivalEntries = response.entries;
   } catch (error) {
-    survivalError = onlineErrorText(error);
+    leaderboardState.survivalError = onlineErrorText(error);
   } finally {
-    survivalLoading = false;
+    leaderboardState.survivalLoading = false;
   }
 }
 
@@ -3243,10 +3224,10 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
   // iniciar sesión en vez de un "fuera del top" engañoso.
   const npub = lunaIdentity?.npub ?? null;
   if (!npub) {
-    survivalRunRank = { status: 'guest' };
+    leaderboardState.survivalRunRank = { status: 'guest' };
     return;
   }
-  survivalRunRank = { status: 'loading' };
+  leaderboardState.survivalRunRank = { status: 'loading' };
   try {
     await onlineClient.submitSurvival({
       playerId: onlinePlayer.id,
@@ -3259,14 +3240,14 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
     // y buscamos mi posición. Pedimos un tope amplio para ubicarme aunque no esté
     // entre los primeros; si ni así aparezco, quedo "fuera del top".
     const response = await onlineClient.getSurvivalLeaderboard(200);
-    survivalEntries = response.entries;
+    leaderboardState.survivalEntries = response.entries;
     const index = response.entries.findIndex((entry) => entry.playerId === onlinePlayer.id);
-    survivalRunRank = index >= 0
+    leaderboardState.survivalRunRank = index >= 0
       ? { status: 'ranked', rank: index + 1, total: response.entries.length }
       : { status: 'unranked' };
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
-    survivalRunRank = { status: 'error' };
+    leaderboardState.survivalRunRank = { status: 'error' };
   }
 }
 
@@ -4007,8 +3988,8 @@ function syncRunEffects(state: GameState, events: GameEvent[]): void {
   }
   // Modo Supervivencia: al perder, mandamos cuánto duró la partida al top mundial
   // (una sola vez por partida). El endless solo termina en 'gameover' (no hay meta).
-  if (currentRunKind === 'survival' && state.status === 'gameover' && !submittedSurvivalRun) {
-    submittedSurvivalRun = true;
+  if (currentRunKind === 'survival' && state.status === 'gameover' && !leaderboardState.submittedSurvivalRun) {
+    leaderboardState.submittedSurvivalRun = true;
     const durationMs = Math.round(terminalRunFrame(state) * GAME_FRAME_MS);
     if (durationMs > 0) void submitSurvivalTime(durationMs);
   }
@@ -5499,7 +5480,7 @@ function renderSoloResultsOverlay(state: GameState): string {
 // Mientras se calcula muestra un estado de carga; si el jugador no entra en el top
 // consultado, lo indica con un mensaje alentador.
 function renderSurvivalRankBlock(): string {
-  const r = survivalRunRank;
+  const r = leaderboardState.survivalRunRank;
   if (!r || r.status === 'loading') {
     return '<div class="solo-results-rank">Calculando tu puesto en el mundo…</div>';
   }
@@ -5524,9 +5505,9 @@ function renderSurvivalRankWindow(rank: number, total: number): string {
   // 2 arriba + vos + 2 abajo: suficiente contexto de vecinos sin que la pantalla
   // de resultados crezca de más y obligue a scrollear.
   const start = Math.max(0, myIndex - 2);
-  const end = Math.min(survivalEntries.length, myIndex + 3);
+  const end = Math.min(leaderboardState.survivalEntries.length, myIndex + 3);
   const myId = onlinePlayer.id;
-  const rows = survivalEntries.slice(start, end).map((entry, i) => {
+  const rows = leaderboardState.survivalEntries.slice(start, end).map((entry, i) => {
     const position = start + i + 1;
     const mine = entry.playerId === myId;
     const pos = position === 1 ? '🥇' : position === 2 ? '🥈' : position === 3 ? '🥉' : `#${position}`;
@@ -8151,7 +8132,7 @@ function renderWelcomeStage(): string {
   const runs = runHistory;
   const bestFrames = runs.length ? Math.max(...runs.map((r) => r.elapsedFrames)) : null;
   const avgPps = runs.length ? runs.reduce((sum, r) => sum + r.pps, 0) / runs.length : null;
-  const myWins = leaderboardEntries.find((e) => e.playerId === onlinePlayer.id)?.wins ?? null;
+  const myWins = leaderboardState.entries.find((e) => e.playerId === onlinePlayer.id)?.wins ?? null;
   return renderWelcome({ bestFrames, avgPps, myWins });
 }
 
@@ -8255,7 +8236,7 @@ function renderMobileCustomChips(): string {
 
 // Tops embebidos compactos para Supervivencia en móvil (mismas pestañas/acciones).
 function renderMobileTopsEmbed(): string {
-  const onSurvival = leaderboardTab === 'survival';
+  const onSurvival = leaderboardState.tab === 'survival';
   const body = onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody();
   return `
     <div class="mdash-tops">
@@ -8399,8 +8380,8 @@ function renderMobileRoomManager(): string {
 // Tops embebidos en la tarjeta Supervivencia: reusa las pestañas y los cuerpos del
 // Top unificado (victorias + tiempo) sin el marco/acciones de la pantalla completa.
 function renderSurvivalTopsEmbed(): string {
-  const onSurvival = leaderboardTab === 'survival';
-  const loading = onSurvival ? survivalLoading : leaderboardLoading;
+  const onSurvival = leaderboardState.tab === 'survival';
+  const loading = onSurvival ? leaderboardState.survivalLoading : leaderboardState.loading;
   const body = onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody();
   return `
     <div class="dash-survival-tops">
@@ -8484,7 +8465,7 @@ function renderDashboardCenterContent(_state: GameState): string {
 // multijugador y tiempo de supervivencia — para que el ranking esté concentrado en
 // un único lugar y quede claro cuál es cada uno.
 function renderLeaderboardPanelContent(): string {
-  const onSurvival = leaderboardTab === 'survival';
+  const onSurvival = leaderboardState.tab === 'survival';
   const tabs = `
     <div class="leaderboard-tabs" role="tablist">
       <button class="leaderboard-tab ${!onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${!onSurvival}" data-ui-action="leaderboard-tab-wins">🏆 Multijugador</button>
@@ -8496,7 +8477,7 @@ function renderLeaderboardPanelContent(): string {
     ? 'Modo de 1 jugador igual para todos: aguantá lo más posible. El ranking ordena por quién duró más tiempo.'
     : 'Victorias en partidas multijugador. Ganá batallas online para subir en el ranking.';
   const body = onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody();
-  const loading = onSurvival ? survivalLoading : leaderboardLoading;
+  const loading = onSurvival ? leaderboardState.survivalLoading : leaderboardState.loading;
   const playBtn = onSurvival
     ? '<button class="dash-action-btn primary" type="button" data-ui-action="survival-start">Jugar Supervivencia</button>'
     : '';
@@ -8520,16 +8501,16 @@ function renderLeaderboardPanelContent(): string {
 // Filas del top de victorias multijugador.
 function renderWinsLeaderboardBody(): string {
   const myId = onlinePlayer.id;
-  if (leaderboardLoading && leaderboardEntries.length === 0) {
+  if (leaderboardState.loading && leaderboardState.entries.length === 0) {
     return '<p class="leaderboard-note">Cargando ranking…</p>';
   }
-  if (leaderboardError && leaderboardEntries.length === 0) {
-    return `<p class="leaderboard-note leaderboard-note--error">${escapeHtml(leaderboardError)}</p>`;
+  if (leaderboardState.error && leaderboardState.entries.length === 0) {
+    return `<p class="leaderboard-note leaderboard-note--error">${escapeHtml(leaderboardState.error)}</p>`;
   }
-  if (leaderboardEntries.length === 0) {
+  if (leaderboardState.entries.length === 0) {
     return '<p class="leaderboard-note">Todavía no hay victorias registradas. ¡Ganá una partida multijugador y aparecé acá!</p>';
   }
-  const rows = leaderboardEntries.map((entry, index) => {
+  const rows = leaderboardState.entries.map((entry, index) => {
     const rank = index + 1;
     const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`;
     const mine = entry.playerId === myId ? ' leaderboard-row--me' : '';
@@ -8549,16 +8530,16 @@ function renderWinsLeaderboardBody(): string {
 // Filas del top de supervivencia (mayor tiempo sobrevivido, formatFrames).
 function renderSurvivalLeaderboardBody(): string {
   const myId = onlinePlayer.id;
-  if (survivalLoading && survivalEntries.length === 0) {
+  if (leaderboardState.survivalLoading && leaderboardState.survivalEntries.length === 0) {
     return '<p class="leaderboard-note">Cargando ranking…</p>';
   }
-  if (survivalError && survivalEntries.length === 0) {
-    return `<p class="leaderboard-note leaderboard-note--error">${escapeHtml(survivalError)}</p>`;
+  if (leaderboardState.survivalError && leaderboardState.survivalEntries.length === 0) {
+    return `<p class="leaderboard-note leaderboard-note--error">${escapeHtml(leaderboardState.survivalError)}</p>`;
   }
-  if (survivalEntries.length === 0) {
+  if (leaderboardState.survivalEntries.length === 0) {
     return '<p class="leaderboard-note">Todavía no hay tiempos registrados. ¡Jugá Supervivencia y aguantá lo más posible para aparecer acá!</p>';
   }
-  const rows = survivalEntries.map((entry, index) => {
+  const rows = leaderboardState.survivalEntries.map((entry, index) => {
     const rank = index + 1;
     const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`;
     const mine = entry.playerId === myId ? ' leaderboard-row--me' : '';
