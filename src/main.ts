@@ -9,6 +9,7 @@ import type { PlayMode } from './ui/playMode';
 import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './ui/dashboard/modeCard';
 import { leaderboardState } from './state/leaderboardState';
 import { betState, DEFAULT_ONLINE_BET_STAKE_SATS } from './state/betState';
+import { lunaState, type PendingLunaLaunchRequest } from './state/lunaState';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -209,7 +210,6 @@ const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 type RunKind = 'custom' | 'online' | 'survival';
 type SequencedOnlineInput = GameInput & { sequence: number };
-type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: string };
 type StoredOnlineRoomSession = {
   roomId: string;
   playerId: string;
@@ -490,31 +490,20 @@ let onlineInputOutbox: SequencedOnlineInput[] = [];
 let onlineActiveRoundId: string | null = null;
 // Ronda cuya victoria ya reporté al ranking mundial (evita doble conteo).
 let onlineWinSubmittedRoundId: string | null = null;
-let lunaIdentity: LunaIdentity | null = null;
-let lunaInviteWindowBusy = false;
-let lunaInviteNotice: string | null = null;
-// Momento en que se copió el link de invitación de la sala, para mostrar un
-// "¡Link copiado!" efímero en el botón sin necesidad de un toast aparte.
-let roomInviteLinkCopiedAt = 0;
-// Si el bloque de depósito (QR de pago) estaba visible en el render anterior, para
-// auto-scrollearlo a la vista la primera vez que aparece (antes quedaba abajo).
-let depositWasVisible = false;
-let trustedLunaOrigin: string | null = null;
-let lunaLaunchPollInFlight = false;
-let pendingLunaLaunchRequest: PendingLunaLaunchRequest | null = null;
-let ignoredLunaLaunchRequestIds = new Set<string>();
+// El estado del dominio Luna Negra / invitaciones / launch vive ahora en
+// ./state/lunaState (ver lunaState en los imports).
 let onlineRoomReopenInFlight = false;
 let onlineRoomGonePolls = 0;
 // QRs de invoices Lightning, cacheados por bolt11 (el overlay se regenera por HTML).
 const betQrDataUrls = new Map<string, string>();
 const betQrPending = new Set<string>();
 
-const LUNA_IDENTITY_KEY = 'stack40.lunaIdentity.v1';
+const LUNA_IDENTITY_KEY = 'stack40.lunaState.identity.v1';
 const LUNA_ORIGIN_KEY = 'stack40.lunaOrigin.v1';
 const LUNA_ENTER_ROOM_MESSAGE_TYPE = 'luna-negra:enter-room';
 const LUNA_LOGOUT_MESSAGE_TYPE = 'luna-negra:logout';
 const ONLINE_ROOM_SESSION_KEY = 'stack40.onlineRoomSession.v1';
-trustedLunaOrigin = loadTrustedLunaOrigin();
+lunaState.trustedOrigin = loadTrustedLunaOrigin();
 // La presencia caduca a los 20s sin heartbeat (ver docs/luna-negra-social-spec.md).
 // Latimos cada 10s (la mitad del TTL) para que un jugador activo nunca expire,
 // pero SOLO mientras la pestaña está visible: si el jugador cambia de app, minimiza
@@ -537,7 +526,7 @@ window.addEventListener('message', handleLunaNegraWindowMessage);
 window.addEventListener('beforeunload', handleBeforeUnload);
 window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
-  if (lunaIdentity && isPlayerActivelyPresent()) void syncLunaPresence();
+  if (lunaState.identity && isPlayerActivelyPresent()) void syncLunaPresence();
 }, LUNA_PRESENCE_HEARTBEAT_MS);
 window.setInterval(() => {
   if (shouldAutoRefreshPublicRooms()) void refreshPublicRooms({ silent: true });
@@ -1362,7 +1351,7 @@ Object.assign(window, {
     getOnlineRoom: () => onlineRoom,
     getOnlinePublicRooms: () => onlinePublicRooms,
     getOnlinePlayer: () => onlinePlayer,
-    getLunaIdentity: () => lunaIdentity,
+    getLunaIdentity: () => lunaState.identity,
     clearRunHistory: () => {
       clearStoredRunHistory();
       runHistory = [];
@@ -1512,7 +1501,7 @@ function advanceGameToFrame(targetFrame: number, finalFrameInputs: GameInput[]):
 
 function handleGlobalKeyDown(event: KeyboardEvent): void {
   if (hasBlockingModal() && event.code === 'Escape') {
-    if (pendingLunaLaunchRequest) cancelPendingLunaLaunchRequest();
+    if (lunaState.pendingLaunchRequest) cancelPendingLunaLaunchRequest();
     else cancelPendingConfirmation();
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -2276,7 +2265,7 @@ async function enterLunaNegraRoomFromInvite(
   options: { cleanUrl?: boolean } = {},
 ): Promise<void> {
   pendingConfirmAction = null;
-  pendingLunaLaunchRequest = null;
+  lunaState.pendingLaunchRequest = null;
   bindingCapture = null;
   appMode = 'onlineMenu';
   settingsReturnMode = 'menu';
@@ -2380,12 +2369,12 @@ async function bootstrapLunaSession(): Promise<void> {
     const stored = loadStoredLunaIdentity();
     if (stored) applyLunaIdentity(stored);
   }
-  if (!lunaIdentity) return;
+  if (!lunaState.identity) return;
   await syncLunaPresence();
 }
 
 function applyLunaIdentity(identity: LunaIdentity): void {
-  lunaIdentity = identity;
+  lunaState.identity = identity;
   onlinePlayer = saveOnlinePlayer({
     ...onlinePlayer,
     id: identity.pubkey || onlinePlayer.id,
@@ -2499,9 +2488,9 @@ function clearStoredLunaIdentity(): void {
 }
 
 function clearLunaIdentity(): void {
-  lunaIdentity = null;
-  lunaInviteNotice = null;
-  pendingLunaLaunchRequest = null;
+  lunaState.identity = null;
+  lunaState.inviteNotice = null;
+  lunaState.pendingLaunchRequest = null;
   clearStoredLunaIdentity();
   if (!onlineRoom) {
     onlinePlayer = saveOnlinePlayer({ id: '', name: 'Player', avatarUrl: null });
@@ -2530,7 +2519,7 @@ function rememberTrustedLunaOriginFromStartup(params: URLSearchParams): void {
     parseHttpOrigin(params.get('lnOrigin') ?? '')
     ?? parseHttpOrigin(document.referrer);
   if (!origin) return;
-  trustedLunaOrigin = origin;
+  lunaState.trustedOrigin = origin;
   try {
     localStorage.setItem(LUNA_ORIGIN_KEY, origin);
   } catch {
@@ -2541,7 +2530,7 @@ function rememberTrustedLunaOriginFromStartup(params: URLSearchParams): void {
 function handleLunaNegraWindowMessage(event: MessageEvent): void {
   const message = parseLunaWindowMessage(event.data);
   if (!message) return;
-  if (!trustedLunaOrigin || event.origin !== trustedLunaOrigin) return;
+  if (!lunaState.trustedOrigin || event.origin !== lunaState.trustedOrigin) return;
   if (message.type === LUNA_LOGOUT_MESSAGE_TYPE) {
     clearLunaIdentity();
     return;
@@ -2605,10 +2594,10 @@ function isPlayerActivelyPresent(): boolean {
 // Reporta que este jugador tiene el juego abierto (online) o está en una sala
 // (in-game). Alimenta el orden del panel de amigos de los demás.
 async function syncLunaPresence(): Promise<void> {
-  if (!lunaIdentity || !isPlayerActivelyPresent()) return;
+  if (!lunaState.identity || !isPlayerActivelyPresent()) return;
   try {
     await lunaSocialClient.heartbeat({
-      npub: lunaIdentity.npub,
+      npub: lunaState.identity.npub,
       name: onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
       status: onlineRoom ? 'in-game' : 'online',
@@ -2620,19 +2609,19 @@ async function syncLunaPresence(): Promise<void> {
 }
 
 async function syncLunaLaunchRequest(): Promise<void> {
-  if (!lunaIdentity || onlineBusy || lunaLaunchPollInFlight || pendingLunaLaunchRequest) return;
-  lunaLaunchPollInFlight = true;
+  if (!lunaState.identity || onlineBusy || lunaState.launchPollInFlight || lunaState.pendingLaunchRequest) return;
+  lunaState.launchPollInFlight = true;
   try {
-    const response = await lunaSocialClient.launchRequest(lunaIdentity.npub);
+    const response = await lunaSocialClient.launchRequest(lunaState.identity.npub);
     syncOnlineClock(response.serverNowMs);
     const request = response.request;
     if (!request) return;
-    if (ignoredLunaLaunchRequestIds.has(request.id)) return;
+    if (lunaState.ignoredLaunchRequestIds.has(request.id)) return;
     await handleLunaLaunchRequest(request);
   } catch {
     // La orden pendiente es best-effort; la UI de Luna conserva el fallback de abrir/navegar.
   } finally {
-    lunaLaunchPollInFlight = false;
+    lunaState.launchPollInFlight = false;
   }
 }
 
@@ -2641,7 +2630,7 @@ async function handleLunaLaunchRequest(request: LunaLaunchRequest): Promise<void
   if (!normalizedRoomId) return;
   if (onlineRoom && normalizeRoomId(onlineRoom.id) === normalizedRoomId) return;
   const pending = { ...request, normalizedRoomId };
-  pendingLunaLaunchRequest = pending;
+  lunaState.pendingLaunchRequest = pending;
   bindingCapture = null;
   // En partida la invitación es un toast: no soltamos los inputs ni robamos el
   // control. Solo el modal (en menús) limpia el estado de teclado.
@@ -2649,17 +2638,17 @@ async function handleLunaLaunchRequest(request: LunaLaunchRequest): Promise<void
 }
 
 async function acceptPendingLunaLaunchRequest(): Promise<void> {
-  const request = pendingLunaLaunchRequest;
+  const request = lunaState.pendingLaunchRequest;
   if (!request) return;
-  pendingLunaLaunchRequest = null;
+  lunaState.pendingLaunchRequest = null;
   await enterLunaNegraRoomFromInvite(request.inviteToken, request.normalizedRoomId);
 }
 
 function cancelPendingLunaLaunchRequest(): void {
-  const request = pendingLunaLaunchRequest;
+  const request = lunaState.pendingLaunchRequest;
   const wasToast = request !== null && lunaInviteShowsAsToast();
-  if (request) ignoredLunaLaunchRequestIds.add(request.id);
-  pendingLunaLaunchRequest = null;
+  if (request) lunaState.ignoredLaunchRequestIds.add(request.id);
+  lunaState.pendingLaunchRequest = null;
   bindingCapture = null;
   // Si era toast, el juego nunca se pausó: no hay que resincronizar el reloj ni
   // soltar las teclas que el jugador tiene apretadas.
@@ -2669,8 +2658,8 @@ function cancelPendingLunaLaunchRequest(): void {
 }
 
 async function openLunaInviteWindow(): Promise<void> {
-  if (lunaInviteWindowBusy) return;
-  if (!lunaIdentity?.gameId) {
+  if (lunaState.inviteWindowBusy) return;
+  if (!lunaState.identity?.gameId) {
     onlineError = 'Abri el juego desde Luna Negra para invitar amigos.';
     return;
   }
@@ -2694,24 +2683,24 @@ async function openLunaInviteWindow(): Promise<void> {
     // Si el navegador no permite tocar about:blank, igual navegamos la ventana.
   }
 
-  lunaInviteWindowBusy = true;
-  lunaInviteNotice = null;
+  lunaState.inviteWindowBusy = true;
+  lunaState.inviteNotice = null;
   try {
-    const response = await lunaSocialClient.inviteWindow(lunaIdentity.gameId, onlineRoom.id, onlinePlayer.id);
+    const response = await lunaSocialClient.inviteWindow(lunaState.identity.gameId, onlineRoom.id, onlinePlayer.id);
     popup.location.href = response.url;
-    lunaInviteNotice = 'Elegiste amigos desde Luna Negra.';
+    lunaState.inviteNotice = 'Elegiste amigos desde Luna Negra.';
     onlineError = null;
   } catch (error) {
     popup.close();
     onlineError = onlineErrorText(error);
   } finally {
-    lunaInviteWindowBusy = false;
+    lunaState.inviteWindowBusy = false;
   }
 }
 
 async function openLunaLogin(): Promise<void> {
-  if (onlineBusy || lunaInviteWindowBusy) return;
-  lunaInviteWindowBusy = true;
+  if (onlineBusy || lunaState.inviteWindowBusy) return;
+  lunaState.inviteWindowBusy = true;
   onlineError = null;
   try {
     const response = await lunaSocialClient.loginUrl();
@@ -2719,7 +2708,7 @@ async function openLunaLogin(): Promise<void> {
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
-    lunaInviteWindowBusy = false;
+    lunaState.inviteWindowBusy = false;
   }
 }
 
@@ -2954,8 +2943,8 @@ async function createOnlineRoom(
     const rules = matchType === 'battle' ? battleRulesFromSettings(inputSettings) : onlineCustomRulesFromSettings();
     const response = await onlineClient.createRoom({
       playerId: onlinePlayer.id,
-      npub: lunaIdentity?.npub ?? null,
-      lunaGameId: lunaIdentity?.gameId ?? null,
+      npub: lunaState.identity?.npub ?? null,
+      lunaGameId: lunaState.identity?.gameId ?? null,
       name: onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
       visibility,
@@ -3036,7 +3025,7 @@ async function joinOnlineRoom(roomId: string): Promise<void> {
     const response = await onlineClient.joinRoom({
       roomId: normalizedRoomId,
       playerId: onlinePlayer.id,
-      npub: lunaIdentity?.npub ?? null,
+      npub: lunaState.identity?.npub ?? null,
       name: onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
     });
@@ -3176,7 +3165,7 @@ async function submitLeaderboardWin(): Promise<void> {
       playerId: onlinePlayer.id,
       name: onlineName.trim() || onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
-      npub: lunaIdentity?.npub ?? null,
+      npub: lunaState.identity?.npub ?? null,
     });
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
@@ -3206,7 +3195,7 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
   // El top mundial solo admite jugadores con sesión de Luna Negra. Sin npub no tiene
   // sentido enviar el tiempo (el server lo descarta): mostramos un estado que invita a
   // iniciar sesión en vez de un "fuera del top" engañoso.
-  const npub = lunaIdentity?.npub ?? null;
+  const npub = lunaState.identity?.npub ?? null;
   if (!npub) {
     leaderboardState.survivalRunRank = { status: 'guest' };
     return;
@@ -3504,14 +3493,14 @@ function buildRoomInviteLink(roomId: string): string {
 }
 
 function roomInviteLinkRecentlyCopied(): boolean {
-  return Date.now() - roomInviteLinkCopiedAt < 2200;
+  return Date.now() - lunaState.roomInviteLinkCopiedAt < 2200;
 }
 
 // Copia el link de invitación de la sala activa al portapapeles. Sin diálogo de
 // "compartir" del sistema: copia directo y muestra el feedback en el botón.
 function shareRoomInviteLink(): void {
   if (!onlineRoom) return;
-  roomInviteLinkCopiedAt = Date.now();
+  lunaState.roomInviteLinkCopiedAt = Date.now();
   void copyToClipboard(buildRoomInviteLink(onlineRoom.id));
 }
 
@@ -3670,7 +3659,7 @@ function resetOnlineRoomState(): void {
   onlineLastPeerBroadcastAt = 0;
   onlineLastKoBroadcastAt = 0;
   onlineActiveRoundId = null;
-  pendingLunaLaunchRequest = null;
+  lunaState.pendingLaunchRequest = null;
 }
 
 function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
@@ -5081,7 +5070,7 @@ function syncOnlineVisibilityChange(): void {
   }
   // Al volver al juego reanunciamos presencia de inmediato (sin esperar el
   // intervalo) para reaparecer como "jugando" apenas el jugador regresa.
-  if (lunaIdentity) void syncLunaPresence();
+  if (lunaState.identity) void syncLunaPresence();
   if (!onlineRoom) return;
   eagerRefreshBetIfPending();
   syncOnline();
@@ -5251,8 +5240,8 @@ function renderOverlay(state: GameState): void {
   }
   // Toast de invitación durante partida: capa propia con caché para que los
   // botones no se recreen cada frame (el juego sigue corriendo detrás).
-  const inviteHtml = pendingLunaLaunchRequest && lunaInviteShowsAsToast()
-    ? renderLunaInviteToast(pendingLunaLaunchRequest)
+  const inviteHtml = lunaState.pendingLaunchRequest && lunaInviteShowsAsToast()
+    ? renderLunaInviteToast(lunaState.pendingLaunchRequest)
     : '';
   if (inviteHtml !== lastInviteOverlayHtml) {
     inviteOverlayElement.innerHTML = inviteHtml;
@@ -5331,10 +5320,10 @@ function captureOverlayScroll(): Map<string, number> {
 function maybeScrollDepositIntoView(): void {
   const deposit = overlayElement.querySelector<HTMLElement>('[data-bet-deposit]');
   const visible = deposit !== null;
-  if (visible && !depositWasVisible) {
+  if (visible && !lunaState.depositWasVisible) {
     deposit.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
-  depositWasVisible = visible;
+  lunaState.depositWasVisible = visible;
 }
 
 function restoreOverlayScroll(snapshot: Map<string, number>): void {
@@ -5348,7 +5337,7 @@ function restoreOverlayScroll(snapshot: Map<string, number>): void {
 }
 
 function renderScreenOverlay(state: GameState): string {
-  if (pendingLunaLaunchRequest && !lunaInviteShowsAsToast()) return renderLunaLaunchRequestOverlay(pendingLunaLaunchRequest);
+  if (lunaState.pendingLaunchRequest && !lunaInviteShowsAsToast()) return renderLunaLaunchRequestOverlay(lunaState.pendingLaunchRequest);
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
   // El visor multi-tablero vive en su capa propia (multiReplayOverlayElement),
@@ -5613,7 +5602,7 @@ function renderDpadScheme(): string {
 
 function requestRunConfirmation(action: DestructiveRunAction): void {
   pendingConfirmAction = action;
-  pendingLunaLaunchRequest = null;
+  lunaState.pendingLaunchRequest = null;
   bindingCapture = null;
   input.releaseAll();
 }
@@ -5679,7 +5668,7 @@ function renderLunaLaunchRequestOverlay(request: PendingLunaLaunchRequest): stri
 function hasBlockingModal(): boolean {
   // La invitación de Luna durante una partida NO bloquea: se muestra como toast
   // clicable (ver renderLunaInviteToast) y el juego sigue corriendo.
-  return pendingConfirmAction !== null || (pendingLunaLaunchRequest !== null && !lunaInviteShowsAsToast());
+  return pendingConfirmAction !== null || (lunaState.pendingLaunchRequest !== null && !lunaInviteShowsAsToast());
 }
 
 // Con el juego corriendo (o pausado), la invitación se presenta como toast no
@@ -5783,12 +5772,12 @@ function roomStatusLabel(status: OnlineRoom['status']): string {
 }
 
 function renderLunaIdentityBadge(): string {
-  if (lunaIdentity) {
+  if (lunaState.identity) {
     return `
       <div class="cs2-identity">
-        ${renderOnlineAvatar({ name: lunaIdentity.name, avatarUrl: lunaIdentity.avatarUrl }, 'small')}
+        ${renderOnlineAvatar({ name: lunaState.identity.name, avatarUrl: lunaState.identity.avatarUrl }, 'small')}
         <div>
-          <strong>${escapeHtml(lunaIdentity.name)}</strong>
+          <strong>${escapeHtml(lunaState.identity.name)}</strong>
           <span>Conectado con Luna Negra</span>
         </div>
       </div>
@@ -5800,8 +5789,8 @@ function renderLunaIdentityBadge(): string {
         <strong>Sin cuenta de Luna Negra</strong>
         <span>Entrá desde Luna Negra para ver a tus amigos e invitarlos.</span>
       </div>
-      <button class="cs2-btn cs2-btn-accent cs2-btn-sm cs2-identity-action" type="button" data-ui-action="luna-login"${lunaInviteWindowBusy ? ' disabled' : ''}>
-        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}
+      <button class="cs2-btn cs2-btn-accent cs2-btn-sm cs2-identity-action" type="button" data-ui-action="luna-login"${lunaState.inviteWindowBusy ? ' disabled' : ''}>
+        ${lunaState.inviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}
       </button>
     </div>
   `;
@@ -5863,9 +5852,9 @@ export function renderOnlineLobbyOverlay(): string {
 
 function renderLunaInviteAction(host: boolean): string {
   if (!host) return '';
-  const unavailable = !lunaIdentity?.gameId;
-  const status = lunaInviteNotice
-    ? lunaInviteNotice
+  const unavailable = !lunaState.identity?.gameId;
+  const status = lunaState.inviteNotice
+    ? lunaState.inviteNotice
     : unavailable
       ? 'Entrá desde Luna Negra para ver amigos e invitarlos.'
       : 'Luna Negra abre la lista de amigos.';
@@ -5873,8 +5862,8 @@ function renderLunaInviteAction(host: boolean): string {
   const label = unavailable ? 'Iniciar sesión' : 'Invitar amigo';
   return `
     <section class="cs2-invite-action" aria-label="Invitar amigo">
-      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="${action}"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>
-        ${lunaInviteWindowBusy ? 'Abriendo...' : label}
+      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="${action}"${onlineBusy || lunaState.inviteWindowBusy ? ' disabled' : ''}>
+        ${lunaState.inviteWindowBusy ? 'Abriendo...' : label}
       </button>
       <span>${escapeHtml(status)}</span>
     </section>
@@ -8288,7 +8277,7 @@ function renderMobileRoomManager(): string {
   const startReason = !ready
     ? 'Marcate listo para poder empezar'
     : (readyCount < 2 ? 'Necesitás al menos 2 jugadores listos' : 'Todo listo · arrancá la partida');
-  const inviteUnavailable = !lunaIdentity?.gameId;
+  const inviteUnavailable = !lunaState.identity?.gameId;
 
   const playersHtml = room.players.map((candidate) => {
     const isSelf = candidate.id === onlinePlayer.id;
@@ -8306,8 +8295,8 @@ function renderMobileRoomManager(): string {
   }).join('');
 
   const inviteBtn = inviteUnavailable
-    ? `<button class="mdash-add-friend" type="button" data-ui-action="luna-login"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo…' : 'Iniciar sesión para invitar'}</button>`
-    : `<button class="mdash-add-friend" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo…' : '+ Invitar amigos'}</button>`;
+    ? `<button class="mdash-add-friend" type="button" data-ui-action="luna-login"${onlineBusy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo…' : 'Iniciar sesión para invitar'}</button>`
+    : `<button class="mdash-add-friend" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo…' : '+ Invitar amigos'}</button>`;
 
   const visToggle = host && isLobby
     ? `<button class="mdash-vis-toggle ${isPublic ? 'is-public' : ''}" type="button" role="switch" aria-checked="${isPublic}" aria-label="${isPublic ? 'Sala pública' : 'Sala privada'}" data-ui-action="online-visibility-toggle"${onlineBusy ? ' disabled' : ''}>
@@ -8542,7 +8531,7 @@ function renderSurvivalLeaderboardBody(): string {
 
 function renderDashboardRoomPanel(): string {
   const room = onlineRoom;
-  const inviteUnavailable = !lunaIdentity?.gameId;
+  const inviteUnavailable = !lunaState.identity?.gameId;
   const roomPurposeIcon = shieldCrestIcon({ size: 16, ariaHidden: true });
 
   if (!room) {
@@ -8640,8 +8629,8 @@ function renderDashboardRoomPanel(): string {
   const inviteButtonsHtml = `
     <button class="dash-copy-btn" type="button" data-ui-action="online-copy-invite-link">${roomInviteLinkRecentlyCopied() ? '¡Link copiado!' : 'Copiar link'}</button>
     ${inviteUnavailable
-      ? `<button class="dash-copy-btn" type="button" data-ui-action="luna-login"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}</button>`
-      : `<button class="dash-copy-btn" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}</button>`}
+      ? `<button class="dash-copy-btn" type="button" data-ui-action="luna-login"${onlineBusy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}</button>`
+      : `<button class="dash-copy-btn" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}</button>`}
   `;
 
   return `
