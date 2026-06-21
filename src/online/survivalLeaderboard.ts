@@ -25,10 +25,19 @@ export class MemorySurvivalLeaderboardStore implements SurvivalLeaderboardStore 
   private entries = new Map<string, SurvivalEntry>();
 
   async topTimes(limit: number): Promise<SurvivalEntry[]> {
-    return [...this.entries.values()].sort(compareEntries).slice(0, clampLimit(limit));
+    // El top mundial solo lista a jugadores con sesión de Luna Negra (npub). El filtro
+    // va también acá —no solo en recordTime— para esconder entradas de invitados que
+    // pudieran haber quedado persistidas de antes de aplicar esta regla.
+    return [...this.entries.values()]
+      .filter((entry) => entry.npub)
+      .sort(compareEntries)
+      .slice(0, clampLimit(limit));
   }
 
   async recordTime(meta: SurvivalTimeMeta): Promise<void> {
+    // Sin sesión de Luna Negra (sin npub) no se entra al top: lo descartamos en silencio
+    // para que el ranking solo cuente jugadores identificados.
+    if (!meta.npub) return;
     const current = this.entries.get(meta.playerId);
     // Solo guardamos si supera el récord previo (o si no había uno).
     if (!current || meta.bestMs > current.bestMs) {

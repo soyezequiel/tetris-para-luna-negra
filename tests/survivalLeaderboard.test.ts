@@ -12,7 +12,8 @@ function baseInput(overrides: Partial<Parameters<typeof submitSurvival>[1]> = {}
     playerId: 'player-1',
     name: 'Ana',
     avatarUrl: null,
-    npub: null,
+    // El top mundial solo admite jugadores con sesión de Luna Negra (npub no nulo).
+    npub: 'npub-test',
     durationMs: 10_000,
     ...overrides,
   };
@@ -71,6 +72,26 @@ describe('submitSurvival', () => {
     expect(top.length).toBe(SURVIVAL_MAX_ENTRIES);
     expect(top[0].playerId).toBe('star');
     expect(top[0].bestMs).toBe(999_000);
+  });
+
+  it('excludes guests without a Luna Negra session (no npub)', async () => {
+    const store = new MemorySurvivalLeaderboardStore();
+    await submitSurvival(store, baseInput({ playerId: 'guest', name: 'Guest', npub: null, durationMs: 99_000 }));
+    await submitSurvival(store, baseInput({ playerId: 'member', name: 'Member', npub: 'npub-member', durationMs: 5_000 }));
+    const top = await getSurvivalLeaderboard(store);
+    // El invitado tiene mejor tiempo pero no inició sesión: no aparece en el top.
+    expect(top.map((entry) => entry.playerId)).toEqual(['member']);
+  });
+
+  it('hides legacy guest entries already persisted (filtered on read)', async () => {
+    const store = new MemorySurvivalLeaderboardStore();
+    // Simula entradas que quedaron persistidas antes de aplicar la regla del npub.
+    store.hydrate([
+      { playerId: 'legacy-guest', npub: null, name: 'Old', avatarUrl: null, bestMs: 50_000, createdAtServerMs: 1 },
+      { playerId: 'member', npub: 'npub-member', name: 'Member', avatarUrl: null, bestMs: 10_000, createdAtServerMs: 2 },
+    ]);
+    const top = await getSurvivalLeaderboard(store);
+    expect(top.map((entry) => entry.playerId)).toEqual(['member']);
   });
 
   it('defaults a blank name to Jugador', async () => {

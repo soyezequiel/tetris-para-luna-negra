@@ -394,6 +394,7 @@ type SurvivalRunRank =
   | { status: 'loading' }
   | { status: 'ranked'; rank: number; total: number }
   | { status: 'unranked' }
+  | { status: 'guest' }
   | { status: 'error' };
 let survivalRunRank: SurvivalRunRank | null = null;
 // Modalidad elegida en la sección "Jugar": decide qué arranca el botón ▶ y, al
@@ -3219,13 +3220,21 @@ async function refreshSurvivalTop(): Promise<void> {
 // en qué puesto quedó (para mostrarlo en la pantalla de resultados).
 // Best-effort: el ranking es secundario, nunca corta el juego local.
 async function submitSurvivalTime(durationMs: number): Promise<void> {
+  // El top mundial solo admite jugadores con sesión de Luna Negra. Sin npub no tiene
+  // sentido enviar el tiempo (el server lo descarta): mostramos un estado que invita a
+  // iniciar sesión en vez de un "fuera del top" engañoso.
+  const npub = lunaIdentity?.npub ?? null;
+  if (!npub) {
+    survivalRunRank = { status: 'guest' };
+    return;
+  }
   survivalRunRank = { status: 'loading' };
   try {
     await onlineClient.submitSurvival({
       playerId: onlinePlayer.id,
       name: onlineName.trim() || onlinePlayer.name,
       avatarUrl: onlinePlayer.avatarUrl,
-      npub: lunaIdentity?.npub ?? null,
+      npub,
       durationMs,
     });
     // Tras registrar (el server guarda el MÁXIMO por jugador), releemos el ranking
@@ -5475,6 +5484,9 @@ function renderSurvivalRankBlock(): string {
   const r = survivalRunRank;
   if (!r || r.status === 'loading') {
     return '<div class="solo-results-rank">Calculando tu puesto en el mundo…</div>';
+  }
+  if (r.status === 'guest') {
+    return '<div class="solo-results-rank">Iniciá sesión en Luna Negra para competir en el top mundial</div>';
   }
   if (r.status === 'unranked') {
     return '<div class="solo-results-rank">Todavía fuera del top mundial — ¡seguí intentando!</div>';
