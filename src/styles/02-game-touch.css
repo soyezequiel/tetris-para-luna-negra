@@ -1,0 +1,1342 @@
+/* ── Pago de la apuesta: progreso del pozo (lobby) ───────────────────── */
+.bet-pot {
+  display: grid;
+  gap: 5px;
+}
+
+.bet-pot-bar {
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.bet-pot-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #f7c850, #39d49a);
+  transition: width 0.4s ease;
+}
+
+.bet-pot-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--dash-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.bet-paid-ok {
+  color: var(--dash-success);
+  font-weight: 800;
+}
+
+/* ── Liquidación (pantalla de resultados) ───────────────────────────── */
+.bet-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(247, 200, 80, 0.28);
+  border-top-color: #f7c850;
+  animation: bet-spin 0.7s linear infinite;
+  vertical-align: -2px;
+}
+
+@keyframes bet-spin {
+  to { transform: rotate(360deg); }
+}
+
+.bet-settle {
+  margin-top: 14px;
+  display: grid;
+  gap: 9px;
+  padding: 12px 14px;
+  border: 1px solid rgba(247, 200, 80, 0.24);
+  border-radius: 10px;
+  background: rgba(247, 200, 80, 0.06);
+  text-align: left;
+}
+
+.bet-settle--paid {
+  border-color: rgba(57, 212, 154, 0.34);
+  background: rgba(57, 212, 154, 0.08);
+}
+
+.bet-settle-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f7c850;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+}
+
+.bet-settle-title--win {
+  color: var(--dash-success);
+  font-size: 15px;
+}
+
+.bet-settle-amount {
+  color: var(--dash-success);
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.bet-settle-amount small {
+  font-size: 13px;
+  font-weight: 800;
+  opacity: 0.7;
+}
+
+.bet-settle-amount--pending {
+  margin-top: 10px;
+  color: #f7c850;
+  font-size: 18px;
+}
+
+.bet-settle-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+.bet-settle-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.bet-settle-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.bet-settle-step.is-done {
+  color: var(--dash-success);
+}
+
+.bet-settle-step.is-done .bet-settle-dot {
+  background: rgba(57, 212, 154, 0.18);
+  color: var(--dash-success);
+}
+
+.bet-settle-step.is-active {
+  color: var(--dash-text);
+}
+
+.bet-settle-step.is-todo {
+  color: var(--dash-text-muted);
+}
+
+.bet-settle-step.is-todo .bet-settle-dot {
+  border: 1.5px dashed rgba(255, 255, 255, 0.22);
+}
+
+.bet-settle-hint {
+  margin: 0;
+  color: var(--dash-text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.bet-settle-error {
+  margin: 0;
+  color: var(--dash-danger);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.bet-settle-muted {
+  color: var(--dash-text-dim);
+}
+
+.online-room-row span,
+.online-lobby-player span,
+.online-empty {
+  display: block;
+  margin-top: 4px;
+  color: rgba(247, 247, 242, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.online-countdown {
+  text-align: center;
+}
+
+.online-countdown h1 {
+  font-size: 92px;
+}
+
+.online-race-panel {
+  position: fixed;
+  left: 28px;
+  top: 86px;
+  width: min(330px, calc(100vw - 56px));
+  padding: 16px;
+  border: 2px solid rgba(247, 247, 242, 0.72);
+  border-radius: 8px;
+  background: rgba(4, 5, 7, 0.82);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+  pointer-events: auto;
+}
+
+.online-battle-meta {
+  margin-top: 8px;
+  color: #39d49a;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+/* HUD inferior compacto: garbage entrante + estrategias de objetivo (estilo
+   tetr.io, teclas 1–5) + salir. Una sola fila fina para no tapar el tablero. */
+.online-hud {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: calc(100vw - 20px);
+  padding: 6px 8px;
+  border: 1px solid rgba(247, 247, 242, 0.5);
+  border-radius: 8px;
+  background: rgba(4, 5, 7, 0.78);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+}
+
+.online-hud-incoming {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(247, 247, 242, 0.06);
+  color: rgba(247, 247, 242, 0.7);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.online-hud-incoming i {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid currentColor;
+}
+
+.online-hud-incoming.is-hot {
+  background: rgba(235, 68, 90, 0.16);
+  color: #eb445a;
+}
+
+.online-target-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.online-target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px 4px 5px;
+  border: 1px solid rgba(247, 247, 242, 0.2);
+  border-radius: 6px;
+  background: rgba(247, 247, 242, 0.06);
+  color: rgba(247, 247, 242, 0.78);
+  cursor: pointer;
+}
+
+.online-target-chip:hover {
+  border-color: rgba(57, 212, 154, 0.6);
+}
+
+.online-target-chip.is-active {
+  border-color: #39d49a;
+  background: rgba(57, 212, 154, 0.14);
+  color: #39d49a;
+}
+
+.online-target-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: rgba(247, 247, 242, 0.16);
+  color: inherit;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.online-target-chip.is-active .online-target-key {
+  background: #39d49a;
+  color: #04050a;
+}
+
+.online-target-name {
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.online-target-now {
+  color: #39d49a;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.online-target-manual {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.online-target-manual em {
+  color: rgba(247, 247, 242, 0.55);
+  font-size: 11px;
+}
+
+.online-target-manual-chip {
+  padding: 4px 8px;
+  border: 1px solid rgba(247, 247, 242, 0.2);
+  border-radius: 5px;
+  background: rgba(247, 247, 242, 0.06);
+  color: rgba(247, 247, 242, 0.78);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.online-target-manual-chip:hover {
+  border-color: rgba(57, 212, 154, 0.6);
+}
+
+.online-target-manual-chip.is-active {
+  border-color: #39d49a;
+  color: #39d49a;
+}
+
+.online-hud-leave {
+  padding: 4px 12px;
+  border: 1px solid rgba(247, 247, 242, 0.28);
+  border-radius: 6px;
+  background: rgba(247, 247, 242, 0.06);
+  color: rgba(247, 247, 242, 0.82);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.online-hud-leave:hover {
+  border-color: rgba(235, 68, 90, 0.7);
+  color: #eb445a;
+}
+
+.online-garbage-meter {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 10px;
+  align-items: center;
+  margin-top: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(247, 247, 242, 0.12);
+}
+
+.online-garbage-meter span,
+.online-garbage-meter strong {
+  color: rgba(247, 247, 242, 0.72);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.online-garbage-meter strong {
+  color: #eb445a;
+  font-size: 13px;
+}
+
+.online-garbage-meter div {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.online-garbage-meter i {
+  display: block;
+  height: 7px;
+  background: rgba(247, 247, 242, 0.1);
+}
+
+.online-garbage-meter .online-garbage-cell-active {
+  background: #eb445a;
+}
+
+.online-standing-row {
+  grid-template-columns: 24px 28px minmax(0, 1fr) auto auto;
+  padding: 8px 0;
+}
+
+.online-standing-row span,
+.online-standing-row strong,
+.online-standing-row em,
+.online-standing-row b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-standing-row span,
+.online-standing-row em {
+  color: rgba(247, 247, 242, 0.58);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.online-standing-row strong,
+.online-standing-row b {
+  color: rgba(247, 247, 242, 0.9);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.online-standing-self {
+  color: #39d49a;
+}
+
+.online-standing-self strong,
+.online-standing-self b {
+  color: #39d49a;
+}
+
+.online-versus-grid {
+  position: fixed;
+  top: 86px;
+  right: 20px;
+  bottom: 22px;
+  z-index: 3;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  justify-items: end;
+  max-width: calc(100vw - 40px);
+  pointer-events: none;
+}
+
+.online-versus-grid-empty {
+  align-content: start;
+}
+
+.online-versus-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  color: rgba(247, 247, 242, 0.68);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.online-versus-title strong {
+  color: #39d49a;
+  font-size: 13px;
+}
+
+.online-peer-boards {
+  --online-peer-columns: 3;
+  --online-peer-card-width: 86px;
+  display: grid;
+  grid-template-columns: repeat(var(--online-peer-columns), var(--online-peer-card-width));
+  gap: 8px;
+  align-content: start;
+  justify-content: end;
+  max-height: 100%;
+}
+
+.online-peer-board {
+  min-width: 0;
+  width: var(--online-peer-card-width);
+}
+
+.online-peer-board-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  height: 20px;
+  margin-bottom: 4px;
+}
+
+.online-peer-board-head strong,
+.online-peer-board-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-peer-board-head strong {
+  color: rgba(247, 247, 242, 0.9);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.online-peer-board-head span {
+  color: rgba(247, 247, 242, 0.56);
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.online-player-label {
+  min-width: 0;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.online-player-label strong {
+  min-width: 0;
+}
+
+.online-avatar {
+  position: relative;
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-top: 0;
+  border: 1px solid rgba(57, 212, 154, 0.46);
+  border-radius: 999px;
+  background: rgba(57, 212, 154, 0.12);
+  color: #39d49a;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: normal;
+}
+
+.online-avatar-small {
+  width: 24px;
+  height: 24px;
+  font-size: 9px;
+}
+
+.online-avatar img,
+.online-avatar-initials {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: inherit;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.online-avatar img {
+  z-index: 1;
+  object-fit: cover;
+}
+
+.online-avatar-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.online-peer-board-body {
+  position: relative;
+}
+
+.online-peer-board-tag {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
+.online-peer-board-tag--ko {
+  border: 1px solid rgba(255, 92, 92, 0.7);
+  background: rgba(40, 6, 6, 0.82);
+  color: #ff7a7a;
+}
+
+.online-peer-board-tag--win {
+  border: 1px solid rgba(57, 212, 154, 0.7);
+  background: rgba(5, 32, 22, 0.82);
+  color: #4be3a6;
+}
+
+.online-peer-board--ko .online-mini-board,
+.online-peer-board--ko .online-mini-board-empty {
+  border-color: rgba(255, 92, 92, 0.45);
+  filter: grayscale(0.75) brightness(0.6);
+}
+
+.online-peer-board--ko .online-peer-board-head strong {
+  color: rgba(255, 122, 122, 0.85);
+}
+
+.online-peer-board--win .online-mini-board {
+  border-color: rgba(57, 212, 154, 0.6);
+}
+
+/* Rival al borde de la derrota: efectos especiales sin texto. WARN = aviso suave
+ * (la pila ya está alta). PERIL = inminente, late fuerte, se sacude y destella. */
+@keyframes peerWarnPulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(255, 170, 60, 0.35), 0 0 10px rgba(255, 150, 40, 0.25); }
+  50% { box-shadow: 0 0 0 1px rgba(255, 190, 80, 0.6), 0 0 18px rgba(255, 160, 50, 0.5); }
+}
+
+@keyframes peerPerilPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(255, 70, 80, 0.7), 0 0 14px rgba(255, 50, 60, 0.55);
+    transform: translate(0, 0);
+  }
+  25% { transform: translate(-1.5px, 1px); }
+  50% {
+    box-shadow: 0 0 0 2px rgba(255, 90, 100, 1), 0 0 26px rgba(255, 60, 70, 0.9);
+    transform: translate(1.5px, -1px);
+  }
+  75% { transform: translate(-1px, -1px); }
+}
+
+@keyframes peerPerilVeil {
+  0%, 100% { opacity: 0.12; }
+  50% { opacity: 0.4; }
+}
+
+.online-peer-board--warn .online-mini-board {
+  border-color: rgba(255, 180, 70, 0.7);
+  animation: peerWarnPulse 1s ease-in-out infinite;
+}
+
+.online-peer-board--peril .online-mini-board {
+  border-color: rgba(255, 90, 100, 0.95);
+  animation: peerPerilPulse 0.42s ease-in-out infinite;
+}
+
+/* Velo rojo latiendo sobre el tablero del rival en peligro inminente. */
+.online-peer-board--peril .online-peer-board-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: radial-gradient(circle at 50% 30%, rgba(255, 60, 70, 0.55), rgba(180, 20, 30, 0.25) 70%, transparent);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: peerPerilVeil 0.42s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .online-peer-board--warn .online-mini-board,
+  .online-peer-board--peril .online-mini-board,
+  .online-peer-board--peril .online-peer-board-body::after {
+    animation: none;
+  }
+}
+
+.online-mini-board {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 10 / 20;
+  overflow: hidden;
+  border: 1px solid rgba(247, 247, 242, 0.24);
+  border-radius: 4px;
+  background: rgba(1, 3, 5, 0.88);
+}
+
+.online-mini-board-empty {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 10 / 20;
+  color: rgba(247, 247, 242, 0.48);
+  font-size: 9px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.online-mini-cell {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid rgba(247, 247, 242, 0.035);
+}
+
+.online-mini-cell-empty {
+  background: rgba(247, 247, 242, 0.025);
+}
+
+/* Misma paleta que el juego real (PIECE_COLORS en src/game/pieces.ts) para que
+   los tableros rivales / espectador se vean con los mismos colores que jugando. */
+.online-mini-cell-I {
+  background: #39c6aa;
+}
+
+.online-mini-cell-J {
+  background: #6453c5;
+}
+
+.online-mini-cell-L {
+  background: #d07c3e;
+}
+
+.online-mini-cell-O {
+  background: #d1bb3f;
+}
+
+.online-mini-cell-S {
+  background: #93ce49;
+}
+
+.online-mini-cell-T {
+  background: #bd50c7;
+}
+
+.online-mini-cell-Z {
+  background: #cf4651;
+}
+
+.replay-strip {
+  position: fixed;
+  left: 28px;
+  bottom: 22px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  max-width: min(560px, calc(100vw - 56px));
+  color: rgba(247, 247, 242, 0.82);
+  font-size: 12px;
+  font-weight: 900;
+  pointer-events: none;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.68);
+}
+
+.replay-strip div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.replay-strip span {
+  color: rgba(247, 247, 242, 0.56);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 10px;
+}
+
+.replay-strip strong {
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 14px;
+}
+
+.replay-panel {
+  position: fixed;
+  right: 28px;
+  bottom: 72px;
+  width: min(420px, calc(100vw - 56px));
+  padding: 18px;
+  border: 2px solid rgba(247, 247, 242, 0.86);
+  border-radius: 8px;
+  background: rgba(4, 5, 7, 0.88);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.48);
+  pointer-events: auto;
+}
+
+.replay-panel h1 {
+  margin: 6px 0 0;
+  color: #f7f7f2;
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.replay-panel p {
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: rgba(247, 247, 242, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replay-progress {
+  height: 5px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(247, 247, 242, 0.14);
+}
+
+.replay-progress div {
+  height: 100%;
+  background: #39d49a;
+}
+
+.replay-actions {
+  margin-top: 14px;
+}
+
+.touch-controls,
+.touch-controls-toggle {
+  display: none;
+}
+
+.touch-controls {
+  position: fixed;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  left: max(14px, env(safe-area-inset-left));
+  z-index: 3;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+/* ---- fila de utilidades (esquema · pausa · vibración · ocultar) ---------- */
+.touch-utility {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+  padding: 5px;
+  border-radius: 16px;
+  background: rgba(4, 7, 13, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(8px);
+}
+
+.touch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #aebbcd;
+  font-family: "Exo 2", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+
+.touch-chip.is-on {
+  color: #04140d;
+  background: linear-gradient(180deg, #5bf0b6, #23c98c);
+  box-shadow: 0 0 18px rgba(57, 212, 154, 0.5);
+}
+
+.touch-chip-scheme {
+  color: #eaf6ff;
+  box-shadow: inset 0 0 0 1.2px rgba(0, 245, 255, 0.4);
+}
+
+.touch-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--scheme-accent, var(--dash-neon-cyan));
+  box-shadow: 0 0 8px var(--scheme-accent, var(--dash-neon-cyan));
+}
+
+.touch-scheme-pro     { --scheme-accent: #39d49a; }
+.touch-scheme-reduced { --scheme-accent: var(--dash-neon-cyan); }
+.touch-scheme-dpad    { --scheme-accent: var(--dash-neon-purple); }
+
+/* ---- contenedor principal: dos pulgares -------------------------------- */
+.touch-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.touch-side {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.touch-side-right { align-items: flex-end; }
+
+.touch-pair { display: flex; gap: 9px; align-items: flex-end; }
+.touch-pair-rot { align-items: center; }
+
+/* =============================================================================
+ *  BOTÓN BASE + FEEDBACK NEÓN
+ *  Acento por acción vía --accent; el estado activo pulsa el glow.
+ * ========================================================================== */
+.touch-button {
+  --accent: var(--dash-neon-cyan);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 78px;
+  min-height: 78px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 20px;
+  color: #eaf6ff;
+  background: linear-gradient(180deg, rgba(20, 28, 40, 0.92), rgba(10, 15, 23, 0.92));
+  box-shadow:
+    inset 0 0 0 1.6px color-mix(in srgb, var(--accent) 38%, transparent),
+    0 8px 20px rgba(0, 0, 0, 0.5);
+  font-family: "Exo 2", "Arial Black", sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  user-select: none;
+  transition: transform 0.07s ease, box-shadow 0.07s ease, background 0.07s ease;
+}
+
+.touch-button small {
+  font-size: 10px;
+  letter-spacing: 1px;
+  font-weight: 800;
+  opacity: 0.85;
+}
+
+/* --- presión: aplasta + glow que pulsa --- */
+.touch-button:active,
+.touch-button-active {
+  transform: scale(0.9);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 34%, transparent),
+    color-mix(in srgb, var(--accent) 16%, transparent));
+  animation: touchPulse 0.85s ease-in-out infinite;
+}
+
+@keyframes touchPulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 2px var(--accent),
+      0 0 22px var(--accent),
+      0 0 44px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 2px var(--accent),
+      0 0 34px var(--accent),
+      0 0 72px color-mix(in srgb, var(--accent) 68%, transparent);
+  }
+}
+
+/* rotación: el botón gira un toque al presionarse */
+.touch-button-rotateCW:active,  .touch-button-rotateCW.touch-button-active  { transform: scale(0.9) rotate(12deg); }
+.touch-button-rotateCCW:active, .touch-button-rotateCCW.touch-button-active { transform: scale(0.9) rotate(-12deg); }
+
+/* --- acentos por acción --- */
+.touch-button-moveLeft,
+.touch-button-moveRight,
+.touch-button-softDrop { --accent: var(--dash-neon-cyan); }            /* movimiento: cian   */
+.touch-button-rotateCW,
+.touch-button-rotateCCW,
+.touch-button-rotate180 { --accent: var(--dash-neon-purple); color: #f0e4ff; } /* rotación: violeta */
+.touch-button-hold { --accent: #ffd166; color: #ffe9b0; }      /* hold: ámbar        */
+.touch-button-hardDrop { --accent: #39d49a; }                  /* drop: verde        */
+
+/* --- variantes de tamaño / forma --- */
+.touch-wide { min-width: 168px; flex-direction: row; gap: 6px; min-height: 46px; font-size: 13px; font-weight: 800; letter-spacing: 1.5px; }
+.touch-big  { min-width: 90px; min-height: 90px; font-size: 33px; }
+.touch-round { border-radius: 50%; }
+.touch-rotate-main { min-width: 104px; min-height: 82px; font-size: 30px; }
+.touch-rotate-main small { display: block; margin-top: 2px; }
+
+.touch-drop {
+  color: #053826;
+  font-weight: 900;
+  background: linear-gradient(180deg, #5bf0b6, #1fc888);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 8px 22px rgba(0, 0, 0, 0.5);
+}
+.touch-drop:active,
+.touch-drop.touch-button-active { color: #053826; }
+
+/* pausa como chip pequeño en la fila de utilidades */
+.touch-button-pause.touch-chip {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: #aebbcd;
+  background: rgba(255, 255, 255, 0.05);
+  flex-direction: row;
+}
+.touch-button-pause.touch-chip:active { transform: scale(0.92); animation: none; }
+
+/* =============================================================================
+ *  ESQUEMA D-PAD: cruceta de movimiento + abanico de acciones
+ * ========================================================================== */
+.touch-scheme-dpad .touch-dpad {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 42%, rgba(0, 245, 255, 0.08), rgba(8, 14, 22, 0) 70%);
+  box-shadow: inset 0 0 0 1.5px rgba(0, 245, 255, 0.18);
+}
+.touch-scheme-dpad .touch-dpad .touch-button {
+  position: absolute;
+  min-width: 60px;
+  min-height: 60px;
+  font-size: 26px;
+}
+.touch-scheme-dpad .dpad-left  { left: 6px;  top: 54px; border-radius: 20px 8px 8px 20px; }
+.touch-scheme-dpad .dpad-right { right: 6px; top: 54px; border-radius: 8px 20px 20px 8px; }
+.touch-scheme-dpad .dpad-down  { left: 54px; bottom: 6px; border-radius: 8px 8px 20px 20px; }
+.touch-scheme-dpad .dpad-hub {
+  position: absolute;
+  left: 54px;
+  top: 54px;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 12, 20, 0.9);
+  box-shadow: inset 0 0 0 1.2px rgba(0, 245, 255, 0.2);
+  color: #3a4a60;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  pointer-events: none;
+}
+.touch-scheme-dpad .touch-fan .touch-button { min-width: 64px; min-height: 64px; font-size: 26px; }
+.touch-scheme-dpad .touch-fan .touch-big { min-width: 76px; min-height: 76px; font-size: 30px; }
+
+/* =============================================================================
+ *  Restaurar (cuando está oculto)
+ * ========================================================================== */
+.touch-controls-restore {
+  position: fixed;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 3;
+  width: auto;
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(4, 7, 13, 0.78);
+  color: #eaf6ff;
+  font-family: "Exo 2", sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  box-shadow: inset 0 0 0 1.2px rgba(0, 245, 255, 0.35);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+@media (pointer: coarse), (max-width: 760px) {
+  .touch-controls {
+    display: flex;
+  }
+
+  .touch-controls-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .help {
+    display: none;
+  }
+}
+
+/* Tableros chicos: bajá un poco los tamaños para que entre cómodo. */
+@media (max-width: 380px) {
+  .touch-button { min-width: 68px; min-height: 68px; }
+  .touch-wide { min-width: 146px; }
+  .touch-big { min-width: 80px; min-height: 80px; }
+}
+
+@media (max-width: 760px) {
+  .brand {
+    top: 12px;
+    left: 14px;
+  }
+
+  .best {
+    top: 16px;
+    right: 14px;
+  }
+
+  .audio-panel {
+    top: 36px;
+    right: 14px;
+    width: min(220px, calc(100vw - 28px));
+  }
+
+  .volume-control {
+    width: 118px;
+  }
+
+  /* En celular el panel de volumen SFX/BGM tapaba el tablero arriba a la derecha.
+     El audio sigue disponible desde Configuración (engranaje → Audio). */
+  .relax-audio {
+    display: none;
+  }
+
+  .help {
+    right: 14px;
+    bottom: 12px;
+  }
+
+  .replay-strip {
+    left: 14px;
+    bottom: 12px;
+    max-width: calc(100vw - 28px);
+  }
+
+  .replay-panel {
+    right: 14px;
+    bottom: 58px;
+    width: min(360px, calc(100vw - 28px));
+    padding: 16px;
+  }
+
+  .online-race-panel {
+    top: 82px;
+    left: 14px;
+    width: min(300px, calc(100vw - 28px));
+    padding: 14px;
+  }
+
+  .online-versus-grid {
+    top: auto;
+    right: 14px;
+    bottom: max(88px, env(safe-area-inset-bottom));
+    left: 14px;
+    justify-items: end;
+    max-width: none;
+  }
+
+  .online-peer-boards {
+    grid-template-columns: repeat(var(--online-peer-columns), var(--online-peer-card-width));
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .online-peer-board-head {
+    height: 18px;
+    margin-bottom: 3px;
+  }
+
+  .online-peer-board-head strong {
+    font-size: 9px;
+  }
+
+  .online-peer-board-head span {
+    display: none;
+  }
+
+  .online-versus-grid .online-avatar-small {
+    width: 18px;
+    height: 18px;
+    font-size: 7px;
+  }
+
+  .persistent-menu-shell {
+    grid-template-columns: 1fr;
+    align-content: center;
+    overflow: auto;
+  }
+
+  .custom-scrim .persistent-menu-shell {
+    grid-template-columns: 1fr;
+    width: min(920px, calc(100vw - 32px));
+  }
+
+  .persistent-menu-shell > .menu-panel,
+  .persistent-menu-shell > .persistent-room-panel {
+    max-height: none;
+  }
+
+  .persistent-room-panel {
+    padding: 14px;
+  }
+
+  .persistent-room-head h2 {
+    font-size: 22px;
+  }
+
+  .persistent-room-actions,
+  .persistent-room-modes {
+    grid-template-columns: 1fr;
+  }
+
+  .menu-panel {
+    padding: 22px;
+  }
+
+  .custom-header,
+  .custom-start-row,
+  .custom-row {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-header button,
+  .custom-start-button {
+    width: 100%;
+  }
+
+  .custom-start-button {
+    border-width: 2px 0 0;
+    font-size: 24px;
+  }
+
+  .custom-music {
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .custom-row {
+    gap: 5px;
+    padding: 8px 0;
+  }
+
+  .custom-row label {
+    white-space: normal;
+  }
+
+  .custom-control {
+    justify-content: start;
+    justify-self: start;
+  }
+
+  .custom-number-control {
+    justify-content: start;
+    width: min(220px, 100%);
+  }
+
+  .menu-panel h1 {
+    font-size: 28px;
+  }
+
+  .binding-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding-bottom: 8px;
+  }
+
+  .history-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .library-layout {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .history-stats {
+    grid-template-columns: repeat(2, auto);
+    justify-content: start;
+  }
+
+  .run-stats-grid,
+  .split-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .online-standing-row {
+    grid-template-columns: 20px 24px minmax(0, 1fr) auto;
+  }
+
+  .online-standing-row em {
+    display: none;
+  }
+}
+
+/* Landscape: poca altura. Subimos los controles para que no tapen el tablero y
+ * achicamos los botones (incluidos los anchos y el d-pad) para que entren. */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
+  .touch-controls {
+    top: 70px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .touch-button { min-width: 60px; min-height: 56px; font-size: 22px; }
+  .touch-big { min-width: 70px; min-height: 70px; font-size: 26px; }
+  .touch-wide { min-width: 134px; min-height: 42px; font-size: 12px; }
+
+  .touch-scheme-dpad .touch-dpad { width: 142px; height: 142px; }
+  .touch-scheme-dpad .touch-dpad .touch-button { min-width: 50px; min-height: 50px; }
+  .touch-scheme-dpad .dpad-left  { top: 46px; }
+  .touch-scheme-dpad .dpad-right { top: 46px; }
+  .touch-scheme-dpad .dpad-down  { left: 46px; }
+  .touch-scheme-dpad .dpad-hub { left: 46px; top: 46px; width: 50px; height: 50px; }
+  .touch-scheme-dpad .touch-fan .touch-button { min-width: 54px; min-height: 54px; }
+  .touch-scheme-dpad .touch-fan .touch-big { min-width: 64px; min-height: 64px; }
+}
+
+@media (max-height: 520px) {
+  .help {
+    display: none;
+  }
+}
+

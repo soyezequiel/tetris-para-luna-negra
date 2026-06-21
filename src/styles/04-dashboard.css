@@ -1,0 +1,1583 @@
+/* Dashboard Menu Redesign styles */
+.dash-layout {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: var(--dash-topbar-h) 1fr;
+  grid-template-columns: var(--dash-sidebar-w) 1fr var(--dash-room-w);
+  grid-template-areas:
+    "topbar topbar topbar"
+    "sidebar main room";
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px) 0 0 / 48px 48px,
+    radial-gradient(900px 560px at 10% -8%, rgba(0, 245, 255, 0.12), transparent 58%),
+    radial-gradient(900px 620px at 102% 110%, rgba(157, 78, 221, 0.16), transparent 58%),
+    #05070f;
+  color: var(--dash-text);
+  font-family: 'Exo 2', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  z-index: 5;
+  pointer-events: auto;
+}
+
+.dash-topbar {
+  grid-area: topbar;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 22px;
+  padding: 0 26px;
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+}
+
+@keyframes dash-pulse-soft {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.012); }
+}
+
+@keyframes dash-pulse-scale {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+.dash-logo {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  background: linear-gradient(90deg, var(--dash-neon-cyan), var(--dash-neon-purple), var(--dash-neon-pink), var(--dash-neon-cyan));
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: dash-shimmer-text 6s linear infinite;
+  filter: drop-shadow(0 0 12px rgba(0, 245, 255, 0.4));
+  margin: 0;
+}
+
+@keyframes dash-shimmer-text {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.dash-user {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(247, 247, 242, 0.85);
+}
+
+.dash-user-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--dash-neon-purple), var(--dash-neon-pink));
+  color: #fff;
+  font-family: 'Exo 2', sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: 0 0 14px rgba(157, 78, 221, 0.5);
+}
+
+.dash-sidebar {
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 24px 12px;
+  background: rgba(5, 7, 12, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.dash-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dash-sidebar-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: rgba(247, 247, 242, 0.6);
+  font-family: 'Exo 2', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  position: relative;
+}
+
+.dash-sidebar-btn svg {
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+  transition: transform 0.2s ease;
+}
+
+.dash-sidebar-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.dash-sidebar-btn:hover svg {
+  transform: scale(1.08);
+}
+
+.dash-sidebar-btn--active {
+  background: linear-gradient(90deg, rgba(0, 245, 255, 0.16), rgba(0, 245, 255, 0.02));
+  color: var(--dash-neon-cyan);
+  border: 1px solid rgba(0, 245, 255, 0.3);
+  box-shadow: inset 3px 0 0 var(--dash-neon-cyan);
+  font-weight: 700;
+}
+
+.dash-sidebar-btn--active:hover {
+  background: linear-gradient(90deg, rgba(0, 245, 255, 0.22), rgba(0, 245, 255, 0.04));
+  color: var(--dash-neon-cyan);
+}
+
+.dash-sidebar-footer {
+  font-size: 11px;
+  color: var(--dash-text-muted);
+  line-height: 1.5;
+  padding: 0 12px;
+}
+
+.dash-hero {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  /* `safe center` conserva el centrado cuando entra todo, pero evita que un
+     contenido alto (por ejemplo un top largo) desborde hacia arriba y oculte
+     las tarjetas de modalidad. */
+  justify-content: flex-start;
+  justify-content: safe center;
+  align-items: center;
+  padding: 30px;
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Full-bleed hero card (dashboard / screen 01) */
+.dash-hero-card {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 245, 255, 0.2);
+  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 245, 255, 0.1);
+}
+
+.dash-hero-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 32%;
+  display: block;
+}
+
+.dash-hero-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(5, 7, 15, 0.08), rgba(5, 7, 15, 0.55) 70%, rgba(5, 7, 15, 0.85));
+}
+
+.dash-hero-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 38%;
+  background: linear-gradient(180deg, transparent, rgba(0, 245, 255, 0.08), transparent);
+  animation: dash-scan-move 5s linear infinite;
+  pointer-events: none;
+}
+
+.dash-hero-sheen {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  animation: dash-sheen 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dash-scan-move {
+  0% { transform: translateY(-130%); }
+  100% { transform: translateY(180%); }
+}
+
+@keyframes dash-sheen {
+  0% { transform: translateX(-130%) skewX(-18deg); }
+  100% { transform: translateX(420%) skewX(-18deg); }
+}
+
+.dash-hero-content {
+  position: absolute;
+  left: 34px;
+  right: 34px;
+  bottom: 34px;
+  z-index: 2;
+}
+
+.dash-hero-eyebrow {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: var(--dash-neon-cyan);
+  text-transform: uppercase;
+}
+
+.dash-hero-title {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-size: 54px;
+  font-weight: 900;
+  line-height: 1;
+  color: #f7f7f2;
+  margin: 8px 0 6px;
+  letter-spacing: -0.5px;
+}
+
+.dash-hero-subtitle {
+  font-size: 14px;
+  color: rgba(247, 247, 242, 0.7);
+  margin: 0 0 20px;
+  font-weight: 500;
+}
+
+.dash-hero-subtitle strong {
+  color: var(--dash-success);
+}
+
+.dash-hero-cta {
+  display: flex;
+  gap: 12px;
+}
+
+.dash-hero-btn {
+  height: 52px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  border: none;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.dash-hero-btn--play {
+  gap: 10px;
+  padding: 0 30px;
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-weight: 900;
+  font-size: 16px;
+  letter-spacing: 1px;
+  color: #05070f;
+  background: linear-gradient(135deg, var(--dash-neon-cyan), #0aa6cc);
+  box-shadow: 0 8px 26px rgba(0, 245, 255, 0.4);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+
+.dash-hero-btn--play:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 10px 30px rgba(0, 245, 255, 0.5);
+}
+
+.dash-hero-btn--ghost {
+  padding: 0 26px;
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  color: rgba(247, 247, 242, 0.85);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.dash-hero-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ===== Smart Play Stage (centro del home) ===== */
+@keyframes dash-fade-up { from { transform: translateY(22px); } to { transform: translateY(0); } }
+@keyframes dash-pop { 0% { transform: scale(0.85); } 60% { transform: scale(1.04); } 100% { transform: scale(1); } }
+@keyframes dash-spin { to { transform: rotate(360deg); } }
+@keyframes dash-dot { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
+
+.dash-play-stage {
+  width: 100%;
+  max-width: 560px;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* Selector de modalidad (variante A del rediseño): alineado a la izquierda, sin
+   centrar. Tarjetas en grid de 3 → divisor → detalle del modo → CTA con sublabel
+   + chips/hint, y los tops debajo en Supervivencia. */
+.dash-mode-select {
+  max-width: 560px;
+  align-items: stretch;
+  text-align: left;
+  margin: 0 auto;
+  padding-top: 18px;
+}
+.dash-mode-select-inner { width: 100%; }
+.dash-mode-step-eyebrow {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  color: var(--dash-neon-cyan);
+  margin-bottom: 14px;
+}
+.dash-mode-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+  margin: 4px 0 22px;
+}
+.dash-mode-tag {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.45);
+  margin-bottom: 6px;
+}
+.dash-mode-name {
+  font-family: 'Orbitron', 'Exo 2', sans-serif;
+  font-weight: 800;
+  font-size: 30px;
+  line-height: 1.05;
+  margin: 0 0 10px;
+  color: #f7f7f2;
+}
+.dash-mode-desc {
+  color: rgba(238, 240, 244, 0.6);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 20px;
+  max-width: 440px;
+  font-weight: 500;
+}
+.dash-mode-action-col { max-width: 380px; }
+.dash-mode-solo-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  padding: 17px 18px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--stage-accent) 90%, transparent);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--stage-accent) 22%, transparent), color-mix(in srgb, var(--stage-accent) 5%, transparent));
+  color: #fff;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  box-shadow: 0 16px 38px -16px color-mix(in srgb, var(--stage-accent) 70%, transparent);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+}
+.dash-mode-solo-cta:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.dash-mode-solo-cta:active { transform: scale(0.98); }
+.dash-mode-solo-text { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; line-height: 1.1; }
+.dash-mode-solo-sub { font-size: 10px; font-weight: 600; letter-spacing: 0.5px; opacity: 0.75; }
+.dash-mode-config-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 11px 16px;
+  border-radius: 11px;
+  border: 1px solid rgba(157, 78, 221, 0.4);
+  background: rgba(157, 78, 221, 0.08);
+  color: #c79bff;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.dash-mode-config-btn:hover { background: rgba(157, 78, 221, 0.16); border-color: rgba(157, 78, 221, 0.6); }
+.dash-mode-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.dash-mode-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: 9px;
+  background: rgba(157, 78, 221, 0.08);
+  border: 1px solid rgba(157, 78, 221, 0.25);
+  font-size: 12px;
+}
+.dash-mode-chip strong { color: #c79bff; font-weight: 700; }
+.dash-mode-chip span { color: rgba(238, 240, 244, 0.6); }
+.dash-mode-hint {
+  font-size: 12px;
+  color: rgba(238, 240, 244, 0.45);
+  margin: 12px 2px 0;
+  line-height: 1.5;
+}
+.dash-mode-select .dash-survival-tops { margin-top: 26px; }
+
+.dash-play-stage--mode-select .dash-mode-step-eyebrow,
+.dash-play-stage--mode-select .dash-mode-cards {
+  /* El stage se vuelve a renderizar al elegir un modo. El selector es navegación
+     persistente, por lo que no debe repetir la animación de entrada en cada click. */
+  animation: none;
+}
+
+/* Al cambiar de modo, cada modalidad tiene distinta altura total (Supervivencia
+   trae los tops, Duelo casi nada). Si el hero centra verticalmente, ese cambio de
+   altura re-centra todo y "mueve" las tarjetas, el nombre y el CTA. Anclamos el
+   selector arriba para que esos elementos queden fijos y solo crezca hacia abajo. */
+.dash-hero:has(.dash-play-stage--mode-select) {
+  justify-content: flex-start;
+}
+
+.dash-step-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 26px;
+  animation: dash-fade-up 0.5s ease both;
+}
+.dash-step-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(247, 247, 242, 0.5);
+  white-space: nowrap;
+}
+.dash-step-pill.is-active {
+  background: rgba(0, 245, 255, 0.14);
+  border-color: rgba(0, 245, 255, 0.4);
+  color: var(--dash-neon-cyan);
+}
+.dash-step-sep { width: 18px; height: 1px; background: rgba(255, 255, 255, 0.2); }
+
+.dash-play-eyebrow {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--stage-accent, var(--dash-neon-cyan));
+  animation: dash-fade-up 0.5s ease 0.05s both;
+}
+.dash-play-title {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-size: 52px;
+  font-weight: 900;
+  line-height: 1.02;
+  letter-spacing: 0;
+  margin: 10px 0 8px;
+  color: #f7f7f2;
+  text-wrap: balance;
+  animation: dash-fade-up 0.5s ease 0.1s both;
+}
+.dash-play-subtitle {
+  font-size: 15px;
+  color: rgba(247, 247, 242, 0.7);
+  margin: 0 0 30px;
+  max-width: 420px;
+  line-height: 1.5;
+  font-weight: 500;
+  text-wrap: pretty;
+  animation: dash-fade-up 0.5s ease 0.15s both;
+}
+.dash-play-cta { animation: dash-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.2s both; }
+.dash-play-secondary { margin-top: 22px; animation: dash-fade-up 0.5s ease 0.3s both; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+
+/* Selector de modalidad (sección Jugar): tarjetas Supervivencia / Custom / 1v1 */
+.dash-mode-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 26px;
+  animation: dash-fade-up 0.5s ease 0.1s both;
+}
+.dash-mode-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  color: #eef0f4;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+}
+.dash-mode-card:hover { background: rgba(255, 255, 255, 0.05); transform: translateY(-2px); }
+.dash-mode-card.is-active {
+  border-color: color-mix(in srgb, var(--card-accent, var(--dash-neon-cyan)) 90%, transparent);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--card-accent, var(--dash-neon-cyan)) 18%, transparent), color-mix(in srgb, var(--card-accent, var(--dash-neon-cyan)) 3%, transparent));
+  color: #f7f7f2;
+  box-shadow: 0 16px 36px -18px color-mix(in srgb, var(--card-accent, var(--dash-neon-cyan)) 75%, transparent);
+}
+.dash-mode-card-icon { display: flex; line-height: 0; }
+.dash-mode-card-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.dash-mode-card-text strong { font-size: 13.5px; font-weight: 800; }
+.dash-mode-card-text small { font-size: 9px; font-weight: 700; letter-spacing: 1px; opacity: 0.55; text-transform: uppercase; }
+
+.dash-mode-detail { display: flex; flex-direction: column; align-items: center; width: 100%; }
+
+/* Tops embebidos en la tarjeta Supervivencia */
+.dash-survival-tops {
+  margin-top: 24px;
+  width: 100%;
+  max-width: 440px;
+  text-align: left;
+  animation: dash-fade-up 0.5s ease 0.3s both;
+}
+.dash-survival-tops .leaderboard-tabs { margin-bottom: 12px; }
+.dash-survival-tops .leaderboard-rows {
+  /* El top embebido no debe apropiarse de toda la altura del hero. Sus filas
+     tienen scroll propio para que las tarjetas, el título y JUGAR sigan a la vista. */
+  max-height: min(32dvh, 300px);
+}
+.dash-survival-tops .dash-action-btn { margin-top: 14px; }
+
+@media (max-width: 560px) {
+  .dash-mode-card { padding: 12px 6px; }
+  .dash-mode-card-icon { font-size: 22px; }
+  .dash-mode-card-text strong { font-size: 12px; }
+}
+
+/* Toggle Supervivencia / Custom del botón inteligente */
+.dash-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dash-text-dim);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.dash-mode-toggle:hover { background: rgba(255, 255, 255, 0.07); }
+
+.dash-mode-toggle.is-on {
+  border-color: var(--dash-accent);
+  color: #fff;
+}
+
+.dash-mode-toggle-track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background 0.18s ease;
+  flex: 0 0 auto;
+}
+
+.dash-mode-toggle.is-on .dash-mode-toggle-track {
+  background: var(--dash-accent);
+  box-shadow: 0 0 14px rgba(0, 229, 255, 0.45);
+}
+
+.dash-mode-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.18s ease;
+}
+
+.dash-mode-toggle.is-on .dash-mode-toggle-knob { transform: translateX(18px); }
+
+.dash-mode-toggle-label strong { color: var(--dash-accent); margin-left: 4px; }
+
+/* El botón inteligente */
+.dash-smart-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  height: 88px;
+  padding: 0 42px;
+  border: none;
+  border-radius: 18px;
+  cursor: pointer;
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  max-width: 100%;
+  transition: transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.2s ease, filter 0.2s ease;
+}
+.dash-smart-play:hover { transform: scale(1.04); filter: brightness(1.07); }
+.dash-smart-play:active { transform: scale(0.97); }
+.dash-smart-play-icon { display: grid; place-items: center; flex: 0 0 auto; }
+.dash-smart-play-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.05; }
+.dash-smart-play-text strong { font-size: 24px; font-weight: 900; letter-spacing: 0.5px; }
+.dash-smart-play-text small { font-size: 12px; font-weight: 700; opacity: 0.8; letter-spacing: 0.3px; margin-top: 3px; }
+
+.dash-smart-play--solo {
+  color: #05070f;
+  background: linear-gradient(135deg, var(--dash-neon-cyan), #0aa6cc);
+  box-shadow: 0 12px 40px rgba(0, 245, 255, 0.4);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+.dash-smart-play--host {
+  color: #fff;
+  background: linear-gradient(135deg, var(--dash-neon-purple), var(--dash-neon-pink));
+  box-shadow: 0 12px 40px rgba(157, 78, 221, 0.5);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+.dash-smart-play--guest {
+  color: #1a0d00;
+  background: linear-gradient(135deg, #ffb627, #ff7b00);
+  box-shadow: 0 12px 40px rgba(255, 154, 39, 0.45);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+.dash-smart-play--ready {
+  color: #04130a;
+  background: linear-gradient(135deg, #2dd36f, #10b981);
+  box-shadow: 0 12px 40px rgba(45, 211, 111, 0.5);
+}
+/* Botón inteligente deshabilitado (host sin condiciones para empezar) */
+.dash-smart-play:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  filter: grayscale(0.4);
+  box-shadow: none;
+  animation: none;
+}
+.dash-smart-play:disabled:hover { transform: none; filter: grayscale(0.4); }
+/* Estado "esperando": no es un botón, es un indicador */
+.dash-smart-play--waiting {
+  cursor: default;
+  color: #ffb627;
+  background: rgba(255, 182, 39, 0.1);
+  border: 1px solid rgba(255, 182, 39, 0.4);
+  padding: 0 38px;
+}
+.dash-smart-play--waiting:hover { transform: none; filter: none; }
+
+.dash-smart-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 182, 39, 0.2);
+  border-top-color: #ffb627;
+  animation: dash-spin 0.9s linear infinite;
+}
+.dash-dots { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px; }
+.dash-dots i { width: 9px; height: 9px; border-radius: 50%; background: #ffb627; animation: dash-dot 1.2s ease-in-out infinite; }
+.dash-dots i:nth-child(2) { animation-delay: 0.18s; }
+.dash-dots i:nth-child(3) { animation-delay: 0.36s; }
+
+/* ===== Encabezado de propósito del panel de sala ===== */
+.dash-room-purpose { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.dash-room-purpose-top { display: flex; align-items: center; gap: 8px; }
+.dash-room-purpose-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(157, 78, 221, 0.18);
+  border: 1px solid rgba(157, 78, 221, 0.4);
+  color: #c79bff;
+  flex: 0 0 auto;
+}
+.dash-room-purpose-explainer {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(247, 247, 242, 0.55);
+  line-height: 1.45;
+}
+.dash-field-hint {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  color: rgba(247, 247, 242, 0.5);
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .dash-play-title { font-size: 42px; }
+  .dash-step-pills { flex-wrap: wrap; justify-content: center; }
+  .dash-smart-play {
+    min-height: 78px;
+    height: auto;
+    padding: 18px 28px;
+  }
+}
+
+@media (max-width: 520px) {
+  .dash-play-title { font-size: 32px; }
+  .dash-play-subtitle { font-size: 14px; }
+  .dash-smart-play {
+    gap: 12px;
+    padding: 16px 20px;
+  }
+  .dash-smart-play-text strong { font-size: 20px; }
+  .dash-smart-play-text small { font-size: 11px; }
+  .dash-step-pill { font-size: 10px; padding: 6px 10px; }
+}
+
+/* ===== Solo results (CLEAR / TOP OUT) — spec 05 ===== */
+.solo-results-scrim {
+  background:
+    radial-gradient(900px 560px at 50% 0%, rgba(0, 245, 255, 0.1), transparent 60%),
+    rgba(5, 7, 15, 0.86);
+  /* En pantallas bajas recuperamos el padding del scrim para que la columna entera
+     entre sin scroll; en pantallas amplias mantiene el aire de 24px. */
+  padding: clamp(8px, 1.5vh, 24px);
+}
+
+.solo-results {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  /* Todo escala con la ALTURA del viewport para entrar sin scroll: en pantallas
+     bajas los espacios y tipografías se achican solos. */
+  gap: clamp(4px, 0.85vh, 9px);
+  padding: clamp(12px, 2.2vh, 28px);
+  max-height: 100dvh;
+}
+
+/* Cartel de la fase de estudio: arriba, centrado, sin tapar el tablero. */
+.death-study-hint {
+  position: fixed;
+  top: 6%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  border-radius: 99px;
+  background: rgba(8, 10, 18, 0.72);
+  border: 1px solid rgba(255, 86, 110, 0.4);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 30;
+  animation: death-study-hint-in 280ms ease-out both;
+}
+
+.death-study-hint-tag {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #ff566e;
+}
+
+.death-study-hint-text {
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+@keyframes death-study-hint-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.solo-results-badge {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 8px 18px;
+  border-radius: 99px;
+}
+
+.solo-results-badge--clear {
+  color: var(--dash-success);
+  background: rgba(57, 212, 154, 0.12);
+  border: 1px solid rgba(57, 212, 154, 0.45);
+  box-shadow: 0 0 18px rgba(57, 212, 154, 0.25);
+  animation: dash-glow-breath 1.6s ease-in-out infinite;
+}
+
+.solo-results-badge--fail {
+  color: var(--dash-danger);
+  background: rgba(235, 68, 90, 0.12);
+  border: 1px solid rgba(235, 68, 90, 0.45);
+}
+
+@keyframes dash-glow-breath {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.solo-results-subtitle {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: rgba(247, 247, 242, 0.55);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.solo-results-hero {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-weight: 900;
+  font-size: clamp(42px, 10vh, 92px);
+  line-height: 1;
+  letter-spacing: -2px;
+  max-width: 100%;
+  background: linear-gradient(90deg, var(--dash-neon-cyan), var(--dash-neon-purple), var(--dash-neon-cyan));
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  filter: drop-shadow(0 0 28px rgba(0, 245, 255, 0.5));
+  animation: dash-shimmer-text 4s linear infinite;
+}
+
+.solo-results-verdict {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-weight: 900;
+  font-size: clamp(24px, 5vh, 48px);
+  letter-spacing: clamp(3px, 1.2vw, 8px);
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+.solo-results-verdict--clear {
+  color: var(--dash-success);
+  text-shadow: 0 0 24px rgba(57, 212, 154, 0.5);
+}
+
+.solo-results-verdict--fail {
+  color: var(--dash-danger);
+  text-shadow: 0 0 24px rgba(235, 68, 90, 0.5);
+}
+
+.solo-results-rank {
+  margin: 2px 0 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.4px;
+  color: var(--dash-text-dim);
+}
+
+.solo-results-rank--ok {
+  color: #061018;
+  background: var(--dash-accent);
+  border-color: var(--dash-accent);
+  box-shadow: 0 0 22px rgba(0, 229, 255, 0.4);
+}
+
+/* Mini-tabla del top centrada en el jugador (3 arriba + vos + 3 abajo). Reemplaza
+   la frase suelta del puesto por una lista compacta que se entiende de un vistazo. */
+.solo-results-rankwin {
+  width: min(380px, 86vw);
+  margin: 2px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(3px, 0.8vh, 8px);
+}
+
+.rankwin-head {
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.3px;
+  color: #f7f7f2;
+  text-align: center;
+}
+
+.rankwin-head span {
+  font-weight: 600;
+  color: var(--dash-text-dim);
+}
+
+/* Aclara que el top va por la mejor marca histórica, no por la partida recién
+   jugada (evita el "¿por qué soy #2 si hice 3 segundos?"). */
+.rankwin-sub {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: rgba(247, 247, 242, 0.45);
+  text-align: center;
+  margin-top: -4px;
+}
+
+.rankwin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rankwin-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: clamp(3px, 0.7vh, 7px) 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  color: var(--dash-text-dim);
+  font-size: 14px;
+}
+
+.rankwin-row--me {
+  color: #061018;
+  background: var(--dash-accent);
+  border-color: var(--dash-accent);
+  box-shadow: 0 0 22px rgba(0, 229, 255, 0.35);
+  font-weight: 800;
+}
+
+.rankwin-pos {
+  font-weight: 800;
+  text-align: center;
+}
+
+.rankwin-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankwin-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* Antes eran 4 cajas grandes de 200px que dominaban la pantalla. Ahora es una
+   sola tira compacta con divisores: la info secundaria pesa menos y el foco queda
+   en el tiempo y el puesto. */
+.solo-results-stats {
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  margin: 4px 0 6px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.solo-results-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: clamp(8px, 1.4vh, 12px) 22px;
+  min-width: 84px;
+}
+
+.solo-results-stat + .solo-results-stat {
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.solo-results-stat span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: rgba(247, 247, 242, 0.5);
+}
+
+.solo-results-stat strong {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-size: clamp(19px, 2.7vh, 24px);
+  font-weight: 900;
+  line-height: 1;
+  color: #f7f7f2;
+}
+
+.solo-results-stat strong em {
+  font-style: normal;
+  font-size: 14px;
+  color: rgba(247, 247, 242, 0.45);
+}
+
+.solo-results-stat strong.is-cyan { color: var(--dash-neon-cyan); }
+.solo-results-stat strong.is-green { color: var(--dash-success); }
+.solo-results-stat strong.is-amber { color: #f59e0b; }
+
+.solo-results-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.solo-results-btn {
+  height: clamp(42px, 6vh, 50px);
+  padding: 0 26px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  border: none;
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 800;
+  font-size: 14px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease, background 0.2s ease;
+}
+
+.solo-results-btn--retry {
+  color: #05070f;
+  background: linear-gradient(135deg, var(--dash-neon-cyan), #0aa6cc);
+  box-shadow: 0 8px 26px rgba(0, 245, 255, 0.4);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+
+.solo-results-btn--retry:hover {
+  filter: brightness(1.06);
+}
+
+.solo-results-btn--ghost {
+  color: rgba(247, 247, 242, 0.85);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.solo-results-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.solo-results-btn--ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.solo-results-btn--rematch {
+  color: #05231a;
+  background: linear-gradient(135deg, #39d49a, #1fae7c);
+  box-shadow: 0 8px 26px rgba(57, 212, 154, 0.35);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+}
+
+.solo-results-btn--rematch:hover {
+  filter: brightness(1.06);
+}
+
+.solo-results-btn--danger {
+  color: #fff;
+  background: rgba(235, 68, 90, 0.14);
+  border: 1px solid rgba(235, 68, 90, 0.5);
+}
+
+.solo-results-btn--danger:hover {
+  background: rgba(235, 68, 90, 0.22);
+}
+
+/* En celular el panel de resultados desbordaba: el hero/verdict gigantes se cortaban
+   a lo ancho y, al ser más alto que la pantalla y estar centrado en el scrim, la parte
+   de arriba quedaba fuera de alcance. Acá lo dejamos scrollear y compactamos el layout. */
+@media (max-width: 560px), (max-height: 620px) {
+  .solo-results {
+    gap: 8px;
+    padding: 18px 14px;
+    max-height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .solo-results-stats {
+    margin: 6px 0 14px;
+    width: 100%;
+  }
+  .solo-results-stat {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 6px;
+  }
+  .solo-results-stat strong {
+    font-size: 21px;
+  }
+  .solo-results-btn {
+    height: 46px;
+    padding: 0 18px;
+    font-size: 13px;
+  }
+}
+
+/* ===== Botón "Reportar problema" (resultados solo + online) ===== */
+.report-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 420px;
+  margin: 6px auto 0;
+  padding-top: clamp(8px, 1.4vh, 14px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.report-comment {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(247, 247, 242, 0.9);
+  font-family: 'Exo 2', sans-serif;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.report-comment::placeholder {
+  color: rgba(247, 247, 242, 0.4);
+}
+
+.report-comment:focus {
+  border-color: rgba(0, 245, 255, 0.5);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.report-comment:disabled {
+  opacity: 0.5;
+}
+
+.report-block-btn {
+  width: 100%;
+  justify-content: center;
+  height: clamp(38px, 5vh, 44px);
+}
+
+.report-block-btn.is-sent {
+  color: #05231a;
+  background: rgba(57, 212, 154, 0.22);
+  border-color: rgba(57, 212, 154, 0.5);
+}
+
+.report-block-btn.is-error {
+  color: #fff;
+  background: rgba(235, 68, 90, 0.16);
+  border-color: rgba(235, 68, 90, 0.5);
+}
+
+/* En pantallas angostas el placeholder largo del comentario y el rótulo del
+   botón de reporte se cortaban; achicamos un punto para que entren enteros.
+   Va después de los estilos base para ganar por orden de cascada. */
+@media (max-width: 560px), (max-height: 620px) {
+  .report-comment {
+    font-size: 12px;
+    padding: 0 10px;
+  }
+  .report-block-btn {
+    font-size: 12px;
+    padding: 0 12px;
+  }
+}
+
+/* ===== Online battle results — spec 06 ===== */
+.online-results-scrim {
+  background:
+    radial-gradient(1000px 600px at 50% -5%, rgba(245, 158, 11, 0.1), transparent 60%),
+    rgba(5, 7, 15, 0.88);
+  overflow: hidden;
+}
+
+.online-results {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  width: min(820px, 92vw);
+  padding: 24px;
+}
+
+.multi-replay-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 30%, rgba(16, 22, 30, 0.96), rgba(4, 6, 10, 0.98));
+}
+
+.multi-replay-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 96vw;
+  max-height: 96vh;
+}
+
+.multi-replay-head {
+  text-align: center;
+}
+
+.multi-replay-clock {
+  margin-top: 4px;
+  font-family: 'Exo 2', monospace;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: rgba(247, 247, 242, 0.92);
+}
+
+.multi-replay-grid {
+  display: grid;
+  gap: 14px;
+  justify-content: center;
+  align-content: center;
+  overflow: auto;
+}
+
+.multi-replay-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.multi-replay-stage {
+  position: relative;
+  line-height: 0;
+}
+
+.multi-replay-card.is-dead .multi-replay-stage canvas {
+  filter: grayscale(0.55) brightness(0.7);
+}
+
+.multi-replay-tag {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-weight: 900;
+  font-size: clamp(16px, 2vw, 30px);
+  letter-spacing: 2px;
+  color: #fff;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+}
+
+.multi-replay-tag--ko { color: #ff5b6e; }
+.multi-replay-tag--win { color: #ffd45b; }
+
+.multi-replay-plate {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.multi-replay-plate strong {
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(247, 247, 242, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.multi-replay-plate span {
+  font-family: 'Exo 2', monospace;
+  font-size: 12px;
+  color: rgba(247, 247, 242, 0.6);
+  white-space: nowrap;
+}
+
+.multi-replay-controls {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.online-results-confetti {
+  position: absolute;
+  inset: -24px 0 auto 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.online-confetti-piece {
+  position: absolute;
+  top: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  opacity: 0.85;
+  animation-name: dash-floaty;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes dash-floaty {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50% { transform: translate(0, 16px) rotate(40deg); }
+}
+
+.online-results-head {
+  text-align: center;
+}
+
+.online-results-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(247, 247, 242, 0.55);
+}
+
+.online-results-title {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-weight: 900;
+  font-size: clamp(34px, 10vw, 60px);
+  line-height: 1.05;
+  letter-spacing: -1px;
+  background: linear-gradient(90deg, #f59e0b, #39d49a, #f59e0b);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  filter: drop-shadow(0 0 20px rgba(245, 158, 11, 0.35));
+  animation: dash-shimmer-text 5s linear infinite;
+}
+
+.online-results-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.online-results-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.online-results-row--winner {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.16), rgba(245, 158, 11, 0.03));
+  border-color: rgba(245, 158, 11, 0.45);
+  box-shadow: 0 0 24px rgba(245, 158, 11, 0.15);
+  animation: dash-pulse-soft 2.8s ease-in-out infinite;
+}
+
+.online-results-row--self {
+  outline: 1px solid rgba(0, 245, 255, 0.3);
+}
+
+.online-results-row--dim {
+  opacity: 0.6;
+}
+
+.online-results-rank {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-weight: 900;
+  font-size: 36px;
+  width: 44px;
+  text-align: center;
+  color: rgba(247, 247, 242, 0.6);
+  flex: 0 0 auto;
+}
+
+.online-results-row--winner .online-results-rank {
+  color: #f59e0b;
+  text-shadow: 0 0 14px rgba(245, 158, 11, 0.5);
+}
+
+.online-results-avatar {
+  flex: 0 0 auto;
+}
+
+.online-results-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.online-results-identity strong {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 16px;
+  font-weight: 800;
+  color: #f7f7f2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.online-results-crown {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: #f59e0b;
+}
+
+.online-results-identity em {
+  font-style: normal;
+  font-size: 12px;
+  color: rgba(247, 247, 242, 0.55);
+}
+
+.online-results-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px 18px;
+  flex: 0 0 auto;
+}
+
+.online-results-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 56px;
+}
+
+.online-results-metric span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(247, 247, 242, 0.45);
+}
+
+.online-results-metric strong {
+  font-family: 'Arial Black', 'Exo 2', sans-serif;
+  font-size: 20px;
+  font-weight: 900;
+  color: #f7f7f2;
+  white-space: nowrap;
+}
+
+.online-results-metric strong.is-amber { color: #f59e0b; }
+.online-results-metric strong.is-green { color: var(--dash-success); }
+.online-results-metric strong.is-muted { color: rgba(247, 247, 242, 0.4); }
+
+/* En pantallas angostas las 4 métricas no caben junto a la identidad: dejamos que la
+   fila envuelva y las métricas pasen a una segunda línea, repartidas a lo ancho. */
+@media (max-width: 560px), (max-height: 620px) {
+  .online-results {
+    gap: 12px;
+    padding: 18px 14px;
+    max-height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .online-results-row { flex-wrap: wrap; }
+  .online-results-metrics {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 10px 16px;
+  }
+  .online-results-metric {
+    min-width: 0;
+    flex: 1 1 0;
+    align-items: flex-start;
+  }
+}
+
+.online-results-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* "Siguiente" va separado del resto para darle protagonismo. */
+.online-results-next {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* La fila de "Siguiente" se separa del resto para leerse como acción destacada:
+   un divisor tenue arriba y aire extra la despegan de los botones secundarios. */
+.solo-results-actions--next {
+  margin-top: 2px;
+  padding-top: clamp(8px, 1.6vh, 16px);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+}
+
+.solo-results-btn--next {
+  color: #05070f;
+  background: linear-gradient(135deg, var(--dash-neon-cyan), #0aa6cc);
+  box-shadow: 0 8px 26px rgba(0, 245, 255, 0.4);
+  animation: dash-pulse-scale 2.8s ease-in-out infinite;
+  padding: 0 56px;
+  font-size: 16px;
+}
+
+.solo-results-btn--next:hover {
+  filter: brightness(1.06);
+}
+
+.dash-room {
+  grid-area: room;
+  /* Card flotante (variante A) en vez de columna a sangre: hugea su contenido
+     desde arriba y scrollea internamente si el panel de sala activa es largo. */
+  align-self: start;
+  margin: 8px 22px 24px 0;
+  max-height: calc(100vh - var(--dash-topbar-h) - 32px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 18px;
+  padding: 20px;
+  overflow-y: auto;
+  gap: 14px;
+}
+

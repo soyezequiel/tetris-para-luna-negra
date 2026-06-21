@@ -1,0 +1,398 @@
+/* ───────────── Toggle compacto de visibilidad de sala ───────────── */
+
+.room-visibility-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(247, 247, 242, 0.14);
+  border-radius: 8px;
+  background: rgba(247, 247, 242, 0.04);
+  width: fit-content;
+}
+
+.room-visibility-label {
+  color: rgba(247, 247, 242, 0.4);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.room-visibility-label.is-active {
+  color: #39d49a;
+}
+
+/* ───────────── QR de la invoice Lightning ───────────── */
+
+.online-bet-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.online-bet-qr {
+  /* Más chico que antes para que el QR + botones entren sin scroll en el panel
+     lateral de la sala (seguía siendo legible para escanear con el celular). */
+  width: min(196px, 64vw);
+  height: auto;
+  border-radius: 10px;
+  background: #fff;
+  /* Sin suavizado: módulos nítidos para que el celular lo lea de una. */
+  image-rendering: pixelated;
+}
+
+.online-bet-qr-loading {
+  display: grid;
+  place-items: center;
+  width: min(196px, 64vw);
+  aspect-ratio: 1;
+  margin: 6px auto;
+  border-radius: 10px;
+  border: 1px dashed rgba(247, 247, 242, 0.3);
+  color: rgba(247, 247, 242, 0.55);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.online-bet-qr-hint {
+  color: rgba(247, 247, 242, 0.6);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ───────────── KO / modo espectador en online ───────────── */
+
+/* Toast compacto de KO: pegado arriba, poco texto. Una sola animación que entra,
+   se sostiene y se va; queda invisible al terminar (no tapa nada). */
+.online-ko-toast {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  border: 1px solid rgba(255, 0, 127, 0.6);
+  border-radius: 999px;
+  background: rgba(10, 4, 10, 0.86);
+  box-shadow: 0 0 26px rgba(255, 0, 127, 0.32);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: online-ko-toast 3.4s cubic-bezier(0.2, 0.9, 0.25, 1) forwards;
+}
+
+.online-ko-toast--win {
+  border-color: rgba(57, 212, 154, 0.6);
+  box-shadow: 0 0 26px rgba(57, 212, 154, 0.32);
+}
+
+.online-ko-toast-tag {
+  color: var(--dash-neon-pink);
+  font-family: "Arial Black", Arial, sans-serif;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  text-shadow: 0 0 14px rgba(255, 0, 127, 0.6);
+}
+
+.online-ko-toast--win .online-ko-toast-tag {
+  color: #39d49a;
+  text-shadow: 0 0 14px rgba(57, 212, 154, 0.6);
+}
+
+.online-ko-toast-place {
+  color: #f59e0b;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+}
+
+/* Entra cayendo desde arriba, se sostiene, y se va hacia arriba desvaneciéndose. */
+@keyframes online-ko-toast {
+  0% { transform: translate(-50%, -28px); opacity: 0; }
+  10% { transform: translate(-50%, 0); opacity: 1; }
+  78% { transform: translate(-50%, 0); opacity: 1; }
+  100% { transform: translate(-50%, -16px); opacity: 0; }
+}
+
+/* Aviso de conexión/desconexión de mandos: píldora abajo-centro, no invasiva, se
+   desvanece sola. Abajo para no chocar con el toast de KO (arriba) ni la invitación
+   de Luna (esquina superior derecha). */
+.gamepad-toast {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  z-index: 7;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 16px;
+  border: 1px solid rgba(57, 212, 154, 0.55);
+  border-radius: 999px;
+  background: rgba(6, 10, 12, 0.9);
+  box-shadow: 0 0 24px rgba(57, 212, 154, 0.28);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: gamepad-toast 3.2s cubic-bezier(0.2, 0.9, 0.25, 1) forwards;
+}
+
+.gamepad-toast--disconnected {
+  border-color: rgba(245, 158, 11, 0.55);
+  box-shadow: 0 0 24px rgba(245, 158, 11, 0.26);
+}
+
+.gamepad-toast-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.gamepad-toast-text {
+  color: #e6fff5;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.gamepad-toast--disconnected .gamepad-toast-text {
+  color: #ffe9c7;
+}
+
+/* Sube desde abajo, se sostiene, y baja desvaneciéndose. */
+@keyframes gamepad-toast {
+  0% { transform: translate(-50%, 24px); opacity: 0; }
+  10% { transform: translate(-50%, 0); opacity: 1; }
+  80% { transform: translate(-50%, 0); opacity: 1; }
+  100% { transform: translate(-50%, 14px); opacity: 0; }
+}
+
+/* Invitación de Luna durante una partida: toast no invasivo en la esquina
+   superior derecha. El contenedor no roba clicks; solo los botones son
+   interactivos. El teclado sigue siendo del juego (aceptar/ignorar es con
+   mouse/touch) y queda visible hasta que el jugador decida o termine. */
+.luna-invite-toast {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 260px;
+  padding: 12px 14px;
+  border: 1px solid rgba(124, 92, 252, 0.55);
+  border-radius: 12px;
+  background: rgba(10, 8, 18, 0.88);
+  box-shadow: 0 0 24px rgba(124, 92, 252, 0.28);
+  pointer-events: none;
+  animation: luna-invite-toast-in 0.32s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+.luna-invite-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #f1edff;
+  font-size: 13px;
+}
+
+.luna-invite-toast-eyebrow {
+  color: #a78bfa;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.luna-invite-toast-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.luna-invite-toast-btn {
+  pointer-events: auto;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e5e3f2;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.luna-invite-toast-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.luna-invite-toast-btn-accept {
+  border-color: rgba(124, 92, 252, 0.7);
+  background: rgba(124, 92, 252, 0.28);
+  color: #ffffff;
+}
+
+.luna-invite-toast-btn-accept:hover {
+  background: rgba(124, 92, 252, 0.45);
+}
+
+@keyframes luna-invite-toast-in {
+  0% { transform: translateX(24px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+/* ===== Modo espectador =====
+   Ya no es una vista aparte: el rival enfocado se dibuja en el canvas principal
+   (#game-root sigue visible) como si jugara yo, y la grilla lateral conserva su
+   posición y estilo de la partida en vivo, listando solo a los demás. */
+
+/* Encabezado lateral: "Viendo · NOMBRE" + cuántos siguen en pie. */
+.online-versus-title--spectating strong {
+  color: #f7f7f2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-spec-alive {
+  color: rgba(247, 247, 242, 0.5);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+/* En escritorio la grilla lateral vive en el mismo top-right que el panel de audio
+   del HUD (Best + volúmenes + música). Jugando casi no molesta (rótulo "Opponents"),
+   pero como espectador el rótulo "Viendo · NOMBRE" y la cabecera del tablero se
+   pisaban con los controles de audio. La bajamos para que arranque debajo del panel.
+   En móvil la grilla va anclada abajo, así que no aplica. */
+@media (min-width: 761px) {
+  .online-versus-grid--watching {
+    top: 188px;
+  }
+}
+
+/* Cada mini-tablero lateral es clickeable para cambiar el foco. La grilla en sí
+   tiene pointer-events:none, así que lo reactivamos solo en estas tarjetas.
+   El realce de hover NO mueve layout ni anima (nada de transform/transition): la
+   grilla se reconstruye cada snapshot (~10 Hz) y un translateY animado titilaría. */
+.online-spec-pick {
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.online-spec-pick:focus-visible {
+  outline: none;
+}
+
+.online-spec-pick:hover .online-mini-board,
+.online-spec-pick:focus-visible .online-mini-board {
+  border-color: rgba(0, 245, 255, 0.7);
+  box-shadow: 0 0 0 1px rgba(0, 245, 255, 0.5);
+}
+
+/* Terminó (sprint completado) pero la sala aún no lo coronó: borde azul neutro. */
+.online-peer-board--done .online-mini-board {
+  border-color: rgba(94, 200, 245, 0.55);
+}
+
+/* ─────────────────────────── Top mundial (leaderboard) ─────────────────────────── */
+.leaderboard-note {
+  color: var(--dash-text-dim);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px 0;
+}
+
+.leaderboard-note--error {
+  color: #ff6b6b;
+}
+
+.leaderboard-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.leaderboard-tab {
+  flex: 1 1 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--dash-text-dim);
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.leaderboard-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.leaderboard-tab--active {
+  color: #061018;
+  background: var(--dash-accent);
+  border-color: var(--dash-accent);
+  box-shadow: 0 0 18px rgba(0, 229, 255, 0.35);
+}
+
+.leaderboard-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.028);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.leaderboard-row--me {
+  border-color: var(--dash-accent);
+  background: rgba(0, 229, 255, 0.08);
+}
+
+.leaderboard-rank {
+  min-width: 28px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--dash-text-dim);
+}
+
+.leaderboard-avatar {
+  flex: 0 0 auto;
+}
+
+.leaderboard-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.leaderboard-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--dash-accent);
+}

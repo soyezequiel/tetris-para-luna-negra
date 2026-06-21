@@ -1,0 +1,398 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   TETRA — Pulido del menú (drop-in)
+   ───────────────────────────────────────────────────────────────────────────
+   Overrides aditivos para el dashboard de escritorio. NO toca lógica ni móvil.
+   Cómo aplicar (elegí una):
+     A) Pegá este bloque al FINAL de src/styles.css.
+     B) Guardá como src/tetris-menu-polish.css y agregá  @import './tetris-menu-polish.css';
+        al final de src/styles.css (o importalo donde cargás los estilos).
+   Objetivo: subir el panel "Control de anfitrión" y las tarjetas de modo al nivel
+   de la referencia y del layout móvil (código de sala protagonista, sin apreturas).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1 · Código de sala protagonista (antes: Arial Black 22px, glow flojo) ──
+   Igual que el móvil (.mdash-room-code): Orbitron grande con glow fuerte. */
+.dash-room-code {
+  font-family: 'Orbitron', 'Arial Black', monospace !important;
+  font-size: 30px !important;
+  font-weight: 800 !important;
+  letter-spacing: 5px !important;
+  text-shadow: 0 0 16px rgba(0, 245, 255, 0.55) !important;
+  line-height: 1.05 !important;
+}
+.dash-room-eyebrow {
+  font-family: 'Orbitron', 'Exo 2', sans-serif !important;
+  font-size: 10px !important;
+  letter-spacing: 2px !important;
+}
+.dash-room-identity-line { gap: 4px !important; }
+
+/* ── 2 · Tarjetas de modo: nunca apretarse/encimar en el stage centrado del host ──
+   El stage del anfitrión centra a 560px; garantizamos columnas iguales y texto
+   que no desborda. */
+.dash-play-stage .dash-mode-cards,
+.dash-mode-cards {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+.dash-mode-card {
+  align-items: center !important;       /* ícono + texto centrados, más prolijo */
+  text-align: center !important;
+  gap: 8px !important;
+}
+.dash-mode-card-text { align-items: center !important; width: 100%; }
+.dash-mode-card-text strong {
+  font-size: 11.5px !important;
+  line-height: 1.2;
+  white-space: nowrap;                  /* "Supervivencia" entera en una línea */
+}
+.dash-mode-card-text small {
+  white-space: nowrap;
+  font-size: 8.5px !important;
+  letter-spacing: 0.6px;
+}
+
+/* ── 3 · Panel "Control de anfitrión": jerarquía y respiración ──
+   Más aire entre bloques y separadores sutiles, como la referencia. */
+.dash-room { gap: 16px !important; padding: 22px !important; }
+
+.dash-room-purpose {
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.dash-room-purpose-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.dash-room-purpose-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: rgba(157, 78, 221, 0.15);
+  border: 1px solid rgba(157, 78, 221, 0.4);
+  color: #c79bff;
+}
+.dash-room-purpose-top strong { font-size: 15px; font-weight: 800; }
+.dash-room-purpose-explainer {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dash-text-muted);
+}
+
+/* Badge de "listos" arriba a la derecha más legible (como la pastilla móvil). */
+.dash-ready-stack .dash-player-ready-indicator.ready {
+  font-family: 'Orbitron', 'Exo 2', sans-serif;
+  font-size: 13px;
+  padding: 4px 10px;
+}
+
+/* Acciones rápidas (Copiar / Copiar link / Iniciar sesión): que respiren y no
+   se amontonen contra el código. */
+.dash-room-code-wrapper { gap: 12px 12px !important; }
+.dash-room-code-actions { gap: 8px !important; }
+.dash-copy-btn {
+  border-radius: 9px !important;
+  padding: 7px 12px !important;
+  font-family: 'Exo 2', sans-serif !important;
+  font-size: 11.5px !important;
+  letter-spacing: 0.3px !important;
+}
+
+/* Chips Tipo / Visibilidad / Velocidad: un toque más altos y legibles. */
+.dash-room-summary-item { padding: 11px 12px !important; border-radius: 12px !important; }
+.dash-room-summary-item span { font-size: 9px; letter-spacing: 1px; }
+.dash-room-summary-item strong { font-size: 13px !important; margin-top: 4px !important; }
+
+/* Botón "Salir de la sala": más presencia (rojo de la referencia). */
+.dash-room-actions-group .dash-action-btn.danger {
+  border: 1px solid rgba(235, 68, 90, 0.45) !important;
+  background: rgba(235, 68, 90, 0.10) !important;
+  color: #ff6b81 !important;
+  font-weight: 800 !important;
+}
+
+/* ── 4 · Tops embebidos (Supervivencia): título con el mismo lenguaje que el móvil ── */
+.dash-survival-tops .panel-eyebrow {
+  font-family: 'Orbitron', 'Exo 2', sans-serif;
+  letter-spacing: 2px;
+}
+
+/* ── 5 · Host smart-play stage: que el título no grite ni aplaste las tarjetas ── */
+.dash-play-title {
+  font-size: clamp(26px, 3vw, 34px) !important;
+  line-height: 1.08 !important;
+  margin: 4px 0 8px !important;
+}
+.dash-play-subtitle { font-size: 14px !important; }
+.dash-play-eyebrow { letter-spacing: 2px; }
+.dash-play-stage { gap: 16px !important; }
+
+/* ── 6 · Historial: alinear con la referencia (eyebrow + "Tus replays" + filas) ──
+   Antes era el placeholder viejo (título Arial Black + botones en inglés). */
+.dash-history { animation: tetra-rise .35s ease both; }
+.dash-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 18px;
+}
+.dash-history .dash-history-title {
+  font-family: 'Orbitron', 'Arial Black', sans-serif !important;
+  font-weight: 800;
+  font-size: 28px;
+  margin: 0;
+  line-height: 1.1;
+}
+.dash-history-import {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border-radius: 11px;
+  border: 1px solid rgba(0, 245, 255, 0.35);
+  background: rgba(0, 245, 255, 0.07);
+  color: var(--dash-neon-cyan);
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, border-color .15s;
+}
+.dash-history-import:hover {
+  background: rgba(0, 245, 255, 0.13);
+  border-color: rgba(0, 245, 255, 0.55);
+}
+.dash-history-list { display: flex; flex-direction: column; gap: 10px; }
+.dash-history-empty {
+  margin: 0;
+  padding: 22px 18px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--dash-text-dim);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.dash-history-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.dash-history-time {
+  font-family: 'Orbitron', 'Arial Black', sans-serif;
+  font-weight: 800;
+  font-size: 15px;
+}
+.dash-history-time.is-clear { color: var(--dash-neon-cyan); }
+.dash-history-time.is-topout { color: #eb445a; }
+.dash-history-label { flex: 1; font-size: 13px; }
+.dash-history-date { font-size: 11px; color: rgba(238, 240, 244, 0.4); }
+.dash-history-view {
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: #eef0f4;
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.dash-history-view:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.dash-history-library {
+  margin-top: 16px;
+  padding: 11px;
+  width: 100%;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: var(--dash-text-dim);
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.dash-history-library:hover { background: rgba(255, 255, 255, 0.04); color: #eef0f4; }
+
+/* ── 7 · Inicio: pantalla de bienvenida (título TETRA degradado + CTA + stats) ── */
+.dash-welcome {
+  width: 100%;
+  max-width: 560px;
+  text-align: center;
+  padding-top: 18px;
+  animation: tetra-rise .35s ease both;
+}
+.dash-welcome-eyebrow {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--dash-neon-cyan);
+  margin-bottom: 12px;
+}
+.dash-welcome .dash-welcome-title {
+  font-family: 'Orbitron', 'Arial Black', sans-serif !important;
+  font-weight: 900;
+  font-size: 54px;
+  margin: 0 0 12px;
+  letter-spacing: 2px;
+  background: linear-gradient(90deg, var(--dash-neon-cyan), var(--dash-neon-purple), var(--dash-neon-pink));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.dash-welcome-subtitle {
+  color: var(--dash-text-dim);
+  font-size: 15px;
+  line-height: 1.5;
+  max-width: 380px;
+  margin: 0 auto 26px;
+}
+.dash-welcome-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 28px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 245, 255, 0.6);
+  background: linear-gradient(120deg, rgba(0, 245, 255, 0.22), rgba(0, 245, 255, 0.05));
+  color: #fff;
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: .5px;
+  cursor: pointer;
+  box-shadow: 0 18px 40px -16px rgba(0, 245, 255, 0.6);
+  transition: transform .15s, box-shadow .15s;
+}
+.dash-welcome-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 22px 46px -16px rgba(0, 245, 255, 0.75);
+}
+.dash-welcome-stats {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 34px;
+  flex-wrap: wrap;
+}
+.dash-welcome-stat {
+  flex: 1 1 130px;
+  max-width: 160px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.dash-welcome-stat-value {
+  font-family: 'Orbitron', 'Arial Black', sans-serif;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--stat-accent, var(--dash-neon-cyan));
+}
+.dash-welcome-stat-label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.45);
+  margin-top: 4px;
+}
+
+/* ── 8 · Ajustes: vista "Controles" (filas DAS/ARR/Soft drop con valor Orbitron) ── */
+.dash-controls { animation: tetra-rise .35s ease both; }
+.dash-controls .dash-controls-title {
+  font-family: 'Orbitron', 'Arial Black', sans-serif !important;
+  font-weight: 800;
+  font-size: 28px;
+  margin: 6px 0 18px;
+  line-height: 1.1;
+}
+.dash-controls-list { display: flex; flex-direction: column; gap: 10px; }
+.dash-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.dash-controls-row span { font-size: 13px; color: rgba(238, 240, 244, 0.7); }
+.dash-controls-row strong {
+  font-family: 'Orbitron', 'Arial Black', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--dash-neon-cyan);
+}
+.dash-controls-edit {
+  margin-top: 18px;
+  padding: 11px 16px;
+  width: 100%;
+  border-radius: 11px;
+  border: 1px solid rgba(0, 245, 255, 0.35);
+  background: rgba(0, 245, 255, 0.07);
+  color: var(--dash-neon-cyan);
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.dash-controls-edit:hover { background: rgba(0, 245, 255, 0.13); border-color: rgba(0, 245, 255, 0.55); }
+
+/* ── 9 · Supervivencia: el top embebido va como tarjeta (igual que la referencia) ── */
+.dash-survival-tops {
+  margin-top: 26px !important;
+  padding: 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* ── 10 · CTA móvil de Jugar: etiqueta + subtítulo (como la referencia) ── */
+.mdash-cta-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  line-height: 1.1;
+}
+.mdash-cta-label { font-size: 16px; font-weight: 800; letter-spacing: .5px; }
+.mdash-cta-sub { font-size: 11px; font-weight: 600; letter-spacing: .3px; opacity: .8; }
+/* El botón "Configurar partida" vive en el área scrolleable (no en las acciones
+   fijas) para que el CTA y "Crear sala" no se muevan al cambiar de modo. */
+.mdash-config-btn { margin-top: 4px; }
+
+/* ── 11 · Ajustes responsive de las vistas compartidas en el layout móvil ──
+   La bienvenida, el historial y los controles se rinden en el ancho angosto del
+   celular; acá evitamos que se aprieten/parta el texto, igual que la referencia. */
+@media (max-width: 760px) {
+  /* Inicio: las 3 stats entran en una sola fila. */
+  .dash-welcome-stats { gap: 8px; flex-wrap: nowrap; }
+  .dash-welcome-stat { flex: 1 1 0; min-width: 0; max-width: none; padding: 14px 8px; }
+  .dash-welcome-stat-value { font-size: 22px; }
+  .dash-welcome-stat-label { font-size: 9px; }
+
+  /* Historial: título en una línea + botón "Importar" (sin "replay"); sin eyebrow. */
+  .dash-history > .panel-eyebrow,
+  .dash-controls > .panel-eyebrow { display: none; }
+  .dash-history .dash-history-title { font-size: 24px; }
+  .dash-history-import-extra { display: none; }
+}

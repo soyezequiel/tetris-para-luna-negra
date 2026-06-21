@@ -1,0 +1,32 @@
+:root {
+  color: #f7f7f2;
+  background: #05080c;
+  font-family: 'Exo 2', sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  --dash-neon-purple: #9d4edd;
+  --dash-neon-cyan: #00f5ff;
+  --dash-neon-pink: #ff007f;
+  --dash-neon-glow-cyan: rgba(0, 245, 255, 0.4);
+  --dash-neon-glow-pink: rgba(255, 0, 127, 0.4);
+  --dash-neon-glow-purple: rgba(157, 78, 221, 0.4);
+
+  /* Tokens semánticos del dashboard. Antes vivían en un segundo :root ~3400
+     líneas más abajo; consolidados acá para tener una sola fuente de verdad. */
+  --dash-bg: #05070f;
+  --dash-surface: rgba(10, 14, 23, 0.45);
+  --dash-surface-hover: rgba(157, 78, 221, 0.08);
+  --dash-border: rgba(255, 255, 255, 0.06);
+  --dash-border-accent: var(--dash-neon-purple);
+  --dash-accent: var(--dash-neon-cyan);
+  --dash-accent-glow: var(--dash-neon-glow-cyan);
+  --dash-text: #f7f7f2;
+  --dash-text-dim: rgba(247, 247, 242, 0.75);
+  --dash-text-muted: rgba(247, 247, 242, 0.45);
+  --dash-success: #39d49a;
+  --dash-danger: #eb445a;
+  --dash-sidebar-w: 200px;
+  --dash-room-w: 400px;
+  --dash-topbar-h: 62px;
+}
