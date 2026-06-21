@@ -1,5 +1,6 @@
 import './styles.css';
 import QRCode from 'qrcode';
+import { checkIcon, gearOutlineIcon, historyClockIcon, homeIcon, importIcon, playIcon, rocketIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon, tetrominoIcon } from './ui/icons';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -5228,7 +5229,7 @@ function renderOverlay(state: GameState): void {
   const currentMusicTrack = sound.getCurrentMusicTrack()?.title ?? 'No music';
   // Modo solo "relax" (40 líneas): muestra subtítulo + engranaje de ajustes.
   const soloRelax = appMode === 'playing' || appMode === 'paused' || appMode === 'soloCountdown';
-  const gearIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>';
+  const gearIcon = gearOutlineIcon({ size: 20 });
   const html = `
     <div class="brand">TETRA${soloRelax ? '<span class="brand-sub">MODO RELAX</span>' : ''}</div>
     ${soloRelax ? `<button class="gear-btn" type="button" data-ui-action="settings" aria-label="Ajustes" title="Ajustes">${gearIcon}</button>` : ''}
@@ -7805,7 +7806,7 @@ function renderPausePanel(state: GameState): string {
       </div>
       <div class="pause-actions">
         <button class="pause-btn pause-btn--resume" type="button" data-ui-action="resume" autofocus>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          ${playIcon({ size: 18, ariaHidden: true })}
           <span>Resume</span>
         </button>
         <div class="pause-grid">
@@ -7937,19 +7938,19 @@ function renderDashboardMenu(state: GameState): string {
       <nav class="dash-sidebar">
         <div class="dash-sidebar-nav">
           <button class="dash-sidebar-btn ${homeClass}" type="button" data-ui-action="main-menu">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+            ${homeIcon({ size: 18, fill: false })}
             Inicio
           </button>
           <button class="dash-sidebar-btn ${playClass}" type="button" data-ui-action="play-menu">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z"/></svg>
+            ${playIcon({ size: 18, fill: false })}
             Jugar
           </button>
           <button class="dash-sidebar-btn ${historyClass}" type="button" data-ui-action="history-menu">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+            ${historyClockIcon({ size: 18, fill: false })}
             Historial
           </button>
           <button class="dash-sidebar-btn ${settingsClass}" type="button" data-ui-action="config-menu">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+            ${settingsGearIcon({ size: 18, fill: false })}
             Ajustes
           </button>
         </div>
@@ -7971,11 +7972,11 @@ function renderDashboardMenu(state: GameState): string {
 }
 
 function renderSmartIconCheck(): string {
-  return '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>';
+  return checkIcon();
 }
 
 function renderSmartIconRocket(): string {
-  return '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M12 2c3.5 2 5.5 5.5 5.5 9.5 0 1.6-.3 2.9-.8 4l-1.7-1V12a3 3 0 1 0-6 0v2.5l-1.7 1c-.5-1.1-.8-2.4-.8-4C6.5 7.5 8.5 4 12 2zm-1 10a1 1 0 1 1 2 0v6l-1 2-1-2v-6z"/></svg>';
+  return rocketIcon();
 }
 
 function renderSmartPlayStage(): string {
@@ -8120,16 +8121,9 @@ function playModeMeta(mode: PlayMode): ModeMeta {
   };
 }
 
-// Ícono de tetrominó por modalidad (SVG inline, color del acento), como el prototipo.
+// Ícono de tetrominó por modalidad (delega en el módulo de íconos con el acento).
 function modeTetrominoIcon(mode: PlayMode, size = 28): string {
-  const c = modeAccent(mode);
-  if (mode === 'custom') {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true"><rect x="2" y="3" width="11" height="11" rx="2" fill="${c}"/><rect x="14.5" y="3" width="11" height="11" rx="2" fill="${c}"/><rect x="27" y="3" width="11" height="11" rx="2" fill="${c}"/><rect x="14.5" y="15.5" width="11" height="11" rx="2" fill="${c}" opacity="0.6"/></svg>`;
-  }
-  if (mode === 'local1v1') {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true"><rect x="18" y="3" width="10" height="10" rx="2" fill="${c}"/><rect x="28" y="3" width="10" height="10" rx="2" fill="${c}"/><rect x="6" y="22" width="10" height="10" rx="2" fill="${c}" opacity="0.7"/><rect x="16" y="22" width="10" height="10" rx="2" fill="${c}" opacity="0.7"/></svg>`;
-  }
-  return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true"><rect x="14" y="2" width="12" height="11" rx="2" fill="${c}"/><rect x="14" y="14.5" width="12" height="11" rx="2" fill="${c}" opacity="0.78"/><rect x="14" y="27" width="12" height="11" rx="2" fill="${c}" opacity="0.5"/></svg>`;
+  return tetrominoIcon(mode, modeAccent(mode), size);
 }
 
 // Datos de los chips de la config custom (Gravedad · Objetivo · Hold · Next).
@@ -8180,7 +8174,6 @@ function renderModeSelectStage(): string {
        <button class="dash-mode-config-btn" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>`
     : '';
   const tops = mode === 'survival' ? renderSurvivalTopsEmbed() : '';
-  const playIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
 
   return `
     <div class="dash-play-stage dash-play-stage--mode-select dash-mode-select" style="--stage-accent: ${accent};">
@@ -8193,7 +8186,7 @@ function renderModeSelectStage(): string {
         <p class="dash-mode-desc">${meta.desc}</p>
         <div class="dash-mode-action-col">
           <button class="dash-mode-solo-cta" type="button" data-ui-action="${primaryAction}" aria-label="${meta.solo}">
-            ${playIcon}
+            ${playIcon({ size: 20, ariaHidden: true })}
             <span class="dash-mode-solo-text"><span>${meta.solo}</span><span class="dash-mode-solo-sub">${escapeHtml(meta.sub)}</span></span>
           </button>
           ${customExtra}
@@ -8213,7 +8206,6 @@ function renderWelcomeStage(): string {
   const bestFrames = runs.length ? Math.max(...runs.map((r) => r.elapsedFrames)) : null;
   const avgPps = runs.length ? runs.reduce((sum, r) => sum + r.pps, 0) / runs.length : null;
   const myWins = leaderboardEntries.find((e) => e.playerId === onlinePlayer.id)?.wins ?? null;
-  const playIcon = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
   const stat = (value: string, label: string, accent: string) =>
     `<div class="dash-welcome-stat" style="--stat-accent: ${accent};"><div class="dash-welcome-stat-value">${value}</div><div class="dash-welcome-stat-label">${label}</div></div>`;
   return `
@@ -8221,7 +8213,7 @@ function renderWelcomeStage(): string {
       <div class="dash-welcome-eyebrow">Bienvenido de nuevo</div>
       <h1 class="dash-welcome-title">TETRA</h1>
       <p class="dash-welcome-subtitle">Tu stacker competitivo. Elegí un modo, jugá solo al instante o armá una sala con amigos.</p>
-      <button class="dash-welcome-cta" type="button" data-ui-action="play-menu">${playIcon}<span>Empezar a jugar</span></button>
+      <button class="dash-welcome-cta" type="button" data-ui-action="play-menu">${playIcon({ size: 18, ariaHidden: true })}<span>Empezar a jugar</span></button>
       <div class="dash-welcome-stats">
         ${stat(bestFrames !== null ? formatFrames(bestFrames, false) : '—', 'Mejor tiempo', '#00f5ff')}
         ${stat(myWins !== null ? String(myWins) : '—', 'Victorias', '#9d4edd')}
@@ -8271,10 +8263,10 @@ function isPlayHubMode(): boolean {
 // Función (no const) para evitar el TDZ del primer render: loop() corre al cargar
 // el módulo y este ícono está en el path de render (ver memoria main-ts-first-render-tdz).
 function mdashNavIcon(tab: DashTab): string {
-  if (tab === 'inicio') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>';
-  if (tab === 'jugar') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-  if (tab === 'historial') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M13 3a9 9 0 1 0 8.49 12h-2.13A7 7 0 1 1 13 5a7 7 0 0 1 6.32 4H22A9 9 0 0 0 13 3zm-1 5v5l4.25 2.52.75-1.23-3.5-2.04V8z"/></svg>';
-  return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>';
+  if (tab === 'inicio') return homeIcon({ size: 21 });
+  if (tab === 'jugar') return playIcon({ size: 21 });
+  if (tab === 'historial') return historyClockIcon({ size: 21 });
+  return settingsGearIcon({ size: 21 });
 }
 
 function renderMobileNavButton(tab: DashTab, active: DashTab, action: string, label: string, dot: boolean): string {
@@ -8382,7 +8374,7 @@ function renderMobileModeSelect(): string {
       </div>
       <div class="mdash-actions">
         <button class="mdash-cta" type="button" data-ui-action="${primaryAction}" aria-label="${escapeHtml(primaryLabel)}">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          ${playIcon({ size: 20 })}
           <span class="mdash-cta-text"><span class="mdash-cta-label">${escapeHtml(primaryLabel)}</span><span class="mdash-cta-sub">${escapeHtml(primarySub)}</span></span>
         </button>
         <button class="mdash-btn mdash-btn--create" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>+ Crear sala con amigos</button>
@@ -8534,7 +8526,6 @@ function renderDashboardCenterContent(_state: GameState): string {
     `;
   }
   if (mode === 'historyMenu') {
-    const importIcon = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M5 20h14v-2H5v2zM12 2L6 8h4v6h4V8h4l-6-6z"/></svg>';
     const entries = runHistory.slice(0, 12);
     const list = entries.length === 0
       ? `<p class="dash-history-empty">Todavía no tenés replays guardados. Jugá una partida o importá un replay para verlo acá.</p>`
@@ -8553,7 +8544,7 @@ function renderDashboardCenterContent(_state: GameState): string {
         <div class="panel-eyebrow">HISTORIAL</div>
         <div class="dash-history-head">
           <h1 class="dash-history-title">Tus replays</h1>
-          <button class="dash-history-import" type="button" data-ui-action="import-replay">${importIcon}Importar<span class="dash-history-import-extra"> replay</span></button>
+          <button class="dash-history-import" type="button" data-ui-action="import-replay">${importIcon({ size: 15 })}Importar<span class="dash-history-import-extra"> replay</span></button>
         </div>
         <div class="dash-history-list">${list}</div>
         ${entries.length > 0 ? '<button class="dash-history-library" type="button" data-ui-action="replay-library">Ver biblioteca completa</button>' : ''}
@@ -8692,14 +8683,14 @@ function renderSurvivalLeaderboardBody(): string {
 function renderDashboardRoomPanel(): string {
   const room = onlineRoom;
   const inviteUnavailable = !lunaIdentity?.gameId;
-  const roomPurposeIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2l9 5v6c0 5-3.6 8.7-9 9-5.4-.3-9-4-9-9V7l9-5zm0 4.2L6 9.5V13c0 3.1 2.1 5.4 6 5.8 3.9-.4 6-2.7 6-5.8V9.5l-6-3.3z"/></svg>';
+  const roomPurposeIcon = shieldCrestIcon({ size: 16, ariaHidden: true });
 
   if (!room) {
     // Sala vacía (variante A del rediseño): ícono+"SALA" violeta, título, descripción,
     // botón "+ Crear sala" violeta, divisor y la lista de salas públicas con filas
     // (avatar + "Sala de X" + X/4 + Unirse). El input por código y el bot dev quedan
     // como utilidades secundarias bajo un divisor, sin recargar la jerarquía.
-    const shieldIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2l9 5v6c0 5-3.6 8.7-9 9-5.4-.3-9-4-9-9V7l9-5z"/></svg>';
+    const shieldIcon = shieldSolidIcon({ size: 16, ariaHidden: true });
     const publicRooms = onlinePublicRooms.length === 0
       ? '<div class="dash-public-empty">No hay salas públicas activas.</div>'
       : onlinePublicRooms.slice(0, 4).map((candidateRoom) => `
@@ -9081,13 +9072,6 @@ function getActiveVolumeChannel(): VolumeChannel | null {
 }
 
 // Ícono de altavoz (encendido / silenciado) para los botones de mute por canal.
-function speakerIcon(muted: boolean): string {
-  const extra = muted
-    ? '<line x1="16" y1="9.5" x2="21" y2="14.5"></line><line x1="21" y1="9.5" x2="16" y2="14.5"></line>'
-    : '<path d="M15.5 9.2a3.6 3.6 0 0 1 0 5.6"></path><path d="M18 7a6.8 6.8 0 0 1 0 10"></path>';
-  return `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 9.5h3L11 6v12l-4.5-3.5h-3z"></path>${extra}</svg>`;
-}
-
 // Fila de un canal de audio (SFX o BGM): botón de mute + etiqueta + porcentaje.
 // El contenedor lleva data-volume-channel para que la rueda del mouse/touchpad
 // lo ajuste (ver handleVolumeWheel). Compartida por el HUD y la tarjeta relax.
