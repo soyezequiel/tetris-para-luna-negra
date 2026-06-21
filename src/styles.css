@@ -8035,3 +8035,140 @@ canvas {
   transition: background .15s, color .15s;
 }
 .dash-history-library:hover { background: rgba(255, 255, 255, 0.04); color: #eef0f4; }
+
+/* ── 7 · Inicio: pantalla de bienvenida (título TETRA degradado + CTA + stats) ── */
+.dash-welcome {
+  width: 100%;
+  max-width: 560px;
+  text-align: center;
+  padding-top: 18px;
+  animation: tetra-rise .35s ease both;
+}
+.dash-welcome-eyebrow {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #00f5ff;
+  margin-bottom: 12px;
+}
+.dash-welcome .dash-welcome-title {
+  font-family: 'Orbitron', 'Arial Black', sans-serif !important;
+  font-weight: 900;
+  font-size: 54px;
+  margin: 0 0 12px;
+  letter-spacing: 2px;
+  background: linear-gradient(90deg, #00f5ff, #9d4edd, #ff007f);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.dash-welcome-subtitle {
+  color: var(--dash-text-dim);
+  font-size: 15px;
+  line-height: 1.5;
+  max-width: 380px;
+  margin: 0 auto 26px;
+}
+.dash-welcome-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 28px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 245, 255, 0.6);
+  background: linear-gradient(120deg, rgba(0, 245, 255, 0.22), rgba(0, 245, 255, 0.05));
+  color: #fff;
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: .5px;
+  cursor: pointer;
+  box-shadow: 0 18px 40px -16px rgba(0, 245, 255, 0.6);
+  transition: transform .15s, box-shadow .15s;
+}
+.dash-welcome-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 22px 46px -16px rgba(0, 245, 255, 0.75);
+}
+.dash-welcome-stats {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 34px;
+  flex-wrap: wrap;
+}
+.dash-welcome-stat {
+  flex: 1 1 130px;
+  max-width: 160px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.dash-welcome-stat-value {
+  font-family: 'Orbitron', 'Arial Black', sans-serif;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--stat-accent, #00f5ff);
+}
+.dash-welcome-stat-label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.45);
+  margin-top: 4px;
+}
+
+/* ── 8 · Ajustes: vista "Controles" (filas DAS/ARR/Soft drop con valor Orbitron) ── */
+.dash-controls { animation: tetra-rise .35s ease both; }
+.dash-controls .dash-controls-title {
+  font-family: 'Orbitron', 'Arial Black', sans-serif !important;
+  font-weight: 800;
+  font-size: 28px;
+  margin: 6px 0 18px;
+  line-height: 1.1;
+}
+.dash-controls-list { display: flex; flex-direction: column; gap: 10px; }
+.dash-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.dash-controls-row span { font-size: 13px; color: rgba(238, 240, 244, 0.7); }
+.dash-controls-row strong {
+  font-family: 'Orbitron', 'Arial Black', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  color: #00f5ff;
+}
+.dash-controls-edit {
+  margin-top: 18px;
+  padding: 11px 16px;
+  width: 100%;
+  border-radius: 11px;
+  border: 1px solid rgba(0, 245, 255, 0.35);
+  background: rgba(0, 245, 255, 0.07);
+  color: #00f5ff;
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.dash-controls-edit:hover { background: rgba(0, 245, 255, 0.13); border-color: rgba(0, 245, 255, 0.55); }
+
+/* ── 9 · Supervivencia: el top embebido va como tarjeta (igual que la referencia) ── */
+.dash-survival-tops {
+  margin-top: 26px !important;
+  padding: 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}

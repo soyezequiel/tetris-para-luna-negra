@@ -7948,7 +7948,7 @@ function renderDashboardMenu(state: GameState): string {
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
             Historial
           </button>
-          <button class="dash-sidebar-btn ${settingsClass}" type="button" data-ui-action="settings">
+          <button class="dash-sidebar-btn ${settingsClass}" type="button" data-ui-action="config-menu">
             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
             Ajustes
           </button>
@@ -8205,6 +8205,32 @@ function renderModeSelectStage(): string {
   `;
 }
 
+// Pantalla de bienvenida (tab Inicio, sin sala): saludo + CTA hacia Jugar + 3
+// stats con datos reales locales (mejor tiempo y PPS desde el historial; victorias
+// desde el leaderboard si está cargado). Donde no hay dato se muestra "—".
+function renderWelcomeStage(): string {
+  const runs = runHistory;
+  const bestFrames = runs.length ? Math.max(...runs.map((r) => r.elapsedFrames)) : null;
+  const avgPps = runs.length ? runs.reduce((sum, r) => sum + r.pps, 0) / runs.length : null;
+  const myWins = leaderboardEntries.find((e) => e.playerId === onlinePlayer.id)?.wins ?? null;
+  const playIcon = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+  const stat = (value: string, label: string, accent: string) =>
+    `<div class="dash-welcome-stat" style="--stat-accent: ${accent};"><div class="dash-welcome-stat-value">${value}</div><div class="dash-welcome-stat-label">${label}</div></div>`;
+  return `
+    <div class="dash-welcome">
+      <div class="dash-welcome-eyebrow">Bienvenido de nuevo</div>
+      <h1 class="dash-welcome-title">TETRA</h1>
+      <p class="dash-welcome-subtitle">Tu stacker competitivo. Elegí un modo, jugá solo al instante o armá una sala con amigos.</p>
+      <button class="dash-welcome-cta" type="button" data-ui-action="play-menu">${playIcon}<span>Empezar a jugar</span></button>
+      <div class="dash-welcome-stats">
+        ${stat(bestFrames !== null ? formatFrames(bestFrames, false) : '—', 'Mejor tiempo', '#00f5ff')}
+        ${stat(myWins !== null ? String(myWins) : '—', 'Victorias', '#9d4edd')}
+        ${stat(avgPps !== null ? avgPps.toFixed(1) : '—', 'PPS prom.', '#ff007f')}
+      </div>
+    </div>
+  `;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MÓVIL — layout dedicado (< 760px)
 // El dashboard de 3 columnas no se usa en móvil; lo reemplaza una sola columna a
@@ -8280,13 +8306,18 @@ function renderMobileDashboard(state: GameState): string {
         ${renderMobileNavButton('inicio', tab, 'main-menu', 'Inicio', false)}
         ${renderMobileNavButton('jugar', tab, 'play-menu', 'Jugar', hasRoom)}
         ${renderMobileNavButton('historial', tab, 'history-menu', 'Historial', false)}
-        ${renderMobileNavButton('ajustes', tab, 'settings', 'Ajustes', false)}
+        ${renderMobileNavButton('ajustes', tab, 'config-menu', 'Ajustes', false)}
       </nav>
     </div>
   `;
 }
 
 function renderMobileMain(state: GameState): string {
+  // Tab Inicio (sin sala): bienvenida. Con sala, Inicio comparte el contexto de
+  // Jugar, así que cae al gestor de sala de abajo.
+  if (appMode === 'menu' && !onlineRoom) {
+    return `<div class="mdash-scroll mdash-center">${renderWelcomeStage()}</div>`;
+  }
   if (isPlayHubMode()) {
     return onlineRoom ? renderMobileRoomManager() : renderMobileModeSelect();
   }
@@ -8453,7 +8484,7 @@ function renderSurvivalTopsEmbed(): string {
   const body = onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody();
   return `
     <div class="dash-survival-tops">
-      <div class="panel-eyebrow">TOPS</div>
+      <div class="panel-eyebrow">Top mundial</div>
       <div class="leaderboard-tabs" role="tablist">
         <button class="leaderboard-tab ${!onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${!onSurvival}" data-ui-action="leaderboard-tab-wins">🏆 Multijugador</button>
         <button class="leaderboard-tab ${onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${onSurvival}" data-ui-action="leaderboard-tab-survival">⏱️ Supervivencia</button>
@@ -8466,7 +8497,12 @@ function renderSurvivalTopsEmbed(): string {
 
 function renderDashboardCenterContent(_state: GameState): string {
   const mode = appMode;
-  if (mode === 'menu' || mode === 'playMenu' || mode === 'onlineMenu' || mode === 'roomLobby') {
+  // Inicio (sin sala) = pantalla de bienvenida; con sala, el contexto pasa a ser el
+  // hub de Jugar (gestor de sala), así que rendimos el smart-play stage.
+  if (mode === 'menu') {
+    return onlineRoom ? renderSmartPlayStage() : renderWelcomeStage();
+  }
+  if (mode === 'playMenu' || mode === 'onlineMenu' || mode === 'roomLobby') {
     return renderSmartPlayStage();
   }
   if (mode === 'soloMenu') {
@@ -8524,15 +8560,21 @@ function renderDashboardCenterContent(_state: GameState): string {
     `;
   }
   if (mode === 'configMenu') {
+    const softDrop = inputSettings.softDropFactor >= INSTANT_SOFT_DROP_FACTOR
+      ? '∞'
+      : `${inputSettings.softDropFactor} G`;
+    const row = (label: string, value: string) =>
+      `<div class="dash-controls-row"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`;
     return `
-      <div class="menu-panel" style="width: 100%; max-width: 440px; border: none; background: transparent; box-shadow: none; padding: 0;">
+      <div class="dash-controls" style="width: 100%; max-width: 460px;">
         <div class="panel-eyebrow">AJUSTES</div>
-        <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Ajustes</h1>
-        <p style="color: var(--dash-text-dim); margin-bottom: 24px; font-size: 14px; font-weight: 500;">Configuración disponible del juego.</p>
-        <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px;">
-          <button class="dash-action-btn accent" type="button" data-ui-action="settings">Input settings</button>
-          <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
+        <h1 class="dash-controls-title">Controles</h1>
+        <div class="dash-controls-list">
+          ${row('DAS', `${inputSettings.dasFrames} f`)}
+          ${row('ARR', `${inputSettings.arrFrames} f`)}
+          ${row('Soft drop', softDrop)}
         </div>
+        <button class="dash-controls-edit" type="button" data-ui-action="settings">Ajustes de controles</button>
       </div>
     `;
   }
