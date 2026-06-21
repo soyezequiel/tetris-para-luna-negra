@@ -18,6 +18,7 @@ import { roundState } from './state/roundState';
 import { attackState } from './state/attackState';
 import { identityState } from './state/identityState';
 import { peerState } from './state/peerState';
+import { roomState } from './state/roomState';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -102,7 +103,7 @@ import { MultiReplayPlayback, type MultiPlaybackSpeed, type MultiReplayPlaybackS
 import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { hasUnresolvedRoomBetPayout, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
-import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRoomSummary, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
+import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
 import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
@@ -361,8 +362,8 @@ let lastDevBotOverlayHtml = '';
 // El estado del flujo de apuesta online (stake input, flags busy/paying/creating,
 // timers de poll, guard de festejo) vive ahora en ./state/betState → ver betState
 // en los imports.
-let onlineRoom: OnlineRoom | null = null;
-let onlinePublicRooms: OnlineRoomSummary[] = [];
+// El estado de la sala online (current + publicRooms) vive ahora en
+// ./state/roomState (roomState; ver imports).
 // El estado del "Top mundial" (rankings de victorias y supervivencia) vive ahora
 // en ./state/leaderboardState — ver leaderboardState más abajo en los imports.
 // Modalidad elegida en la sección "Jugar": decide qué arranca el botón ▶ y, al
@@ -654,7 +655,7 @@ function roomBetEntryForLocalPlayer(room: OnlineRoom | null): RoomBetParticipant
 
 function recordBetWithdrawalTrace(
   source: BetWithdrawalTraceSource,
-  room: OnlineRoom | null = onlineRoom,
+  room: OnlineRoom | null = roomState.current,
   note: string | null = null,
 ): void {
   const entry = roomBetEntryForLocalPlayer(room);
@@ -813,7 +814,7 @@ async function sendPerfReport(): Promise<void> {
 }
 function buildPerfReport(): Record<string, unknown> {
   const nav = navigator;
-  const localBetEntry = roomBetEntryForLocalPlayer(onlineRoom);
+  const localBetEntry = roomBetEntryForLocalPlayer(roomState.current);
   const withdrawQr = overlayElement.querySelector<HTMLImageElement>('img[alt="QR de retiro Lightning"]');
   return {
     generatedAt: new Date().toISOString(),
@@ -829,15 +830,15 @@ function buildPerfReport(): Record<string, unknown> {
     },
     context: {
       appMode,
-      roomId: onlineRoom?.id ?? null,
-      players: onlineRoom?.players?.length ?? null,
-      isHost: onlineRoom ? isOnlineHost() : null,
+      roomId: roomState.current?.id ?? null,
+      players: roomState.current?.players?.length ?? null,
+      isHost: roomState.current ? isOnlineHost() : null,
     },
     betWithdrawal: {
-      roomStatus: onlineRoom?.status ?? null,
-      roomUpdatedAtServerMs: onlineRoom?.updatedAtServerMs ?? null,
-      betId: onlineRoom?.bet?.betId ?? null,
-      betStatus: onlineRoom?.bet?.status ?? null,
+      roomStatus: roomState.current?.status ?? null,
+      roomUpdatedAtServerMs: roomState.current?.updatedAtServerMs ?? null,
+      betId: roomState.current?.bet?.betId ?? null,
+      betStatus: roomState.current?.bet?.status ?? null,
       payoutStatus: localBetEntry?.payoutStatus ?? null,
       payoutSats: localBetEntry?.payoutSats ?? null,
       hasWithdrawLnurl: !!localBetEntry?.withdrawLnurl,
@@ -1208,7 +1209,7 @@ function isSoloDeathStudying(): boolean {
 }
 
 function onlineLocalPlacementLabel(): string {
-  const room = onlineRoom;
+  const room = roomState.current;
   if (!room) return '';
   const ranked = rankPlayers(room.players);
   const myIndex = ranked.findIndex((player) => player.id === identityState.player.id);
@@ -1270,8 +1271,8 @@ Object.assign(window, {
     getCustomSettings: () => cloneCustomSettings(customSettings),
     getTouchControlsHidden: () => touchControlsHidden,
     getRunHistory: () => runHistory,
-    getOnlineRoom: () => onlineRoom,
-    getOnlinePublicRooms: () => onlinePublicRooms,
+    getOnlineRoom: () => roomState.current,
+    getOnlinePublicRooms: () => roomState.publicRooms,
     getOnlinePlayer: () => identityState.player,
     getLunaIdentity: () => lunaState.identity,
     clearRunHistory: () => {
@@ -1387,7 +1388,7 @@ function logMp(event: string, data: Record<string, unknown>): void {
   if (!mpLogEnabled) return; // apagado por defecto; prender con ?mplog=1
   // Serializamos a string para que la consola imprima TODOS los campos en línea (los
   // objetos anidados se colapsan a "…" y se pierden al copiar/pegar).
-  console.log(`[MP ${event}] ${JSON.stringify({ role: isOnlineHost() ? 'host' : 'guest', player: identityState.player.id.slice(0, 6), seed: onlineRoom?.seed, ...data })}`);
+  console.log(`[MP ${event}] ${JSON.stringify({ role: isOnlineHost() ? 'host' : 'guest', player: identityState.player.id.slice(0, 6), seed: roomState.current?.seed, ...data })}`);
 }
 
 // Métricas baratas de un tablero para los logs: cuántas celdas ocupadas hay y a qué
@@ -1459,7 +1460,7 @@ function handleGlobalKeyDown(event: KeyboardEvent): void {
   }
   // Teclas 1–5 (fila numérica o numpad) eligen la estrategia de objetivo
   // durante una batalla online de 3+ jugadores, al estilo tetr.io.
-  if (appMode === 'onlinePlaying' && onlineRoom && onlineRoom.players.length > 2) {
+  if (appMode === 'onlinePlaying' && roomState.current && roomState.current.players.length > 2) {
     const digit = /^(?:Digit|Numpad)([1-9])$/.exec(event.code);
     if (digit) {
       const index = Number(digit[1]) - 1;
@@ -1602,7 +1603,7 @@ function handleOverlayClick(event: MouseEvent): void {
     // Botón principal inteligente:
     // - solo o sin sala → partida de un jugador con la config custom (honra el seed).
     // - con rivales en la sala → alterna el estado "listo" (host e invitado por igual).
-    if (onlineRoom && onlineRoomHasOtherPlayers()) {
+    if (roomState.current && onlineRoomHasOtherPlayers()) {
       // Host e invitado: este botón alterna "listo". El host arranca la ronda
       // con la acción 'online-start' del botón central.
       void setOnlineReady(!currentOnlinePlayer()?.ready);
@@ -1676,7 +1677,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-refresh') refreshPublicRooms();
   if (action === 'online-room-visibility') setOnlineRoomVisibility(control.dataset.visibility);
   if (action === 'online-visibility-toggle') {
-    setOnlineRoomVisibility(onlineRoom?.visibility === 'public' ? 'private' : 'public');
+    setOnlineRoomVisibility(roomState.current?.visibility === 'public' ? 'private' : 'public');
   }
   if (action === 'online-results-menu') {
     closeOnlineResults();
@@ -2414,7 +2415,7 @@ function clearLunaIdentity(): void {
   lunaState.inviteNotice = null;
   lunaState.pendingLaunchRequest = null;
   clearStoredLunaIdentity();
-  if (!onlineRoom) {
+  if (!roomState.current) {
     identityState.player = saveOnlinePlayer({ id: '', name: 'Player', avatarUrl: null });
     identityState.name = identityState.player.name;
   }
@@ -2522,8 +2523,8 @@ async function syncLunaPresence(): Promise<void> {
       npub: lunaState.identity.npub,
       name: identityState.player.name,
       avatarUrl: identityState.player.avatarUrl,
-      status: onlineRoom ? 'in-game' : 'online',
-      roomId: onlineRoom?.id ?? null,
+      status: roomState.current ? 'in-game' : 'online',
+      roomId: roomState.current?.id ?? null,
     });
   } catch {
     // La presencia es best-effort.
@@ -2550,7 +2551,7 @@ async function syncLunaLaunchRequest(): Promise<void> {
 async function handleLunaLaunchRequest(request: LunaLaunchRequest): Promise<void> {
   const normalizedRoomId = normalizeRoomId(request.roomId);
   if (!normalizedRoomId) return;
-  if (onlineRoom && normalizeRoomId(onlineRoom.id) === normalizedRoomId) return;
+  if (roomState.current && normalizeRoomId(roomState.current.id) === normalizedRoomId) return;
   const pending = { ...request, normalizedRoomId };
   lunaState.pendingLaunchRequest = pending;
   bindingCapture = null;
@@ -2586,9 +2587,9 @@ async function openLunaInviteWindow(): Promise<void> {
     return;
   }
 
-  if (!onlineRoom) {
+  if (!roomState.current) {
     await createOnlineRoom('private');
-    if (!onlineRoom) return;
+    if (!roomState.current) return;
   }
 
   const popup = window.open('', 'luna-negra-invite', 'popup=yes,width=420,height=640');
@@ -2608,7 +2609,7 @@ async function openLunaInviteWindow(): Promise<void> {
   lunaState.inviteWindowBusy = true;
   lunaState.inviteNotice = null;
   try {
-    const response = await lunaSocialClient.inviteWindow(lunaState.identity.gameId, onlineRoom.id, identityState.player.id);
+    const response = await lunaSocialClient.inviteWindow(lunaState.identity.gameId, roomState.current.id, identityState.player.id);
     popup.location.href = response.url;
     lunaState.inviteNotice = 'Elegiste amigos desde Luna Negra.';
     onlineNetState.error = null;
@@ -2635,12 +2636,12 @@ async function openLunaLogin(): Promise<void> {
 }
 
 async function kickOnlinePlayer(targetPlayerId: string): Promise<void> {
-  if (!onlineRoom || onlineNetState.busy || !targetPlayerId) return;
+  if (!roomState.current || onlineNetState.busy || !targetPlayerId) return;
   if (targetPlayerId === identityState.player.id) return;
   onlineNetState.busy = true;
   try {
     const response = await onlineClient.kickPlayer({
-      roomId: onlineRoom.id,
+      roomId: roomState.current.id,
       playerId: identityState.player.id,
       targetPlayerId,
     });
@@ -2661,7 +2662,7 @@ const ROOM_BROWSER_APP_MODES: AppMode[] = ['menu', 'multiplayerMenu', 'onlineMen
 
 function shouldAutoRefreshPublicRooms(): boolean {
   if (document.hidden) return false;
-  if (onlineRoom || onlineNetState.busy) return false;
+  if (roomState.current || onlineNetState.busy) return false;
   return ROOM_BROWSER_APP_MODES.includes(appMode);
 }
 
@@ -2685,7 +2686,7 @@ async function refreshPublicRooms(options: { silent?: boolean } = {}): Promise<v
   try {
     const response = await onlineClient.listPublicRooms(publicRoomFilters());
     syncOnlineClock(response.serverNowMs);
-    onlinePublicRooms = response.rooms;
+    roomState.publicRooms = response.rooms;
     onlineNetState.error = null;
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
@@ -2702,14 +2703,14 @@ function publicRoomFilters(): PublicRoomsFilters {
 }
 
 async function setOnlineRoomVisibility(value: string | undefined): Promise<void> {
-  if (!onlineRoom || onlineNetState.busy) return;
+  if (!roomState.current || onlineNetState.busy) return;
   const visibility = value === 'public' ? 'public' : value === 'private' ? 'private' : null;
-  if (!visibility || visibility === onlineRoom.visibility) return;
-  if (onlineRoom.hostPlayerId !== identityState.player.id) {
+  if (!visibility || visibility === roomState.current.visibility) return;
+  if (roomState.current.hostPlayerId !== identityState.player.id) {
     onlineNetState.error = 'Solo el host puede cambiar la visibilidad de la sala.';
     return;
   }
-  if (onlineRoom.status !== 'lobby') {
+  if (roomState.current.status !== 'lobby') {
     onlineNetState.error = 'La visibilidad solo se puede cambiar en el lobby.';
     return;
   }
@@ -2718,7 +2719,7 @@ async function setOnlineRoomVisibility(value: string | undefined): Promise<void>
     // visibilityOnly: el toggle no reinicia reglas, jugadores ni la apuesta, y
     // no cambia la pantalla actual (se usa desde el panel persistente también).
     const response = await onlineClient.updateRoomSettings({
-      roomId: onlineRoom.id,
+      roomId: roomState.current.id,
       playerId: identityState.player.id,
       visibility,
       visibilityOnly: true,
@@ -2740,12 +2741,12 @@ async function setOnlineRoomVisibility(value: string | undefined): Promise<void>
 let onlineRulesSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 function canSyncOnlineRoomRules(): boolean {
-  if (!onlineRoom || !isOnlineHost() || onlineRoom.status !== 'lobby') return false;
+  if (!roomState.current || !isOnlineHost() || roomState.current.status !== 'lobby') return false;
   // Supervivencia (battle) tiene reglas fijas: no se sincroniza la config custom
   // (además, hacerlo convertiría la sala a 'custom' en el server).
-  if (onlineRoom.matchType === 'battle') return false;
+  if (roomState.current.matchType === 'battle') return false;
   // El server rechaza cambios de reglas con una apuesta activa; no spameamos.
-  if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) return false;
+  if (roomState.current.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(roomState.current.bet.status)) return false;
   return true;
 }
 
@@ -2759,13 +2760,13 @@ function scheduleOnlineRoomRulesSync(): void {
 }
 
 async function syncOnlineRoomRules(): Promise<void> {
-  if (!canSyncOnlineRoomRules() || !onlineRoom) return;
+  if (!canSyncOnlineRoomRules() || !roomState.current) return;
   if (onlineNetState.busy) {
     // Otra operación online en curso: reintentar sin perder el cambio.
     scheduleOnlineRoomRulesSync();
     return;
   }
-  const room = onlineRoom;
+  const room = roomState.current;
   onlineNetState.busy = true;
   try {
     const response = await onlineClient.updateRoomSettings({
@@ -2796,7 +2797,7 @@ function roomMatchTypeForSelectedMode(): OnlineMatchType {
 // Modo actual de la sala derivado de su matchType (para resaltar la tarjeta activa
 // en el lobby). 'battle' = Supervivencia; 'custom' = Custom.
 function roomPlayMode(): PlayMode {
-  return onlineRoom?.matchType === 'battle' ? 'survival' : 'custom';
+  return roomState.current?.matchType === 'battle' ? 'survival' : 'custom';
 }
 
 // El host puede cambiar la modalidad SIN salir de la sala: re-configura el
@@ -2815,21 +2816,21 @@ async function switchOnlineRoomMode(mode: PlayMode): Promise<void> {
   if (mode === 'local1v1') {
     // El duelo local no es una sala online: pasar a él te saca de la sala. Si hay
     // sala, pedimos confirmación antes (la acción confirma con leaveRoomAndStartLocalVersus).
-    if (onlineRoom) { requestRunConfirmation('leave-room-for-local'); return; }
+    if (roomState.current) { requestRunConfirmation('leave-room-for-local'); return; }
     leaveRoomAndStartLocalVersus();
     return;
   }
-  if (!onlineRoom || !isOnlineHost() || onlineRoom.status !== 'lobby') return;
+  if (!roomState.current || !isOnlineHost() || roomState.current.status !== 'lobby') return;
   selectedPlayMode = mode;
   if (mode === 'survival') ensureSurvivalTopsLoaded();
   const targetMatchType: OnlineMatchType = mode === 'survival' ? 'battle' : 'custom';
-  if (onlineRoom.matchType === targetMatchType) return; // ya está en ese modo
-  if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) {
+  if (roomState.current.matchType === targetMatchType) return; // ya está en ese modo
+  if (roomState.current.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(roomState.current.bet.status)) {
     onlineNetState.error = 'No se puede cambiar de modo con una apuesta activa.';
     return;
   }
   if (onlineNetState.busy) return;
-  const room = onlineRoom;
+  const room = roomState.current;
   onlineNetState.busy = true;
   try {
     const rules = targetMatchType === 'battle' ? battleRulesFromSettings(inputSettings) : onlineCustomRulesFromSettings();
@@ -2892,15 +2893,15 @@ async function createOnlineRoom(
 async function startDevBotMatch(): Promise<void> {
   if (!import.meta.env.DEV || devBotMatch) return;
   await createOnlineRoom('private');
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   const { DevBotOpponent } = await import('./dev/devBotOpponent');
   const bot = new DevBotOpponent({
-    getRoom: () => onlineRoom,
+    getRoom: () => roomState.current,
     getNowMs: onlineNowMs,
-    botRules: () => onlineRulesFromRoom(onlineRoom),
+    botRules: () => onlineRulesFromRoom(roomState.current),
     deliverAttackIntent: (intent) => {
       // Mismo camino que onAttackIntent del peer broadcast: el host rutea.
-      if (onlineRoom && isOnlineHost()) commitOnlineAttack(intent);
+      if (roomState.current && isOnlineHost()) commitOnlineAttack(intent);
     },
     deliverSnapshot: (playerId, game) => {
       // Mismo camino que el snapshot por peer: display local + relay del host
@@ -2918,7 +2919,7 @@ async function startDevBotMatch(): Promise<void> {
     },
   }, onlineClient);
   try {
-    await bot.join(onlineRoom.id);
+    await bot.join(roomState.current.id);
   } catch (error) {
     bot.dispose();
     onlineNetState.error = onlineErrorText(error);
@@ -2962,10 +2963,10 @@ async function joinOnlineRoom(roomId: string): Promise<void> {
 }
 
 async function setOnlineReady(ready: boolean): Promise<void> {
-  if (!onlineRoom || onlineNetState.busy) return;
+  if (!roomState.current || onlineNetState.busy) return;
   onlineNetState.busy = true;
   try {
-    const response = await onlineClient.setReady({ roomId: onlineRoom.id, playerId: identityState.player.id, ready });
+    const response = await onlineClient.setReady({ roomId: roomState.current.id, playerId: identityState.player.id, ready });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
   } catch (error) {
@@ -2981,9 +2982,9 @@ async function setOnlineReady(ready: boolean): Promise<void> {
 // sala todavía no está en lobby (status finished/countdown) el server lo rechaza y
 // lo ignoramos; el poll de la repetición lo reintenta cuando la sala reabre.
 async function setOnlineReadyQuiet(ready: boolean): Promise<void> {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   try {
-    const response = await onlineClient.setReady({ roomId: onlineRoom.id, playerId: identityState.player.id, ready });
+    const response = await onlineClient.setReady({ roomId: roomState.current.id, playerId: identityState.player.id, ready });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
   } catch {
@@ -2993,9 +2994,9 @@ async function setOnlineReadyQuiet(ready: boolean): Promise<void> {
 
 // Al abrir una repetición dentro de una sala online me marco NO listo, para que el
 // host no arranque la próxima ronda mientras la estoy viendo. Fuera de una sala no
-// hace nada (setOnlineReadyQuiet corta si no hay onlineRoom).
+// hace nada (setOnlineReadyQuiet corta si no hay roomState.current).
 function beginReplayReadyHold(): void {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   multiReplayState.holdNotReady = true;
   void setOnlineReadyQuiet(false);
 }
@@ -3008,14 +3009,14 @@ function endReplayReadyHold(): void {
 }
 
 async function startOnlineRoom(): Promise<void> {
-  if (!onlineRoom || onlineNetState.busy) return;
+  if (!roomState.current || onlineNetState.busy) return;
   if (!onlineRoomHasOtherPlayers()) {
     startNewRun();
     return;
   }
   onlineNetState.busy = true;
   try {
-    const response = await onlineClient.startRoom({ roomId: onlineRoom.id, playerId: identityState.player.id });
+    const response = await onlineClient.startRoom({ roomId: roomState.current.id, playerId: identityState.player.id });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'onlineCountdown');
   } catch (error) {
@@ -3175,16 +3176,16 @@ function closeOnlineResults(): void {
 }
 
 async function reopenOnlineRoom(): Promise<void> {
-  if (!onlineRoom || !isOnlineHost() || roundState.roomReopenInFlight) return;
-  if (onlineRoom.status !== 'finished') return;
+  if (!roomState.current || !isOnlineHost() || roundState.roomReopenInFlight) return;
+  if (roomState.current.status !== 'finished') return;
   // No reabrimos hasta que la apuesta y sus pagos terminen. `settled` puede incluir
   // un ganador invitado con retiro pendiente; borrar la apuesta haría desaparecer
   // su QR. El servidor repite esta validación para proteger contra otros clientes.
-  if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) return;
-  if (onlineRoom.bet && hasUnresolvedRoomBetPayout(onlineRoom.bet)) return;
+  if (roomState.current.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(roomState.current.bet.status)) return;
+  if (roomState.current.bet && hasUnresolvedRoomBetPayout(roomState.current.bet)) return;
   roundState.roomReopenInFlight = true;
   try {
-    const response = await onlineClient.reopenRoom({ roomId: onlineRoom.id, playerId: identityState.player.id });
+    const response = await onlineClient.reopenRoom({ roomId: roomState.current.id, playerId: identityState.player.id });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
   } catch {
@@ -3195,10 +3196,10 @@ async function reopenOnlineRoom(): Promise<void> {
 }
 
 async function restartOnlineRoom(): Promise<void> {
-  if (!onlineRoom || onlineNetState.busy) return;
+  if (!roomState.current || onlineNetState.busy) return;
   onlineNetState.busy = true;
   try {
-    const response = await onlineClient.restartRoom({ roomId: onlineRoom.id, playerId: identityState.player.id });
+    const response = await onlineClient.restartRoom({ roomId: roomState.current.id, playerId: identityState.player.id });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'onlineCountdown');
   } catch (error) {
@@ -3209,7 +3210,7 @@ async function restartOnlineRoom(): Promise<void> {
 }
 
 async function createOnlineBet(): Promise<void> {
-  if (!onlineRoom || betState.busy) return;
+  if (!roomState.current || betState.busy) return;
   const stakeSats = Number(readOnlineStakeInput());
   if (!Number.isInteger(stakeSats) || stakeSats <= 0) {
     onlineNetState.error = 'Ingresá un monto de apuesta válido (sats).';
@@ -3218,7 +3219,7 @@ async function createOnlineBet(): Promise<void> {
   betState.busy = true;
   betState.creating = true;
   try {
-    const response = await onlineClient.createBet({ roomId: onlineRoom.id, playerId: identityState.player.id, stakeSats });
+    const response = await onlineClient.createBet({ roomId: roomState.current.id, playerId: identityState.player.id, stakeSats });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     armOnlineBetFastPolling();
@@ -3240,10 +3241,10 @@ function readOnlineStakeInput(): string {
 }
 
 async function cancelOnlineBet(): Promise<void> {
-  if (!onlineRoom || betState.busy) return;
+  if (!roomState.current || betState.busy) return;
   betState.busy = true;
   try {
-    const response = await onlineClient.cancelBet({ roomId: onlineRoom.id, playerId: identityState.player.id });
+    const response = await onlineClient.cancelBet({ roomId: roomState.current.id, playerId: identityState.player.id });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     onlineNetState.error = null;
@@ -3255,10 +3256,10 @@ async function cancelOnlineBet(): Promise<void> {
 }
 
 async function retryOnlineBetInvoiceGeneration(): Promise<void> {
-  if (!onlineRoom || betState.busy) return;
+  if (!roomState.current || betState.busy) return;
   betState.busy = true;
   try {
-    const response = await onlineClient.retryBet({ roomId: onlineRoom.id, playerId: identityState.player.id });
+    const response = await onlineClient.retryBet({ roomId: roomState.current.id, playerId: identityState.player.id });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     armOnlineBetFastPolling();
@@ -3271,10 +3272,10 @@ async function retryOnlineBetInvoiceGeneration(): Promise<void> {
 }
 
 async function settleOnlineBet(): Promise<void> {
-  if (!onlineRoom || betState.busy) return;
+  if (!roomState.current || betState.busy) return;
   betState.busy = true;
   try {
-    const response = await onlineClient.settleBet({ roomId: onlineRoom.id, playerId: identityState.player.id });
+    const response = await onlineClient.settleBet({ roomId: roomState.current.id, playerId: identityState.player.id });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
     onlineNetState.error = null;
@@ -3289,23 +3290,23 @@ async function refreshOnlineBet(
   silent: boolean,
   options: { queueIfBusy?: boolean } = {},
 ): Promise<void> {
-  if (!onlineRoom?.bet) return;
+  if (!roomState.current?.bet) return;
   if (betState.busy) {
     if (options.queueIfBusy) betState.refreshQueued = true;
     return;
   }
-  const requestedRoomId = onlineRoom.id;
+  const requestedRoomId = roomState.current.id;
   betState.busy = true;
   betState.lastPollAt = performance.now();
   try {
-    const result = await requestOnlineBetRefresh(onlineRoom.id, identityState.player.id);
+    const result = await requestOnlineBetRefresh(roomState.current.id, identityState.player.id);
     syncOnlineClock(result.payload.serverNowMs);
     adoptOnlineRoom(result.payload.room, 'bet-refresh');
     if (!silent) onlineNetState.error = null;
   } catch (error) {
     recordBetWithdrawalTrace(
       'bet-refresh-error',
-      onlineRoom,
+      roomState.current,
       error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
     );
     if (!silent) onlineNetState.error = onlineErrorText(error);
@@ -3313,7 +3314,7 @@ async function refreshOnlineBet(
     betState.busy = false;
     const shouldRefreshAgain = betState.refreshQueued;
     betState.refreshQueued = false;
-    if (shouldRefreshAgain && onlineRoom?.id === requestedRoomId && isRefreshableRoomBet(onlineRoom.bet)) {
+    if (shouldRefreshAgain && roomState.current?.id === requestedRoomId && isRefreshableRoomBet(roomState.current.bet)) {
       void refreshOnlineBet(true, { queueIfBusy: true });
     }
   }
@@ -3399,7 +3400,7 @@ async function claimOnlineBetWithExtension(lnurl: string): Promise<void> {
 function openLightningWallet(lightningPayload: string): void {
   const normalized = lightningPayload.trim();
   if (!normalized) return;
-  recordBetWithdrawalTrace('withdraw-render', onlineRoom, 'open-mobile-wallet');
+  recordBetWithdrawalTrace('withdraw-render', roomState.current, 'open-mobile-wallet');
   window.location.href = `lightning:${normalized.toUpperCase()}`;
 }
 
@@ -3421,9 +3422,9 @@ function roomInviteLinkRecentlyCopied(): boolean {
 // Copia el link de invitación de la sala activa al portapapeles. Sin diálogo de
 // "compartir" del sistema: copia directo y muestra el feedback en el botón.
 function shareRoomInviteLink(): void {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   lunaState.roomInviteLinkCopiedAt = Date.now();
-  void copyToClipboard(buildRoomInviteLink(onlineRoom.id));
+  void copyToClipboard(buildRoomInviteLink(roomState.current.id));
 }
 
 async function wakeUpServer(): Promise<void> {
@@ -3491,13 +3492,13 @@ function isOnlineRoomResponse(value: unknown): value is OnlineRoomResponse {
 }
 
 async function setOnlineTargeting(mode: string | undefined, manualTargetPlayerId: string | null = null): Promise<void> {
-  if (!onlineRoom || onlineNetState.busy) return;
+  if (!roomState.current || onlineNetState.busy) return;
   const targetingMode = parseTargetingMode(mode);
   if (!targetingMode) return;
   onlineNetState.busy = true;
   try {
     const response = await onlineClient.setTargeting({
-      roomId: onlineRoom.id,
+      roomId: roomState.current.id,
       playerId: identityState.player.id,
       targetingMode,
       manualTargetPlayerId,
@@ -3517,7 +3518,7 @@ function leaveOnlineRoom(): void {
   // Avisamos al servidor para que migre el host (si yo era el host, se lo pasa al
   // siguiente que queda) o elimine la sala si queda vacía. No esperamos la
   // respuesta: la salida local es inmediata.
-  const room = onlineRoom;
+  const room = roomState.current;
   if (room) {
     void onlineClient.leaveRoom({ roomId: room.id, playerId: identityState.player.id }).catch(() => {});
   }
@@ -3529,7 +3530,7 @@ function leaveOnlineRoom(): void {
 // Sale de la sala actual (si hay) antes de crear/unirse a otra, para que una
 // persona nunca tenga dos salas a la vez. Espera el leave del servidor.
 async function leaveCurrentRoomBeforeNew(targetRoomId?: string): Promise<void> {
-  const room = onlineRoom;
+  const room = roomState.current;
   if (!room || room.id === targetRoomId) return;
   try {
     await onlineClient.leaveRoom({ roomId: room.id, playerId: identityState.player.id });
@@ -3540,7 +3541,7 @@ async function leaveCurrentRoomBeforeNew(targetRoomId?: string): Promise<void> {
 }
 
 function resetOnlineRoomState(): void {
-  if (import.meta.env.DEV) { // BOT DEV: salir de la sala mata al bot (antes de perder onlineRoom)
+  if (import.meta.env.DEV) { // BOT DEV: salir de la sala mata al bot (antes de perder roomState.current)
     devBotMatch?.dispose();
     devBotMatch = null;
   }
@@ -3550,7 +3551,7 @@ function resetOnlineRoomState(): void {
   peerState.states = new Map();
   peerState.displaySnapshots = new Map();
   resetSpectatorFocus();
-  onlineRoom = null;
+  roomState.current = null;
   onlineNetState.error = null;
   betState.stakeInput = String(DEFAULT_ONLINE_BET_STAKE_SATS);
   betState.busy = false;
@@ -3652,7 +3653,7 @@ function preserveVisiblePendingWithdrawal(previousRoom: OnlineRoom | null, incom
 }
 
 function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' | 'bet-refresh' = 'room-action'): void {
-  const previousRoom = onlineRoom;
+  const previousRoom = roomState.current;
   const previousRoundId = roundState.activeRoundId;
   const previousEntry = roomBetEntryForLocalPlayer(previousRoom);
   const incomingEntry = roomBetEntryForLocalPlayer(room);
@@ -3673,7 +3674,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   const nextRoundId = onlineRoundKey(protectedRoom);
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && protectedRoom.status === 'countdown';
-  onlineRoom = protectedRoom;
+  roomState.current = protectedRoom;
   saveOnlineRoomSession(protectedRoom);
   if (protectedRoom.bet?.status !== 'pending_deposits') betState.fastPollUntil = 0;
   roundState.activeRoundId = nextRoundId;
@@ -3686,7 +3687,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
 // `withdraw_pending` ya tiene monto asignado, pero todavía necesita que el ganador
 // abra su wallet y reclame; festejar antes bloquea justamente esos controles.
 function maybeCelebratePayout(): void {
-  const bet = onlineRoom?.bet;
+  const bet = roomState.current?.bet;
   if (!bet || bet.status !== 'settled') return;
   if (betState.celebratedBetId === bet.betId) return;
   const myEntry = myBetEntry(bet);
@@ -3723,7 +3724,7 @@ function resetOnlineRuntimeForNextRound(): void {
   onlineNetState.lastKoBroadcastAt = 0;
   input.releaseAll();
   lastCountdownSecondPlayed = -1;
-  if (onlineRoom?.status === 'countdown' || onlineRoom?.status === 'playing') appMode = 'onlineCountdown';
+  if (roomState.current?.status === 'countdown' || roomState.current?.status === 'playing') appMode = 'onlineCountdown';
 }
 
 function applyInputSettings(settings: InputSettings): void {
@@ -3891,7 +3892,7 @@ function syncRunEffects(state: GameState, events: GameEvent[]): void {
 }
 
 function syncOnlineBattleEvents(events: GameEvent[], state: GameState): void {
-  if (appMode !== 'onlinePlaying' || !onlineRoom) return;
+  if (appMode !== 'onlinePlaying' || !roomState.current) return;
   // Cliente-autoritativo: cada jugador (host o invitado) declara sus propios ataques a
   // partir de SUS líneas. Antes solo el host generaba ataques (los de los invitados los
   // derivaba de la simulación que divergía); ahora nacen del motor real de cada cliente.
@@ -3913,13 +3914,13 @@ function flushOnlineInputOutbox(): void {
 }
 
 function sendOnlineAttack(event: LineClearEvent, state: GameState): void {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   attackState.sequence += 1;
   const attack = {
     attackId: `${identityState.player.id}-${gameFrame}-${attackState.sequence}`,
     fromPlayerId: identityState.player.id,
     lines: event.outgoingLines,
-    holeSeed: (onlineRoom.seed + gameFrame + attackState.sequence * 97) >>> 0,
+    holeSeed: (roomState.current.seed + gameFrame + attackState.sequence * 97) >>> 0,
     frame: displayedElapsedFrames(state.stats),
   };
   // Autoridad descentralizada: cada jugador rutea su PROPIO ataque (elige objetivo
@@ -3964,17 +3965,17 @@ function commitOnlineAttack(request: {
 }): void {
   // Solo ruteo ataques que yo origino (o, si soy host, también los que me llegan
   // como intención de un peer por compatibilidad). authorityPlayerId queda como yo.
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   if (!isOnlineHost() && request.fromPlayerId !== identityState.player.id) return;
   const target = selectAttackTarget(request.fromPlayerId, request.attackId);
   if (!target) return;
   const attack: AttackRequest = {
-    roomId: onlineRoom.id,
+    roomId: roomState.current.id,
     authorityPlayerId: identityState.player.id,
     attackId: request.attackId,
     fromPlayerId: request.fromPlayerId,
     toPlayerId: target.id,
-    seed: onlineRoom.seed,
+    seed: roomState.current.seed,
     lines: request.lines,
     holeSeed: request.holeSeed,
     frame: request.frame,
@@ -4023,36 +4024,36 @@ function applyAttackToHostTruth(attack: AttackRequest): void {
 }
 
 function selectAttackTarget(sourcePlayerId: string, attackId: string): OnlinePlayer | null {
-  if (!onlineRoom) return null;
-  const source = onlineRoom.players.find((player) => player.id === sourcePlayerId);
+  if (!roomState.current) return null;
+  const source = roomState.current.players.find((player) => player.id === sourcePlayerId);
   return selectTargetForAttack({
-    players: onlineRoom.players,
+    players: roomState.current.players,
     sourcePlayerId,
     attackId,
-    mode: source?.targetingMode ?? onlineRoom.ruleset.targeting,
+    mode: source?.targetingMode ?? roomState.current.ruleset.targeting,
     manualTargetPlayerId: source?.manualTargetPlayerId ?? null,
     recentAttackers: source?.recentAttackers ?? [],
   });
 }
 
 function advanceHostAuthority(targetFrame: number): void {
-  if (!onlineRoom || !isOnlineHost() || !hostAuthorityState.simulator) return;
+  if (!roomState.current || !isOnlineHost() || !hostAuthorityState.simulator) return;
   syncHostAuthorityPlayers();
   const updates = hostAuthorityState.simulator.advanceAll(targetFrame);
   for (const update of updates) processHostSimulationUpdate(update);
 }
 
 function syncHostAuthorityPlayers(): void {
-  if (!onlineRoom || !isOnlineHost() || !hostAuthorityState.simulator) return;
+  if (!roomState.current || !isOnlineHost() || !hostAuthorityState.simulator) return;
   hostAuthorityState.simulator.ensurePlayers(
-    onlineRoom.players
+    roomState.current.players
       .map((player) => player.id)
       .filter((playerId) => playerId !== identityState.player.id),
   );
 }
 
 function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
-  if (!onlineRoom || !isOnlineHost()) return;
+  if (!roomState.current || !isOnlineHost()) return;
   const snapshot = createOnlineGameSnapshotFromState(
     update.state,
     update.snapshot,
@@ -4080,7 +4081,7 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
         attackId: `${update.playerId}-${event.frame}-${attackState.sequence}`,
         fromPlayerId: update.playerId,
         lines: event.outgoingLines,
-        holeSeed: ((onlineRoom?.seed ?? 0) + event.frame + attackState.sequence * 97) >>> 0,
+        holeSeed: ((roomState.current?.seed ?? 0) + event.frame + attackState.sequence * 97) >>> 0,
         frame: event.frame,
       });
     }
@@ -4109,7 +4110,7 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
 }
 
 function syncOnline(): void {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   const now = performance.now();
   // Suaviza el reloj del server cada frame (el frame del motor se ancla a él en online).
   slewOnlineClock();
@@ -4117,8 +4118,8 @@ function syncOnline(): void {
   if (appMode === 'onlineCountdown') {
     // Mismo sonido de cuenta regresiva que el solo, dirigido por el reloj del
     // servidor (compartido por todos los jugadores de la sala).
-    if (onlineRoom.startsAtServerMs) {
-      playCountdownAudio(Math.max(0, onlineRoom.startsAtServerMs - onlineNowMs()));
+    if (roomState.current.startsAtServerMs) {
+      playCountdownAudio(Math.max(0, roomState.current.startsAtServerMs - onlineNowMs()));
     }
     maybeStartOnlineRun();
   }
@@ -4134,7 +4135,7 @@ function syncOnline(): void {
   // terminado y esté mirando los resultados: si dejara de simular, el resto de
   // los jugadores se quedaría sin garbage, sin snapshots y sin eliminaciones, y
   // la sala terminaría mal (o nunca).
-  const roomStillRunning = onlineRoom.status === 'playing' || onlineRoom.status === 'countdown';
+  const roomStillRunning = roomState.current.status === 'playing' || roomState.current.status === 'countdown';
   const hostStillAuthority = isOnlineHost() && roundState.runStarted && appMode === 'onlineResults' && roomStillRunning;
   // Un espectador de la ronda (no estaba listo al arrancar) no tiene tablero
   // propio: no simula, no reporta ni difunde nada. Solo mira a los rivales con los
@@ -4143,8 +4144,8 @@ function syncOnline(): void {
   if ((appMode === 'onlinePlaying' || hostStillAuthority) && !roundState.spectatorRound) {
     if (appMode === 'onlinePlaying' && now - onlineLastDiagLogAt >= 2000) {
       onlineLastDiagLogAt = now;
-      const serverFrame = onlineRoom.startsAtServerMs
-        ? Math.floor((onlineNowMs() - onlineRoom.startsAtServerMs) / GAME_FRAME_MS)
+      const serverFrame = roomState.current.startsAtServerMs
+        ? Math.floor((onlineNowMs() - roomState.current.startsAtServerMs) / GAME_FRAME_MS)
         : null;
       logMp('heartbeat', {
         status: liveState.status,
@@ -4161,7 +4162,7 @@ function syncOnline(): void {
     }
     if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(liveState));
     else { flushOnlineInputOutbox(); maybePostSelfProgressFallback(now, liveState); maybeRequestHostFailover(now, liveState); }
-    applyRoomAttacks(onlineRoom);
+    applyRoomAttacks(roomState.current);
     if (shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(liveState);
     if (isOnlineHost()) relayPeerProgressToServer();
     // El host postea progreso mientras la sala siga en ronda AUNQUE su propia
@@ -4186,8 +4187,8 @@ function syncOnline(): void {
 // así que derivamos el frame objetivo del reloj sincronizado con el servidor
 // para que las partidas remotas sigan corriendo hasta que la sala termine.
 function onlineAuthorityTargetFrame(state: GameState): number {
-  if (state.status === 'playing' || !onlineRoom?.startsAtServerMs) return gameFrame;
-  const elapsedFrames = Math.floor((onlineNowMs() - onlineRoom.startsAtServerMs) / GAME_FRAME_MS);
+  if (state.status === 'playing' || !roomState.current?.startsAtServerMs) return gameFrame;
+  const elapsedFrames = Math.floor((onlineNowMs() - roomState.current.startsAtServerMs) / GAME_FRAME_MS);
   return Math.max(gameFrame, elapsedFrames);
 }
 
@@ -4208,11 +4209,11 @@ function shouldBroadcastPeerSnapshot(now: number): boolean {
 }
 
 async function pollOnlineRoom(): Promise<void> {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   onlineNetState.pollInFlight = true;
   onlineNetState.lastPollAt = performance.now();
   try {
-    const response = await onlineClient.getRoomState(onlineRoom.id, identityState.player.id);
+    const response = await onlineClient.getRoomState(roomState.current.id, identityState.player.id);
     syncOnlineClock(response.serverNowMs);
     // Si ya no estoy entre los jugadores y la sala sigue en lobby, me expulsaron.
     if (
@@ -4290,7 +4291,7 @@ function maybeRefreshBet(): void {
   // refrescando para reintentar la liquidación (reporte del ganador + pago) hasta
   // que la apuesta quede en estado terminal.
   if (appMode !== 'roomLobby' && appMode !== 'onlineResults') return;
-  const bet = onlineRoom?.bet;
+  const bet = roomState.current?.bet;
   if (!isRefreshableRoomBet(bet)) return;
   const now = performance.now();
   // Igual que la pantalla de pago por QR de Luna Negra: mientras MI depósito
@@ -4322,22 +4323,22 @@ function hasOwnPendingDeposit(bet: RoomBet): boolean {
 }
 
 function armOnlineBetFastPolling(): void {
-  const bet = onlineRoom?.bet;
+  const bet = roomState.current?.bet;
   if (!bet || bet.status !== 'pending_deposits') return;
   betState.fastPollUntil = Math.max(betState.fastPollUntil, performance.now() + ONLINE_BET_FAST_POLL_WINDOW_MS);
 }
 
 async function postOnlineProgress(state: GameState): Promise<void> {
-  if (!onlineRoom || !isOnlineHost()) return;
+  if (!roomState.current || !isOnlineHost()) return;
   onlineNetState.progressInFlight = true;
   onlineNetState.lastProgressAt = performance.now();
-  const requestSeed = onlineRoom.seed;
+  const requestSeed = roomState.current.seed;
   try {
     const response = await onlineClient.updateProgress({
-      roomId: onlineRoom.id,
+      roomId: roomState.current.id,
       authorityPlayerId: identityState.player.id,
       playerId: identityState.player.id,
-      seed: onlineRoom.seed,
+      seed: roomState.current.seed,
       lines: state.stats.lines,
       pieces: state.stats.pieces,
       elapsedFrames: displayedElapsedFrames(state.stats),
@@ -4361,9 +4362,9 @@ async function postOnlineProgress(state: GameState): Promise<void> {
 // ¿Tengo abierto el canal de datos hacia el host? (El host siempre "se ve" a sí
 // mismo.) Si no, los snapshots peer no llegan y dependo del fallback por servidor.
 function isHostChannelOpen(): boolean {
-  if (!onlineRoom) return false;
+  if (!roomState.current) return false;
   if (isOnlineHost()) return true;
-  return peerState.states.get(onlineRoom.hostPlayerId) === 'open';
+  return peerState.states.get(roomState.current.hostPlayerId) === 'open';
 }
 
 // Fallback del invitado: si el canal al host lleva caído ONLINE_SELF_REPORT_GRACE_MS
@@ -4371,7 +4372,7 @@ function isHostChannelOpen(): boolean {
 // que los demás me vean vía player.game. No mueve room.updatedAtServerMs (el server
 // lo trata como self-report; ver updateProgressOnce).
 function maybePostSelfProgressFallback(now: number, state: GameState): void {
-  if (!onlineRoom || isOnlineHost()) return;
+  if (!roomState.current || isOnlineHost()) return;
   if (state.status !== 'playing') { onlineFailoverState.hostChannelDownSince = 0; return; }
   if (isHostChannelOpen()) { onlineFailoverState.hostChannelDownSince = 0; return; }
   if (onlineFailoverState.hostChannelDownSince === 0) { onlineFailoverState.hostChannelDownSince = now; return; }
@@ -4386,8 +4387,8 @@ function maybePostSelfProgressFallback(now: number, state: GameState): void {
 // que llamarlo de más es inocuo (devuelve la sala sin cambios). Resuelve el 1v1:
 // el sobreviviente no puede eliminar al host ausente por su cuenta.
 function maybeRequestHostFailover(now: number, state: GameState): void {
-  if (!onlineRoom || isOnlineHost()) return;
-  if (onlineRoom.status !== 'playing' && onlineRoom.status !== 'countdown') return;
+  if (!roomState.current || isOnlineHost()) return;
+  if (roomState.current.status !== 'playing' && roomState.current.status !== 'countdown') return;
   if (state.status !== 'playing') return; // solo un jugador vivo lo pide
   if (isHostChannelOpen()) return;
   if (onlineFailoverState.hostChannelDownSince === 0) return; // aún sin medir el corte (lo setea el self-report)
@@ -4397,13 +4398,13 @@ function maybeRequestHostFailover(now: number, state: GameState): void {
 }
 
 async function requestHostFailover(): Promise<void> {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   onlineFailoverState.requestInFlight = true;
   onlineFailoverState.lastRequestAt = performance.now();
-  const requestSeed = onlineRoom.seed;
+  const requestSeed = roomState.current.seed;
   try {
     const response = await onlineClient.requestHostFailover({
-      roomId: onlineRoom.id,
+      roomId: roomState.current.id,
       playerId: identityState.player.id,
     });
     if (!isCurrentOnlineSeed(requestSeed)) return;
@@ -4417,16 +4418,16 @@ async function requestHostFailover(): Promise<void> {
 }
 
 async function postSelfProgress(state: GameState): Promise<void> {
-  if (!onlineRoom || isOnlineHost()) return;
+  if (!roomState.current || isOnlineHost()) return;
   onlineNetState.selfReportInFlight = true;
   onlineNetState.lastSelfReportAt = performance.now();
-  const requestSeed = onlineRoom.seed;
+  const requestSeed = roomState.current.seed;
   try {
     const response = await onlineClient.updateProgress({
-      roomId: onlineRoom.id,
+      roomId: roomState.current.id,
       authorityPlayerId: identityState.player.id, // no soy host: el server lo trata como self-report
       playerId: identityState.player.id,
-      seed: onlineRoom.seed,
+      seed: roomState.current.seed,
       lines: state.stats.lines,
       pieces: state.stats.pieces,
       elapsedFrames: displayedElapsedFrames(state.stats),
@@ -4445,7 +4446,7 @@ async function postSelfProgress(state: GameState): Promise<void> {
 }
 
 async function postOnlineResult(state: GameState): Promise<void> {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   roundState.resultSubmitted = true;
   if (!canCommitLocalOnlineTerminal(isOnlineHost())) {
     onlineNetState.error = null;
@@ -4467,7 +4468,7 @@ async function commitOnlineResult(
 ): Promise<void> {
   // Cada cliente reporta su propio resultado ('won' del sobreviviente/sprint); el
   // host queda como respaldo. Ya no es el único escritor del servidor.
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   if (!isOnlineHost() && playerId !== identityState.player.id) return;
   hostAuthorityState.committedResults.add(playerId);
   const requestSeed = game.seed;
@@ -4499,7 +4500,7 @@ async function commitOnlineResult(
 }
 
 async function postOnlineElimination(state: GameState): Promise<void> {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   const canCommit = canCommitLocalOnlineTerminal(isOnlineHost());
   if (!canCommit) {
     const now = performance.now();
@@ -4525,7 +4526,7 @@ async function postOnlineElimination(state: GameState): Promise<void> {
 async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>, onFailure?: () => void): Promise<void> {
   // Cada quien commitea SU PROPIA muerte; el host además puede commitear la de un
   // peer que se cayó justo después de anunciar su KO (respaldo idempotente).
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   if (!isOnlineHost() && report.playerId !== identityState.player.id) return;
   // Los KOs llegan repetidos (broadcast por peer con retry + simulación local):
   // un solo commit por jugador y por ronda.
@@ -4534,7 +4535,7 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
   hostAuthorityState.committedEliminations.add(report.playerId);
   try {
     const response = await onlineClient.eliminatePlayer({
-      roomId: onlineRoom.id,
+      roomId: roomState.current.id,
       authorityPlayerId: identityState.player.id,
       playerId: report.playerId,
       seed: report.seed,
@@ -4580,19 +4581,19 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
  * con lo que el servidor puede terminar la partida (finishRoomIfOnlyOneAlive).
  */
 function ensureMigratedHostAuthority(): void {
-  if (!onlineRoom || !roundState.runStarted || !isOnlineHost()) return;
+  if (!roomState.current || !roundState.runStarted || !isOnlineHost()) return;
   if (hostAuthorityState.simulator || hostAuthorityState.migrated) return;
   hostAuthorityState.migrated = true;
 }
 
 function maybeStartOnlineRun(): void {
-  if (!onlineRoom?.startsAtServerMs || roundState.runStarted) return;
-  if (onlineNowMs() < onlineRoom.startsAtServerMs) return;
+  if (!roomState.current?.startsAtServerMs || roundState.runStarted) return;
+  if (onlineNowMs() < roomState.current.startsAtServerMs) return;
   roundState.runStarted = true;
   // No estaba listo cuando arrancó la ronda: el servidor me dejó como espectador
   // (alive=false). No simulo tablero propio ni reporto nada; solo miro a los
   // rivales. Ver isOnlineSpectating() y los guards de syncOnline().
-  const me = onlineRoom.players.find((player) => player.id === identityState.player.id);
+  const me = roomState.current.players.find((player) => player.id === identityState.player.id);
   if (me && !me.alive) {
     roundState.spectatorRound = true;
     appMode = 'onlinePlaying';
@@ -4622,7 +4623,7 @@ function maybeStartOnlineRun(): void {
   onlineNetState.lastPeerBroadcastAt = 0;
   onlineNetState.lastKoBroadcastAt = 0;
   syncHostAuthorityPlayers();
-  startNewRun(onlineRoom.seed, 'onlinePlaying');
+  startNewRun(roomState.current.seed, 'onlinePlaying');
 }
 
 // Sonido de cuenta regresiva compartido por solo y online: un beep por cada
@@ -4650,9 +4651,9 @@ function syncOnlinePeers(room: OnlineRoom): void {
   peerState.broadcaster ??= new OnlinePeerBroadcaster({
     playerId: identityState.player.id,
     sendSignal: (signal) => {
-      if (!onlineRoom) return;
+      if (!roomState.current) return;
       void onlineClient.sendPeerSignal({
-        roomId: onlineRoom.id,
+        roomId: roomState.current.id,
         fromPlayerId: identityState.player.id,
         toPlayerId: signal.toPlayerId,
         type: signal.type,
@@ -4668,11 +4669,11 @@ function syncOnlinePeers(room: OnlineRoom): void {
     onAttack: (remoteId, attack) => {
       // Acepto el ataque de cualquier peer que lo firme como propio (el emisor es el
       // autor y la fuente). Antes solo se aceptaban los del host.
-      if (!onlineRoom || attack.authorityPlayerId !== remoteId || attack.fromPlayerId !== remoteId) return;
+      if (!roomState.current || attack.authorityPlayerId !== remoteId || attack.fromPlayerId !== remoteId) return;
       if (!isCurrentOnlineSeed(attack.seed)) return;
       applyOnlineAttack({
         id: attack.attackId,
-        roomId: onlineRoom.id,
+        roomId: roomState.current.id,
         authorityPlayerId: attack.authorityPlayerId,
         fromPlayerId: attack.fromPlayerId,
         toPlayerId: attack.toPlayerId,
@@ -4687,7 +4688,7 @@ function syncOnlinePeers(room: OnlineRoom): void {
       // Solo el host rutea: elige objetivo según el targeting de la sala y emite el
       // ataque (aplica garbage local si el objetivo es el host, lo reenvía al peer
       // objetivo si es otro, y lo registra en el servidor).
-      if (!onlineRoom || !isOnlineHost()) return;
+      if (!roomState.current || !isOnlineHost()) return;
       if (remoteId !== intent.fromPlayerId) return;
       if (!isCurrentOnlineSeed(intent.seed)) return;
       commitOnlineAttack({
@@ -4704,14 +4705,14 @@ function syncOnlinePeers(room: OnlineRoom): void {
       hostAuthorityState.simulator?.pushInputs(message.playerId, message.inputs);
     },
     onKo: (remoteId, message) => {
-      if (!onlineRoom) return;
+      if (!roomState.current) return;
       const action = decidePeerKoAction({
         isHostAuthority: isOnlineHost(),
         localPlayerId: identityState.player.id,
-        hostPlayerId: onlineRoom.hostPlayerId,
+        hostPlayerId: roomState.current.hostPlayerId,
         remotePlayerId: remoteId,
         messagePlayerId: message.playerId,
-        playerIsInRoom: onlineRoom.players.some((player) => player.id === remoteId),
+        playerIsInRoom: roomState.current.players.some((player) => player.id === remoteId),
         seedMatches: isCurrentOnlineSeed(message.seed),
       });
       if (action === 'ignore') return;
@@ -4738,7 +4739,7 @@ function broadcastOnlineSnapshot(state: GameState): void {
     if (isOnlineHost()) applyPeerSnapshot(identityState.player.id, identityState.player.id, snapshot);
   }
   if (!isOnlineHost()) return;
-  for (const player of onlineRoom?.players ?? []) {
+  for (const player of roomState.current?.players ?? []) {
     if (player.id === identityState.player.id) continue;
     const remoteState = hostAuthorityState.simulator?.getState(player.id);
     const remoteSnapshot = hostAuthorityState.simulator?.getSnapshot(player.id);
@@ -4761,7 +4762,7 @@ function broadcastOnlineSnapshot(state: GameState): void {
 function maybeBroadcastOwnReplay(state: GameState): void {
   if (currentRunKind !== 'online' || multiReplayState.broadcast) return;
   const localTerminal = state.status === 'gameover' || state.status === 'finished';
-  const roundOver = onlineRoom?.status === 'finished';
+  const roundOver = roomState.current?.status === 'finished';
   if (!localTerminal && !roundOver) return;
   multiReplayState.broadcast = true;
   const report: Omit<OnlinePeerReplayMessage, 'type'> = {
@@ -4791,10 +4792,10 @@ function collectPeerReplay(remoteId: string, message: OnlinePeerReplayMessage): 
 }
 
 function applyAuthoritativeSnapshot(remoteId: string, playerId: string, game: OnlineGameSnapshot): void {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   if (playerId === remoteId) rememberPeerDisplaySnapshot(playerId, game);
   if (isOnlineHost()) return;
-  if (remoteId !== onlineRoom.hostPlayerId) return;
+  if (remoteId !== roomState.current.hostPlayerId) return;
   if (!isCurrentOnlineGame(game)) return;
   // Cliente-autoritativo: cada quien es dueño de su propio motor. NO adoptamos el tablero
   // que el host tenga de nosotros (eso era lo que nos mataba con el mapa lleno cuando su
@@ -4808,15 +4809,15 @@ function isCurrentOnlineGame(game: OnlineGameSnapshot | null | undefined): boole
 }
 
 function isCurrentOnlineSeed(seedValue: number | undefined): boolean {
-  return !!onlineRoom && seedValue === onlineRoom.seed;
+  return !!roomState.current && seedValue === roomState.current.seed;
 }
 
 function applyPeerSnapshot(_remoteId: string, playerId: string, game: OnlineGameSnapshot): void {
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   if (!isCurrentOnlineGame(game)) return;
-  onlineRoom = {
-    ...onlineRoom,
-    players: onlineRoom.players.map((player) => player.id === playerId ? { ...player, game } : player),
+  roomState.current = {
+    ...roomState.current,
+    players: roomState.current.players.map((player) => player.id === playerId ? { ...player, game } : player),
   };
 }
 
@@ -4835,14 +4836,14 @@ function prunePeerDisplaySnapshots(room: OnlineRoom): void {
 }
 
 function postHostSimulatedProgress(playerId: string, state: GameState): void {
-  if (!onlineRoom || !isOnlineHost()) return;
+  if (!roomState.current || !isOnlineHost()) return;
   const now = performance.now();
   if (hostAuthorityState.progressInFlight.has(playerId)) return;
   if (now - (hostAuthorityState.lastProgressAt.get(playerId) ?? 0) < ONLINE_POLL_MS) return;
 
   hostAuthorityState.progressInFlight.add(playerId);
   hostAuthorityState.lastProgressAt.set(playerId, now);
-  const requestSeed = onlineRoom.seed;
+  const requestSeed = roomState.current.seed;
   const progress = createProgressRequest(playerId, createOnlineGameSnapshotFromState(
     state,
     hostAuthorityState.simulator?.getSnapshot(playerId) ?? undefined,
@@ -4869,9 +4870,9 @@ function postHostSimulatedProgress(playerId: string, state: GameState): void {
 // El servidor solo acepta escrituras con authorityPlayerId = host, así que el host sigue
 // siendo el único escritor; acá actúa de mero relay del estado real que reporta cada peer.
 function relayPeerProgressToServer(): void {
-  if (!onlineRoom || !isOnlineHost()) return;
+  if (!roomState.current || !isOnlineHost()) return;
   const now = performance.now();
-  for (const player of onlineRoom.players) {
+  for (const player of roomState.current.players) {
     if (player.id === identityState.player.id) continue;
     if (player.status === 'eliminated' || player.status === 'won' || player.status === 'lost') continue;
     const snapshot = peerState.displaySnapshots.get(player.id);
@@ -4881,7 +4882,7 @@ function relayPeerProgressToServer(): void {
 
     hostAuthorityState.progressInFlight.add(player.id);
     hostAuthorityState.lastProgressAt.set(player.id, now);
-    const requestSeed = onlineRoom.seed;
+    const requestSeed = roomState.current.seed;
     void onlineClient.updateProgress(createProgressRequest(player.id, snapshot))
       .then((response) => {
         if (!isCurrentOnlineSeed(requestSeed)) return;
@@ -4900,11 +4901,11 @@ function relayPeerProgressToServer(): void {
 
 function applyPeerKo(message: Pick<OnlinePeerKoMessage, 'playerId' | 'seed' | 'frame' | 'elapsedFrames' | 'game'>): void {
   const { playerId, frame } = message;
-  if (!onlineRoom || playerId === identityState.player.id) return;
+  if (!roomState.current || playerId === identityState.player.id) return;
   if (!isCurrentOnlineSeed(message.seed)) return;
-  onlineRoom = {
-    ...onlineRoom,
-    players: onlineRoom.players.map((player) => player.id === playerId
+  roomState.current = {
+    ...roomState.current,
+    players: roomState.current.players.map((player) => player.id === playerId
       ? {
         ...player,
         status: 'eliminated',
@@ -4925,7 +4926,7 @@ function applyRoomAttacks(room: OnlineRoom): void {
 function applyOnlineAttack(attack: OnlineAttack): void {
   // Cada ataque va firmado por su fuente (authorityPlayerId === fromPlayerId), tanto
   // si llega por peer como del fallback por servidor (applyRoomAttacks).
-  if (!onlineRoom || attack.authorityPlayerId !== attack.fromPlayerId) return;
+  if (!roomState.current || attack.authorityPlayerId !== attack.fromPlayerId) return;
   if (!isCurrentOnlineSeed(attack.seed)) return;
   if (attack.toPlayerId !== identityState.player.id || attackState.appliedIds.has(attack.id)) return;
   attackState.appliedIds.add(attack.id);
@@ -4959,10 +4960,10 @@ function applyOnlineAttack(attack: OnlineAttack): void {
 }
 
 function rememberOnlineAttack(fromPlayerId: string, toPlayerId: string, lines: number): void {
-  if (!onlineRoom) return;
-  onlineRoom = {
-    ...onlineRoom,
-    players: onlineRoom.players.map((player) => {
+  if (!roomState.current) return;
+  roomState.current = {
+    ...roomState.current,
+    players: roomState.current.players.map((player) => {
       if (player.id === fromPlayerId) {
         return {
           ...player,
@@ -4993,7 +4994,7 @@ function syncOnlineVisibilityChange(): void {
   // Al volver al juego reanunciamos presencia de inmediato (sin esperar el
   // intervalo) para reaparecer como "jugando" apenas el jugador regresa.
   if (lunaState.identity) void syncLunaPresence();
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   eagerRefreshBetIfPending();
   syncOnline();
 }
@@ -5007,14 +5008,14 @@ function handleBeforeUnload(event: BeforeUnloadEvent): void {
 }
 
 function shouldConfirmPageUnload(): boolean {
-  return !!onlineRoom
+  return !!roomState.current
     && (appMode === 'onlineCountdown' || appMode === 'onlinePlaying')
-    && (onlineRoom.status === 'countdown' || onlineRoom.status === 'playing');
+    && (roomState.current.status === 'countdown' || roomState.current.status === 'playing');
 }
 
 function eagerRefreshBetIfPending(): void {
   if (appMode !== 'roomLobby') return;
-  const bet = onlineRoom?.bet;
+  const bet = roomState.current?.bet;
   if (!isRefreshableRoomBet(bet)) return;
   armOnlineBetFastPolling();
   void refreshOnlineBet(true, { queueIfBusy: true });
@@ -5022,7 +5023,7 @@ function eagerRefreshBetIfPending(): void {
 
 function syncOnlineBackground(): void {
   if (!document.hidden) return;
-  if (!onlineRoom) return;
+  if (!roomState.current) return;
   if (!['roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode)) return;
 
   if (appMode === 'onlinePlaying') {
@@ -5045,7 +5046,7 @@ function createOnlineGameSnapshotFromState(
   lastProcessedInputSequence?: number,
 ): OnlineGameSnapshot {
   return {
-    seed: onlineRoom?.seed,
+    seed: roomState.current?.seed,
     board: state.board.map((row) => [...row]),
     active: state.active ? { ...state.active } : null,
     visibleRows: Math.min(BATTLE_RULES.visibleRows, state.board.length),
@@ -5083,7 +5084,7 @@ function renderDevBotPanel(): string {
   const statusLine = botState
     ? `${botState.status} · ${botState.stats.lines} líneas · ${botState.stats.pendingGarbage} pend.`
     : 'esperando ronda';
-  const nextRoundHtml = onlineRoom?.status === 'lobby'
+  const nextRoundHtml = roomState.current?.status === 'lobby'
     ? `<button type="button" style="${buttonStyle}${activeStyle}" data-ui-action="dev-bot-next-round">Siguiente ronda</button>`
     : '';
   return `
@@ -5565,8 +5566,8 @@ function renderConfirmOverlay(action: DestructiveRunAction): string {
 
 function renderLunaLaunchRequestOverlay(request: PendingLunaLaunchRequest): string {
   let description = '';
-  if (onlineRoom) {
-    description = `Para unirte vas a salir de la sala ${escapeHtml(onlineRoom.id)} en este dispositivo.`;
+  if (roomState.current) {
+    description = `Para unirte vas a salir de la sala ${escapeHtml(roomState.current.id)} en este dispositivo.`;
   } else if (appMode === 'playing' || appMode === 'soloCountdown' || appMode === 'paused') {
     description = 'Para unirte vas a abandonar tu partida actual.';
   } else {
@@ -5632,9 +5633,9 @@ function renderLobbyShell(main: string): string {
 
 function renderOnlineMenuPanelContent(): string {
   const modeLabel = 'Custom';
-  const publicRooms = onlinePublicRooms.length === 0
+  const publicRooms = roomState.publicRooms.length === 0
     ? '<div class="online-empty">Todavía no hay salas públicas. Creá una.</div>'
-    : onlinePublicRooms.map((room) => `
+    : roomState.publicRooms.map((room) => `
       <article class="cs2-room-row">
         ${renderOnlineAvatar({ name: room.hostName, avatarUrl: room.hostAvatarUrl })}
         <div class="cs2-room-row-info">
@@ -5721,7 +5722,7 @@ function renderLunaIdentityBadge(): string {
 // ───────────────────────── Lobby online ─────────────────────
 
 function renderOnlineLobbyPanelContent(): string {
-  const room = onlineRoom;
+  const room = roomState.current;
   if (!room) return renderOnlineMenuPanelContent();
   const player = currentOnlinePlayer();
   const host = room.hostPlayerId === identityState.player.id;
@@ -5834,14 +5835,14 @@ function renderCountdownStage(remainingMs: number, caption: string): string {
 }
 
 function renderOnlineCountdownOverlay(): string {
-  if (!onlineRoom?.startsAtServerMs) return renderOnlineLobbyOverlay();
+  if (!roomState.current?.startsAtServerMs) return renderOnlineLobbyOverlay();
   // Reloj del servidor (compartido por todos), no el reloj local del solo.
-  const remainingMs = Math.max(0, onlineRoom.startsAtServerMs - onlineNowMs());
-  return renderCountdownStage(remainingMs, `SALA ${escapeHtml(onlineRoom.id)} · ÚLTIMO EN PIE GANA`);
+  const remainingMs = Math.max(0, roomState.current.startsAtServerMs - onlineNowMs());
+  return renderCountdownStage(remainingMs, `SALA ${escapeHtml(roomState.current.id)} · ÚLTIMO EN PIE GANA`);
 }
 
 function renderOnlineResultsOverlay(state: GameState): string {
-  const room = onlineRoom;
+  const room = roomState.current;
   const ranked = room ? rankPlayers(room.players) : [];
   const bet = room?.bet;
   const mustClaimBeforeLeaving = bet
@@ -5913,7 +5914,7 @@ function renderOnlineResultsOverlay(state: GameState): string {
 function renderReportBlock(): string {
   const sending = reportButtonState === 'sending';
   const sent = reportButtonState === 'sent';
-  const includesWithdrawDiagnostics = roomBetEntryForLocalPlayer(onlineRoom)?.payoutStatus === 'withdraw_pending';
+  const includesWithdrawDiagnostics = roomBetEntryForLocalPlayer(roomState.current)?.payoutStatus === 'withdraw_pending';
   const label = sent ? '✓ ¡Gracias! Reporte enviado'
     : sending ? 'Enviando…'
     : reportButtonState === 'error' ? '⚠ No se pudo enviar — reintentar'
@@ -5936,7 +5937,7 @@ function renderReportBlock(): string {
 // Abre el visor multi-tablero con los logs recolectados de la ronda. Lo dispara
 // el botón "Ver repetición" de los resultados (solo aparece si hay logs).
 function openMultiReplay(): void {
-  const roomId = onlineRoom?.id ?? 'sala';
+  const roomId = roomState.current?.id ?? 'sala';
   const pkg = onlineReplayCollector.build(roomId);
   if (!pkg) {
     onlineNetState.error = 'No hay repeticiones disponibles para esta ronda.';
@@ -6164,7 +6165,7 @@ function friendlyGamepadName(id: string | null): string {
 // por el cronómetro vivo). El HUD interactivo se pinta en su propia capa, ver
 // renderOverlay/hudOverlayElement.
 function renderOnlinePlayingOverlay(): string {
-  if (!onlineRoom) return '';
+  if (!roomState.current) return '';
   return renderOnlinePeerBoards();
 }
 
@@ -6229,13 +6230,13 @@ function targetingModeHint(mode: TargetingMode): string {
 // objetivo (teclas 1–5, estilo tetr.io) + salir. Reemplaza al panel lateral
 // grande y se mantiene fino para no tapar el tablero.
 function renderOnlineHud(): string {
-  if (!onlineRoom) return '';
+  if (!roomState.current) return '';
   const player = currentOnlinePlayer();
-  const activeMode = player?.targetingMode ?? onlineRoom.ruleset.targeting;
-  const showTargeting = onlineRoom.players.length > 2 && !!player;
+  const activeMode = player?.targetingMode ?? roomState.current.ruleset.targeting;
+  const showTargeting = roomState.current.players.length > 2 && !!player;
   const pending = engine.getState().stats.pendingGarbage;
   const liveTargets = showTargeting
-    ? onlineRoom.players.filter((candidate) => (
+    ? roomState.current.players.filter((candidate) => (
         candidate.id !== player!.id
         && candidate.alive
         && candidate.status !== 'eliminated'
@@ -6243,7 +6244,7 @@ function renderOnlineHud(): string {
         && candidate.status !== 'disconnected'
       ))
     : [];
-  const target = onlineRoom.players.find((candidate) => candidate.id === player?.currentTargetPlayerId)
+  const target = roomState.current.players.find((candidate) => candidate.id === player?.currentTargetPlayerId)
     ?? liveTargets.find((candidate) => candidate.id === player?.manualTargetPlayerId)
     ?? null;
   return `
@@ -6273,7 +6274,7 @@ function renderOnlineHud(): string {
 }
 
 function renderLobbyPlayer(player: OnlinePlayer, viewerIsHost = false): string {
-  const isHost = player.id === onlineRoom?.hostPlayerId;
+  const isHost = player.id === roomState.current?.hostPlayerId;
   const isSelf = player.id === identityState.player.id;
   const badges = [
     isHost ? '<span class="cs2-badge cs2-badge-host">HOST</span>' : '',
@@ -6286,7 +6287,7 @@ function renderLobbyPlayer(player: OnlinePlayer, viewerIsHost = false): string {
   // Durante una ronda activa, quien no estaba listo (alive=false sin ser eliminado)
   // la juega de espectador: lo etiquetamos así en vez de "Sin listo", que en mitad
   // de la partida confunde.
-  const roundActive = onlineRoom?.status === 'playing' || onlineRoom?.status === 'countdown';
+  const roundActive = roomState.current?.status === 'playing' || roomState.current?.status === 'countdown';
   const spectating = roundActive && !player.alive && player.status !== 'eliminated' && player.status !== 'lost';
   const statusLabel = spectating ? '👁 Espectador' : player.ready ? '✓ Listo' : 'Sin listo';
   return `
@@ -6303,8 +6304,8 @@ function renderLobbyPlayer(player: OnlinePlayer, viewerIsHost = false): string {
 }
 
 function lunaNegraBettingBlockedReason(): string {
-  if (!onlineRoom) return '';
-  if (onlineRoom.players.length < 2) return 'Necesitás al menos 2 jugadores en la sala para apostar.';
+  if (!roomState.current) return '';
+  if (roomState.current.players.length < 2) return 'Necesitás al menos 2 jugadores en la sala para apostar.';
   // Ya no hace falta que todos tengan cuenta: los invitados depositan por QR y, si
   // ganan, cobran por LNURL-withdraw (los que tienen cuenta cobran a su billetera).
   return '';
@@ -6342,7 +6343,7 @@ function depositStatusLabel(status: RoomBetParticipant['depositStatus']): string
 }
 
 function betParticipantName(participant: RoomBetParticipant): string {
-  const player = onlineRoom?.players.find((candidate) => candidate.npub === participant.npub || candidate.id === participant.playerId);
+  const player = roomState.current?.players.find((candidate) => candidate.npub === participant.npub || candidate.id === participant.playerId);
   if (player) return player.name;
   return `${participant.npub.slice(0, 8)}…${participant.npub.slice(-4)}`;
 }
@@ -6361,8 +6362,8 @@ function canRetryBetInvoiceGeneration(bet: RoomBet, host: boolean): boolean {
 }
 
 function renderOnlineBetPanel(host: boolean): string {
-  if (!onlineRoom) return '';
-  const bet = onlineRoom.bet;
+  if (!roomState.current) return '';
+  const bet = roomState.current.bet;
 
   if (!bet) {
     // La apuesta pertenece a la sala, no a la identidad Nostr del host. Un host
@@ -6371,7 +6372,7 @@ function renderOnlineBetPanel(host: boolean): string {
     if (!host) return '';
     // No mostramos el panel de crear apuesta hasta que haya con quién apostar:
     // con una sola persona en la sala no tiene sentido ofrecer el pozo.
-    if (onlineRoom.players.length < 2) return '';
+    if (roomState.current.players.length < 2) return '';
     const blocked = lunaNegraBettingBlockedReason();
     const canCreate = !blocked && !betState.busy && !betState.creating;
     return `
@@ -6561,7 +6562,7 @@ function amILocalBetWinner(bet: RoomBet): boolean {
       || myEntry.payoutStatus === 'withdraw_pending'
       || myEntry.payoutStatus === 'claimed';
   }
-  const winner = onlineRoom ? rankPlayers(onlineRoom.players)[0] : null;
+  const winner = roomState.current ? rankPlayers(roomState.current.players)[0] : null;
   return !!winner && winner.id === identityState.player.id;
 }
 
@@ -6609,7 +6610,7 @@ function renderBetSettlementCard(reportDone: boolean, errorHtml: string): string
 }
 
 function renderOnlineBetResult(): string {
-  const bet = onlineRoom?.bet;
+  const bet = roomState.current?.bet;
   if (!bet) return '';
   const myEntry = myBetEntry(bet);
   const amIWinner = amILocalBetWinner(bet);
@@ -6684,7 +6685,7 @@ function renderOnlineBetResult(): string {
   }
 
   if (bet.status === 'funded') {
-    const isHost = onlineRoom?.hostPlayerId === identityState.player.id;
+    const isHost = roomState.current?.hostPlayerId === identityState.player.id;
     // NOT_READY no es un fallo: significa que otro `/result` ya tomó la apuesta y la
     // está liquidando (o todavía no quedó lista). Es transitorio y se auto-cura al
     // pasar a `settled`, así que lo absorbemos en el paso "Liquidando" en vez de un
@@ -6707,8 +6708,8 @@ function renderOnlineBetResult(): string {
 }
 
 function renderOnlinePeerBoards(): string {
-  if (!onlineRoom) return '';
-  const remotePlayers = onlineRoom.players.filter((player) => player.id !== identityState.player.id);
+  if (!roomState.current) return '';
+  const remotePlayers = roomState.current.players.filter((player) => player.id !== identityState.player.id);
   if (remotePlayers.length === 0) {
     return `
       <aside class="online-versus-grid online-versus-grid-empty" aria-label="Remote player boards">
@@ -6720,7 +6721,7 @@ function renderOnlinePeerBoards(): string {
       </aside>
     `;
   }
-  const aliveCount = onlineRoom.players.filter((candidate) => (
+  const aliveCount = roomState.current.players.filter((candidate) => (
     candidate.alive
     && candidate.status !== 'eliminated'
     && candidate.status !== 'lost'
@@ -6793,8 +6794,8 @@ function isOnlineSpectating(): boolean {
 // rankPlayers: los que siguen en pie/mejor posicionados primero, así el foco
 // automático arranca en el líder.
 function spectatorPeers(): OnlinePlayer[] {
-  if (!onlineRoom) return [];
-  return rankPlayers(onlineRoom.players).filter((player) => player.id !== identityState.player.id);
+  if (!roomState.current) return [];
+  return rankPlayers(roomState.current.players).filter((player) => player.id !== identityState.player.id);
 }
 
 // Rival enfocado en el tablero principal. Respeta la elección manual mientras
@@ -6842,10 +6843,10 @@ function resetSpectatorFocus(): void {
 // Marca a todos los muertos como "anunciados" aunque no suenen, para no repetir; al
 // revivir un jugador (reopen de ronda) se borra su marca para que su próxima caída suene.
 function syncRivalDeathSounds(): void {
-  if (!onlineRoom || appMode !== 'onlinePlaying') return;
+  if (!roomState.current || appMode !== 'onlinePlaying') return;
   const spectating = isOnlineSpectating();
   const focus = spectating ? spectatorFocusPlayer() : null;
-  for (const player of onlineRoom.players) {
+  for (const player of roomState.current.players) {
     if (player.id === identityState.player.id) continue;
     const dead = !player.alive || player.status === 'eliminated' || player.status === 'lost';
     if (!dead) {
@@ -6871,12 +6872,12 @@ function syncRivalDeathSounds(): void {
 // buscado). Mismo criterio de diff que el espectador: lock por aumento de piezas, y
 // si la pieza es la misma, giro con prioridad sobre desplazamiento.
 function syncRivalPieceSounds(): void {
-  if (!onlineRoom || appMode !== 'onlinePlaying' || isOnlineSpectating()) {
+  if (!roomState.current || appMode !== 'onlinePlaying' || isOnlineSpectating()) {
     if (rivalPieceSnapshots.size) rivalPieceSnapshots.clear();
     return;
   }
   const live = new Set<string>();
-  for (const player of onlineRoom.players) {
+  for (const player of roomState.current.players) {
     if (player.id === identityState.player.id) continue;
     const alive = player.alive
       && player.status !== 'eliminated'
@@ -6922,13 +6923,13 @@ function syncRivalPieceSounds(): void {
 // juiceAudio. El efecto VISUAL lo dibuja el CSS del mini-tablero (clases --warn/--peril
 // en renderOnlinePeerBoard); esto solo aporta el audio.
 function syncRivalDangerCues(): void {
-  if (!onlineRoom || appMode !== 'onlinePlaying' || isOnlineSpectating()) {
+  if (!roomState.current || appMode !== 'onlinePlaying' || isOnlineSpectating()) {
     rivalDangerAudio.setDanger(0);
     return;
   }
   let level = 0;
   let dangerPlayerId: string | null = null;
-  for (const player of onlineRoom.players) {
+  for (const player of roomState.current.players) {
     if (player.id === identityState.player.id) continue;
     const alive = player.alive
       && player.status !== 'eliminated'
@@ -7136,7 +7137,7 @@ function onlinePeerOutcome(
   player: OnlinePlayer,
   snapshot: OnlineGameSnapshot | null,
 ): { kind: 'ko' | 'win' | 'done'; label: string; tag: string } | null {
-  const crowned = player.status === 'winner' || onlineRoom?.winnerPlayerId === player.id;
+  const crowned = player.status === 'winner' || roomState.current?.winnerPlayerId === player.id;
   if (crowned) return { kind: 'win', label: 'Ganó', tag: 'WIN' };
   const finished = player.status === 'won' || snapshot?.status === 'finished';
   if (finished) return { kind: 'done', label: 'Terminó', tag: 'FIN' };
@@ -7742,7 +7743,7 @@ function isPersistentRoomPanelMode(mode: AppMode): boolean {
 }
 
 function renderPersistentRoomPanel(): string {
-  return onlineRoom ? renderActivePersistentRoomPanel() : renderEmptyPersistentRoomPanel();
+  return roomState.current ? renderActivePersistentRoomPanel() : renderEmptyPersistentRoomPanel();
 }
 
 function renderFloatingParticles(): string {
@@ -7861,7 +7862,7 @@ function renderSmartIconRocket(): string {
 }
 
 function renderSmartPlayStage(): string {
-  const hasRoom = !!onlineRoom;
+  const hasRoom = !!roomState.current;
   // Sin sala: selector de modalidad (tarjetas). El modo elegido decide qué arranca
   // el botón ▶ en solo y, al crear sala, su matchType.
   if (!hasRoom) return renderModeSelectStage();
@@ -7871,10 +7872,10 @@ function renderSmartPlayStage(): string {
   const ready = !!currentOnlinePlayer()?.ready;
   // El host puede cambiar la modalidad sin salir de la sala (en el lobby). Para los
   // invitados la modalidad la fija el host, así que solo ven el eyebrow.
-  const modeCardsHtml = host && onlineRoom!.status === 'lobby' ? renderRoomModeCards() : '';
+  const modeCardsHtml = host && roomState.current!.status === 'lobby' ? renderRoomModeCards() : '';
   // En sala la modalidad ya quedó fijada por la sala (matchType): la mostramos en
   // el eyebrow para que se entienda bajo qué reglas se va a jugar.
-  const roomModeName = matchTypeLabel(onlineRoom!.matchType).toUpperCase();
+  const roomModeName = matchTypeLabel(roomState.current!.matchType).toUpperCase();
 
   // Contexto = exactamente la lógica del botón inteligente (sidebar-play)
   const ctx: 'waiting' | 'host' | 'guest' =
@@ -7899,8 +7900,8 @@ function renderSmartPlayStage(): string {
       </div>`;
   } else if (ctx === 'host') {
     accent = '#c79bff'; eyebrow = `SALA ${roomModeName} · SOS EL ANFITRIÓN`; step2 = 'EMPEZÁ';
-    const total = onlineRoom!.players.length;
-    const readyCount = onlineRoom!.players.filter((p) => p.ready).length;
+    const total = roomState.current!.players.length;
+    const readyCount = roomState.current!.players.filter((p) => p.ready).length;
     // El host arranca la ronda (acción 'online-start'). El server exige host listo
     // + ≥2 listos, así que el botón se deshabilita hasta cumplirlo. Marcarse listo
     // se hace desde el panel de sala (online-ready/online-unready).
@@ -8052,7 +8053,7 @@ function dashboardActiveTab(): DashTab {
   if (appMode === 'playMenu' || appMode === 'custom' || appMode === 'leaderboard' || appMode === 'survivalTop') return 'jugar';
   // Con sala activa el hub ES el contexto de Jugar (ahí vive el gestor de sala y el
   // punto verde de la nav): resaltamos Jugar aunque appMode haya quedado en 'menu'.
-  if (onlineRoom && isPlayHubMode()) return 'jugar';
+  if (roomState.current && isPlayHubMode()) return 'jugar';
   return 'inicio';
 }
 
@@ -8083,7 +8084,7 @@ function renderMobileNavButton(tab: DashTab, active: DashTab, action: string, la
 function renderMobileDashboard(state: GameState): string {
   const userDisplayName = identityState.name.trim() || 'Jugador';
   const tab = dashboardActiveTab();
-  const hasRoom = !!onlineRoom;
+  const hasRoom = !!roomState.current;
   return `
     <div class="mdash">
       ${renderFloatingParticles()}
@@ -8110,11 +8111,11 @@ function renderMobileDashboard(state: GameState): string {
 function renderMobileMain(state: GameState): string {
   // Tab Inicio (sin sala): bienvenida. Con sala, Inicio comparte el contexto de
   // Jugar, así que cae al gestor de sala de abajo.
-  if (appMode === 'menu' && !onlineRoom) {
+  if (appMode === 'menu' && !roomState.current) {
     return `<div class="mdash-scroll mdash-center">${renderWelcomeStage()}</div>`;
   }
   if (isPlayHubMode()) {
-    return onlineRoom ? renderMobileRoomManager() : renderMobileModeSelect();
+    return roomState.current ? renderMobileRoomManager() : renderMobileModeSelect();
   }
   // Inicio / Historial / Ajustes / Custom / Tops: una sola columna scrollable
   // reutilizando el contenido del centro de desktop (estas vistas SÍ pueden scrollear).
@@ -8187,7 +8188,7 @@ function renderMobileModeSelect(): string {
 
 // Con sala: gestor "Control de anfitrión" sin scroll de página.
 function renderMobileRoomManager(): string {
-  const room = onlineRoom!;
+  const room = roomState.current!;
   const host = isOnlineHost();
   const player = currentOnlinePlayer();
   const ready = !!player?.ready;
@@ -8296,7 +8297,7 @@ function renderDashboardCenterContent(_state: GameState): string {
   // Inicio (sin sala) = pantalla de bienvenida; con sala, el contexto pasa a ser el
   // hub de Jugar (gestor de sala), así que rendimos el smart-play stage.
   if (mode === 'menu') {
-    return onlineRoom ? renderSmartPlayStage() : renderWelcomeStage();
+    return roomState.current ? renderSmartPlayStage() : renderWelcomeStage();
   }
   if (mode === 'playMenu' || mode === 'onlineMenu' || mode === 'roomLobby') {
     return renderSmartPlayStage();
@@ -8452,7 +8453,7 @@ function renderSurvivalLeaderboardBody(): string {
 }
 
 function renderDashboardRoomPanel(): string {
-  const room = onlineRoom;
+  const room = roomState.current;
   const inviteUnavailable = !lunaState.identity?.gameId;
   const roomPurposeIcon = shieldCrestIcon({ size: 16, ariaHidden: true });
 
@@ -8462,9 +8463,9 @@ function renderDashboardRoomPanel(): string {
     // (avatar + "Sala de X" + X/4 + Unirse). El input por código y el bot dev quedan
     // como utilidades secundarias bajo un divisor, sin recargar la jerarquía.
     const shieldIcon = shieldSolidIcon({ size: 16, ariaHidden: true });
-    const publicRooms = onlinePublicRooms.length === 0
+    const publicRooms = roomState.publicRooms.length === 0
       ? '<div class="dash-public-empty">No hay salas públicas activas.</div>'
-      : onlinePublicRooms.slice(0, 4).map((candidateRoom) => `
+      : roomState.publicRooms.slice(0, 4).map((candidateRoom) => `
         <div class="dash-public-room">
           ${renderOnlineAvatar({ name: candidateRoom.hostName, avatarUrl: candidateRoom.hostAvatarUrl }, 'small', 'dash-public-room-avatar')}
           <span class="dash-public-room-name">Sala de ${escapeHtml(candidateRoom.hostName)}</span>
@@ -8630,9 +8631,9 @@ function renderDashboardRoomPanel(): string {
 
 
 function renderEmptyPersistentRoomPanel(): string {
-  const publicRooms = onlinePublicRooms.length === 0
+  const publicRooms = roomState.publicRooms.length === 0
     ? '<div class="online-empty">No hay salas públicas.</div>'
-    : onlinePublicRooms.slice(0, 4).map((room) => `
+    : roomState.publicRooms.slice(0, 4).map((room) => `
       <article class="persistent-room-row">
         <div>
           <strong>${escapeHtml(room.id)}</strong>
@@ -8672,29 +8673,29 @@ function renderEmptyPersistentRoomPanel(): string {
 }
 
 function renderActivePersistentRoomPanel(): string {
-  if (!onlineRoom) return '';
-  const host = onlineRoom.hostPlayerId === identityState.player.id;
+  if (!roomState.current) return '';
+  const host = roomState.current.hostPlayerId === identityState.player.id;
   const player = currentOnlinePlayer();
-  const readyCount = onlineRoom.players.filter((candidate) => candidate.ready).length;
-  const visibilityActions = host && onlineRoom.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : '';
+  const readyCount = roomState.current.players.filter((candidate) => candidate.ready).length;
+  const visibilityActions = host && roomState.current.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : '';
   return `
     <aside class="persistent-room-panel" aria-label="Sala actual">
       <div class="persistent-room-head">
         <div>
-          <span class="panel-eyebrow">${escapeHtml(onlineRoom.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')}</span>
-          <h2>${escapeHtml(onlineRoom.id)}</h2>
+          <span class="panel-eyebrow">${escapeHtml(roomState.current.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')}</span>
+          <h2>${escapeHtml(roomState.current.id)}</h2>
         </div>
-        <span class="cs2-ready-pill">${readyCount}/${onlineRoom.players.length}</span>
+        <span class="cs2-ready-pill">${readyCount}/${roomState.current.players.length}</span>
       </div>
-      <p class="persistent-room-status">${escapeHtml(matchTypeLabel(onlineRoom.matchType))} · ${escapeHtml(roomStatusLabel(onlineRoom.status))}</p>
+      <p class="persistent-room-status">${escapeHtml(matchTypeLabel(roomState.current.matchType))} · ${escapeHtml(roomStatusLabel(roomState.current.status))}</p>
       ${renderOnlineError()}
       ${visibilityActions}
       <div class="persistent-room-players">
-        ${onlineRoom.players.map((candidate) => renderLobbyPlayer(candidate, host)).join('')}
+        ${roomState.current.players.map((candidate) => renderLobbyPlayer(candidate, host)).join('')}
       </div>
       ${renderLunaInviteAction(host)}
       <div class="cs2-lobby-actions">
-        ${onlineRoom.status === 'lobby'
+        ${roomState.current.status === 'lobby'
           ? `${player?.ready
             ? '<button class="cs2-btn" type="button" data-ui-action="online-unready">No listo</button>'
             : '<button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="online-ready">Listo</button>'}
@@ -8709,8 +8710,8 @@ function renderActivePersistentRoomPanel(): string {
 // Toggle compacto pública/privada: un switch que alterna la visibilidad de la
 // sala sin tocar nada más (solo lo ve el host y solo en el lobby).
 function renderPersistentRoomVisibilityToggle(): string {
-  if (!onlineRoom) return '';
-  const isPublic = onlineRoom.visibility === 'public';
+  if (!roomState.current) return '';
+  const isPublic = roomState.current.visibility === 'public';
   return `
     <div class="room-visibility-toggle" aria-label="Visibilidad de sala">
       <span class="room-visibility-label ${isPublic ? '' : 'is-active'}">Privada</span>
@@ -9049,7 +9050,7 @@ function onlineCustomRulesFromSettings(): GameRules {
   };
 }
 
-function onlineRulesFromRoom(room = onlineRoom): GameRules {
+function onlineRulesFromRoom(room = roomState.current): GameRules {
   const sharedRules = room?.rules ?? battleRulesFromSettings(inputSettings);
   return {
     ...sharedRules,
@@ -9089,7 +9090,7 @@ function parseControlAction(value: string | undefined): ControlAction | null {
 }
 
 function onlineRoomHasOtherPlayers(): boolean {
-  return !!onlineRoom && onlineRoom.players.some((player) => player.id !== identityState.player.id);
+  return !!roomState.current && roomState.current.players.some((player) => player.id !== identityState.player.id);
 }
 
 function touchSourceId(pointerId: number): string {
@@ -9190,16 +9191,16 @@ function formatHistoryStatus(status: RunHistoryEntry['status']): string {
 }
 
 function isOnlineHost(): boolean {
-  return onlineRoom?.hostPlayerId === identityState.player.id;
+  return roomState.current?.hostPlayerId === identityState.player.id;
 }
 
 function createProgressRequest(playerId: string, game: OnlineGameSnapshot): ProgressRequest {
-  const player = onlineRoom?.players.find((candidate) => candidate.id === playerId);
+  const player = roomState.current?.players.find((candidate) => candidate.id === playerId);
   return {
-    roomId: onlineRoom?.id ?? '',
+    roomId: roomState.current?.id ?? '',
     authorityPlayerId: identityState.player.id,
     playerId,
-    seed: onlineRoom?.seed,
+    seed: roomState.current?.seed,
     lines: normalizeProgressInteger(game.lines, player?.lines ?? 0),
     pieces: normalizeProgressInteger(game.pieces, player?.pieces ?? 0),
     elapsedFrames: normalizeProgressInteger(game.elapsedFrames, player?.elapsedFrames ?? 0),
@@ -9218,7 +9219,7 @@ function createOnlineKoReportFromState(playerId: string, state: GameState): Omit
   const elapsedFrames = displayedElapsedFrames(state.stats);
   return {
     playerId,
-    seed: onlineRoom?.seed,
+    seed: roomState.current?.seed,
     frame: elapsedFrames,
     lines: state.stats.lines,
     pieces: state.stats.pieces,
@@ -9231,7 +9232,7 @@ function createOnlineKoReportFromState(playerId: string, state: GameState): Omit
 }
 
 function currentOnlinePlayer(): OnlinePlayer | null {
-  return onlineRoom?.players.find((player) => player.id === identityState.player.id) ?? null;
+  return roomState.current?.players.find((player) => player.id === identityState.player.id) ?? null;
 }
 
 function parseTargetingMode(value: string | undefined): TargetingMode | null {
