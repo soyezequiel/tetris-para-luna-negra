@@ -1,6 +1,8 @@
 import './styles.css';
 import QRCode from 'qrcode';
 import { checkIcon, gearOutlineIcon, historyClockIcon, homeIcon, importIcon, playIcon, rocketIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon, tetrominoIcon } from './ui/icons';
+import { formatFrames, formatHistoryDate, escapeHtml } from './ui/format';
+import { renderWelcome } from './ui/dashboard/welcome';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -8206,21 +8208,7 @@ function renderWelcomeStage(): string {
   const bestFrames = runs.length ? Math.max(...runs.map((r) => r.elapsedFrames)) : null;
   const avgPps = runs.length ? runs.reduce((sum, r) => sum + r.pps, 0) / runs.length : null;
   const myWins = leaderboardEntries.find((e) => e.playerId === onlinePlayer.id)?.wins ?? null;
-  const stat = (value: string, label: string, accent: string) =>
-    `<div class="dash-welcome-stat" style="--stat-accent: ${accent};"><div class="dash-welcome-stat-value">${value}</div><div class="dash-welcome-stat-label">${label}</div></div>`;
-  return `
-    <div class="dash-welcome">
-      <div class="dash-welcome-eyebrow">Bienvenido de nuevo</div>
-      <h1 class="dash-welcome-title">TETRA</h1>
-      <p class="dash-welcome-subtitle">Tu stacker competitivo. Elegí un modo, jugá solo al instante o armá una sala con amigos.</p>
-      <button class="dash-welcome-cta" type="button" data-ui-action="play-menu">${playIcon({ size: 18, ariaHidden: true })}<span>Empezar a jugar</span></button>
-      <div class="dash-welcome-stats">
-        ${stat(bestFrames !== null ? formatFrames(bestFrames, false) : '—', 'Mejor tiempo', '#00f5ff')}
-        ${stat(myWins !== null ? String(myWins) : '—', 'Victorias', '#9d4edd')}
-        ${stat(avgPps !== null ? avgPps.toFixed(1) : '—', 'PPS prom.', '#ff007f')}
-      </div>
-    </div>
-  `;
+  return renderWelcome({ bestFrames, avgPps, myWins });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9389,15 +9377,6 @@ function randomSeed(): number {
   return Math.floor(Math.random() * 0xffffffff);
 }
 
-function formatFrames(frames: number, showMillis = true): string {
-  const seconds = frames / 60;
-  const minutes = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
-  if (!showMillis) return `${minutes}:${secs}`;
-  const millis = Math.floor((seconds % 1) * 1000).toString().padStart(3, '0');
-  return `${minutes}:${secs}.${millis}`;
-}
-
 function replayProgressPercent(snapshot: ReplayPlaybackSnapshot): string {
   if (snapshot.targetFrame <= 0) return '100';
   return Math.min(100, Math.max(0, (snapshot.frame / snapshot.targetFrame) * 100)).toFixed(2);
@@ -9425,17 +9404,6 @@ function formatDateTime(value: string): string {
 
 function formatHistoryStatus(status: RunHistoryEntry['status']): string {
   return status === 'finished' ? 'CLEAR' : 'TOP OUT';
-}
-
-function formatHistoryDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const dayDiff = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86400000);
-  if (dayDiff <= 0) return 'hoy';
-  if (dayDiff === 1) return 'ayer';
-  if (dayDiff < 7) return `hace ${dayDiff} días`;
-  return date.toLocaleDateString();
 }
 
 function isOnlineHost(): boolean {
@@ -9535,11 +9503,3 @@ function normalizeProgressInteger(value: number | undefined, fallback: number): 
   return Math.max(0, Math.floor(value as number));
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
