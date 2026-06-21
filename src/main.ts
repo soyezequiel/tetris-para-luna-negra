@@ -1,9 +1,10 @@
 import './styles.css';
 import QRCode from 'qrcode';
-import { gearOutlineIcon, historyClockIcon, homeIcon, playIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon } from './ui/icons';
+import { gearOutlineIcon, historyClockIcon, homeIcon, playIcon, settingsGearIcon, speakerIcon } from './ui/icons';
 import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
 import { renderModeSelectStage as renderModeSelectStageView, renderSmartPlayStage as renderSmartPlayStageView } from './ui/dashboard/smartPlay';
+import { renderRoomPanelEmpty, renderRoomPanelActive } from './ui/dashboard/roomPanel';
 import { renderHistory } from './ui/dashboard/history';
 import { renderControls } from './ui/dashboard/controls';
 import type { PlayMode } from './ui/playMode';
@@ -8299,181 +8300,62 @@ function renderSurvivalLeaderboardBody(): string {
   return `<div class="leaderboard-rows">${rows}</div>`;
 }
 
+// Orquestador stateful del panel de sala: deriva del estado del shell (roomState,
+// lunaState, onlineNetState, identityState) y delega el markup en la vista pura
+// (src/ui/dashboard/roomPanel.ts). Los sub-paneles con estado (error, toggle de
+// visibilidad, apuesta) y los avatares se pre-renderizan acá.
 function renderDashboardRoomPanel(): string {
   const room = roomState.current;
   const inviteUnavailable = !lunaState.identity?.gameId;
-  const roomPurposeIcon = shieldCrestIcon({ size: 16, ariaHidden: true });
 
   if (!room) {
-    // Sala vacía (variante A del rediseño): ícono+"SALA" violeta, título, descripción,
-    // botón "+ Crear sala" violeta, divisor y la lista de salas públicas con filas
-    // (avatar + "Sala de X" + X/4 + Unirse). El input por código y el bot dev quedan
-    // como utilidades secundarias bajo un divisor, sin recargar la jerarquía.
-    const shieldIcon = shieldSolidIcon({ size: 16, ariaHidden: true });
-    const publicRooms = roomState.publicRooms.length === 0
-      ? '<div class="dash-public-empty">No hay salas públicas activas.</div>'
-      : roomState.publicRooms.slice(0, 4).map((candidateRoom) => `
-        <div class="dash-public-room">
-          ${renderOnlineAvatar({ name: candidateRoom.hostName, avatarUrl: candidateRoom.hostAvatarUrl }, 'small', 'dash-public-room-avatar')}
-          <span class="dash-public-room-name">Sala de ${escapeHtml(candidateRoom.hostName)}</span>
-          <span class="dash-public-room-count">${candidateRoom.playerCount}/4</span>
-          <button class="dash-public-room-join" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(candidateRoom.id)}"${onlineNetState.busy ? ' disabled' : ''}>Unirse</button>
-        </div>
-      `).join('');
-
-    return `
-      <div class="dash-room-empty">
-        <div class="dash-room-empty-head">
-          <span class="dash-room-empty-icon">${shieldIcon}</span>
-          <span class="dash-room-empty-eyebrow">Sala</span>
-        </div>
-        <h3 class="dash-room-empty-title">Jugá con amigos</h3>
-        <p class="dash-room-empty-desc">Creá una sala y compartí el link. Cualquiera entra y la batalla arranca con 2+ jugadores.</p>
-
-        ${renderOnlineError()}
-
-        <button class="dash-room-create-btn" type="button" data-ui-action="online-create"${onlineNetState.busy ? ' disabled' : ''}>+ Crear sala</button>
-        ${import.meta.env.DEV ? `<button class="dash-room-devbot-btn" type="button" data-ui-action="dev-bot-match"${onlineNetState.busy ? ' disabled' : ''}>Partida vs bot (dev)</button>` : ''}
-
-        <div class="dash-room-empty-divider"></div>
-
-        <div class="dash-room-empty-section-head">
-          <span>Salas públicas</span>
-          <button class="dash-room-empty-refresh" type="button" data-ui-action="online-refresh"${onlineNetState.busy ? ' disabled' : ''}>Actualizar</button>
-        </div>
-        <div class="dash-public-rooms">${publicRooms}</div>
-
-        <div class="dash-room-empty-divider"></div>
-
-        <label class="dash-room-empty-join-label" for="dash-code-input">Unirse con código</label>
-        <div class="dash-join-row">
-          <input id="dash-code-input" class="dash-input" type="text" style="text-transform: uppercase;" placeholder="CÓDIGO" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(identityState.joinCode)}" data-online-field="join-code" autocomplete="off" />
-          <button class="dash-action-btn accent" type="button" style="width: auto; padding: 8px 16px;" data-ui-action="online-join"${onlineNetState.busy ? ' disabled' : ''}>Unirse</button>
-        </div>
-      </div>
-    `;
+    return renderRoomPanelEmpty({
+      publicRooms: roomState.publicRooms.slice(0, 4).map((candidateRoom) => ({
+        id: candidateRoom.id,
+        hostName: candidateRoom.hostName,
+        avatarHtml: renderOnlineAvatar({ name: candidateRoom.hostName, avatarUrl: candidateRoom.hostAvatarUrl }, 'small', 'dash-public-room-avatar'),
+        playerCount: candidateRoom.playerCount,
+      })),
+      joinCode: identityState.joinCode,
+      busy: onlineNetState.busy,
+      isDev: import.meta.env.DEV,
+      onlineErrorHtml: renderOnlineError(),
+      roomIdMaxLength: ROOM_ID_MAX_LENGTH,
+    });
   }
 
-  // Cuando hay una sala activa
   const host = room.hostPlayerId === identityState.player.id;
-  const readyCount = room.players.filter((candidate) => candidate.ready).length;
-  const matchText = matchTypeLabel(room.matchType);
-  const statusText = roomStatusLabel(room.status);
-  const visibilityText = room.visibility === 'private' ? 'Privada' : 'Pública';
-  const speedLevelText = roomSpeedLabel(room.rules);
-  const roomPurposeText = host
-    ? 'Gestioná jugadores, invitaciones y listos desde este panel. Cuando estén listos, el botón central empieza la partida.'
-    : 'Marcá tu estado desde el botón central y seguí la sala desde este panel mientras el anfitrión prepara la partida.';
-  
-  const playersHtml = room.players.map((candidate) => {
-    const isHost = candidate.id === room.hostPlayerId;
-    const isSelf = candidate.id === identityState.player.id;
-    const isReady = candidate.ready;
-    return `
-      <div class="dash-player-card ${isSelf ? 'is-self' : ''} ${isReady ? 'is-ready' : ''}">
-        <div class="dash-player-info">
-          <div class="dash-player-avatar-wrap">
-            ${renderOnlineAvatar(candidate, 'medium', 'dash-player-avatar-circle')}
-          </div>
-          <div class="dash-player-copy">
-            <span class="dash-player-name">${escapeHtml(candidate.name)}${isSelf ? ' (Tú)' : ''}</span>
-            <span class="dash-player-role">${isHost ? 'Anfitrión' : isSelf ? 'Tu jugador' : 'Invitado'}</span>
-          </div>
-        </div>
-        <div class="dash-player-actions">
-          ${isSelf && room.status === 'lobby'
-            ? (isReady
-              ? '<button class="dash-player-ready-btn is-ready" type="button" data-ui-action="online-unready">Listo ✓</button>'
-              : '<button class="dash-player-ready-btn" type="button" data-ui-action="online-ready">Marcar listo</button>')
-            : (isReady
-              ? '<span class="dash-player-ready-indicator ready">Listo</span>'
-              : '<span class="dash-player-ready-indicator waiting">Sin listo</span>')}
-          ${host && !isSelf
-            ? `<button class="dash-copy-btn dash-kick-btn" type="button" data-ui-action="online-kick" data-target-player-id="${escapeHtml(candidate.id)}">Sacar</button>`
-            : ''}
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  const inviteButtonsHtml = `
-    <button class="dash-copy-btn" type="button" data-ui-action="online-copy-invite-link">${roomInviteLinkRecentlyCopied() ? '¡Link copiado!' : 'Copiar link'}</button>
-    ${inviteUnavailable
-      ? `<button class="dash-copy-btn" type="button" data-ui-action="luna-login"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}</button>`
-      : `<button class="dash-copy-btn" type="button" data-ui-action="online-open-invite"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}</button>`}
-  `;
-
-  return `
-    <div class="dash-room-header dash-room-header-active">
-      <div class="dash-room-title-area">
-        <div class="dash-room-code-wrapper">
-          <div class="dash-room-identity-line">
-            <span class="dash-room-eyebrow">${escapeHtml(room.visibility === 'private' ? 'SALA PRIVADA' : 'SALA PÚBLICA')}</span>
-            <h2 class="dash-room-code">${escapeHtml(room.id)}</h2>
-          </div>
-          <div class="dash-room-code-actions">
-            <button class="dash-copy-btn" type="button" data-ui-action="online-copy-code" data-code="${escapeHtml(room.id)}">Copiar</button>
-            ${inviteButtonsHtml}
-          </div>
-        </div>
-      </div>
-      <div class="dash-ready-stack">
-        <span class="dash-player-ready-indicator ready">${readyCount}/${room.players.length}</span>
-        <span>listos</span>
-      </div>
-    </div>
-
-    <div class="dash-room-status-line">
-      <span>${escapeHtml(matchText)}</span>
-      <span>${escapeHtml(statusText)}</span>
-    </div>
-
-    <div class="dash-room-purpose">
-      <div class="dash-room-purpose-top">
-        <span class="dash-room-purpose-icon">${roomPurposeIcon}</span>
-        <strong>${host ? 'Control de anfitrión' : 'Tu lugar en la sala'}</strong>
-      </div>
-      <p class="dash-room-purpose-explainer">${escapeHtml(roomPurposeText)}</p>
-    </div>
-
-    <div class="dash-room-summary" aria-label="Configuración de sala">
-      <div class="dash-room-summary-item">
-        <span>Tipo</span>
-        <strong>${escapeHtml(matchText)}</strong>
-      </div>
-      <div class="dash-room-summary-item">
-        <span>Visibilidad</span>
-        <strong>${escapeHtml(visibilityText)}</strong>
-      </div>
-      <div class="dash-room-summary-item">
-        <span>Velocidad</span>
-        <strong>${escapeHtml(speedLevelText)}</strong>
-      </div>
-    </div>
-    
-    ${renderOnlineError()}
-
-    ${host && room.status === 'lobby' ? renderPersistentRoomVisibilityToggle() : ''}
-
-    <section class="dash-room-section">
-      <div class="dash-section-header">
-        <span>Jugadores</span>
-        <small>${readyCount}/${room.players.length} listos</small>
-      </div>
-      <div class="dash-player-list">
-        ${playersHtml}
-      </div>
-    </section>
-
-    ${renderOnlineBetPanel(host)}
-
-    <div class="dash-room-actions-group">
-      ${room.status === 'lobby'
-        ? (host ? `<span class="dash-room-start-hint" style="align-self: center; color: var(--dash-text-dim); font-size: 12px; font-weight: 600;">El host arranca con el botón central</span>` : '')
-        : '<button class="dash-action-btn" type="button" disabled>Ronda en curso…</button>'}
-      <button class="dash-action-btn danger" type="button" data-ui-action="online-leave">Salir de la sala</button>
-    </div>
-  `;
+  const inLobby = room.status === 'lobby';
+  return renderRoomPanelActive({
+    roomId: room.id,
+    isPrivate: room.visibility === 'private',
+    host,
+    inLobby,
+    readyCount: room.players.filter((candidate) => candidate.ready).length,
+    playerCount: room.players.length,
+    matchText: matchTypeLabel(room.matchType),
+    statusText: roomStatusLabel(room.status),
+    visibilityText: room.visibility === 'private' ? 'Privada' : 'Pública',
+    speedLevelText: roomSpeedLabel(room.rules),
+    roomPurposeText: host
+      ? 'Gestioná jugadores, invitaciones y listos desde este panel. Cuando estén listos, el botón central empieza la partida.'
+      : 'Marcá tu estado desde el botón central y seguí la sala desde este panel mientras el anfitrión prepara la partida.',
+    players: room.players.map((candidate) => ({
+      id: candidate.id,
+      name: candidate.name,
+      avatarHtml: renderOnlineAvatar(candidate, 'medium', 'dash-player-avatar-circle'),
+      isHost: candidate.id === room.hostPlayerId,
+      isSelf: candidate.id === identityState.player.id,
+      isReady: candidate.ready,
+    })),
+    inviteLinkCopied: roomInviteLinkRecentlyCopied(),
+    inviteUnavailable,
+    inviteWindowBusy: lunaState.inviteWindowBusy,
+    busy: onlineNetState.busy,
+    onlineErrorHtml: renderOnlineError(),
+    visibilityToggleHtml: host && inLobby ? renderPersistentRoomVisibilityToggle() : '',
+    betPanelHtml: renderOnlineBetPanel(host),
+  });
 }
 
 
