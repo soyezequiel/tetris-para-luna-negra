@@ -1,10 +1,12 @@
 import './styles.css';
 import QRCode from 'qrcode';
-import { checkIcon, gearOutlineIcon, historyClockIcon, homeIcon, playIcon, rocketIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon, tetrominoIcon } from './ui/icons';
+import { checkIcon, gearOutlineIcon, historyClockIcon, homeIcon, playIcon, rocketIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon } from './ui/icons';
 import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
 import { renderHistory } from './ui/dashboard/history';
 import { renderControls } from './ui/dashboard/controls';
+import type { PlayMode } from './ui/playMode';
+import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './ui/dashboard/modeCard';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -407,7 +409,6 @@ let survivalRunRank: SurvivalRunRank | null = null;
 // con sala→batalla online de reglas fijas, top justo). 'custom' = config propia
 // (solo→custom; con sala→batalla editable). 'local1v1' = duelo local en misma
 // pantalla (independiente de sala). Default 'survival'.
-type PlayMode = 'survival' | 'custom' | 'local1v1';
 let selectedPlayMode: PlayMode = 'survival';
 let localRunError: string | null = null;
 let onlineError: string | null = null;
@@ -8080,56 +8081,6 @@ function renderSmartPlayStage(): string {
 // Función (declaración hoisteada) en vez de const: el loop de render corre al
 // cargar el módulo y un `const` acá rompería con TDZ en el primer frame (ver
 // memoria main-ts-first-render-tdz).
-interface ModeMeta {
-  // cardName/cardTag → tarjeta del selector; tag/name/desc → detalle; solo/sub → CTA.
-  cardName: string;
-  cardTag: string;
-  tag: string;
-  name: string;
-  desc: string;
-  solo: string;
-  sub: string;
-}
-
-function playModeMeta(mode: PlayMode): ModeMeta {
-  if (mode === 'custom') {
-    return {
-      cardName: 'Custom',
-      cardTag: 'Tus reglas',
-      tag: 'Tus reglas',
-      name: 'Partida custom',
-      desc: 'Configurá gravedad, objetivo y reglas a tu gusto. Con sala, es una batalla online con tus propias reglas.',
-      solo: 'JUGAR',
-      sub: 'Con tu configuración',
-    };
-  }
-  if (mode === 'local1v1') {
-    return {
-      cardName: 'Duelo 1v1',
-      cardTag: 'Local',
-      tag: '1v1 · misma pantalla',
-      name: 'Duelo local',
-      desc: 'Dos jugadores en la misma compu, misma semilla. Sin cuenta ni conexión, solo dos manos.',
-      solo: 'INICIAR DUELO',
-      sub: '2 jugadores · local',
-    };
-  }
-  return {
-    cardName: 'Supervivencia',
-    cardTag: 'Resistencia',
-    tag: 'Resistencia',
-    name: 'Supervivencia',
-    desc: 'Reglas fijas iguales para todos. Aguantá lo máximo posible y subí en el ranking de tiempo.',
-    solo: 'JUGAR',
-    sub: 'Al instante · sin configurar',
-  };
-}
-
-// Ícono de tetrominó por modalidad (delega en el módulo de íconos con el acento).
-function modeTetrominoIcon(mode: PlayMode, size = 28): string {
-  return tetrominoIcon(mode, modeAccent(mode), size);
-}
-
 // Datos de los chips de la config custom (Gravedad · Objetivo · Hold · Next).
 function customConfigChips(): Array<{ k: string; v: string }> {
   return [
@@ -8142,15 +8093,6 @@ function customConfigChips(): Array<{ k: string; v: string }> {
 
 function renderCustomConfigChips(): string {
   return `<div class="dash-mode-chips">${customConfigChips().map((c) => `<span class="dash-mode-chip"><strong>${c.k}</strong><span>${escapeHtml(c.v)}</span></span>`).join('')}</div>`;
-}
-
-function renderModeCard(mode: PlayMode, active: boolean, action = 'select-play-mode'): string {
-  const meta = playModeMeta(mode);
-  return `
-    <button class="dash-mode-card ${active ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active}" data-ui-action="${action}" data-mode="${mode}" style="--card-accent: ${modeAccent(mode)};">
-      <span class="dash-mode-card-icon" aria-hidden="true">${modeTetrominoIcon(mode)}</span>
-      <span class="dash-mode-card-text"><strong>${meta.cardName}</strong><small>${escapeHtml(meta.cardTag)}</small></span>
-    </button>`;
 }
 
 // Tarjetas de modalidad dentro de la sala (solo host, en lobby): cambiar de tarjeta
@@ -8225,11 +8167,6 @@ function isMobileDashboard(): boolean {
   return typeof window !== 'undefined' && window.innerWidth < 760;
 }
 
-function modeAccent(mode: PlayMode): string {
-  if (mode === 'custom') return '#9d4edd';
-  if (mode === 'local1v1') return '#ff007f';
-  return '#00f5ff';
-}
 
 type DashTab = 'inicio' | 'jugar' | 'historial' | 'ajustes';
 

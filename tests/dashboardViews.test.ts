@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderWelcome } from '../src/ui/dashboard/welcome';
 import { renderHistory } from '../src/ui/dashboard/history';
 import { renderControls } from '../src/ui/dashboard/controls';
+import { modeAccent, playModeMeta, renderModeCard } from '../src/ui/dashboard/modeCard';
 import type { RunHistoryEntry } from '../src/app/runHistory';
 
 // Construye una entrada de historial con solo los campos que la vista lee; el
@@ -64,5 +65,32 @@ describe('renderControls', () => {
     expect(html).toContain('>10 f<');
     expect(html).toContain('>2 f<');
     expect(html).toContain('>∞<');
+  });
+});
+
+describe('modeCard (núcleo puro del selector de modalidad)', () => {
+  it('modeAccent da el hex por modo', () => {
+    expect(modeAccent('survival')).toBe('#00f5ff');
+    expect(modeAccent('custom')).toBe('#9d4edd');
+    expect(modeAccent('local1v1')).toBe('#ff007f');
+  });
+
+  it('playModeMeta da los metadatos por modo', () => {
+    expect(playModeMeta('survival').cardName).toBe('Supervivencia');
+    expect(playModeMeta('custom').cardName).toBe('Custom');
+    expect(playModeMeta('local1v1').cardName).toBe('Duelo 1v1');
+  });
+
+  it('renderModeCard refleja modo, estado activo y acento', () => {
+    const active = renderModeCard('custom', true);
+    expect(active).toContain('data-mode="custom"');
+    expect(active).toContain('is-active');
+    expect(active).toContain('--card-accent: #9d4edd');
+    expect(active).toContain('aria-selected="true"');
+    expect(active).toContain('<strong>Custom</strong>');
+
+    const inactive = renderModeCard('survival', false, 'select-room-mode');
+    expect(inactive).not.toContain('is-active');
+    expect(inactive).toContain('data-ui-action="select-room-mode"');
   });
 });
