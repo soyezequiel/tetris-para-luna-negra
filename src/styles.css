@@ -3730,34 +3730,116 @@ canvas {
   text-align: center;
 }
 
-@media (min-width: 901px) {
-  .dash-play-stage--mode-select {
-    /* El selector ocupa siempre el mismo marco del hero. Así las tarjetas no
-       cambian de posición cuando el detalle inferior es más alto o más bajo. */
-    min-height: 100%;
-    box-sizing: border-box;
-    margin: 0 auto;
-    padding-top: 18px;
-  }
-
-  .dash-mode-primary-action {
-    /* Acción persistente en la esquina marcada: no depende de la altura del
-       título, la configuración o el ranking del modo activo. */
-    position: absolute;
-    right: 48px;
-    bottom: 48px;
-    z-index: 4;
-    animation: none;
-  }
-
-  .dash-mode-primary-action .dash-smart-play {
-    width: 314px;
-    justify-content: center;
-  }
+/* Selector de modalidad (variante A del rediseño): alineado a la izquierda, sin
+   centrar. Tarjetas en grid de 3 → divisor → detalle del modo → CTA con sublabel
+   + chips/hint, y los tops debajo en Supervivencia. */
+.dash-mode-select {
+  max-width: 560px;
+  align-items: stretch;
+  text-align: left;
+  margin: 0 auto;
+  padding-top: 18px;
 }
+.dash-mode-select-inner { width: 100%; }
+.dash-mode-step-eyebrow {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  color: var(--dash-neon-cyan);
+  margin-bottom: 14px;
+}
+.dash-mode-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+  margin: 4px 0 22px;
+}
+.dash-mode-tag {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.45);
+  margin-bottom: 6px;
+}
+.dash-mode-name {
+  font-family: 'Orbitron', 'Exo 2', sans-serif;
+  font-weight: 800;
+  font-size: 30px;
+  line-height: 1.05;
+  margin: 0 0 10px;
+  color: #f7f7f2;
+}
+.dash-mode-desc {
+  color: rgba(238, 240, 244, 0.6);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 20px;
+  max-width: 440px;
+  font-weight: 500;
+}
+.dash-mode-action-col { max-width: 380px; }
+.dash-mode-solo-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  padding: 17px 18px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--stage-accent) 90%, transparent);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--stage-accent) 22%, transparent), color-mix(in srgb, var(--stage-accent) 5%, transparent));
+  color: #fff;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  box-shadow: 0 16px 38px -16px color-mix(in srgb, var(--stage-accent) 70%, transparent);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+}
+.dash-mode-solo-cta:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.dash-mode-solo-cta:active { transform: scale(0.98); }
+.dash-mode-solo-text { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; line-height: 1.1; }
+.dash-mode-solo-sub { font-size: 10px; font-weight: 600; letter-spacing: 0.5px; opacity: 0.75; }
+.dash-mode-config-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 11px 16px;
+  border-radius: 11px;
+  border: 1px solid rgba(157, 78, 221, 0.4);
+  background: rgba(157, 78, 221, 0.08);
+  color: #c79bff;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.dash-mode-config-btn:hover { background: rgba(157, 78, 221, 0.16); border-color: rgba(157, 78, 221, 0.6); }
+.dash-mode-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.dash-mode-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: 9px;
+  background: rgba(157, 78, 221, 0.08);
+  border: 1px solid rgba(157, 78, 221, 0.25);
+  font-size: 12px;
+}
+.dash-mode-chip strong { color: #c79bff; font-weight: 700; }
+.dash-mode-chip span { color: rgba(238, 240, 244, 0.6); }
+.dash-mode-hint {
+  font-size: 12px;
+  color: rgba(238, 240, 244, 0.45);
+  margin: 12px 2px 0;
+  line-height: 1.5;
+}
+.dash-mode-select .dash-survival-tops { margin-top: 26px; }
 
-.dash-play-stage--mode-select > .dash-play-eyebrow,
-.dash-play-stage--mode-select > .dash-mode-cards {
+.dash-play-stage--mode-select .dash-mode-step-eyebrow,
+.dash-play-stage--mode-select .dash-mode-cards {
   /* El stage se vuelve a renderizar al elegir un modo. El selector es navegación
      persistente, por lo que no debe repetir la animación de entrada en cada click. */
   animation: none;
@@ -3825,39 +3907,39 @@ canvas {
 
 /* Selector de modalidad (sección Jugar): tarjetas Supervivencia / Custom / 1v1 */
 .dash-mode-cards {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
   width: 100%;
-  margin: 6px 0 24px;
+  margin: 0 0 26px;
   animation: dash-fade-up 0.5s ease 0.1s both;
 }
 .dash-mode-card {
-  flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 10px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--dash-text-dim);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  color: #eef0f4;
   cursor: pointer;
-  text-align: center;
-  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
 }
-.dash-mode-card:hover { background: rgba(255, 255, 255, 0.07); transform: translateY(-2px); }
+.dash-mode-card:hover { background: rgba(255, 255, 255, 0.05); transform: translateY(-2px); }
 .dash-mode-card.is-active {
-  border-color: var(--dash-neon-cyan);
-  background: rgba(0, 245, 255, 0.12);
+  border-color: color-mix(in srgb, var(--card-accent, var(--dash-neon-cyan)) 90%, transparent);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--card-accent, var(--dash-neon-cyan)) 18%, transparent), color-mix(in srgb, var(--card-accent, var(--dash-neon-cyan)) 3%, transparent));
   color: #f7f7f2;
-  box-shadow: 0 0 0 1px rgba(0, 245, 255, 0.35), 0 8px 22px rgba(0, 245, 255, 0.12);
+  box-shadow: 0 16px 36px -18px color-mix(in srgb, var(--card-accent, var(--dash-neon-cyan)) 75%, transparent);
 }
-.dash-mode-card-icon { font-size: 26px; line-height: 1; }
-.dash-mode-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.dash-mode-card-text strong { font-size: 14px; font-weight: 800; }
-.dash-mode-card-text small { font-size: 9px; font-weight: 700; letter-spacing: 1px; opacity: 0.7; text-transform: uppercase; }
+.dash-mode-card-icon { display: flex; line-height: 0; }
+.dash-mode-card-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.dash-mode-card-text strong { font-size: 13.5px; font-weight: 800; }
+.dash-mode-card-text small { font-size: 9px; font-weight: 700; letter-spacing: 1px; opacity: 0.55; text-transform: uppercase; }
 
 .dash-mode-detail { display: flex; flex-direction: column; align-items: center; width: 100%; }
 
@@ -5585,6 +5667,477 @@ canvas {
     letter-spacing: 2px;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MÓVIL — layout dedicado del dashboard (renderMobileDashboard, < 760px)
+   Pantalla completa de una columna (100dvh, sin scroll de página). En sala, el
+   gestor parte MAIN en 3 zonas: header fijo + jugadores (único scroll) +
+   acciones ancladas, para no scrollear nunca al marcarse listo / empezar / salir.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.mdash {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  /* El overlay padre tiene pointer-events:none (deja pasar al juego); cada raíz de
+     menú re-habilita los clics, igual que .dash-layout. Sin esto el tap atraviesa
+     al canvas de abajo (pe:auto) aunque el z-index sea mayor. */
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--dash-text);
+  font-family: 'Exo 2', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(120% 60% at 50% -8%, rgba(157, 78, 221, 0.16), transparent 55%),
+    radial-gradient(90% 50% at 100% 108%, rgba(0, 245, 255, 0.08), transparent 55%),
+    #06080f;
+}
+
+/* HEADER */
+.mdash-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  z-index: 1;
+}
+.mdash-logo {
+  font-family: 'Orbitron', 'Arial Black', sans-serif;
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: 3px;
+  background: linear-gradient(90deg, #00f5ff, #9d4edd);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.mdash-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px 5px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.mdash-user-avatar {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  font-size: 11px;
+}
+.mdash-user-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* MAIN */
+.mdash-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+.mdash-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.mdash-center {
+  padding: 20px 18px 28px;
+}
+.mdash-center .menu-panel {
+  width: 100%;
+  max-width: 100%;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+/* BOTTOM NAV */
+.mdash-nav {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(6, 8, 15, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  position: relative;
+  z-index: 2;
+}
+.mdash-nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-height: 56px;
+  padding: 9px 4px;
+  background: transparent;
+  border: none;
+  color: rgba(238, 240, 244, 0.5);
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.mdash-nav-btn.is-active { color: #00f5ff; }
+.mdash-nav-icon { position: relative; display: grid; place-items: center; }
+.mdash-nav-dot {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dash-success);
+  box-shadow: 0 0 8px var(--dash-success);
+}
+.mdash-nav-label { font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
+
+/* EYEBROWS / TITLES compartidos del móvil */
+.mdash-eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.45);
+  margin-bottom: 6px;
+}
+.mdash-eyebrow--cyan { color: #00f5ff; margin-bottom: 12px; }
+
+/* ── JUGAR (sin sala): pills + detalle scrollable + acciones ancladas ── */
+.mdash-jugar { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mdash-jugar-scroll { padding: 18px; }
+.mdash-mode-pills { display: flex; gap: 8px; margin-bottom: 20px; }
+.mdash-mode-pill {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 6px;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--dash-text);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+.mdash-mode-pill:active { transform: scale(0.97); }
+.mdash-mode-pill.is-active {
+  border-color: var(--pill-accent);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--pill-accent) 18%, transparent), color-mix(in srgb, var(--pill-accent) 3%, transparent));
+  box-shadow: 0 12px 28px -16px var(--pill-accent);
+}
+.mdash-mode-pill-icon { font-size: 22px; line-height: 1; }
+.mdash-mode-pill-label { font-size: 11.5px; font-weight: 800; text-align: center; line-height: 1.2; }
+.mdash-mode-title {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 800;
+  font-size: 24px;
+  margin: 0 0 8px;
+}
+.mdash-mode-desc {
+  color: rgba(238, 240, 244, 0.6);
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin: 0 0 18px;
+}
+.mdash-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 16px; }
+.mdash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(157, 78, 221, 0.08);
+  border: 1px solid rgba(157, 78, 221, 0.25);
+  font-size: 11.5px;
+}
+.mdash-chip strong { color: #c79bff; font-weight: 700; }
+.mdash-chip span { color: rgba(238, 240, 244, 0.6); }
+.mdash-tops {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  margin-bottom: 8px;
+}
+.mdash-tops-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.4);
+  margin-bottom: 10px;
+}
+
+/* ACCIONES ancladas (Jugar sin sala) */
+.mdash-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(6, 8, 15, 0.9);
+}
+.mdash-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 15px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--cta-accent, #00f5ff);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--cta-accent, #00f5ff) 22%, transparent), color-mix(in srgb, var(--cta-accent, #00f5ff) 5%, transparent));
+  color: #fff;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  box-shadow: 0 16px 38px -18px var(--cta-accent, #00f5ff);
+}
+.mdash-cta:active { transform: scale(0.98); }
+.mdash-btn {
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 16px;
+  border-radius: 12px;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mdash-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.mdash-btn--ghost-purple {
+  border: 1px solid rgba(157, 78, 221, 0.4);
+  background: rgba(157, 78, 221, 0.08);
+  color: #c79bff;
+}
+.mdash-btn--create {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--dash-text);
+}
+
+/* ── GESTOR DE SALA (3 zonas, sin scroll de página) ── */
+.mdash-room { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mdash-room-head { flex: none; padding: 14px 18px 12px; }
+.mdash-room-head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.mdash-room-eyebrow {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #9d4edd;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.mdash-room-code {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 800;
+  font-size: 28px;
+  letter-spacing: 5px;
+  color: #00f5ff;
+  text-shadow: 0 0 14px rgba(0, 245, 255, 0.5);
+  margin-top: 2px;
+}
+.mdash-room-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: rgba(238, 240, 244, 0.6);
+  margin-top: 4px;
+}
+.mdash-room-status strong { font-weight: 700; }
+.mdash-dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(238, 240, 244, 0.3); }
+.mdash-ready-badge {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 6px 11px;
+  border-radius: 11px;
+  background: rgba(57, 212, 154, 0.12);
+  border: 1px solid rgba(57, 212, 154, 0.35);
+}
+.mdash-ready-count { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 14px; color: #7df0c4; }
+.mdash-ready-label { font-size: 8px; font-weight: 800; letter-spacing: 1.5px; color: rgba(125, 240, 196, 0.7); }
+.mdash-room-quick { display: flex; gap: 7px; margin-top: 12px; }
+.mdash-quick-btn {
+  flex: 1;
+  min-height: 38px;
+  padding: 9px 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 245, 255, 0.4);
+  background: rgba(0, 245, 255, 0.07);
+  color: #00f5ff;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.mdash-vis-toggle {
+  flex: none;
+  width: 52px;
+  min-height: 38px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+  border: 1px solid rgba(157, 78, 221, 0.45);
+  background: rgba(157, 78, 221, 0.12);
+  cursor: pointer;
+}
+.mdash-vis-toggle.is-public { border-color: rgba(0, 245, 255, 0.45); background: rgba(0, 245, 255, 0.12); }
+.mdash-vis-knob {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #c79bff;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+.mdash-vis-toggle.is-public .mdash-vis-knob { transform: translateX(20px); background: #00f5ff; }
+
+/* JUGADORES — único scroll interno */
+.mdash-room-players { padding: 0 18px; }
+.mdash-room-players-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.4);
+}
+.mdash-player-list { display: flex; flex-direction: column; gap: 8px; padding-bottom: 10px; }
+.mdash-player {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mdash-player-avatar { width: 36px; height: 36px; flex: 0 0 auto; border-radius: 9px; font-size: 14px; }
+.mdash-player-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mdash-player-name { font-weight: 700; font-size: 13.5px; }
+.mdash-player-role {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.45);
+}
+.mdash-player-ready {
+  flex: none;
+  font-size: 10px;
+  font-weight: 800;
+  color: #7df0c4;
+  background: rgba(57, 212, 154, 0.14);
+  border: 1px solid rgba(57, 212, 154, 0.4);
+  padding: 4px 9px;
+  border-radius: 999px;
+}
+.mdash-add-friend {
+  width: 100%;
+  min-height: 44px;
+  padding: 11px;
+  border-radius: 11px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: rgba(238, 240, 244, 0.7);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mdash-add-friend:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ACCIONES de sala ancladas */
+.mdash-room-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(6, 8, 15, 0.92);
+}
+.mdash-start {
+  width: 100%;
+  min-height: 50px;
+  padding: 14px;
+  border-radius: 13px;
+  border: 1px solid rgba(57, 212, 154, 0.9);
+  background: linear-gradient(120deg, rgba(57, 212, 154, 0.24), rgba(57, 212, 154, 0.05));
+  color: #eafff5;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 15px;
+  cursor: pointer;
+}
+.mdash-start:disabled {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(238, 240, 244, 0.4);
+  cursor: not-allowed;
+}
+.mdash-start-reason { text-align: center; font-size: 11px; color: rgba(238, 240, 244, 0.45); margin: 0; }
+.mdash-action-row { display: flex; gap: 9px; }
+.mdash-ready {
+  flex: 1;
+  min-height: 46px;
+  padding: 13px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dash-text);
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mdash-ready.is-ready {
+  border-color: rgba(57, 212, 154, 0.6);
+  background: rgba(57, 212, 154, 0.14);
+  color: #7df0c4;
+}
+.mdash-leave {
+  flex: none;
+  min-height: 46px;
+  padding: 13px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(235, 68, 90, 0.4);
+  background: rgba(235, 68, 90, 0.08);
+  color: #ff6b81;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* En móvil, las pestañas de Tops embebidas van más compactas. */
+.mdash-tops .leaderboard-tabs { display: flex; gap: 7px; margin-bottom: 10px; }
 
 /* Overrides for menu panels nested inside the dashboard center */
 .dash-hero .menu-panel {

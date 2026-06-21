@@ -7848,6 +7848,13 @@ function renderFloatingParticles(): string {
 }
 
 function renderDashboardMenu(state: GameState): string {
+  // Móvil (< 760px): layout dedicado de pantalla completa con nav inferior y, en
+  // sala, un gestor de 3 zonas donde solo la lista de jugadores scrollea (las
+  // acciones Marcar listo / Empezar / Salir quedan SIEMPRE visibles). El loop
+  // recomputa este string cada frame, así que cruzar el breakpoint reconstruye el
+  // DOM solo (renderOverlay difea contra lastOverlayHtml).
+  if (isMobileDashboard()) return renderMobileDashboard(state);
+
   const userDisplayName = onlineName.trim() || 'Jugador';
 
   const isHomeActive = appMode === 'menu';
@@ -7914,10 +7921,6 @@ function renderDashboardMenu(state: GameState): string {
       ` : ''}
     </div>
   `;
-}
-
-function renderSmartIconPlay(): string {
-  return '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 }
 
 function renderSmartIconCheck(): string {
@@ -8025,37 +8028,83 @@ function renderSmartPlayStage(): string {
 // Función (declaración hoisteada) en vez de const: el loop de render corre al
 // cargar el módulo y un `const` acá rompería con TDZ en el primer frame (ver
 // memoria main-ts-first-render-tdz).
-function playModeMeta(mode: PlayMode): { eyebrow: string; title: string; subtitle: string; icon: string } {
+interface ModeMeta {
+  // cardName/cardTag → tarjeta del selector; tag/name/desc → detalle; solo/sub → CTA.
+  cardName: string;
+  cardTag: string;
+  tag: string;
+  name: string;
+  desc: string;
+  solo: string;
+  sub: string;
+}
+
+function playModeMeta(mode: PlayMode): ModeMeta {
   if (mode === 'custom') {
     return {
-      eyebrow: 'MODO CUSTOM',
-      title: 'Partida custom',
-      subtitle: 'Jugá con tu configuración personalizada. Con sala, es una batalla online con tus reglas.',
-      icon: '⚙️',
+      cardName: 'Custom',
+      cardTag: 'Tus reglas',
+      tag: 'Tus reglas',
+      name: 'Partida custom',
+      desc: 'Configurá gravedad, objetivo y reglas a tu gusto. Con sala, es una batalla online con tus propias reglas.',
+      solo: 'JUGAR',
+      sub: 'Con tu configuración',
     };
   }
   if (mode === 'local1v1') {
     return {
-      eyebrow: 'DUELO LOCAL 1V1',
-      title: 'Duelo local (1v1)',
-      subtitle: 'Dos jugadores en la misma compu, misma semilla, sin cuenta ni conexión.',
-      icon: '🎮',
+      cardName: 'Duelo 1v1',
+      cardTag: 'Local',
+      tag: '1v1 · misma pantalla',
+      name: 'Duelo local',
+      desc: 'Dos jugadores en la misma compu, misma semilla. Sin cuenta ni conexión, solo dos manos.',
+      solo: 'INICIAR DUELO',
+      sub: '2 jugadores · local',
     };
   }
   return {
-    eyebrow: 'MODO SUPERVIVENCIA',
-    title: 'Supervivencia',
-    subtitle: 'Reglas fijas iguales para todos: aguantá lo más posible. Con sala, es batalla online de reglas fijas y el top de victorias es justo.',
-    icon: '🛡️',
+    cardName: 'Supervivencia',
+    cardTag: 'Resistencia',
+    tag: 'Resistencia',
+    name: 'Supervivencia',
+    desc: 'Reglas fijas iguales para todos. Aguantá lo máximo posible y subí en el ranking de tiempo.',
+    solo: 'JUGAR',
+    sub: 'Al instante · sin configurar',
   };
+}
+
+// Ícono de tetrominó por modalidad (SVG inline, color del acento), como el prototipo.
+function modeTetrominoIcon(mode: PlayMode, size = 28): string {
+  const c = modeAccent(mode);
+  if (mode === 'custom') {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true"><rect x="2" y="3" width="11" height="11" rx="2" fill="${c}"/><rect x="14.5" y="3" width="11" height="11" rx="2" fill="${c}"/><rect x="27" y="3" width="11" height="11" rx="2" fill="${c}"/><rect x="14.5" y="15.5" width="11" height="11" rx="2" fill="${c}" opacity="0.6"/></svg>`;
+  }
+  if (mode === 'local1v1') {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true"><rect x="18" y="3" width="10" height="10" rx="2" fill="${c}"/><rect x="28" y="3" width="10" height="10" rx="2" fill="${c}"/><rect x="6" y="22" width="10" height="10" rx="2" fill="${c}" opacity="0.7"/><rect x="16" y="22" width="10" height="10" rx="2" fill="${c}" opacity="0.7"/></svg>`;
+  }
+  return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true"><rect x="14" y="2" width="12" height="11" rx="2" fill="${c}"/><rect x="14" y="14.5" width="12" height="11" rx="2" fill="${c}" opacity="0.78"/><rect x="14" y="27" width="12" height="11" rx="2" fill="${c}" opacity="0.5"/></svg>`;
+}
+
+// Datos de los chips de la config custom (Gravedad · Objetivo · Hold · Next).
+function customConfigChips(): Array<{ k: string; v: string }> {
+  return [
+    { k: 'Gravedad', v: roomSpeedLabel(gameRules) },
+    { k: 'Objetivo', v: customSettings.objectiveMode === 'lines' && customSettings.objectiveLineTarget > 0 ? `${customSettings.objectiveLineTarget} líneas` : 'Sin fin' },
+    { k: 'Hold', v: customSettings.useHoldQueue ? 'Sí' : 'No' },
+    { k: 'Next', v: String(customSettings.nextPieces) },
+  ];
+}
+
+function renderCustomConfigChips(): string {
+  return `<div class="dash-mode-chips">${customConfigChips().map((c) => `<span class="dash-mode-chip"><strong>${c.k}</strong><span>${escapeHtml(c.v)}</span></span>`).join('')}</div>`;
 }
 
 function renderModeCard(mode: PlayMode, active: boolean, action = 'select-play-mode'): string {
   const meta = playModeMeta(mode);
   return `
-    <button class="dash-mode-card ${active ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active}" data-ui-action="${action}" data-mode="${mode}">
-      <span class="dash-mode-card-icon" aria-hidden="true">${meta.icon}</span>
-      <span class="dash-mode-card-text"><strong>${meta.title}</strong><small>${escapeHtml(meta.eyebrow)}</small></span>
+    <button class="dash-mode-card ${active ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active}" data-ui-action="${action}" data-mode="${mode}" style="--card-accent: ${modeAccent(mode)};">
+      <span class="dash-mode-card-icon" aria-hidden="true">${modeTetrominoIcon(mode)}</span>
+      <span class="dash-mode-card-text"><strong>${meta.cardName}</strong><small>${escapeHtml(meta.cardTag)}</small></span>
     </button>`;
 }
 
@@ -8073,39 +8122,280 @@ function renderRoomModeCards(): string {
 function renderModeSelectStage(): string {
   const mode = selectedPlayMode;
   const meta = playModeMeta(mode);
+  const accent = modeAccent(mode);
   const cards = (['survival', 'custom', 'local1v1'] as PlayMode[])
     .map((m) => renderModeCard(m, m === mode))
     .join('');
 
-  let extraHtml = '';
-  if (mode === 'survival') {
-    extraHtml = renderSurvivalTopsEmbed();
-  } else if (mode === 'custom') {
-    extraHtml = `
-      <div class="dash-play-secondary">
-        <button class="dash-hero-btn dash-hero-btn--ghost" type="button" data-ui-action="custom-open">Configurar partida</button>
-      </div>`;
-  }
   const primaryAction = mode === 'local1v1' ? 'local-versus' : 'sidebar-play';
-  const primaryActionHtml = `
-    <button class="dash-smart-play dash-smart-play--solo" type="button" data-ui-action="${primaryAction}" aria-label="Jugar">
-      <span class="dash-smart-play-icon">${renderSmartIconPlay()}</span>
-      <span class="dash-smart-play-text"><strong>JUGAR</strong></span>
-    </button>`;
+  const customExtra = mode === 'custom'
+    ? `${renderCustomConfigChips()}
+       <button class="dash-mode-config-btn" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>`
+    : '';
+  const tops = mode === 'survival' ? renderSurvivalTopsEmbed() : '';
+  const playIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
 
   return `
-    <div class="dash-play-stage dash-play-stage--mode-select" style="--stage-accent: #00f5ff;">
-      <div class="dash-play-eyebrow">1 · ELEGÍ CÓMO JUGAR</div>
-      <div class="dash-mode-cards" role="tablist">${cards}</div>
-      <div class="dash-mode-detail">
-        <div class="dash-play-eyebrow">${meta.eyebrow}</div>
-        <h2 class="dash-play-title">${meta.title}</h2>
-        <p class="dash-play-subtitle">${meta.subtitle}</p>
-        <div class="dash-play-cta dash-mode-primary-action">${primaryActionHtml}</div>
-        ${extraHtml}
+    <div class="dash-play-stage dash-play-stage--mode-select dash-mode-select" style="--stage-accent: ${accent};">
+      <div class="dash-mode-select-inner">
+        <div class="dash-play-eyebrow dash-mode-step-eyebrow">1 · Elegí cómo jugar</div>
+        <div class="dash-mode-cards" role="tablist">${cards}</div>
+        <div class="dash-mode-divider"></div>
+        <div class="dash-mode-tag">${escapeHtml(meta.tag)}</div>
+        <h2 class="dash-mode-name">${meta.name}</h2>
+        <p class="dash-mode-desc">${meta.desc}</p>
+        <div class="dash-mode-action-col">
+          <button class="dash-mode-solo-cta" type="button" data-ui-action="${primaryAction}" aria-label="${meta.solo}">
+            ${playIcon}
+            <span class="dash-mode-solo-text"><span>${meta.solo}</span><span class="dash-mode-solo-sub">${escapeHtml(meta.sub)}</span></span>
+          </button>
+          ${customExtra}
+          <p class="dash-mode-hint">¿Jugar con amigos? Creá una sala en el panel de la derecha y se vuelve multijugador. →</p>
+        </div>
+        ${tops}
       </div>
     </div>
   `;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MÓVIL — layout dedicado (< 760px)
+// El dashboard de 3 columnas no se usa en móvil; lo reemplaza una sola columna a
+// pantalla completa (100dvh, overflow oculto) con nav inferior fija. En sala, el
+// gestor parte MAIN en 3 zonas: header fijo + jugadores (único scroll) + acciones
+// ancladas, para no scrollear nunca y poder marcarse listo / empezar / salir.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isMobileDashboard(): boolean {
+  return typeof window !== 'undefined' && window.innerWidth < 760;
+}
+
+function modeAccent(mode: PlayMode): string {
+  if (mode === 'custom') return '#9d4edd';
+  if (mode === 'local1v1') return '#ff007f';
+  return '#00f5ff';
+}
+
+type DashTab = 'inicio' | 'jugar' | 'historial' | 'ajustes';
+
+function dashboardActiveTab(): DashTab {
+  if (appMode === 'historyMenu' || appMode === 'library') return 'historial';
+  if (appMode === 'configMenu' || appMode === 'settings') return 'ajustes';
+  if (appMode === 'playMenu' || appMode === 'custom' || appMode === 'leaderboard' || appMode === 'survivalTop') return 'jugar';
+  // Con sala activa el hub ES el contexto de Jugar (ahí vive el gestor de sala y el
+  // punto verde de la nav): resaltamos Jugar aunque appMode haya quedado en 'menu'.
+  if (onlineRoom && isPlayHubMode()) return 'jugar';
+  return 'inicio';
+}
+
+// El hub de juego (selector de modo / gestor de sala) vive bajo estos appModes;
+// el resto (custom, tops, historial, ajustes) se rinde como contenido scrollable
+// reutilizando el centro de desktop.
+function isPlayHubMode(): boolean {
+  return appMode === 'menu' || appMode === 'playMenu' || appMode === 'onlineMenu' || appMode === 'roomLobby';
+}
+
+// Función (no const) para evitar el TDZ del primer render: loop() corre al cargar
+// el módulo y este ícono está en el path de render (ver memoria main-ts-first-render-tdz).
+function mdashNavIcon(tab: DashTab): string {
+  if (tab === 'inicio') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>';
+  if (tab === 'jugar') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  if (tab === 'historial') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M13 3a9 9 0 1 0 8.49 12h-2.13A7 7 0 1 1 13 5a7 7 0 0 1 6.32 4H22A9 9 0 0 0 13 3zm-1 5v5l4.25 2.52.75-1.23-3.5-2.04V8z"/></svg>';
+  return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M19.14 12.94a7.5 7.5 0 0 0 0-1.88l2-1.56-2-3.46-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.56h-4l-.36 2.56c-.59.24-1.13.56-1.62.94L4.4 6.04l-2 3.46 2 1.56a7.5 7.5 0 0 0 0 1.88l-2 1.56 2 3.46 2.39-.96c.49.38 1.03.7 1.62.94l.36 2.56h4l.36-2.56c.59-.24 1.13-.56 1.62-.94l2.39.96 2-3.46zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>';
+}
+
+function renderMobileNavButton(tab: DashTab, active: DashTab, action: string, label: string, dot: boolean): string {
+  return `
+    <button class="mdash-nav-btn ${tab === active ? 'is-active' : ''}" type="button" data-ui-action="${action}">
+      <span class="mdash-nav-icon">${mdashNavIcon(tab)}${dot ? '<span class="mdash-nav-dot" aria-hidden="true"></span>' : ''}</span>
+      <span class="mdash-nav-label">${label}</span>
+    </button>`;
+}
+
+function renderMobileDashboard(state: GameState): string {
+  const userDisplayName = onlineName.trim() || 'Jugador';
+  const tab = dashboardActiveTab();
+  const hasRoom = !!onlineRoom;
+  return `
+    <div class="mdash">
+      ${renderFloatingParticles()}
+      <header class="mdash-header">
+        <span class="mdash-logo">TETRA</span>
+        <span class="mdash-user">
+          ${renderOnlineAvatar({ name: userDisplayName, avatarUrl: onlinePlayer.avatarUrl }, 'small', 'mdash-user-avatar')}
+          <span class="mdash-user-name">${escapeHtml(userDisplayName)}</span>
+        </span>
+      </header>
+      <main class="mdash-main">
+        ${renderMobileMain(state)}
+      </main>
+      <nav class="mdash-nav" aria-label="Navegación">
+        ${renderMobileNavButton('inicio', tab, 'main-menu', 'Inicio', false)}
+        ${renderMobileNavButton('jugar', tab, 'play-menu', 'Jugar', hasRoom)}
+        ${renderMobileNavButton('historial', tab, 'history-menu', 'Historial', false)}
+        ${renderMobileNavButton('ajustes', tab, 'settings', 'Ajustes', false)}
+      </nav>
+    </div>
+  `;
+}
+
+function renderMobileMain(state: GameState): string {
+  if (isPlayHubMode()) {
+    return onlineRoom ? renderMobileRoomManager() : renderMobileModeSelect();
+  }
+  // Inicio / Historial / Ajustes / Custom / Tops: una sola columna scrollable
+  // reutilizando el contenido del centro de desktop (estas vistas SÍ pueden scrollear).
+  return `<div class="mdash-scroll mdash-center">${renderDashboardCenterContent(state)}</div>`;
+}
+
+// Chips compactos de la config custom (Gravedad · Objetivo · Hold · Next).
+function renderMobileCustomChips(): string {
+  return `
+    <div class="mdash-chips">
+      ${customConfigChips().map((c) => `<span class="mdash-chip"><strong>${c.k}</strong><span>${escapeHtml(c.v)}</span></span>`).join('')}
+    </div>`;
+}
+
+// Tops embebidos compactos para Supervivencia en móvil (mismas pestañas/acciones).
+function renderMobileTopsEmbed(): string {
+  const onSurvival = leaderboardTab === 'survival';
+  const body = onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody();
+  return `
+    <div class="mdash-tops">
+      <div class="mdash-tops-title">Top mundial</div>
+      <div class="leaderboard-tabs" role="tablist">
+        <button class="leaderboard-tab ${!onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${!onSurvival}" data-ui-action="leaderboard-tab-wins">🏆 Multi</button>
+        <button class="leaderboard-tab ${onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${onSurvival}" data-ui-action="leaderboard-tab-survival">⏱️ Surv</button>
+      </div>
+      ${body}
+    </div>`;
+}
+
+// Sin sala: pills de modo (fila compacta) + detalle scrollable + acciones ancladas.
+function renderMobileModeSelect(): string {
+  const mode = selectedPlayMode;
+  const meta = playModeMeta(mode);
+  const pills = (['survival', 'custom', 'local1v1'] as PlayMode[]).map((m) => {
+    const pm = playModeMeta(m);
+    return `
+      <button class="mdash-mode-pill ${m === mode ? 'is-active' : ''}" type="button" data-ui-action="select-play-mode" data-mode="${m}" style="--pill-accent: ${modeAccent(m)};">
+        <span class="mdash-mode-pill-icon" aria-hidden="true">${modeTetrominoIcon(m, 24)}</span>
+        <span class="mdash-mode-pill-label">${pm.cardName}</span>
+      </button>`;
+  }).join('');
+
+  const extra = mode === 'survival' ? renderMobileTopsEmbed() : '';
+  const customChips = mode === 'custom' ? renderMobileCustomChips() : '';
+  const primaryAction = mode === 'local1v1' ? 'local-versus' : 'sidebar-play';
+  const primaryLabel = mode === 'local1v1' ? 'Iniciar duelo' : 'Jugar';
+
+  return `
+    <div class="mdash-jugar" style="--mode-accent: ${modeAccent(mode)};">
+      <div class="mdash-scroll mdash-jugar-scroll">
+        <div class="mdash-eyebrow mdash-eyebrow--cyan">Elegí cómo jugar</div>
+        <div class="mdash-mode-pills" role="tablist">${pills}</div>
+        <div class="mdash-eyebrow">${escapeHtml(meta.tag)}</div>
+        <h2 class="mdash-mode-title">${meta.name}</h2>
+        <p class="mdash-mode-desc">${meta.desc}</p>
+        ${customChips}
+        ${extra}
+      </div>
+      <div class="mdash-actions">
+        ${mode === 'custom' ? `<button class="mdash-btn mdash-btn--ghost-purple" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>` : ''}
+        <button class="mdash-cta" type="button" data-ui-action="${primaryAction}" aria-label="${primaryLabel}">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <span>${primaryLabel}</span>
+        </button>
+        <button class="mdash-btn mdash-btn--create" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>+ Crear sala con amigos</button>
+      </div>
+    </div>`;
+}
+
+// Con sala: gestor "Control de anfitrión" sin scroll de página.
+function renderMobileRoomManager(): string {
+  const room = onlineRoom!;
+  const host = isOnlineHost();
+  const player = currentOnlinePlayer();
+  const ready = !!player?.ready;
+  const readyCount = room.players.filter((p) => p.ready).length;
+  const total = room.players.length;
+  const isPublic = room.visibility === 'public';
+  const isLobby = room.status === 'lobby';
+  const canStart = ready && readyCount >= 2;
+  const startReason = !ready
+    ? 'Marcate listo para poder empezar'
+    : (readyCount < 2 ? 'Necesitás al menos 2 jugadores listos' : 'Todo listo · arrancá la partida');
+  const inviteUnavailable = !lunaIdentity?.gameId;
+
+  const playersHtml = room.players.map((candidate) => {
+    const isSelf = candidate.id === onlinePlayer.id;
+    const isHost = candidate.id === room.hostPlayerId;
+    const roleLabel = isHost ? 'Anfitrión' : isSelf ? 'Tu jugador' : 'Invitado';
+    return `
+      <div class="mdash-player">
+        ${renderOnlineAvatar(candidate, 'medium', 'mdash-player-avatar')}
+        <span class="mdash-player-copy">
+          <span class="mdash-player-name">${escapeHtml(candidate.name)}${isSelf ? ' (Tú)' : ''}</span>
+          <span class="mdash-player-role">${roleLabel}</span>
+        </span>
+        ${candidate.ready ? '<span class="mdash-player-ready">Listo ✓</span>' : ''}
+      </div>`;
+  }).join('');
+
+  const inviteBtn = inviteUnavailable
+    ? `<button class="mdash-add-friend" type="button" data-ui-action="luna-login"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo…' : 'Iniciar sesión para invitar'}</button>`
+    : `<button class="mdash-add-friend" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>${lunaInviteWindowBusy ? 'Abriendo…' : '+ Invitar amigos'}</button>`;
+
+  const visToggle = host && isLobby
+    ? `<button class="mdash-vis-toggle ${isPublic ? 'is-public' : ''}" type="button" role="switch" aria-checked="${isPublic}" aria-label="${isPublic ? 'Sala pública' : 'Sala privada'}" data-ui-action="online-visibility-toggle"${onlineBusy ? ' disabled' : ''}>
+        <span class="mdash-vis-knob"></span>
+      </button>`
+    : '';
+
+  return `
+    <div class="mdash-room">
+      <!-- HEADER (fijo) -->
+      <div class="mdash-room-head">
+        <div class="mdash-room-head-top">
+          <div class="mdash-room-id">
+            <div class="mdash-room-eyebrow">${isPublic ? 'SALA PÚBLICA' : 'SALA PRIVADA'}</div>
+            <div class="mdash-room-code">${escapeHtml(room.id)}</div>
+            <div class="mdash-room-status"><strong>${escapeHtml(matchTypeLabel(room.matchType))}</strong><span class="mdash-dot"></span><span>${escapeHtml(roomStatusLabel(room.status))}</span></div>
+          </div>
+          <span class="mdash-ready-badge">
+            <span class="mdash-ready-count">${readyCount}/${total}</span>
+            <span class="mdash-ready-label">LISTOS</span>
+          </span>
+        </div>
+        <div class="mdash-room-quick">
+          <button class="mdash-quick-btn" type="button" data-ui-action="online-copy-code" data-code="${escapeHtml(room.id)}">Copiar</button>
+          <button class="mdash-quick-btn" type="button" data-ui-action="online-copy-invite-link">${roomInviteLinkRecentlyCopied() ? '¡Link copiado!' : 'Copiar link'}</button>
+          ${visToggle}
+        </div>
+      </div>
+      <!-- JUGADORES (único scroll) -->
+      <div class="mdash-room-players mdash-scroll">
+        <div class="mdash-room-players-head"><span>Jugadores</span><span>${readyCount}/${total} listos</span></div>
+        ${renderOnlineError()}
+        <div class="mdash-player-list">
+          ${playersHtml}
+          ${inviteBtn}
+        </div>
+      </div>
+      <!-- ACCIONES (ancladas, siempre visibles) -->
+      <div class="mdash-room-actions">
+        ${isLobby && host
+          ? `<button class="mdash-start" type="button" data-ui-action="online-start"${canStart ? '' : ' disabled'}>🚀 Empezar partida</button>
+             <p class="mdash-start-reason">${startReason}</p>`
+          : (!isLobby ? '<p class="mdash-start-reason">Ronda en curso…</p>' : '')}
+        <div class="mdash-action-row">
+          ${isLobby
+            ? `<button class="mdash-ready ${ready ? 'is-ready' : ''}" type="button" data-ui-action="${ready ? 'online-unready' : 'online-ready'}">${ready ? '✓ Listo' : 'Marcarme listo'}</button>`
+            : ''}
+          <button class="mdash-leave" type="button" data-ui-action="online-leave">Salir</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 // Tops embebidos en la tarjeta Supervivencia: reusa las pestañas y los cuerpos del
