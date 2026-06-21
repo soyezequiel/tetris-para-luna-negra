@@ -5473,20 +5473,46 @@ function renderSoloResultsOverlay(state: GameState): string {
 // consultado, lo indica con un mensaje alentador.
 function renderSurvivalRankBlock(): string {
   const r = survivalRunRank;
-  let cls = 'solo-results-rank';
-  let text: string;
   if (!r || r.status === 'loading') {
-    text = 'Calculando tu puesto en el mundo…';
-  } else if (r.status === 'ranked') {
-    cls += ' solo-results-rank--ok';
-    const medal = r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : '';
-    text = `${medal ? `${medal} ` : ''}Terminaste #${r.rank} de ${r.total} en el mundo`;
-  } else if (r.status === 'unranked') {
-    text = 'Todavía fuera del top mundial — ¡seguí intentando!';
-  } else {
-    text = 'No se pudo calcular tu puesto';
+    return '<div class="solo-results-rank">Calculando tu puesto en el mundo…</div>';
   }
-  return `<div class="${cls}">${escapeHtml(text)}</div>`;
+  if (r.status === 'unranked') {
+    return '<div class="solo-results-rank">Todavía fuera del top mundial — ¡seguí intentando!</div>';
+  }
+  if (r.status === 'error') {
+    return '<div class="solo-results-rank">No se pudo calcular tu puesto</div>';
+  }
+  // Ranqueado: en vez de una sola frase, mostramos una mini-tabla con tu vecindario
+  // del ranking (hasta 3 arriba y 3 abajo) y tu fila resaltada. Da contexto de un
+  // vistazo —a quién le ganás y a quién perseguís— sin abrir el top completo.
+  return renderSurvivalRankWindow(r.rank, r.total);
+}
+
+// Mini-tabla del top centrada en el jugador: tu fila + vecinos inmediatos.
+function renderSurvivalRankWindow(rank: number, total: number): string {
+  const myIndex = rank - 1;
+  const start = Math.max(0, myIndex - 3);
+  const end = Math.min(survivalEntries.length, myIndex + 4);
+  const myId = onlinePlayer.id;
+  const rows = survivalEntries.slice(start, end).map((entry, i) => {
+    const position = start + i + 1;
+    const mine = entry.playerId === myId;
+    const pos = position === 1 ? '🥇' : position === 2 ? '🥈' : position === 3 ? '🥉' : `#${position}`;
+    const time = formatFrames(Math.round(entry.bestMs / GAME_FRAME_MS));
+    const name = mine ? 'Vos' : entry.name;
+    return `
+      <div class="rankwin-row${mine ? ' rankwin-row--me' : ''}">
+        <span class="rankwin-pos">${escapeHtml(pos)}</span>
+        <span class="rankwin-name">${escapeHtml(name)}</span>
+        <span class="rankwin-time">${escapeHtml(time)}</span>
+      </div>`;
+  }).join('');
+  const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '';
+  return `
+    <div class="solo-results-rankwin">
+      <div class="rankwin-head">${medal ? `${medal} ` : ''}Puesto #${rank} <span>de ${total} en el mundo</span></div>
+      <div class="rankwin-list">${rows}</div>
+    </div>`;
 }
 
 function canRetryCurrentRun(): boolean {

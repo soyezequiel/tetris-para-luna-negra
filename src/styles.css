@@ -4291,6 +4291,72 @@ canvas {
   box-shadow: 0 0 22px rgba(0, 229, 255, 0.4);
 }
 
+/* Mini-tabla del top centrada en el jugador (3 arriba + vos + 3 abajo). Reemplaza
+   la frase suelta del puesto por una lista compacta que se entiende de un vistazo. */
+.solo-results-rankwin {
+  width: min(380px, 86vw);
+  margin: 4px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rankwin-head {
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.3px;
+  color: #f7f7f2;
+  text-align: center;
+}
+
+.rankwin-head span {
+  font-weight: 600;
+  color: var(--dash-text-dim);
+}
+
+.rankwin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rankwin-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  color: var(--dash-text-dim);
+  font-size: 14px;
+}
+
+.rankwin-row--me {
+  color: #061018;
+  background: var(--dash-accent);
+  border-color: var(--dash-accent);
+  box-shadow: 0 0 22px rgba(0, 229, 255, 0.35);
+  font-weight: 800;
+}
+
+.rankwin-pos {
+  font-weight: 800;
+  text-align: center;
+}
+
+.rankwin-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankwin-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
 .solo-results-stats {
   display: flex;
   gap: 14px;
