@@ -13,6 +13,7 @@ import { lunaState, type PendingLunaLaunchRequest } from './state/lunaState';
 import { spectatorState } from './state/spectatorState';
 import { replayState, multiReplayState, type MultiReplayCard } from './state/replayState';
 import { onlineNetState, onlineClockState, onlineFailoverState } from './state/onlineNetState';
+import { hostAuthorityState } from './state/hostAuthorityState';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -88,7 +89,7 @@ import { INSTANT_SOFT_DROP_FACTOR } from './game/rules';
 import { OnlineApiError } from './online/client';
 import { createOnlineClient } from './online/partyClient';
 import { LunaSocialClient } from './online/lunaNegraFriendsClient';
-import { HostAuthoritySimulator, type HostSimulatedPlayer } from './online/hostAuthority';
+import type { HostSimulatedPlayer } from './online/hostAuthority';
 import { loadOnlinePlayer, saveOnlinePlayer } from './online/playerIdentity';
 import { decidePeerKoAction } from './online/peerKoAuthority';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayMessage } from './online/peerBroadcast';
@@ -413,18 +414,9 @@ const RIVAL_PIECE_GAIN = 0.26;
 const RIVAL_DEATH_GAIN = 1.7;
 let onlineAttackSequence = 0;
 let onlineAppliedAttackIds = new Set<string>();
-let onlineHostAuthority: HostAuthoritySimulator | null = null;
-// true cuando el servidor me migró la autoridad a mitad de ronda (el host
-// original se desconectó). Corro como host en "modo degradado": ver
-// ensureMigratedHostAuthority().
-let onlineHostMigrated = false;
-let onlineHostProgressInFlight = new Set<string>();
-let onlineHostLastProgressAt = new Map<string, number>();
-let onlineHostCommittedEliminations = new Set<string>();
-let onlineHostCommittedResults = new Set<string>();
-let onlineLastAuthoritativeFrame = 0;
+// El estado de la autoridad de host (simulador + bookkeeping de migración) vive
+// ahora en ./state/hostAuthorityState (hostAuthorityState; ver imports).
 let onlineLastDiagLogAt = 0;
-let onlineLastHostSimLogAt = new Map<string, number>();
 let onlineInputOutbox: SequencedOnlineInput[] = [];
 let onlineActiveRoundId: string | null = null;
 // Ronda cuya victoria ya reporté al ranking mundial (evita doble conteo).
@@ -3581,13 +3573,13 @@ function resetOnlineRoomState(): void {
   onlineSpectatorRound = false;
   onlineAttackSequence = 0;
   onlineAppliedAttackIds = new Set();
-  onlineHostAuthority = null;
-  onlineHostMigrated = false;
-  onlineHostProgressInFlight = new Set();
-  onlineHostLastProgressAt = new Map();
-  onlineHostCommittedEliminations = new Set();
-  onlineHostCommittedResults = new Set();
-  onlineLastAuthoritativeFrame = 0;
+  hostAuthorityState.simulator = null;
+  hostAuthorityState.migrated = false;
+  hostAuthorityState.progressInFlight = new Set();
+  hostAuthorityState.lastProgressAt = new Map();
+  hostAuthorityState.committedEliminations = new Set();
+  hostAuthorityState.committedResults = new Set();
+  hostAuthorityState.lastAuthoritativeFrame = 0;
   onlinePeerDisplaySnapshots = new Map();
   resetSpectatorFocus();
   onlineInputOutbox = [];
@@ -3723,13 +3715,13 @@ function resetOnlineRuntimeForNextRound(): void {
   onlineResultSubmitted = false;
   onlineAttackSequence = 0;
   onlineAppliedAttackIds = new Set();
-  onlineHostAuthority = null;
-  onlineHostMigrated = false;
-  onlineHostProgressInFlight = new Set();
-  onlineHostLastProgressAt = new Map();
-  onlineHostCommittedEliminations = new Set();
-  onlineHostCommittedResults = new Set();
-  onlineLastAuthoritativeFrame = 0;
+  hostAuthorityState.simulator = null;
+  hostAuthorityState.migrated = false;
+  hostAuthorityState.progressInFlight = new Set();
+  hostAuthorityState.lastProgressAt = new Map();
+  hostAuthorityState.committedEliminations = new Set();
+  hostAuthorityState.committedResults = new Set();
+  hostAuthorityState.lastAuthoritativeFrame = 0;
   onlinePeerDisplaySnapshots = new Map();
   resetSpectatorFocus();
   onlineInputOutbox = [];
@@ -4036,7 +4028,7 @@ function applyAttackToHostTruth(attack: AttackRequest): void {
     });
     return;
   }
-  onlineHostAuthority?.queueGarbage(attack.toPlayerId, attack.lines, attack.holeSeed, attack.attackId, attack.frame);
+  hostAuthorityState.simulator?.queueGarbage(attack.toPlayerId, attack.lines, attack.holeSeed, attack.attackId, attack.frame);
 }
 
 function selectAttackTarget(sourcePlayerId: string, attackId: string): OnlinePlayer | null {
@@ -4053,15 +4045,15 @@ function selectAttackTarget(sourcePlayerId: string, attackId: string): OnlinePla
 }
 
 function advanceHostAuthority(targetFrame: number): void {
-  if (!onlineRoom || !isOnlineHost() || !onlineHostAuthority) return;
+  if (!onlineRoom || !isOnlineHost() || !hostAuthorityState.simulator) return;
   syncHostAuthorityPlayers();
-  const updates = onlineHostAuthority.advanceAll(targetFrame);
+  const updates = hostAuthorityState.simulator.advanceAll(targetFrame);
   for (const update of updates) processHostSimulationUpdate(update);
 }
 
 function syncHostAuthorityPlayers(): void {
-  if (!onlineRoom || !isOnlineHost() || !onlineHostAuthority) return;
-  onlineHostAuthority.ensurePlayers(
+  if (!onlineRoom || !isOnlineHost() || !hostAuthorityState.simulator) return;
+  hostAuthorityState.simulator.ensurePlayers(
     onlineRoom.players
       .map((player) => player.id)
       .filter((playerId) => playerId !== onlinePlayer.id),
@@ -4078,8 +4070,8 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
   applyPeerSnapshot(onlinePlayer.id, update.playerId, snapshot);
   postHostSimulatedProgress(update.playerId, update.state);
   const nowMs = performance.now();
-  if (update.state.status === 'playing' && nowMs - (onlineLastHostSimLogAt.get(update.playerId) ?? 0) >= 2000) {
-    onlineLastHostSimLogAt.set(update.playerId, nowMs);
+  if (update.state.status === 'playing' && nowMs - (hostAuthorityState.lastSimLogAt.get(update.playerId) ?? 0) >= 2000) {
+    hostAuthorityState.lastSimLogAt.set(update.playerId, nowMs);
     logMp('host-sim', {
       target: update.playerId.slice(0, 6),
       simFrame: update.state.stats.frame,
@@ -4102,7 +4094,7 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
       });
     }
   }
-  if (update.state.status === 'gameover' && !onlineHostCommittedEliminations.has(update.playerId)) {
+  if (update.state.status === 'gameover' && !hostAuthorityState.committedEliminations.has(update.playerId)) {
     logMp('host-eliminate', {
       target: update.playerId.slice(0, 6),
       reason: update.state.stats.gameOverReason,
@@ -4120,7 +4112,7 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
     });
     void commitOnlineElimination(createOnlineKoReportFromState(update.playerId, update.state));
   }
-  if (update.state.status === 'finished' && !onlineHostCommittedResults.has(update.playerId)) {
+  if (update.state.status === 'finished' && !hostAuthorityState.committedResults.has(update.playerId)) {
     void commitOnlineResult(update.playerId, update.state, 'won', snapshot);
   }
 }
@@ -4173,7 +4165,7 @@ function syncOnline(): void {
         board: boardMetrics(liveState.board),
         pendingGarbage: liveState.stats.pendingGarbage,
         outbox: onlineInputOutbox.length,
-        lastAuthFrame: onlineLastAuthoritativeFrame,
+        lastAuthFrame: hostAuthorityState.lastAuthoritativeFrame,
       });
     }
     if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(liveState));
@@ -4486,7 +4478,7 @@ async function commitOnlineResult(
   // host queda como respaldo. Ya no es el único escritor del servidor.
   if (!onlineRoom) return;
   if (!isOnlineHost() && playerId !== onlinePlayer.id) return;
-  onlineHostCommittedResults.add(playerId);
+  hostAuthorityState.committedResults.add(playerId);
   const requestSeed = game.seed;
   try {
     const response = await onlineClient.submitResult({
@@ -4510,7 +4502,7 @@ async function commitOnlineResult(
     onlineNetState.error = null;
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
-    onlineHostCommittedResults.delete(playerId);
+    hostAuthorityState.committedResults.delete(playerId);
     onFailure?.();
   }
 }
@@ -4546,9 +4538,9 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
   if (!isOnlineHost() && report.playerId !== onlinePlayer.id) return;
   // Los KOs llegan repetidos (broadcast por peer con retry + simulación local):
   // un solo commit por jugador y por ronda.
-  if (onlineHostCommittedEliminations.has(report.playerId)) return;
+  if (hostAuthorityState.committedEliminations.has(report.playerId)) return;
   const requestSeed = report.seed;
-  onlineHostCommittedEliminations.add(report.playerId);
+  hostAuthorityState.committedEliminations.add(report.playerId);
   try {
     const response = await onlineClient.eliminatePlayer({
       roomId: onlineRoom.id,
@@ -4574,7 +4566,7 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
     onlineNetState.error = null;
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
-    onlineHostCommittedEliminations.delete(report.playerId);
+    hostAuthorityState.committedEliminations.delete(report.playerId);
     onFailure?.();
   }
 }
@@ -4588,7 +4580,7 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
  * frame 0 sin sus inputs (los dejaría reseteados y los eliminaría por error).
  *
  * Por eso el sucesor corre en "modo degradado", sin autorar los tableros
- * ajenos (onlineHostAuthority queda null, y todos los caminos que lo usan están
+ * ajenos (hostAuthorityState.simulator queda null, y todos los caminos que lo usan están
  * guardados). Igual recupera la ronda porque, ya reconocido como host:
  *  - mantiene viva la sala posteando su propio progreso (postOnlineProgress),
  *  - acredita los KO que los peers anuncian por broadcast
@@ -4598,8 +4590,8 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
  */
 function ensureMigratedHostAuthority(): void {
   if (!onlineRoom || !onlineRunStarted || !isOnlineHost()) return;
-  if (onlineHostAuthority || onlineHostMigrated) return;
-  onlineHostMigrated = true;
+  if (hostAuthorityState.simulator || hostAuthorityState.migrated) return;
+  hostAuthorityState.migrated = true;
 }
 
 function maybeStartOnlineRun(): void {
@@ -4624,14 +4616,14 @@ function maybeStartOnlineRun(): void {
   // líneas/ataques/KO por peer. El host ya NO re-simula a los demás (eso causaba
   // divergencias deterministas y top-outs falsos al recibir garbage). El host solo
   // rutea ataques y relaya progreso/KO al servidor, que es el único escritor autorizado.
-  // onlineHostAuthority queda siempre null y todos los caminos de simulación quedan inertes.
-  onlineHostAuthority = null;
-  onlineHostMigrated = false;
-  onlineHostProgressInFlight = new Set();
-  onlineHostLastProgressAt = new Map();
-  onlineHostCommittedEliminations = new Set();
-  onlineHostCommittedResults = new Set();
-  onlineLastAuthoritativeFrame = 0;
+  // hostAuthorityState.simulator queda siempre null y todos los caminos de simulación quedan inertes.
+  hostAuthorityState.simulator = null;
+  hostAuthorityState.migrated = false;
+  hostAuthorityState.progressInFlight = new Set();
+  hostAuthorityState.lastProgressAt = new Map();
+  hostAuthorityState.committedEliminations = new Set();
+  hostAuthorityState.committedResults = new Set();
+  hostAuthorityState.lastAuthoritativeFrame = 0;
   onlineInputOutbox = [];
   onlineNetState.lastProgressAt = 0;
   onlineNetState.lastSelfReportAt = 0;
@@ -4718,7 +4710,7 @@ function syncOnlinePeers(room: OnlineRoom): void {
     onInput: (remoteId, message) => {
       if (!isOnlineHost() || remoteId !== message.playerId) return;
       if (!isCurrentOnlineSeed(message.seed)) return;
-      onlineHostAuthority?.pushInputs(message.playerId, message.inputs);
+      hostAuthorityState.simulator?.pushInputs(message.playerId, message.inputs);
     },
     onKo: (remoteId, message) => {
       if (!onlineRoom) return;
@@ -4757,13 +4749,13 @@ function broadcastOnlineSnapshot(state: GameState): void {
   if (!isOnlineHost()) return;
   for (const player of onlineRoom?.players ?? []) {
     if (player.id === onlinePlayer.id) continue;
-    const remoteState = onlineHostAuthority?.getState(player.id);
-    const remoteSnapshot = onlineHostAuthority?.getSnapshot(player.id);
+    const remoteState = hostAuthorityState.simulator?.getState(player.id);
+    const remoteSnapshot = hostAuthorityState.simulator?.getSnapshot(player.id);
     if (remoteState && remoteSnapshot) {
       onlinePeerBroadcaster?.broadcastSnapshot(player.id, createOnlineGameSnapshotFromState(
         remoteState,
         remoteSnapshot,
-        onlineHostAuthority?.getLastProcessedInputSequence(player.id) ?? 0,
+        hostAuthorityState.simulator?.getLastProcessedInputSequence(player.id) ?? 0,
       ));
     }
   }
@@ -4854,16 +4846,16 @@ function prunePeerDisplaySnapshots(room: OnlineRoom): void {
 function postHostSimulatedProgress(playerId: string, state: GameState): void {
   if (!onlineRoom || !isOnlineHost()) return;
   const now = performance.now();
-  if (onlineHostProgressInFlight.has(playerId)) return;
-  if (now - (onlineHostLastProgressAt.get(playerId) ?? 0) < ONLINE_POLL_MS) return;
+  if (hostAuthorityState.progressInFlight.has(playerId)) return;
+  if (now - (hostAuthorityState.lastProgressAt.get(playerId) ?? 0) < ONLINE_POLL_MS) return;
 
-  onlineHostProgressInFlight.add(playerId);
-  onlineHostLastProgressAt.set(playerId, now);
+  hostAuthorityState.progressInFlight.add(playerId);
+  hostAuthorityState.lastProgressAt.set(playerId, now);
   const requestSeed = onlineRoom.seed;
   const progress = createProgressRequest(playerId, createOnlineGameSnapshotFromState(
     state,
-    onlineHostAuthority?.getSnapshot(playerId) ?? undefined,
-    onlineHostAuthority?.getLastProcessedInputSequence(playerId) ?? 0,
+    hostAuthorityState.simulator?.getSnapshot(playerId) ?? undefined,
+    hostAuthorityState.simulator?.getLastProcessedInputSequence(playerId) ?? 0,
   ));
   void onlineClient.updateProgress(progress)
     .then((response) => {
@@ -4877,7 +4869,7 @@ function postHostSimulatedProgress(playerId: string, state: GameState): void {
       onlineNetState.error = onlineErrorText(error);
     })
     .finally(() => {
-      onlineHostProgressInFlight.delete(playerId);
+      hostAuthorityState.progressInFlight.delete(playerId);
     });
 }
 
@@ -4893,11 +4885,11 @@ function relayPeerProgressToServer(): void {
     if (player.status === 'eliminated' || player.status === 'won' || player.status === 'lost') continue;
     const snapshot = onlinePeerDisplaySnapshots.get(player.id);
     if (!snapshot || !isCurrentOnlineGame(snapshot) || snapshot.status !== 'playing') continue;
-    if (onlineHostProgressInFlight.has(player.id)) continue;
-    if (now - (onlineHostLastProgressAt.get(player.id) ?? 0) < ONLINE_POLL_MS) continue;
+    if (hostAuthorityState.progressInFlight.has(player.id)) continue;
+    if (now - (hostAuthorityState.lastProgressAt.get(player.id) ?? 0) < ONLINE_POLL_MS) continue;
 
-    onlineHostProgressInFlight.add(player.id);
-    onlineHostLastProgressAt.set(player.id, now);
+    hostAuthorityState.progressInFlight.add(player.id);
+    hostAuthorityState.lastProgressAt.set(player.id, now);
     const requestSeed = onlineRoom.seed;
     void onlineClient.updateProgress(createProgressRequest(player.id, snapshot))
       .then((response) => {
@@ -4910,7 +4902,7 @@ function relayPeerProgressToServer(): void {
         onlineNetState.error = onlineErrorText(error);
       })
       .finally(() => {
-        onlineHostProgressInFlight.delete(player.id);
+        hostAuthorityState.progressInFlight.delete(player.id);
       });
   }
 }
