@@ -1,8 +1,9 @@
 import './styles.css';
 import QRCode from 'qrcode';
-import { checkIcon, gearOutlineIcon, historyClockIcon, homeIcon, playIcon, rocketIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon } from './ui/icons';
+import { gearOutlineIcon, historyClockIcon, homeIcon, playIcon, settingsGearIcon, shieldCrestIcon, shieldSolidIcon, speakerIcon } from './ui/icons';
 import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
+import { renderModeSelectStage as renderModeSelectStageView, renderSmartPlayStage as renderSmartPlayStageView } from './ui/dashboard/smartPlay';
 import { renderHistory } from './ui/dashboard/history';
 import { renderControls } from './ui/dashboard/controls';
 import type { PlayMode } from './ui/playMode';
@@ -7810,112 +7811,43 @@ function renderDashboardMenu(state: GameState): string {
   `;
 }
 
-function renderSmartIconCheck(): string {
-  return checkIcon();
-}
-
-function renderSmartIconRocket(): string {
-  return rocketIcon();
-}
-
+// Orquestador stateful de la etapa "Jugar": deriva los datos del estado del shell
+// y delega el markup en la vista pura (src/ui/dashboard/smartPlay.ts).
 function renderSmartPlayStage(): string {
-  const hasRoom = !!roomState.current;
   // Sin sala: selector de modalidad (tarjetas). El modo elegido decide qué arranca
-  // el botón ▶ en solo y, al crear sala, su matchType.
-  if (!hasRoom) return renderModeSelectStage();
+  // el botón ▶ en solo y, al crear sala, su matchType. Los tops de Supervivencia
+  // solo se derivan en esta rama (no hay sala) para no hacer trabajo de más.
+  if (!roomState.current) {
+    return renderModeSelectStageView({
+      mode: uiSelectionState.playMode,
+      customChips: customConfigChips(),
+      survivalTopsHtml: renderSurvivalTopsEmbed(),
+    });
+  }
 
   const hasOthers = onlineRoomHasOtherPlayers();
   const host = isOnlineHost();
   const ready = !!currentOnlinePlayer()?.ready;
-  // El host puede cambiar la modalidad sin salir de la sala (en el lobby). Para los
-  // invitados la modalidad la fija el host, así que solo ven el eyebrow.
-  const modeCardsHtml = host && roomState.current!.status === 'lobby' ? renderRoomModeCards() : '';
-  // En sala la modalidad ya quedó fijada por la sala (matchType): la mostramos en
-  // el eyebrow para que se entienda bajo qué reglas se va a jugar.
-  const roomModeName = matchTypeLabel(roomState.current!.matchType).toUpperCase();
-
-  // Contexto = exactamente la lógica del botón inteligente (sidebar-play)
+  // Contexto = exactamente la lógica del botón inteligente (sidebar-play).
   const ctx: 'waiting' | 'host' | 'guest' =
     !hasOthers ? 'waiting' : host ? 'host' : 'guest';
 
-  let accent = '#00f5ff';
-  let eyebrow = 'SALA';
-  let step2 = 'JUGÁ';
-  let title = 'Listo para jugar';
-  let subtitle = 'Tocá jugar y empezás una partida al instante.';
-  let playHtml = '';
-  let secondaryHtml = '';
-
-  if (ctx === 'waiting') {
-    accent = '#ffb627'; eyebrow = `SALA ${roomModeName} · ESPERANDO`; step2 = 'ESPERÁ RIVALES';
-    title = 'Esperando a que lleguen';
-    subtitle = 'Sos el único en la sala. Invitá amigos desde el panel de la derecha — la partida arranca cuando haya al menos 2 jugadores.';
-    playHtml = `
-      <div class="dash-smart-play dash-smart-play--waiting" role="status">
-        <span class="dash-smart-spinner" aria-hidden="true"></span>
-        <span class="dash-smart-play-text"><strong>ESPERANDO JUGADORES</strong><small>Faltan rivales<span class="dash-dots"><i></i><i></i><i></i></span></small></span>
-      </div>`;
-  } else if (ctx === 'host') {
-    accent = '#c79bff'; eyebrow = `SALA ${roomModeName} · SOS EL ANFITRIÓN`; step2 = 'EMPEZÁ';
-    const total = roomState.current!.players.length;
-    const readyCount = roomState.current!.players.filter((p) => p.ready).length;
-    // El host arranca la ronda (acción 'online-start'). El server exige host listo
-    // + ≥2 listos, así que el botón se deshabilita hasta cumplirlo. Marcarse listo
-    // se hace desde el panel de sala (online-ready/online-unready).
-    const canStart = ready && readyCount >= 2;
-    const startTitle = !ready
-      ? 'Marcate listo en el panel para empezar'
-      : (readyCount < 2 ? 'Esperá a que haya 2 jugadores listos' : 'Empezar partida');
-    title = '¡Ya pueden jugar!';
-    subtitle = canStart
-      ? 'Cuando estén todos listos, arrancá la partida. Vos controlás el inicio.'
-      : (!ready
-        ? 'Marcate listo en el panel de la derecha para poder arrancar.'
-        : 'Necesitás al menos 2 jugadores listos para arrancar.');
-    playHtml = `
-      <button class="dash-smart-play dash-smart-play--host" type="button" data-ui-action="online-start" aria-label="${startTitle}" title="${startTitle}"${canStart ? '' : ' disabled'}>
-        <span class="dash-smart-play-icon">${renderSmartIconRocket()}</span>
-        <span class="dash-smart-play-text"><strong>EMPEZAR PARTIDA</strong><small>${readyCount}/${total} listos · multijugador</small></span>
-      </button>`;
-  } else { // guest
-    accent = ready ? '#39d49a' : '#ffb627';
-    eyebrow = `SALA ${roomModeName} · ESPERANDO AL ANFITRIÓN`;
-    step2 = ready ? '¡LISTO!' : 'MARCÁ LISTO';
-    title = ready ? 'Estás listo' : 'Marcá que estás listo';
-    subtitle = ready
-      ? 'La partida arranca apenas el anfitrión la inicie. Podés cambiar de opinión cuando quieras.'
-      : 'Confirmá que estás listo — el anfitrión arranca cuando todos lo estén.';
-    playHtml = `
-      <button class="dash-smart-play ${ready ? 'dash-smart-play--ready' : 'dash-smart-play--guest'}" type="button" data-ui-action="sidebar-play" aria-pressed="${ready}" aria-label="${ready ? 'Quitar listo' : 'Estoy listo'}">
-        <span class="dash-smart-play-icon">${renderSmartIconCheck()}</span>
-        <span class="dash-smart-play-text"><strong>${ready ? '¡LISTO!' : 'ESTOY LISTO'}</strong><small>${ready ? 'Esperando al anfitrión…' : 'Tocá para confirmar'}</small></span>
-      </button>`;
-  }
-
-  return `
-    <div class="dash-play-stage" style="--stage-accent: ${accent};">
-      <div class="dash-step-pills">
-        <span class="dash-step-pill is-active">1 · ELEGÍ CÓMO JUGAR</span>
-        <span class="dash-step-sep"></span>
-        <span class="dash-step-pill is-active">2 · ${step2}</span>
-      </div>
-      ${modeCardsHtml}
-      <div class="dash-play-eyebrow">${eyebrow}</div>
-      <h2 class="dash-play-title">${title}</h2>
-      <p class="dash-play-subtitle">${subtitle}</p>
-      <div class="dash-play-cta">${playHtml}</div>
-      ${secondaryHtml ? `<div class="dash-play-secondary">${secondaryHtml}</div>` : ''}
-    </div>
-  `;
+  return renderSmartPlayStageView({
+    ctx,
+    // En sala la modalidad ya quedó fijada por la sala (matchType): la mostramos en
+    // el eyebrow para que se entienda bajo qué reglas se va a jugar.
+    roomModeName: matchTypeLabel(roomState.current.matchType).toUpperCase(),
+    ready,
+    readyCount: roomState.current.players.filter((p) => p.ready).length,
+    total: roomState.current.players.length,
+    // El host puede cambiar la modalidad sin salir de la sala (en el lobby). Para los
+    // invitados la modalidad la fija el host, así que solo ven el eyebrow.
+    modeCardsHtml: host && roomState.current.status === 'lobby' ? renderRoomModeCards() : '',
+  });
 }
 
-// ─── Selector de modalidad (sin sala): tarjetas Supervivencia / Custom / 1v1 local ───
-// La tarjeta activa define qué arranca el botón ▶ en solo y el matchType al crear
-// sala. La de Supervivencia muestra además los tops embebidos.
-// Función (declaración hoisteada) en vez de const: el loop de render corre al
-// cargar el módulo y un `const` acá rompería con TDZ en el primer frame (ver
-// memoria main-ts-first-render-tdz).
-// Datos de los chips de la config custom (Gravedad · Objetivo · Hold · Next).
+// Datos de los chips de la config custom (Gravedad · Objetivo · Hold · Next). Los
+// consume tanto el selector de modalidad (vista smart-play) como el dashboard móvil.
 function customConfigChips(): Array<{ k: string; v: string }> {
   return [
     { k: 'Gravedad', v: roomSpeedLabel(gameRules) },
@@ -7923,10 +7855,6 @@ function customConfigChips(): Array<{ k: string; v: string }> {
     { k: 'Hold', v: customSettings.useHoldQueue ? 'Sí' : 'No' },
     { k: 'Next', v: String(customSettings.nextPieces) },
   ];
-}
-
-function renderCustomConfigChips(): string {
-  return `<div class="dash-mode-chips">${customConfigChips().map((c) => `<span class="dash-mode-chip"><strong>${c.k}</strong><span>${escapeHtml(c.v)}</span></span>`).join('')}</div>`;
 }
 
 // Tarjetas de modalidad dentro de la sala (solo host, en lobby): cambiar de tarjeta
@@ -7938,44 +7866,6 @@ function renderRoomModeCards(): string {
     .map((m) => renderModeCard(m, m === current, 'select-room-mode'))
     .join('');
   return `<div class="dash-mode-cards" role="tablist">${cards}</div>`;
-}
-
-function renderModeSelectStage(): string {
-  const mode = uiSelectionState.playMode;
-  const meta = playModeMeta(mode);
-  const accent = modeAccent(mode);
-  const cards = (['survival', 'custom', 'local1v1'] as PlayMode[])
-    .map((m) => renderModeCard(m, m === mode))
-    .join('');
-
-  const primaryAction = mode === 'local1v1' ? 'local-versus' : 'sidebar-play';
-  const customExtra = mode === 'custom'
-    ? `${renderCustomConfigChips()}
-       <button class="dash-mode-config-btn" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>`
-    : '';
-  const tops = mode === 'survival' ? renderSurvivalTopsEmbed() : '';
-
-  return `
-    <div class="dash-play-stage dash-play-stage--mode-select dash-mode-select" style="--stage-accent: ${accent};">
-      <div class="dash-mode-select-inner">
-        <div class="dash-play-eyebrow dash-mode-step-eyebrow">1 · Elegí cómo jugar</div>
-        <div class="dash-mode-cards" role="tablist">${cards}</div>
-        <div class="dash-mode-divider"></div>
-        <div class="dash-mode-tag">${escapeHtml(meta.tag)}</div>
-        <h2 class="dash-mode-name">${meta.name}</h2>
-        <p class="dash-mode-desc">${meta.desc}</p>
-        <div class="dash-mode-action-col">
-          <button class="dash-mode-solo-cta" type="button" data-ui-action="${primaryAction}" aria-label="${meta.solo}">
-            ${playIcon({ size: 20, ariaHidden: true })}
-            <span class="dash-mode-solo-text"><span>${meta.solo}</span><span class="dash-mode-solo-sub">${escapeHtml(meta.sub)}</span></span>
-          </button>
-          ${customExtra}
-          <p class="dash-mode-hint">¿Jugar con amigos? Creá una sala en el panel de la derecha y se vuelve multijugador. →</p>
-        </div>
-        ${tops}
-      </div>
-    </div>
-  `;
 }
 
 // Pantalla de bienvenida (tab Inicio, sin sala): saludo + CTA hacia Jugar + 3
