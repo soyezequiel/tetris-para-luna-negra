@@ -14,6 +14,8 @@ import { spectatorState } from './state/spectatorState';
 import { replayState, multiReplayState, type MultiReplayCard } from './state/replayState';
 import { onlineNetState, onlineClockState, onlineFailoverState } from './state/onlineNetState';
 import { hostAuthorityState } from './state/hostAuthorityState';
+import { roundState } from './state/roundState';
+import { attackState } from './state/attackState';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -213,7 +215,6 @@ const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
 
 type LibraryFilter = typeof LIBRARY_FILTERS[number];
 type RunKind = 'custom' | 'online' | 'survival';
-type SequencedOnlineInput = GameInput & { sequence: number };
 type StoredOnlineRoomSession = {
   roomId: string;
   playerId: string;
@@ -377,12 +378,9 @@ let localRunError: string | null = null;
 // reanudación tras congelarse rAF): por debajo, slew exponencial suave.
 const ONLINE_CLOCK_SNAP_MS = 150;
 const ONLINE_CLOCK_SMOOTH_TAU_MS = 250; // constante de tiempo del slew (~0.25s)
-let onlineResultSubmitted = false;
-let onlineRunStarted = false;
-// La ronda arrancó pero yo no estaba listo (o cerré la pestaña): entro de
-// espectador, sin tablero propio ni reportes. Miro a los rivales hasta que la sala
-// termine. Se limpia entre rondas (resetOnlineRuntimeForNextRound).
-let onlineSpectatorRound = false;
+// El estado del ciclo de ronda online (resultSubmitted/runStarted/spectatorRound/
+// activeRoundId/winSubmittedRoundId/roomReopenInFlight/roomGonePolls) vive ahora en
+// ./state/roundState (roundState; ver imports).
 let onlinePeerBroadcaster: OnlinePeerBroadcaster | null = null;
 // Recolector de replays multi-tablero: junta el log de cada jugador de la ronda
 // (el propio + los que llegan por WebRTC) para reproducir la partida completa.
@@ -412,19 +410,12 @@ const RIVAL_PIECE_GAIN = 0.26;
 // Refuerzo del jingle de derrota de un rival: a volumen normal quedaba demasiado bajo
 // y se perdía bajo el resto de la mezcla.
 const RIVAL_DEATH_GAIN = 1.7;
-let onlineAttackSequence = 0;
-let onlineAppliedAttackIds = new Set<string>();
-// El estado de la autoridad de host (simulador + bookkeeping de migración) vive
-// ahora en ./state/hostAuthorityState (hostAuthorityState; ver imports).
+// El pipeline de input/ataques online (sequence/appliedIds/inputOutbox) vive ahora
+// en ./state/attackState (attackState; ver imports).
+// El estado de la autoridad de host vive en ./state/hostAuthorityState.
+// El ciclo de ronda online vive en ./state/roundState.
+// El dominio Luna Negra / invitaciones / launch vive en ./state/lunaState.
 let onlineLastDiagLogAt = 0;
-let onlineInputOutbox: SequencedOnlineInput[] = [];
-let onlineActiveRoundId: string | null = null;
-// Ronda cuya victoria ya reporté al ranking mundial (evita doble conteo).
-let onlineWinSubmittedRoundId: string | null = null;
-// El estado del dominio Luna Negra / invitaciones / launch vive ahora en
-// ./state/lunaState (ver lunaState en los imports).
-let onlineRoomReopenInFlight = false;
-let onlineRoomGonePolls = 0;
 // QRs de invoices Lightning, cacheados por bolt11 (el overlay se regenera por HTML).
 const betQrDataUrls = new Map<string, string>();
 const betQrPending = new Set<string>();
@@ -857,7 +848,7 @@ function buildPerfReport(): Record<string, unknown> {
       qrCacheEntries: betQrDataUrls.size,
       betBusy: betState.busy,
       betPaying: betState.paying,
-      onlineRoomReopenInFlight,
+      roomReopenInFlight: roundState.roomReopenInFlight,
       lastBetPollAt: Math.round(betState.lastPollAt),
       trace: betWithdrawalTrace.slice(),
     },
@@ -967,7 +958,7 @@ function loopBody(): void {
   const beforeState = engine.getState();
   // Un espectador de la ronda no tiene tablero propio: aunque el motor heredado
   // quede en 'playing', no debe avanzar (solo mira a los rivales).
-  const canAdvanceThisLoop = !hasBlockingModal() && !onlineSpectatorRound && canAdvanceGame(appMode, beforeState.status);
+  const canAdvanceThisLoop = !hasBlockingModal() && !roundState.spectatorRound && canAdvanceGame(appMode, beforeState.status);
   if (!canAdvanceThisLoop) syncGameplayClockToCurrentFrame();
   const candidateFrame = canAdvanceThisLoop ? targetGameplayFrame() : gameFrame;
   // P2: con el frame anclado al reloj real, un rAF de un monitor >60Hz puede no
@@ -3163,8 +3154,8 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
 function maybeSubmitOnlineWin(room: OnlineRoom): void {
   if (room.status !== 'finished' || room.winnerPlayerId !== onlinePlayer.id) return;
   const roundId = onlineRoundKey(room);
-  if (onlineWinSubmittedRoundId === roundId) return;
-  onlineWinSubmittedRoundId = roundId;
+  if (roundState.winSubmittedRoundId === roundId) return;
+  roundState.winSubmittedRoundId = roundId;
   // Sonido de victoria: el ganador online sobrevive (último en pie), así que su
   // motor local sigue en 'playing' y nunca pasa a 'finished' — la transición que
   // dispara juice.onWin() en solo. Lo gatillamos acá, donde la SALA me corona,
@@ -3184,14 +3175,14 @@ function closeOnlineResults(): void {
 }
 
 async function reopenOnlineRoom(): Promise<void> {
-  if (!onlineRoom || !isOnlineHost() || onlineRoomReopenInFlight) return;
+  if (!onlineRoom || !isOnlineHost() || roundState.roomReopenInFlight) return;
   if (onlineRoom.status !== 'finished') return;
   // No reabrimos hasta que la apuesta y sus pagos terminen. `settled` puede incluir
   // un ganador invitado con retiro pendiente; borrar la apuesta haría desaparecer
   // su QR. El servidor repite esta validación para proteger contra otros clientes.
   if (onlineRoom.bet && !['settled', 'cancelled', 'expired', 'refunded'].includes(onlineRoom.bet.status)) return;
   if (onlineRoom.bet && hasUnresolvedRoomBetPayout(onlineRoom.bet)) return;
-  onlineRoomReopenInFlight = true;
+  roundState.roomReopenInFlight = true;
   try {
     const response = await onlineClient.reopenRoom({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
     syncOnlineClock(response.serverNowMs);
@@ -3199,7 +3190,7 @@ async function reopenOnlineRoom(): Promise<void> {
   } catch {
     // Best-effort: el próximo poll lo reintenta (ver pollOnlineRoom).
   } finally {
-    onlineRoomReopenInFlight = false;
+    roundState.roomReopenInFlight = false;
   }
 }
 
@@ -3568,11 +3559,11 @@ function resetOnlineRoomState(): void {
   betState.fastPollUntil = 0;
   betState.refreshQueued = false;
   betState.celebratedBetId = null;
-  onlineResultSubmitted = false;
-  onlineRunStarted = false;
-  onlineSpectatorRound = false;
-  onlineAttackSequence = 0;
-  onlineAppliedAttackIds = new Set();
+  roundState.resultSubmitted = false;
+  roundState.runStarted = false;
+  roundState.spectatorRound = false;
+  attackState.sequence = 0;
+  attackState.appliedIds = new Set();
   hostAuthorityState.simulator = null;
   hostAuthorityState.migrated = false;
   hostAuthorityState.progressInFlight = new Set();
@@ -3582,14 +3573,14 @@ function resetOnlineRoomState(): void {
   hostAuthorityState.lastAuthoritativeFrame = 0;
   onlinePeerDisplaySnapshots = new Map();
   resetSpectatorFocus();
-  onlineInputOutbox = [];
+  attackState.inputOutbox = [];
   onlineNetState.lastPollAt = 0;
   onlineNetState.lastProgressAt = 0;
   onlineNetState.lastSelfReportAt = 0;
   onlineFailoverState.hostChannelDownSince = 0;
   onlineNetState.lastPeerBroadcastAt = 0;
   onlineNetState.lastKoBroadcastAt = 0;
-  onlineActiveRoundId = null;
+  roundState.activeRoundId = null;
   lunaState.pendingLaunchRequest = null;
 }
 
@@ -3599,7 +3590,7 @@ function enterOnlineRoom(room: OnlineRoom, preferredMode: AppMode): void {
   onlineNetState.error = null;
   onlineNetState.lastPollAt = 0;
   if (room.status === 'finished') appMode = 'onlineResults';
-  else if (room.status === 'playing') appMode = onlineRunStarted ? 'onlinePlaying' : 'onlineCountdown';
+  else if (room.status === 'playing') appMode = roundState.runStarted ? 'onlinePlaying' : 'onlineCountdown';
   else if (room.status === 'countdown') appMode = 'onlineCountdown';
   else appMode = preferredMode;
 }
@@ -3662,7 +3653,7 @@ function preserveVisiblePendingWithdrawal(previousRoom: OnlineRoom | null, incom
 
 function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' | 'bet-refresh' = 'room-action'): void {
   const previousRoom = onlineRoom;
-  const previousRoundId = onlineActiveRoundId;
+  const previousRoundId = roundState.activeRoundId;
   const previousEntry = roomBetEntryForLocalPlayer(previousRoom);
   const incomingEntry = roomBetEntryForLocalPlayer(room);
   const resolvesPendingWithdrawal = previousRoom?.bet?.betId === room.bet?.betId
@@ -3685,7 +3676,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   onlineRoom = protectedRoom;
   saveOnlineRoomSession(protectedRoom);
   if (protectedRoom.bet?.status !== 'pending_deposits') betState.fastPollUntil = 0;
-  onlineActiveRoundId = nextRoundId;
+  roundState.activeRoundId = nextRoundId;
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
   maybeSubmitOnlineWin(protectedRoom);
   maybeCelebratePayout();
@@ -3710,11 +3701,11 @@ function onlineRoundKey(room: OnlineRoom): string {
 }
 
 function resetOnlineRuntimeForNextRound(): void {
-  onlineRunStarted = false;
-  onlineSpectatorRound = false;
-  onlineResultSubmitted = false;
-  onlineAttackSequence = 0;
-  onlineAppliedAttackIds = new Set();
+  roundState.runStarted = false;
+  roundState.spectatorRound = false;
+  roundState.resultSubmitted = false;
+  attackState.sequence = 0;
+  attackState.appliedIds = new Set();
   hostAuthorityState.simulator = null;
   hostAuthorityState.migrated = false;
   hostAuthorityState.progressInFlight = new Set();
@@ -3724,7 +3715,7 @@ function resetOnlineRuntimeForNextRound(): void {
   hostAuthorityState.lastAuthoritativeFrame = 0;
   onlinePeerDisplaySnapshots = new Map();
   resetSpectatorFocus();
-  onlineInputOutbox = [];
+  attackState.inputOutbox = [];
   onlineNetState.lastProgressAt = 0;
   onlineNetState.lastSelfReportAt = 0;
   onlineFailoverState.hostChannelDownSince = 0;
@@ -3923,12 +3914,12 @@ function flushOnlineInputOutbox(): void {
 
 function sendOnlineAttack(event: LineClearEvent, state: GameState): void {
   if (!onlineRoom) return;
-  onlineAttackSequence += 1;
+  attackState.sequence += 1;
   const attack = {
-    attackId: `${onlinePlayer.id}-${gameFrame}-${onlineAttackSequence}`,
+    attackId: `${onlinePlayer.id}-${gameFrame}-${attackState.sequence}`,
     fromPlayerId: onlinePlayer.id,
     lines: event.outgoingLines,
-    holeSeed: (onlineRoom.seed + gameFrame + onlineAttackSequence * 97) >>> 0,
+    holeSeed: (onlineRoom.seed + gameFrame + attackState.sequence * 97) >>> 0,
     frame: displayedElapsedFrames(state.stats),
   };
   // Autoridad descentralizada: cada jugador rutea su PROPIO ataque (elige objetivo
@@ -4084,12 +4075,12 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
   }
   for (const event of update.events) {
     if (event.type === 'lineClear' && event.outgoingLines > 0) {
-      onlineAttackSequence += 1;
+      attackState.sequence += 1;
       commitOnlineAttack({
-        attackId: `${update.playerId}-${event.frame}-${onlineAttackSequence}`,
+        attackId: `${update.playerId}-${event.frame}-${attackState.sequence}`,
         fromPlayerId: update.playerId,
         lines: event.outgoingLines,
-        holeSeed: ((onlineRoom?.seed ?? 0) + event.frame + onlineAttackSequence * 97) >>> 0,
+        holeSeed: ((onlineRoom?.seed ?? 0) + event.frame + attackState.sequence * 97) >>> 0,
         frame: event.frame,
       });
     }
@@ -4144,12 +4135,12 @@ function syncOnline(): void {
   // los jugadores se quedaría sin garbage, sin snapshots y sin eliminaciones, y
   // la sala terminaría mal (o nunca).
   const roomStillRunning = onlineRoom.status === 'playing' || onlineRoom.status === 'countdown';
-  const hostStillAuthority = isOnlineHost() && onlineRunStarted && appMode === 'onlineResults' && roomStillRunning;
+  const hostStillAuthority = isOnlineHost() && roundState.runStarted && appMode === 'onlineResults' && roomStillRunning;
   // Un espectador de la ronda (no estaba listo al arrancar) no tiene tablero
   // propio: no simula, no reporta ni difunde nada. Solo mira a los rivales con los
   // snapshots que llegan por WebRTC. El host nunca es espectador (debe estar listo
   // para arrancar), así que la autoridad/relay no se ve afectada.
-  if ((appMode === 'onlinePlaying' || hostStillAuthority) && !onlineSpectatorRound) {
+  if ((appMode === 'onlinePlaying' || hostStillAuthority) && !roundState.spectatorRound) {
     if (appMode === 'onlinePlaying' && now - onlineLastDiagLogAt >= 2000) {
       onlineLastDiagLogAt = now;
       const serverFrame = onlineRoom.startsAtServerMs
@@ -4164,7 +4155,7 @@ function syncOnline(): void {
         lines: liveState.stats.lines,
         board: boardMetrics(liveState.board),
         pendingGarbage: liveState.stats.pendingGarbage,
-        outbox: onlineInputOutbox.length,
+        outbox: attackState.inputOutbox.length,
         lastAuthFrame: hostAuthorityState.lastAuthoritativeFrame,
       });
     }
@@ -4180,14 +4171,14 @@ function syncOnline(): void {
     // jugadores todavía vivos. El servidor trata el progreso de un jugador
     // terminal como keepalive (no toca sus stats).
     if (isOnlineHost() && roomStillRunning && shouldPostOnlineProgress(now)) postOnlineProgress(liveState);
-    if (liveState.status === 'finished' && !onlineResultSubmitted) postOnlineResult(liveState);
+    if (liveState.status === 'finished' && !roundState.resultSubmitted) postOnlineResult(liveState);
     if (liveState.status === 'gameover') postOnlineElimination(liveState);
   }
   // FUERA del bloque anterior: un cliente NO-host que muere y pasa a 'onlineResults'
   // deja de entrar ahí, pero su partida ya terminó y todavía sigue conectado como
   // espectador. Difundimos su replay igual (idempotente por flag) para que el host
   // y el resto lo reciban; si no, solo se vería el tablero del host.
-  if (!onlineSpectatorRound) maybeBroadcastOwnReplay(liveState);
+  if (!roundState.spectatorRound) maybeBroadcastOwnReplay(liveState);
 }
 
 // Mientras el host juega, la simulación autoritativa avanza con su gameFrame.
@@ -4270,7 +4261,7 @@ async function pollOnlineRoom(): Promise<void> {
       void reopenOnlineRoom();
     }
     onlineNetState.error = null;
-    onlineRoomGonePolls = 0;
+    roundState.roomGonePolls = 0;
     maybeRefreshBet();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
@@ -4278,16 +4269,16 @@ async function pollOnlineRoom(): Promise<void> {
       // La sala ya no existe en el servidor: tras varios polls seguidos dejamos
       // de insistir (cerramos peers, limpiamos sesión) y volvemos al menú, en
       // vez de quedar atascados polleando y señalizando una sala fantasma.
-      onlineRoomGonePolls += 1;
-      if (onlineRoomGonePolls >= ONLINE_ROOM_GONE_POLL_LIMIT) {
-        onlineRoomGonePolls = 0;
+      roundState.roomGonePolls += 1;
+      if (roundState.roomGonePolls >= ONLINE_ROOM_GONE_POLL_LIMIT) {
+        roundState.roomGonePolls = 0;
         resetOnlineRoomState();
         goToMenu();
         onlineNetState.error = 'La sala ya no existe en el servidor.';
         void syncLunaPresence();
       }
     } else {
-      onlineRoomGonePolls = 0;
+      roundState.roomGonePolls = 0;
     }
   } finally {
     onlineNetState.pollInFlight = false;
@@ -4455,7 +4446,7 @@ async function postSelfProgress(state: GameState): Promise<void> {
 
 async function postOnlineResult(state: GameState): Promise<void> {
   if (!onlineRoom) return;
-  onlineResultSubmitted = true;
+  roundState.resultSubmitted = true;
   if (!canCommitLocalOnlineTerminal(isOnlineHost())) {
     onlineNetState.error = null;
     return;
@@ -4463,7 +4454,7 @@ async function postOnlineResult(state: GameState): Promise<void> {
 
   const game = createOnlineGameSnapshot(state);
   await commitOnlineResult(onlinePlayer.id, state, 'won', game, () => {
-    onlineResultSubmitted = false;
+    roundState.resultSubmitted = false;
   });
 }
 
@@ -4512,22 +4503,22 @@ async function postOnlineElimination(state: GameState): Promise<void> {
   const canCommit = canCommitLocalOnlineTerminal(isOnlineHost());
   if (!canCommit) {
     const now = performance.now();
-    if (onlineResultSubmitted && now - onlineNetState.lastKoBroadcastAt < ONLINE_KO_BROADCAST_RETRY_MS) return;
-    onlineResultSubmitted = true;
+    if (roundState.resultSubmitted && now - onlineNetState.lastKoBroadcastAt < ONLINE_KO_BROADCAST_RETRY_MS) return;
+    roundState.resultSubmitted = true;
     onlineNetState.lastKoBroadcastAt = now;
     onlinePeerBroadcaster?.broadcastKo(createOnlineKoReport(onlinePlayer.id, state));
     onlineNetState.error = null;
     return;
   }
 
-  if (onlineResultSubmitted) return;
-  onlineResultSubmitted = true;
+  if (roundState.resultSubmitted) return;
+  roundState.resultSubmitted = true;
   const report = createOnlineKoReport(onlinePlayer.id, state);
   onlineNetState.lastKoBroadcastAt = performance.now();
   onlinePeerBroadcaster?.broadcastKo(report);
 
   await commitOnlineElimination(report, () => {
-    onlineResultSubmitted = false;
+    roundState.resultSubmitted = false;
   });
 }
 
@@ -4589,29 +4580,29 @@ async function commitOnlineElimination(report: Omit<OnlinePeerKoMessage, 'type'>
  * con lo que el servidor puede terminar la partida (finishRoomIfOnlyOneAlive).
  */
 function ensureMigratedHostAuthority(): void {
-  if (!onlineRoom || !onlineRunStarted || !isOnlineHost()) return;
+  if (!onlineRoom || !roundState.runStarted || !isOnlineHost()) return;
   if (hostAuthorityState.simulator || hostAuthorityState.migrated) return;
   hostAuthorityState.migrated = true;
 }
 
 function maybeStartOnlineRun(): void {
-  if (!onlineRoom?.startsAtServerMs || onlineRunStarted) return;
+  if (!onlineRoom?.startsAtServerMs || roundState.runStarted) return;
   if (onlineNowMs() < onlineRoom.startsAtServerMs) return;
-  onlineRunStarted = true;
+  roundState.runStarted = true;
   // No estaba listo cuando arrancó la ronda: el servidor me dejó como espectador
   // (alive=false). No simulo tablero propio ni reporto nada; solo miro a los
   // rivales. Ver isOnlineSpectating() y los guards de syncOnline().
   const me = onlineRoom.players.find((player) => player.id === onlinePlayer.id);
   if (me && !me.alive) {
-    onlineSpectatorRound = true;
+    roundState.spectatorRound = true;
     appMode = 'onlinePlaying';
     resetSpectatorFocus();
     return;
   }
-  onlineSpectatorRound = false;
-  onlineResultSubmitted = false;
-  onlineAttackSequence = 0;
-  onlineAppliedAttackIds = new Set();
+  roundState.spectatorRound = false;
+  roundState.resultSubmitted = false;
+  attackState.sequence = 0;
+  attackState.appliedIds = new Set();
   // Modelo cliente-autoritativo: cada jugador simula su PROPIO tablero y reporta sus
   // líneas/ataques/KO por peer. El host ya NO re-simula a los demás (eso causaba
   // divergencias deterministas y top-outs falsos al recibir garbage). El host solo
@@ -4624,7 +4615,7 @@ function maybeStartOnlineRun(): void {
   hostAuthorityState.committedEliminations = new Set();
   hostAuthorityState.committedResults = new Set();
   hostAuthorityState.lastAuthoritativeFrame = 0;
-  onlineInputOutbox = [];
+  attackState.inputOutbox = [];
   onlineNetState.lastProgressAt = 0;
   onlineNetState.lastSelfReportAt = 0;
   onlineFailoverState.hostChannelDownSince = 0;
@@ -4936,8 +4927,8 @@ function applyOnlineAttack(attack: OnlineAttack): void {
   // si llega por peer como del fallback por servidor (applyRoomAttacks).
   if (!onlineRoom || attack.authorityPlayerId !== attack.fromPlayerId) return;
   if (!isCurrentOnlineSeed(attack.seed)) return;
-  if (attack.toPlayerId !== onlinePlayer.id || onlineAppliedAttackIds.has(attack.id)) return;
-  onlineAppliedAttackIds.add(attack.id);
+  if (attack.toPlayerId !== onlinePlayer.id || attackState.appliedIds.has(attack.id)) return;
+  attackState.appliedIds.add(attack.id);
   rememberOnlineAttack(attack.fromPlayerId, attack.toPlayerId, attack.lines);
   const beforeGarbage = engine.getState();
   logMp('garbage-in', {
@@ -6794,7 +6785,7 @@ function isOnlineSpectating(): boolean {
   if (appMode !== 'onlinePlaying') return false;
   // Espectador de toda la ronda (no estaba listo al arrancar): no tengo tablero
   // propio, miro a los rivales desde el primer frame.
-  if (onlineSpectatorRound) return true;
+  if (roundState.spectatorRound) return true;
   return lastStatus !== 'playing' && !isOnlineDeathAnimating();
 }
 
