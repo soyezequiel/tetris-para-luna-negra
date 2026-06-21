@@ -5,6 +5,7 @@ import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
 import { renderModeSelectStage as renderModeSelectStageView, renderSmartPlayStage as renderSmartPlayStageView } from './ui/dashboard/smartPlay';
 import { renderRoomPanelEmpty, renderRoomPanelActive } from './ui/dashboard/roomPanel';
+import { renderLeaderboardBody, renderLeaderboardPanel } from './ui/dashboard/leaderboard';
 import { renderHistory } from './ui/dashboard/history';
 import { renderControls } from './ui/dashboard/controls';
 import type { PlayMode } from './ui/playMode';
@@ -8208,96 +8209,49 @@ function renderDashboardCenterContent(_state: GameState): string {
 // Top mundial UNIFICADO: una sola pantalla con dos pestañas — victorias de
 // multijugador y tiempo de supervivencia — para que el ranking esté concentrado en
 // un único lugar y quede claro cuál es cada uno.
+// Orquestador del panel "Top mundial": elige la pestaña activa y delega el markup
+// en la vista pura (src/ui/dashboard/leaderboard.ts).
 function renderLeaderboardPanelContent(): string {
   const onSurvival = leaderboardState.tab === 'survival';
-  const tabs = `
-    <div class="leaderboard-tabs" role="tablist">
-      <button class="leaderboard-tab ${!onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${!onSurvival}" data-ui-action="leaderboard-tab-wins">🏆 Multijugador</button>
-      <button class="leaderboard-tab ${onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${onSurvival}" data-ui-action="leaderboard-tab-survival">⏱️ Supervivencia</button>
-    </div>
-  `;
-
-  const desc = onSurvival
-    ? 'Modo de 1 jugador igual para todos: aguantá lo más posible. El ranking ordena por quién duró más tiempo.'
-    : 'Victorias en partidas multijugador. Ganá batallas online para subir en el ranking.';
-  const body = onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody();
-  const loading = onSurvival ? leaderboardState.survivalLoading : leaderboardState.loading;
-  const playBtn = onSurvival
-    ? '<button class="dash-action-btn primary" type="button" data-ui-action="survival-start">Jugar Supervivencia</button>'
-    : '';
-
-  return `
-    <div class="menu-panel" style="width: 100%; max-width: 480px; border: none; background: transparent; box-shadow: none; padding: 0;">
-      <div class="panel-eyebrow">TOP MUNDIAL</div>
-      <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Top mundial</h1>
-      ${tabs}
-      <p style="color: var(--dash-text-dim); margin: 4px 0 20px; font-size: 14px; font-weight: 500;">${desc}</p>
-      ${body}
-      <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px; margin-top: 20px;">
-        ${playBtn}
-        <button class="dash-action-btn" type="button" data-ui-action="leaderboard-refresh"${loading ? ' disabled' : ''}>${loading ? 'Actualizando…' : 'Actualizar'}</button>
-        <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
-      </div>
-    </div>
-  `;
+  return renderLeaderboardPanel({
+    onSurvival,
+    loading: onSurvival ? leaderboardState.survivalLoading : leaderboardState.loading,
+    bodyHtml: onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody(),
+  });
 }
 
 // Filas del top de victorias multijugador.
+// Top de victorias multijugador: arma las filas desde leaderboardState y delega el
+// markup en la vista pura renderLeaderboardBody.
 function renderWinsLeaderboardBody(): string {
   const myId = identityState.player.id;
-  if (leaderboardState.loading && leaderboardState.entries.length === 0) {
-    return '<p class="leaderboard-note">Cargando ranking…</p>';
-  }
-  if (leaderboardState.error && leaderboardState.entries.length === 0) {
-    return `<p class="leaderboard-note leaderboard-note--error">${escapeHtml(leaderboardState.error)}</p>`;
-  }
-  if (leaderboardState.entries.length === 0) {
-    return '<p class="leaderboard-note">Todavía no hay victorias registradas. ¡Ganá una partida multijugador y aparecé acá!</p>';
-  }
-  const rows = leaderboardState.entries.map((entry, index) => {
-    const rank = index + 1;
-    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`;
-    const mine = entry.playerId === myId ? ' leaderboard-row--me' : '';
-    const wins = entry.wins === 1 ? '1 victoria' : `${entry.wins} victorias`;
-    return `
-      <div class="leaderboard-row${mine}">
-        <span class="leaderboard-rank">${escapeHtml(medal)}</span>
-        ${renderOnlineAvatar({ name: entry.name, avatarUrl: entry.avatarUrl }, 'small', 'leaderboard-avatar')}
-        <span class="leaderboard-name">${escapeHtml(entry.name)}</span>
-        <span class="leaderboard-time">${escapeHtml(wins)}</span>
-      </div>
-    `;
-  }).join('');
-  return `<div class="leaderboard-rows">${rows}</div>`;
+  return renderLeaderboardBody({
+    loading: leaderboardState.loading,
+    error: leaderboardState.error,
+    rows: leaderboardState.entries.map((entry) => ({
+      isMe: entry.playerId === myId,
+      avatarHtml: renderOnlineAvatar({ name: entry.name, avatarUrl: entry.avatarUrl }, 'small', 'leaderboard-avatar'),
+      name: entry.name,
+      valueText: entry.wins === 1 ? '1 victoria' : `${entry.wins} victorias`,
+    })),
+    emptyMessage: 'Todavía no hay victorias registradas. ¡Ganá una partida multijugador y aparecé acá!',
+  });
 }
 
-// Filas del top de supervivencia (mayor tiempo sobrevivido, formatFrames).
+// Top de supervivencia (mayor tiempo sobrevivido, formatFrames).
 function renderSurvivalLeaderboardBody(): string {
   const myId = identityState.player.id;
-  if (leaderboardState.survivalLoading && leaderboardState.survivalEntries.length === 0) {
-    return '<p class="leaderboard-note">Cargando ranking…</p>';
-  }
-  if (leaderboardState.survivalError && leaderboardState.survivalEntries.length === 0) {
-    return `<p class="leaderboard-note leaderboard-note--error">${escapeHtml(leaderboardState.survivalError)}</p>`;
-  }
-  if (leaderboardState.survivalEntries.length === 0) {
-    return '<p class="leaderboard-note">Todavía no hay tiempos registrados. ¡Jugá Supervivencia y aguantá lo más posible para aparecer acá!</p>';
-  }
-  const rows = leaderboardState.survivalEntries.map((entry, index) => {
-    const rank = index + 1;
-    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`;
-    const mine = entry.playerId === myId ? ' leaderboard-row--me' : '';
-    const time = formatFrames(Math.round(entry.bestMs / GAME_FRAME_MS));
-    return `
-      <div class="leaderboard-row${mine}">
-        <span class="leaderboard-rank">${escapeHtml(medal)}</span>
-        ${renderOnlineAvatar({ name: entry.name, avatarUrl: entry.avatarUrl }, 'small', 'leaderboard-avatar')}
-        <span class="leaderboard-name">${escapeHtml(entry.name)}</span>
-        <span class="leaderboard-time">${escapeHtml(time)}</span>
-      </div>
-    `;
-  }).join('');
-  return `<div class="leaderboard-rows">${rows}</div>`;
+  return renderLeaderboardBody({
+    loading: leaderboardState.survivalLoading,
+    error: leaderboardState.survivalError,
+    rows: leaderboardState.survivalEntries.map((entry) => ({
+      isMe: entry.playerId === myId,
+      avatarHtml: renderOnlineAvatar({ name: entry.name, avatarUrl: entry.avatarUrl }, 'small', 'leaderboard-avatar'),
+      name: entry.name,
+      valueText: formatFrames(Math.round(entry.bestMs / GAME_FRAME_MS)),
+    })),
+    emptyMessage: 'Todavía no hay tiempos registrados. ¡Jugá Supervivencia y aguantá lo más posible para aparecer acá!',
+  });
 }
 
 // Orquestador stateful del panel de sala: deriva del estado del shell (roomState,
