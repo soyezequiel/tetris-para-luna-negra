@@ -8589,94 +8589,53 @@ function renderSurvivalLeaderboardBody(): string {
 function renderDashboardRoomPanel(): string {
   const room = onlineRoom;
   const inviteUnavailable = !lunaIdentity?.gameId;
-  const inviteStatusText = lunaInviteNotice
-    ? lunaInviteNotice
-    : inviteUnavailable
-      ? 'Entrá desde Luna Negra para ver amigos e invitarlos.'
-      : 'Abre la lista de amigos en Luna Negra.';
-  const inviteActionHtml = inviteUnavailable
-    ? `<button class="dash-invite-btn" type="button" data-ui-action="luna-login"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>
-        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}
-      </button>`
-    : `<button class="dash-invite-btn" type="button" data-ui-action="online-open-invite"${onlineBusy || lunaInviteWindowBusy ? ' disabled' : ''}>
-        ${lunaInviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}
-      </button>`;
-
-  const inviteLinkHtml = room
-    ? `<button class="dash-invite-btn dash-invite-link-btn" type="button" data-ui-action="online-copy-invite-link">
-        ${roomInviteLinkRecentlyCopied() ? '¡Link copiado!' : 'Copiar link de invitación'}
-      </button>`
-    : '';
-
-  const inviteSectionHtml = `
-    <div class="dash-invite-section ${!room ? 'glow' : ''}">
-      <div class="dash-invite-copy">
-        <strong>Invitaciones</strong>
-        <span class="dash-invite-text">${escapeHtml(room ? 'Compartí el link y cualquiera entra a la sala.' : inviteStatusText)}</span>
-      </div>
-      <div class="dash-invite-actions">
-        ${inviteLinkHtml}
-        ${inviteActionHtml}
-      </div>
-    </div>
-  `;
   const roomPurposeIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2l9 5v6c0 5-3.6 8.7-9 9-5.4-.3-9-4-9-9V7l9-5zm0 4.2L6 9.5V13c0 3.1 2.1 5.4 6 5.8 3.9-.4 6-2.7 6-5.8V9.5l-6-3.3z"/></svg>';
 
   if (!room) {
-    // Cuando no hay sala activa
+    // Sala vacía (variante A del rediseño): ícono+"SALA" violeta, título, descripción,
+    // botón "+ Crear sala" violeta, divisor y la lista de salas públicas con filas
+    // (avatar + "Sala de X" + X/4 + Unirse). El input por código y el bot dev quedan
+    // como utilidades secundarias bajo un divisor, sin recargar la jerarquía.
+    const shieldIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2l9 5v6c0 5-3.6 8.7-9 9-5.4-.3-9-4-9-9V7l9-5z"/></svg>';
     const publicRooms = onlinePublicRooms.length === 0
-      ? '<div class="online-empty" style="font-size: 12px; color: var(--dash-text-muted); text-align: center; padding: 12px 0;">No hay salas públicas activas.</div>'
-      : onlinePublicRooms.slice(0, 3).map((candidateRoom) => `
-        <div class="dash-player-card" style="margin-bottom: 6px;">
-          <div class="dash-public-room-info">
-            ${renderOnlineAvatar({ name: candidateRoom.hostName, avatarUrl: candidateRoom.hostAvatarUrl }, 'small', 'dash-player-avatar-circle')}
-            <div class="dash-public-room-copy">
-              <span>${escapeHtml(candidateRoom.id)}</span>
-              <small>${escapeHtml(candidateRoom.hostName)} · ${escapeHtml(matchTypeLabel(candidateRoom.matchType))} · ${candidateRoom.playerCount} jug.</small>
-            </div>
-          </div>
-          <button class="dash-copy-btn" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(candidateRoom.id)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>
+      ? '<div class="dash-public-empty">No hay salas públicas activas.</div>'
+      : onlinePublicRooms.slice(0, 4).map((candidateRoom) => `
+        <div class="dash-public-room">
+          ${renderOnlineAvatar({ name: candidateRoom.hostName, avatarUrl: candidateRoom.hostAvatarUrl }, 'small', 'dash-public-room-avatar')}
+          <span class="dash-public-room-name">Sala de ${escapeHtml(candidateRoom.hostName)}</span>
+          <span class="dash-public-room-count">${candidateRoom.playerCount}/4</span>
+          <button class="dash-public-room-join" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(candidateRoom.id)}"${onlineBusy ? ' disabled' : ''}>Unirse</button>
         </div>
       `).join('');
 
     return `
-      <div class="dash-room-header">
-        <div class="dash-room-title-area">
-          <span class="dash-room-eyebrow">SALA ONLINE</span>
-          <h2 style="margin: 0; font-size: 20px; font-weight: 800;">Jugá con amigos</h2>
+      <div class="dash-room-empty">
+        <div class="dash-room-empty-head">
+          <span class="dash-room-empty-icon">${shieldIcon}</span>
+          <span class="dash-room-empty-eyebrow">Sala</span>
         </div>
-        <button class="dash-copy-btn" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Actualizar</button>
-      </div>
+        <h3 class="dash-room-empty-title">Jugá con amigos</h3>
+        <p class="dash-room-empty-desc">Creá una sala y compartí el link. Cualquiera entra y la batalla arranca con 2+ jugadores.</p>
 
-      ${renderOnlineError()}
+        ${renderOnlineError()}
 
-      <div class="dash-empty-state">
-        <div class="dash-field-group">
-          <label>Crear sala · ${escapeHtml(matchTypeLabel(roomMatchTypeForSelectedMode()))}</label>
-          <div class="dash-buttons-row">
-            <button class="dash-action-btn accent" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>Crear sala</button>
-          </div>
-          <small style="display:block; margin-top:6px; color: var(--dash-text-muted); font-size: 11px;">La modalidad la elegís en la sección <strong>Jugar</strong>.</small>
-          ${import.meta.env.DEV ? `<div class="dash-buttons-row" style="margin-top: 6px;">
-            <button class="dash-action-btn" type="button" data-ui-action="dev-bot-match"${onlineBusy ? ' disabled' : ''}>Partida vs bot (dev)</button>
-          </div>` : ''}
+        <button class="dash-room-create-btn" type="button" data-ui-action="online-create"${onlineBusy ? ' disabled' : ''}>+ Crear sala</button>
+        ${import.meta.env.DEV ? `<button class="dash-room-devbot-btn" type="button" data-ui-action="dev-bot-match"${onlineBusy ? ' disabled' : ''}>Partida vs bot (dev)</button>` : ''}
+
+        <div class="dash-room-empty-divider"></div>
+
+        <div class="dash-room-empty-section-head">
+          <span>Salas públicas</span>
+          <button class="dash-room-empty-refresh" type="button" data-ui-action="online-refresh"${onlineBusy ? ' disabled' : ''}>Actualizar</button>
         </div>
+        <div class="dash-public-rooms">${publicRooms}</div>
 
-        <div class="dash-field-group">
-          <label for="dash-code-input">Unirse con código</label>
-          <div class="dash-join-row">
-            <input id="dash-code-input" class="dash-input" type="text" style="text-transform: uppercase;" placeholder="CÓDIGO" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
-            <button class="dash-action-btn accent" type="button" style="width: auto; padding: 8px 16px;" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse</button>
-          </div>
-        </div>
-      </div>
+        <div class="dash-room-empty-divider"></div>
 
-      ${inviteSectionHtml}
-
-      <div class="dash-field-group" style="margin-top: 10px;">
-        <label>Salas públicas</label>
-        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
-          ${publicRooms}
+        <label class="dash-room-empty-join-label" for="dash-code-input">Unirse con código</label>
+        <div class="dash-join-row">
+          <input id="dash-code-input" class="dash-input" type="text" style="text-transform: uppercase;" placeholder="CÓDIGO" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(onlineJoinCode)}" data-online-field="join-code" autocomplete="off" />
+          <button class="dash-action-btn accent" type="button" style="width: auto; padding: 8px 16px;" data-ui-action="online-join"${onlineBusy ? ' disabled' : ''}>Unirse</button>
         </div>
       </div>
     `;

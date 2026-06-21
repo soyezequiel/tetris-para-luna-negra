@@ -4850,13 +4850,132 @@ canvas {
 
 .dash-room {
   grid-area: room;
+  /* Card flotante (variante A) en vez de columna a sangre: hugea su contenido
+     desde arriba y scrollea internamente si el panel de sala activa es largo. */
+  align-self: start;
+  margin: 8px 22px 24px 0;
+  max-height: calc(100vh - var(--dash-topbar-h) - 32px);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, rgba(157, 78, 221, 0.06), transparent 60%);
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
-  padding: 22px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 18px;
+  padding: 20px;
   overflow-y: auto;
   gap: 14px;
+}
+
+/* ── Sala vacía (sin sala): rediseño variante A ── */
+.dash-room-empty { display: flex; flex-direction: column; }
+.dash-room-empty-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dash-room-empty-icon { display: flex; color: var(--dash-neon-purple); }
+.dash-room-empty-eyebrow {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--dash-neon-purple);
+  font-weight: 700;
+}
+.dash-room-empty-title { font-size: 18px; font-weight: 800; margin: 0 0 6px; }
+.dash-room-empty-desc { font-size: 13px; color: rgba(238, 240, 244, 0.55); line-height: 1.5; margin: 0 0 16px; }
+.dash-room-create-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--dash-neon-purple) 90%, transparent);
+  background: linear-gradient(120deg, rgba(157, 78, 221, 0.24), rgba(157, 78, 221, 0.05));
+  color: #fff;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  box-shadow: 0 16px 38px -18px rgba(157, 78, 221, 0.7);
+  transition: transform 0.16s ease, filter 0.16s ease;
+}
+.dash-room-create-btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.dash-room-create-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.dash-room-devbot-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px;
+  border-radius: 11px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: rgba(238, 240, 244, 0.6);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+.dash-room-empty-divider { height: 1px; background: rgba(255, 255, 255, 0.07); margin: 20px 0 14px; }
+.dash-room-empty-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.dash-room-empty-section-head > span {
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.4);
+  font-weight: 700;
+}
+.dash-room-empty-refresh {
+  background: transparent;
+  border: none;
+  color: var(--dash-neon-cyan);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.dash-room-empty-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+.dash-public-rooms { display: flex; flex-direction: column; gap: 8px; }
+.dash-public-empty { font-size: 12px; color: var(--dash-text-muted); text-align: center; padding: 12px 0; }
+.dash-public-room {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dash-public-room-avatar { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; font-size: 12px; }
+.dash-public-room-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dash-public-room-count { font-size: 11px; color: rgba(238, 240, 244, 0.4); }
+.dash-public-room-join {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 245, 255, 0.4);
+  background: rgba(0, 245, 255, 0.08);
+  color: var(--dash-neon-cyan);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+}
+.dash-public-room-join:disabled { opacity: 0.5; cursor: not-allowed; }
+.dash-room-empty-join-label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(238, 240, 244, 0.4);
+  font-weight: 700;
+  margin-bottom: 8px;
 }
 
 .dash-room-header {
