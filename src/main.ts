@@ -8274,7 +8274,7 @@ function mdashNavIcon(tab: DashTab): string {
   if (tab === 'inicio') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>';
   if (tab === 'jugar') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
   if (tab === 'historial') return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M13 3a9 9 0 1 0 8.49 12h-2.13A7 7 0 1 1 13 5a7 7 0 0 1 6.32 4H22A9 9 0 0 0 13 3zm-1 5v5l4.25 2.52.75-1.23-3.5-2.04V8z"/></svg>';
-  return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M19.14 12.94a7.5 7.5 0 0 0 0-1.88l2-1.56-2-3.46-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.56h-4l-.36 2.56c-.59.24-1.13.56-1.62.94L4.4 6.04l-2 3.46 2 1.56a7.5 7.5 0 0 0 0 1.88l-2 1.56 2 3.46 2.39-.96c.49.38 1.03.7 1.62.94l.36 2.56h4l.36-2.56c.59-.24 1.13-.56 1.62-.94l2.39.96 2-3.46zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>';
+  return '<svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>';
 }
 
 function renderMobileNavButton(tab: DashTab, active: DashTab, action: string, label: string, dot: boolean): string {
@@ -8377,10 +8377,10 @@ function renderMobileModeSelect(): string {
         <h2 class="mdash-mode-title">${meta.name}</h2>
         <p class="mdash-mode-desc">${meta.desc}</p>
         ${customChips}
+        ${mode === 'custom' ? `<button class="mdash-btn mdash-btn--ghost-purple mdash-config-btn" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>` : ''}
         ${extra}
       </div>
       <div class="mdash-actions">
-        ${mode === 'custom' ? `<button class="mdash-btn mdash-btn--ghost-purple" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>` : ''}
         <button class="mdash-cta" type="button" data-ui-action="${primaryAction}" aria-label="${escapeHtml(primaryLabel)}">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           <span class="mdash-cta-text"><span class="mdash-cta-label">${escapeHtml(primaryLabel)}</span><span class="mdash-cta-sub">${escapeHtml(primarySub)}</span></span>

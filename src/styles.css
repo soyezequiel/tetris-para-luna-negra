@@ -3845,6 +3845,14 @@ canvas {
   animation: none;
 }
 
+/* Al cambiar de modo, cada modalidad tiene distinta altura total (Supervivencia
+   trae los tops, Duelo casi nada). Si el hero centra verticalmente, ese cambio de
+   altura re-centra todo y "mueve" las tarjetas, el nombre y el CTA. Anclamos el
+   selector arriba para que esos elementos queden fijos y solo crezca hacia abajo. */
+.dash-hero:has(.dash-play-stage--mode-select) {
+  justify-content: flex-start;
+}
+
 .dash-step-pills {
   display: flex;
   align-items: center;
@@ -8183,6 +8191,9 @@ canvas {
 }
 .mdash-cta-label { font-size: 16px; font-weight: 800; letter-spacing: .5px; }
 .mdash-cta-sub { font-size: 11px; font-weight: 600; letter-spacing: .3px; opacity: .8; }
+/* El botón "Configurar partida" vive en el área scrolleable (no en las acciones
+   fijas) para que el CTA y "Crear sala" no se muevan al cambiar de modo. */
+.mdash-config-btn { margin-top: 4px; }
 
 /* ── 11 · Ajustes responsive de las vistas compartidas en el layout móvil ──
    La bienvenida, el historial y los controles se rinden en el ancho angosto del
