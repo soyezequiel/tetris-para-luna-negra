@@ -4357,36 +4357,44 @@ canvas {
   font-weight: 700;
 }
 
+/* Antes eran 4 cajas grandes de 200px que dominaban la pantalla. Ahora es una
+   sola tira compacta con divisores: la info secundaria pesa menos y el foco queda
+   en el tiempo y el puesto. */
 .solo-results-stats {
   display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
   justify-content: center;
-  margin: 10px 0 20px;
-}
-
-.solo-results-stat {
-  width: 200px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 18px 20px;
+  align-items: stretch;
+  margin: 6px 0 18px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.solo-results-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 22px;
+  min-width: 84px;
+}
+
+.solo-results-stat + .solo-results-stat {
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .solo-results-stat span {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 2px;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
   color: rgba(247, 247, 242, 0.5);
 }
 
 .solo-results-stat strong {
   font-family: 'Arial Black', 'Exo 2', sans-serif;
-  font-size: 34px;
+  font-size: 24px;
   font-weight: 900;
   line-height: 1;
   color: #f7f7f2;
@@ -4394,7 +4402,7 @@ canvas {
 
 .solo-results-stat strong em {
   font-style: normal;
-  font-size: 18px;
+  font-size: 14px;
   color: rgba(247, 247, 242, 0.45);
 }
 
@@ -4483,15 +4491,16 @@ canvas {
     -webkit-overflow-scrolling: touch;
   }
   .solo-results-stats {
-    gap: 10px;
-    margin: 8px 0 16px;
+    margin: 6px 0 14px;
+    width: 100%;
   }
   .solo-results-stat {
-    width: calc(50% - 5px);
-    padding: 12px 14px;
+    flex: 1;
+    min-width: 0;
+    padding: 10px 6px;
   }
   .solo-results-stat strong {
-    font-size: 26px;
+    font-size: 21px;
   }
   .solo-results-btn {
     height: 46px;
