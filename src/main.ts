@@ -5491,8 +5491,10 @@ function renderSurvivalRankBlock(): string {
 // Mini-tabla del top centrada en el jugador: tu fila + vecinos inmediatos.
 function renderSurvivalRankWindow(rank: number, total: number): string {
   const myIndex = rank - 1;
-  const start = Math.max(0, myIndex - 3);
-  const end = Math.min(survivalEntries.length, myIndex + 4);
+  // 2 arriba + vos + 2 abajo: suficiente contexto de vecinos sin que la pantalla
+  // de resultados crezca de más y obligue a scrollear.
+  const start = Math.max(0, myIndex - 2);
+  const end = Math.min(survivalEntries.length, myIndex + 3);
   const myId = onlinePlayer.id;
   const rows = survivalEntries.slice(start, end).map((entry, i) => {
     const position = start + i + 1;

@@ -4148,6 +4148,9 @@ canvas {
   background:
     radial-gradient(900px 560px at 50% 0%, rgba(0, 245, 255, 0.1), transparent 60%),
     rgba(5, 7, 15, 0.86);
+  /* En pantallas bajas recuperamos el padding del scrim para que la columna entera
+     entre sin scroll; en pantallas amplias mantiene el aire de 24px. */
+  padding: clamp(8px, 1.5vh, 24px);
 }
 
 .solo-results {
@@ -4155,8 +4158,11 @@ canvas {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 10px;
-  padding: 32px;
+  /* Todo escala con la ALTURA del viewport para entrar sin scroll: en pantallas
+     bajas los espacios y tipografías se achican solos. */
+  gap: clamp(4px, 0.85vh, 9px);
+  padding: clamp(12px, 2.2vh, 28px);
+  max-height: 100dvh;
 }
 
 /* Cartel de la fase de estudio: arriba, centrado, sin tapar el tablero. */
@@ -4233,13 +4239,13 @@ canvas {
   letter-spacing: 4px;
   color: rgba(247, 247, 242, 0.55);
   text-transform: uppercase;
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 .solo-results-hero {
   font-family: 'Arial Black', 'Exo 2', sans-serif;
   font-weight: 900;
-  font-size: clamp(56px, 17vw, 130px);
+  font-size: clamp(42px, 10vh, 92px);
   line-height: 1;
   letter-spacing: -2px;
   max-width: 100%;
@@ -4256,10 +4262,10 @@ canvas {
 .solo-results-verdict {
   font-family: 'Arial Black', 'Exo 2', sans-serif;
   font-weight: 900;
-  font-size: clamp(34px, 11vw, 64px);
+  font-size: clamp(24px, 5vh, 48px);
   letter-spacing: clamp(3px, 1.2vw, 8px);
   line-height: 1;
-  margin-bottom: 8px;
+  margin-bottom: 2px;
 }
 
 .solo-results-verdict--clear {
@@ -4295,10 +4301,10 @@ canvas {
    la frase suelta del puesto por una lista compacta que se entiende de un vistazo. */
 .solo-results-rankwin {
   width: min(380px, 86vw);
-  margin: 4px 0 8px;
+  margin: 2px 0 4px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: clamp(3px, 0.8vh, 8px);
 }
 
 .rankwin-head {
@@ -4336,7 +4342,7 @@ canvas {
   grid-template-columns: 44px 1fr auto;
   align-items: center;
   gap: 10px;
-  padding: 7px 12px;
+  padding: clamp(3px, 0.7vh, 7px) 12px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid transparent;
@@ -4375,7 +4381,7 @@ canvas {
   display: flex;
   justify-content: center;
   align-items: stretch;
-  margin: 6px 0 18px;
+  margin: 4px 0 6px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -4386,8 +4392,8 @@ canvas {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  padding: 12px 22px;
+  gap: 4px;
+  padding: clamp(8px, 1.4vh, 12px) 22px;
   min-width: 84px;
 }
 
@@ -4405,7 +4411,7 @@ canvas {
 
 .solo-results-stat strong {
   font-family: 'Arial Black', 'Exo 2', sans-serif;
-  font-size: 24px;
+  font-size: clamp(19px, 2.7vh, 24px);
   font-weight: 900;
   line-height: 1;
   color: #f7f7f2;
@@ -4429,7 +4435,7 @@ canvas {
 }
 
 .solo-results-btn {
-  height: 52px;
+  height: clamp(42px, 6vh, 50px);
   padding: 0 26px;
   border-radius: 12px;
   display: inline-flex;
@@ -4524,17 +4530,17 @@ canvas {
 .report-block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   max-width: 420px;
-  margin: 14px auto 0;
-  padding-top: 14px;
+  margin: 6px auto 0;
+  padding-top: clamp(8px, 1.4vh, 14px);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .report-comment {
   width: 100%;
-  height: 40px;
+  height: 36px;
   padding: 0 12px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -4562,7 +4568,7 @@ canvas {
 .report-block-btn {
   width: 100%;
   justify-content: center;
-  height: 44px;
+  height: clamp(38px, 5vh, 44px);
 }
 
 .report-block-btn.is-sent {
@@ -4924,8 +4930,8 @@ canvas {
 /* La fila de "Siguiente" se separa del resto para leerse como acción destacada:
    un divisor tenue arriba y aire extra la despegan de los botones secundarios. */
 .solo-results-actions--next {
-  margin-top: 6px;
-  padding-top: 16px;
+  margin-top: 2px;
+  padding-top: clamp(8px, 1.6vh, 16px);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   width: 100%;
 }
