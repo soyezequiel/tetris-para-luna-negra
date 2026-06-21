@@ -5,7 +5,7 @@ import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
 import { renderModeSelectStage as renderModeSelectStageView, renderSmartPlayStage as renderSmartPlayStageView } from './ui/dashboard/smartPlay';
 import { renderRoomPanelEmpty, renderRoomPanelActive } from './ui/dashboard/roomPanel';
-import { renderLeaderboardBody, renderLeaderboardPanel } from './ui/dashboard/leaderboard';
+import { renderLeaderboardBody, renderLeaderboardPanel, renderSurvivalTopsEmbed as renderSurvivalTopsEmbedView } from './ui/dashboard/leaderboard';
 import { renderHistory } from './ui/dashboard/history';
 import { renderControls } from './ui/dashboard/controls';
 import type { PlayMode } from './ui/playMode';
@@ -8126,19 +8126,11 @@ function renderMobileRoomManager(): string {
 // Top unificado (victorias + tiempo) sin el marco/acciones de la pantalla completa.
 function renderSurvivalTopsEmbed(): string {
   const onSurvival = leaderboardState.tab === 'survival';
-  const loading = onSurvival ? leaderboardState.survivalLoading : leaderboardState.loading;
-  const body = onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody();
-  return `
-    <div class="dash-survival-tops">
-      <div class="panel-eyebrow">Top mundial</div>
-      <div class="leaderboard-tabs" role="tablist">
-        <button class="leaderboard-tab ${!onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${!onSurvival}" data-ui-action="leaderboard-tab-wins">🏆 Multijugador</button>
-        <button class="leaderboard-tab ${onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${onSurvival}" data-ui-action="leaderboard-tab-survival">⏱️ Supervivencia</button>
-      </div>
-      ${body}
-      <button class="dash-action-btn" type="button" data-ui-action="leaderboard-refresh"${loading ? ' disabled' : ''}>${loading ? 'Actualizando…' : 'Actualizar'}</button>
-    </div>
-  `;
+  return renderSurvivalTopsEmbedView({
+    onSurvival,
+    loading: onSurvival ? leaderboardState.survivalLoading : leaderboardState.loading,
+    bodyHtml: onSurvival ? renderSurvivalLeaderboardBody() : renderWinsLeaderboardBody(),
+  });
 }
 
 function renderDashboardCenterContent(_state: GameState): string {

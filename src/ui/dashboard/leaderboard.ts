@@ -62,6 +62,22 @@ export interface LeaderboardPanelData {
   bodyHtml: string;
 }
 
+// Variante embebida del top (tarjeta de Supervivencia del selector de modalidad):
+// mismas pestañas/body que el panel completo, sin el hero ni las acciones de "Volver".
+export function renderSurvivalTopsEmbed({ onSurvival, loading, bodyHtml }: LeaderboardPanelData): string {
+  return `
+    <div class="dash-survival-tops">
+      <div class="panel-eyebrow">Top mundial</div>
+      <div class="leaderboard-tabs" role="tablist">
+        <button class="leaderboard-tab ${!onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${!onSurvival}" data-ui-action="leaderboard-tab-wins">🏆 Multijugador</button>
+        <button class="leaderboard-tab ${onSurvival ? 'leaderboard-tab--active' : ''}" type="button" role="tab" aria-selected="${onSurvival}" data-ui-action="leaderboard-tab-survival">⏱️ Supervivencia</button>
+      </div>
+      ${bodyHtml}
+      <button class="dash-action-btn" type="button" data-ui-action="leaderboard-refresh"${loading ? ' disabled' : ''}>${loading ? 'Actualizando…' : 'Actualizar'}</button>
+    </div>
+  `;
+}
+
 export function renderLeaderboardPanel({ onSurvival, loading, bodyHtml }: LeaderboardPanelData): string {
   const tabs = `
     <div class="leaderboard-tabs" role="tablist">
