@@ -1752,7 +1752,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'restart') restartCurrentRun();
   if (action === 'solo-menu') openModeMenu('soloMenu');
   if (action === 'multiplayer-menu') openOnlineMenu();
-  if (action === 'history-menu') openReplayLibrary();
+  if (action === 'history-menu') openHistoryMenu();
   if (action === 'leaderboard-open') openLeaderboard();
   if (action === 'leaderboard-refresh') void refreshActiveLeaderboard();
   if (action === 'leaderboard-tab-wins') setLeaderboardTab('wins');
@@ -2262,6 +2262,18 @@ function openReplayLibrary(): void {
   libraryError = null;
   lastExportName = null;
   syncLibrarySelection();
+  input.releaseAll();
+}
+
+// Vista "Historial" del dashboard: lista simple de replays recientes (diseño
+// "Tus replays"). La biblioteca completa con filtros/detalles vive en 'library'
+// y se alcanza desde el botón "Ver biblioteca completa" (replay-library).
+function openHistoryMenu(): void {
+  bindingCapture = null;
+  pendingConfirmAction = null;
+  runHistory = loadRunHistory();
+  appMode = 'historyMenu';
+  settingsReturnMode = 'menu';
   input.releaseAll();
 }
 
@@ -8485,16 +8497,29 @@ function renderDashboardCenterContent(_state: GameState): string {
     `;
   }
   if (mode === 'historyMenu') {
+    const importIcon = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M5 20h14v-2H5v2zM12 2L6 8h4v6h4V8h4l-6-6z"/></svg>';
+    const entries = runHistory.slice(0, 12);
+    const list = entries.length === 0
+      ? `<p class="dash-history-empty">Todavía no tenés replays guardados. Jugá una partida o importá un replay para verlo acá.</p>`
+      : entries.map((entry) => {
+          const won = entry.status === 'finished';
+          return `
+            <div class="dash-history-row">
+              <span class="dash-history-time ${won ? 'is-clear' : 'is-topout'}">${escapeHtml(formatFrames(entry.elapsedFrames))}</span>
+              <span class="dash-history-label">${entry.lines}L · ${won ? 'clear' : 'top out'}</span>
+              <span class="dash-history-date">${escapeHtml(formatHistoryDate(entry.createdAt))}</span>
+              <button class="dash-history-view" type="button" data-ui-action="play-history-replay" data-history-id="${escapeHtml(entry.id)}">Ver</button>
+            </div>`;
+        }).join('');
     return `
-      <div class="menu-panel" style="width: 100%; max-width: 440px; border: none; background: transparent; box-shadow: none; padding: 0;">
+      <div class="dash-history" style="width: 100%; max-width: 520px;">
         <div class="panel-eyebrow">HISTORIAL</div>
-        <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: 'Arial Black', Arial, sans-serif;">Historial</h1>
-        <p style="color: var(--dash-text-dim); margin-bottom: 24px; font-size: 14px; font-weight: 500;">Replays guardados e importación de partidas.</p>
-        <div class="panel-actions mode-menu-actions" style="display: flex; flex-direction: column; gap: 12px; max-width: 320px;">
-          <button class="dash-action-btn accent" type="button" data-ui-action="replay-library">Replay library</button>
-          <button class="dash-action-btn" type="button" data-ui-action="import-replay">Import replay</button>
-          <button class="dash-action-btn danger" type="button" data-ui-action="main-menu">Volver</button>
+        <div class="dash-history-head">
+          <h1 class="dash-history-title">Tus replays</h1>
+          <button class="dash-history-import" type="button" data-ui-action="import-replay">${importIcon}Importar replay</button>
         </div>
+        <div class="dash-history-list">${list}</div>
+        ${entries.length > 0 ? '<button class="dash-history-library" type="button" data-ui-action="replay-library">Ver biblioteca completa</button>' : ''}
       </div>
     `;
   }
@@ -9373,6 +9398,17 @@ function formatDateTime(value: string): string {
 
 function formatHistoryStatus(status: RunHistoryEntry['status']): string {
   return status === 'finished' ? 'CLEAR' : 'TOP OUT';
+}
+
+function formatHistoryDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86400000);
+  if (dayDiff <= 0) return 'hoy';
+  if (dayDiff === 1) return 'ayer';
+  if (dayDiff < 7) return `hace ${dayDiff} días`;
+  return date.toLocaleDateString();
 }
 
 function isOnlineHost(): boolean {
