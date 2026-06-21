@@ -19,6 +19,13 @@ import { attackState } from './state/attackState';
 import { identityState } from './state/identityState';
 import { peerState } from './state/peerState';
 import { roomState } from './state/roomState';
+import { deathState } from './state/deathState';
+import { libraryState, LIBRARY_FILTERS, type LibraryFilter } from './state/libraryState';
+import { reportState } from './state/reportState';
+import { overlayState } from './state/overlayState';
+import { autoPlayState } from './state/autoPlayState';
+import { runState, type RunKind } from './state/runState';
+import { uiSelectionState } from './state/uiSelectionState';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -117,7 +124,7 @@ const overlay = document.getElementById('hud-overlay');
 if (!root || !overlay) throw new Error('Missing application root.');
 
 const overlayElement = overlay;
-// Capa propia para el banner de KO online (ver lastKoOverlayHtml). Vive fuera del
+// Capa propia para el banner de KO online (ver overlayState.lastKo). Vive fuera del
 // overlay general para que el redibujo por frame de los tableros rivales no
 // recree su nodo y reinicie sus animaciones.
 const koOverlayElement = document.createElement('div');
@@ -126,7 +133,7 @@ const koOverlayElement = document.createElement('div');
 // overlay, vive fuera del overlay general: éste se reescribe cada frame por el
 // cronómetro vivo de los tableros rivales, así que si el HUD estuviera ahí sus
 // botones se recrearían 60 veces por segundo y el hover titilaría. Aparte, solo
-// se redibuja cuando cambia su contenido (ver lastHudOverlayHtml).
+// se redibuja cuando cambia su contenido (ver overlayState.lastHud).
 const hudOverlayElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(hudOverlayElement);
 hudOverlayElement.addEventListener('click', handleOverlayClick);
@@ -161,7 +168,6 @@ const VOLUME_WHEEL_STEP = 0.05;
 // reportar deltaY enorme; sin tope, un solo notch saltaría medio volumen.
 const VOLUME_WHEEL_MAX_STEP = 0.08;
 const REPLAY_SPEEDS: PlaybackSpeed[] = [1, 2, 4];
-const LIBRARY_FILTERS = ['all', 'clear', 'topout', 'best'] as const;
 const ONLINE_POLL_MS = 1000;
 // Polls consecutivos con 404 (sala borrada del servidor) antes de abandonar la
 // sala fantasma: corta el spam infinito de /state y /signal contra una sala que
@@ -215,9 +221,6 @@ const GAME_FRAME_MS = 1000 / 60;
 // reloj en vez de fast-forwardear la gravedad. Un hitch normal queda por debajo.
 const MAX_OFFLINE_RESUME_FRAMES = 30;
 const AUTO_PLAY_ACCESS_STORAGE = 'stack40.autoplayAccess.v1'; // TRUCO AUTOPLAY
-
-type LibraryFilter = typeof LIBRARY_FILTERS[number];
-type RunKind = 'custom' | 'online' | 'survival';
 type StoredOnlineRoomSession = {
   roomId: string;
   playerId: string;
@@ -289,74 +292,33 @@ let best = loadRecord();
 let runHistory = loadRunHistory();
 let appMode: AppMode = 'menu';
 let settingsReturnMode: AppMode = 'menu';
-let soloCountdownStartsAtMs = 0;
-// Compartido por la cuenta regresiva solo y online: el último segundo cuyo sonido
-// ya se reprodujo, para no repetir el beep dentro del mismo segundo.
-let lastCountdownSecondPlayed = -1;
-let currentRunKind: RunKind = 'custom';
-let customTab: CustomTab = 'game';
-let gameFrame = 0;
-let gameClockOriginMs = performance.now();
-let savedRunHistoryEntry = false;
-let runSplitTracker = new RunSplitTracker();
-let lastPieces = 0;
-let lastLines = 0;
+// El estado de la partida en curso (runState.gameFrame/runState.gameClockOriginMs/countdown/runState.currentRunKind/
+// runState.savedRunHistoryEntry/splitTracker/runState.lastPieces/runState.lastLines/maxCombo) vive ahora en
+// ./state/runState (runState; ver imports).
 let lastStatus = engine.getState().status;
-let runMaxCombo = 0;
 let volumeFeedback: { channel: VolumeChannel; expiresAt: number } | null = null;
 let bindingCapture: ControlAction | null = null;
 let lastExportName: string | null = null;
 let lastCustomExportName: string | null = null;
-let lastOverlayHtml = '';
-// El banner de KO vive en su propia capa persistente (no en el innerHTML del
-// overlay general). El overlay se reescribe cada frame porque los tableros
-// rivales tienen un cronómetro vivo; si el KO estuviera ahí, su DOM se recrearía
-// 60 veces por segundo y sus animaciones (pop/shake) se reiniciarían sin parar
-// (parpadeo). Manteniéndolo aparte solo se redibuja cuando cambia su contenido.
-let lastKoOverlayHtml = '';
-// Datos del KO congelados en el instante de morir: así el toast compacto tiene
-// contenido estable y su animación (entra arriba, se va) corre una sola vez.
-let onlineKoBanner: { placement: string; won: boolean } | null = null;
-// Momento en que morí en online; durante la ventana de muerte sigo dibujando mi
-// tablero (estudio + colapso) antes de pasar a espectador.
-let onlineDeathAnimStartedAt: number | null = null;
-// Ya disparé el colapso del tablero online (segunda fase). Evita re-dispararlo.
-let onlineDeathCollapseStarted = false;
-// Morí por top out (no por ganar): solo entonces hay fase de estudio + colapso.
-let onlineDeathLostByTopOut = false;
-// Equivalente para solo/offline: instante en que toqué el techo. Durante la fase de
-// estudio + colapso se difiere el panel de resultados (ver SOLO_DEATH_*_MS).
-let soloDeathStartedAt: number | null = null;
-// Ya disparé el colapso del tablero (segunda fase). Evita re-dispararlo cada frame.
-let soloDeathCollapseStarted = false;
-// La secuencia de derrota terminó y ya se muestran los resultados. Se mantiene true
-// aunque entres/salgas de la repetición, para no re-animar al volver.
-let soloDeathSequenceDone = false;
-// Mismo motivo que el KO: el HUD online se diffea aparte para no recrearse cada
-// frame y evitar el titileo del hover en sus botones.
-let lastHudOverlayHtml = '';
-let lastInviteOverlayHtml = '';
-// El estado del visor de repetición de una partida vive ahora en
-// ./state/replayState (replayState; ver imports).
-let libraryFilter: LibraryFilter = 'all';
-let selectedHistoryEntryId: string | null = null;
-let libraryError: string | null = null;
+// Cachés del último HTML por overlay (last/lastKo/lastHud/lastInvite/lastDevBot) viven
+// ahora en ./state/overlayState; se diffean para no recrear el DOM cada frame.
+// Las secuencias de muerte (online + solo) viven en ./state/deathState.
+// El estado del visor de repetición de una partida vive en ./state/replayState.
+// El estado de la biblioteca de repeticiones vive en ./state/libraryState.
 let pendingConfirmAction: DestructiveRunAction | null = null;
 // "Ocultar controles" se quitó de la UI: los controles táctiles ahora se muestran
 // siempre durante la partida (el esquema/vibración se ajustan desde Configuración).
 let touchControlsHidden = false;
 let touchScheme: TouchScheme = best.touchScheme;        // 'pro' | 'reduced' | 'dpad'
 let touchHapticsEnabled: boolean = best.touchHaptics;   // navigator.vibrate on/off
-let autoPlayEnabled = false; // TRUCO AUTOPLAY: el bot juega solo al activarse
-let autoPlayAccessGranted = false; // TRUCO AUTOPLAY: habilitado solo con llave local hasheada
-let ignoreNextAutoPlayClick = false; // TRUCO AUTOPLAY: pointerdown ya hizo el toggle
+// El estado del TRUCO AUTOPLAY (enabled/accessGranted/ignoreNextClick) vive ahora en
+// ./state/autoPlayState (autoPlayState; ver imports).
 // BOT DEV: oponente simulado para ver el flujo multijugador completo en modo dev
 // (ver src/dev/devBotOpponent.ts). Solo existe detrás de import.meta.env.DEV.
 let devBotMatch: import('./dev/devBotOpponent').DevBotOpponent | null = null;
 // DUELO LOCAL: sesión del modo 1v1 en la misma compu (overlay propio). Mientras
 // está activa, el loop principal queda en pausa (ver loopBody).
 let localVersusSession: LocalVersusSession | null = null;
-let lastDevBotOverlayHtml = '';
 // La identidad online (player/name/joinCode) vive ahora en ./state/identityState
 // (identityState; ver imports).
 // El estado del flujo de apuesta online (stake input, flags busy/paying/creating,
@@ -366,12 +328,8 @@ let lastDevBotOverlayHtml = '';
 // ./state/roomState (roomState; ver imports).
 // El estado del "Top mundial" (rankings de victorias y supervivencia) vive ahora
 // en ./state/leaderboardState — ver leaderboardState más abajo en los imports.
-// Modalidad elegida en la sección "Jugar": decide qué arranca el botón ▶ y, al
-// crear sala, su matchType. 'survival' = reglas fijas (solo→survival endless;
-// con sala→batalla online de reglas fijas, top justo). 'custom' = config propia
-// (solo→custom; con sala→batalla editable). 'local1v1' = duelo local en misma
-// pantalla (independiente de sala). Default 'survival'.
-let selectedPlayMode: PlayMode = 'survival';
+// La selección de UI del dashboard (playMode de "Jugar" + uiSelectionState.customTab del config) vive
+// ahora en ./state/uiSelectionState (uiSelectionState; ver imports).
 let localRunError: string | null = null;
 // El "cableado" de red online (locks/timestamps de poll·progress·report, reloj del
 // server, y failover de host) vive ahora en ./state/onlineNetState como 3 objetos:
@@ -416,7 +374,7 @@ const RIVAL_DEATH_GAIN = 1.7;
 // El estado de la autoridad de host vive en ./state/hostAuthorityState.
 // El ciclo de ronda online vive en ./state/roundState.
 // El dominio Luna Negra / invitaciones / launch vive en ./state/lunaState.
-let onlineLastDiagLogAt = 0;
+// onlineNetState.lastDiagLogAt + onlineNetState.rulesSyncTimer viven ahora en onlineNetState.
 // QRs de invoices Lightning, cacheados por bolt11 (el overlay se regenera por HTML).
 const betQrDataUrls = new Map<string, string>();
 const betQrPending = new Set<string>();
@@ -469,11 +427,11 @@ overlayElement.addEventListener('pointerup', handleTouchControlPointerEnd);
 overlayElement.addEventListener('pointercancel', handleTouchControlPointerEnd);
 overlayElement.addEventListener('lostpointercapture', handleTouchControlPointerEnd);
 
-try { autoPlayAccessGranted = localStorage.getItem(AUTO_PLAY_ACCESS_STORAGE) === '1'; } catch { /* noop */ } // TRUCO AUTOPLAY
+try { autoPlayState.accessGranted = localStorage.getItem(AUTO_PLAY_ACCESS_STORAGE) === '1'; } catch { /* noop */ } // TRUCO AUTOPLAY
 (window as unknown as Record<string, unknown>)['test'] = () => { // TRUCO AUTOPLAY
   try { localStorage.setItem(AUTO_PLAY_ACCESS_STORAGE, '1'); } catch { /* noop */ }
-  autoPlayAccessGranted = true;
-  lastOverlayHtml = '';
+  autoPlayState.accessGranted = true;
+  overlayState.last = '';
   console.log('autoplay unlocked');
 };
 
@@ -613,9 +571,8 @@ function safeStringify(value: unknown): string {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
-// Estado del botón "Reportar" de la pantalla de resultados + comentario del jugador.
-let reportComment = '';
-let reportButtonState: 'idle' | 'sending' | 'sent' | 'error' = 'idle';
+// El estado del botón "Reportar" de resultados (comment/buttonState) vive ahora en
+// ./state/reportState (reportState; ver imports).
 type BetWithdrawalTraceSource =
   | 'room-action'
   | 'room-poll'
@@ -791,11 +748,11 @@ function runPerfReport(): Record<string, unknown> {
 }
 
 // Envía el reporte al backend (/api/report → webhook de Discord del dev). Lo dispara el botón
-// "Reportar" de la pantalla de resultados. El estado (reportButtonState) lo refleja el render
+// "Reportar" de la pantalla de resultados. El estado (reportState.buttonState) lo refleja el render
 // del overlay, que se reconstruye cada frame. No relanzamos si ya está en vuelo o ya se envió.
 async function sendPerfReport(): Promise<void> {
-  if (reportButtonState === 'sending' || reportButtonState === 'sent') return;
-  reportButtonState = 'sending';
+  if (reportState.buttonState === 'sending' || reportState.buttonState === 'sent') return;
+  reportState.buttonState = 'sending';
   try {
     const report = buildPerfReport();
     const response = await fetch('/api/report', {
@@ -803,12 +760,12 @@ async function sendPerfReport(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(report),
     });
-    reportButtonState = response.ok ? 'sent' : 'error';
+    reportState.buttonState = response.ok ? 'sent' : 'error';
     if (!response.ok) {
       console.error(`[report] el server rechazó el reporte (HTTP ${response.status})`);
     }
   } catch (error) {
-    reportButtonState = 'error';
+    reportState.buttonState = 'error';
     console.error('[report] no se pudo enviar el reporte', error);
   }
 }
@@ -819,7 +776,7 @@ function buildPerfReport(): Record<string, unknown> {
   return {
     generatedAt: new Date().toISOString(),
     perfLogEnabled,
-    comment: reportComment.trim() ? reportComment.trim().slice(0, 400) : null,
+    comment: reportState.comment.trim() ? reportState.comment.trim().slice(0, 400) : null,
     url: (() => { try { return window.location.href; } catch { return null; } })(),
     device: {
       userAgent: nav.userAgent,
@@ -961,15 +918,15 @@ function loopBody(): void {
   // quede en 'playing', no debe avanzar (solo mira a los rivales).
   const canAdvanceThisLoop = !hasBlockingModal() && !roundState.spectatorRound && canAdvanceGame(appMode, beforeState.status);
   if (!canAdvanceThisLoop) syncGameplayClockToCurrentFrame();
-  const candidateFrame = canAdvanceThisLoop ? targetGameplayFrame() : gameFrame;
+  const candidateFrame = canAdvanceThisLoop ? targetGameplayFrame() : runState.gameFrame;
   // P2: con el frame anclado al reloj real, un rAF de un monitor >60Hz puede no
-  // producir un frame de engine nuevo (candidateFrame === gameFrame). En ese caso NO
+  // producir un frame de engine nuevo (candidateFrame === runState.gameFrame). En ese caso NO
   // recolectamos inputs: quedan en la cola del InputController hasta el próximo tick
   // real, para no perder taps ni doble-contar repeats de DAS/ARR (collect corre así
   // exactamente una vez por frame de engine). En menús/gameover canAdvanceThisLoop es
-  // false y candidateFrame también queda en gameFrame, pero ahí SÍ seguimos
+  // false y candidateFrame también queda en runState.gameFrame, pero ahí SÍ seguimos
   // recolectando para que la navegación responda en cada rAF.
-  const skipInputThisLoop = canAdvanceThisLoop && candidateFrame === gameFrame;
+  const skipInputThisLoop = canAdvanceThisLoop && candidateFrame === runState.gameFrame;
   // Leemos los mandos cada rAF (la Gamepad API se sondea, no emite eventos por botón).
   // pressControl sólo encola; los repeats DAS/ARR los gobierna input.collect() abajo.
   gamepad.poll();
@@ -1006,16 +963,16 @@ function loopBody(): void {
   // Frame del motor ANTES del posible tick de abajo: si no cambia, este rAF no produjo
   // un frame nuevo (típico en monitores >60Hz, ~2 de cada 3 rAF) y el tablero es idéntico
   // al ya dibujado → el renderer puede saltarse la reconstrucción completa (ver render()).
-  const frameBefore = gameFrame;
-  // candidateFrame > gameFrame garantiza que advanceGameToFrame ticará al menos un
+  const frameBefore = runState.gameFrame;
+  // candidateFrame > runState.gameFrame garantiza que advanceGameToFrame ticará al menos un
   // frame: en un rAF sin frame nuevo (skipInputThisLoop) el for de catch-up no
   // iteraría, pero evitamos igual el autoplay/bot/sendOnline/recordInput con inputs
   // vacíos o sellados a un frame ya pasado (rompería el determinismo del replay).
-  if (!consumedByApp && canAdvanceGame(appMode, state.status) && candidateFrame > gameFrame) {
+  if (!consumedByApp && canAdvanceGame(appMode, state.status) && candidateFrame > runState.gameFrame) {
     const beforeTickState = engine.getState();
     const gameInputs = toGameInputs(controlInputs, candidateFrame);
     // TRUCO AUTOPLAY: inyecta la acción del bot como si fuera una tecla más.
-    if (autoPlayEnabled) {
+    if (autoPlayState.enabled) {
       // BOT DEV: en una partida vs bot el autoplay local se frena al mismo ritmo
       // del oponente (a toda velocidad la ronda dura ~10s y no se ve nada).
       const devBotPaced = import.meta.env.DEV && devBotMatch
@@ -1106,13 +1063,13 @@ function loopBody(): void {
     // Reconstrucción completa solo cuando hay frame nuevo o no estamos jugando (banner
     // de resultados, animación de muerte, cuenta regresiva). El juice/shake igual corren
     // a tasa de refresco dentro de render() para que partículas y temblor sigan suaves.
-    const boardChanged = gameFrame !== frameBefore || state.status !== 'playing';
+    const boardChanged = runState.gameFrame !== frameBefore || state.status !== 'playing';
     const renderStart = performance.now();
     renderer.render(state, boardChanged);
     if (perfFrame) {
       // ticks del motor (>1 = catch-up de varios frames de golpe = posible pico) y costo del
       // render, para atribuir el spike en perfEndFrame.
-      perfFrame.ticks = Math.max(0, gameFrame - frameBefore);
+      perfFrame.ticks = Math.max(0, runState.gameFrame - frameBefore);
       perfFrame.renderMs = performance.now() - renderStart;
     }
     // `live` solo en juego real: en lobby/resultados/pausa el motor puede quedar
@@ -1136,40 +1093,40 @@ function syncOnlineDeathPhase(state: GameState): void {
   const dead = inOnlineRound
     && (state.status === 'gameover' || state.status === 'finished');
   if (!dead) {
-    onlineDeathAnimStartedAt = null;
-    onlineDeathCollapseStarted = false;
-    onlineDeathLostByTopOut = false;
-    onlineKoBanner = null;
+    deathState.onlineAnimStartedAt = null;
+    deathState.onlineCollapseStarted = false;
+    deathState.onlineLostByTopOut = false;
+    deathState.onlineKoBanner = null;
     return;
   }
-  if (onlineDeathAnimStartedAt === null) {
-    onlineDeathAnimStartedAt = performance.now();
-    onlineDeathLostByTopOut = state.status === 'gameover';
+  if (deathState.onlineAnimStartedAt === null) {
+    deathState.onlineAnimStartedAt = performance.now();
+    deathState.onlineLostByTopOut = state.status === 'gameover';
     // Ganar (finished) no congela ni colapsa: marcamos el colapso como ya hecho.
-    onlineDeathCollapseStarted = !onlineDeathLostByTopOut;
-    onlineKoBanner = {
+    deathState.onlineCollapseStarted = !deathState.onlineLostByTopOut;
+    deathState.onlineKoBanner = {
       placement: onlineLocalPlacementLabel(),
       won: state.status === 'finished',
     };
   }
   // Top out: primero la fase de estudio (tablero congelado), luego el colapso.
-  if (onlineDeathLostByTopOut && !onlineDeathCollapseStarted
-    && performance.now() - onlineDeathAnimStartedAt >= ONLINE_DEATH_STUDY_MS) {
-    onlineDeathCollapseStarted = true;
+  if (deathState.onlineLostByTopOut && !deathState.onlineCollapseStarted
+    && performance.now() - deathState.onlineAnimStartedAt >= ONLINE_DEATH_STUDY_MS) {
+    deathState.onlineCollapseStarted = true;
     renderer.playDeathAnimation();
   }
 }
 
 function isOnlineDeathAnimating(): boolean {
-  if (onlineDeathAnimStartedAt === null) return false;
+  if (deathState.onlineAnimStartedAt === null) return false;
   // Al perder la ventana cubre estudio + colapso; al ganar solo la animación normal.
-  const windowMs = onlineDeathLostByTopOut ? ONLINE_DEATH_STUDY_MS + ONLINE_DEATH_ANIM_MS : ONLINE_DEATH_ANIM_MS;
-  return performance.now() - onlineDeathAnimStartedAt < windowMs;
+  const windowMs = deathState.onlineLostByTopOut ? ONLINE_DEATH_STUDY_MS + ONLINE_DEATH_ANIM_MS : ONLINE_DEATH_ANIM_MS;
+  return performance.now() - deathState.onlineAnimStartedAt < windowMs;
 }
 
 // True solo durante la fase de estudio online (tablero congelado, sin colapso aún).
 function isOnlineDeathStudying(): boolean {
-  return onlineDeathAnimStartedAt !== null && onlineDeathLostByTopOut && !onlineDeathCollapseStarted;
+  return deathState.onlineAnimStartedAt !== null && deathState.onlineLostByTopOut && !deathState.onlineCollapseStarted;
 }
 
 // Maneja la secuencia de muerte en solo (no online): primero congela el tablero para
@@ -1179,33 +1136,33 @@ function isOnlineDeathStudying(): boolean {
 function syncSoloDeathPhase(state: GameState): void {
   if (state.status !== 'gameover') {
     // Nueva partida / reset: limpiamos toda la secuencia.
-    soloDeathStartedAt = null;
-    soloDeathCollapseStarted = false;
-    soloDeathSequenceDone = false;
+    deathState.soloStartedAt = null;
+    deathState.soloCollapseStarted = false;
+    deathState.soloSequenceDone = false;
     return;
   }
   const soloContext = appMode === 'playing' || appMode === 'paused';
   // En gameover pero fuera del contexto solo (p. ej. mirando la repetición) no
   // tocamos el estado: preservamos la secuencia para retomarla al volver.
-  if (!soloContext || soloDeathSequenceDone) return;
-  if (soloDeathStartedAt === null) soloDeathStartedAt = performance.now();
-  const elapsed = performance.now() - soloDeathStartedAt;
-  if (!soloDeathCollapseStarted && elapsed >= SOLO_DEATH_STUDY_MS) {
-    soloDeathCollapseStarted = true;
+  if (!soloContext || deathState.soloSequenceDone) return;
+  if (deathState.soloStartedAt === null) deathState.soloStartedAt = performance.now();
+  const elapsed = performance.now() - deathState.soloStartedAt;
+  if (!deathState.soloCollapseStarted && elapsed >= SOLO_DEATH_STUDY_MS) {
+    deathState.soloCollapseStarted = true;
     renderer.playDeathAnimation(); // colapso del tablero, igual que online
   }
-  if (elapsed >= SOLO_DEATH_STUDY_MS + SOLO_DEATH_COLLAPSE_MS) soloDeathSequenceDone = true;
+  if (elapsed >= SOLO_DEATH_STUDY_MS + SOLO_DEATH_COLLAPSE_MS) deathState.soloSequenceDone = true;
 }
 
 // True mientras la derrota en solo sigue su secuencia (estudio o colapso): difiere el
 // panel de resultados hasta que termine.
 function isSoloDeathAnimating(): boolean {
-  return soloDeathStartedAt !== null && !soloDeathSequenceDone;
+  return deathState.soloStartedAt !== null && !deathState.soloSequenceDone;
 }
 
 // True solo durante la fase de estudio (tablero congelado, sin colapso aún).
 function isSoloDeathStudying(): boolean {
-  return soloDeathStartedAt !== null && !soloDeathCollapseStarted && !soloDeathSequenceDone;
+  return deathState.soloStartedAt !== null && !deathState.soloCollapseStarted && !deathState.soloSequenceDone;
 }
 
 function onlineLocalPlacementLabel(): string {
@@ -1278,7 +1235,7 @@ Object.assign(window, {
     clearRunHistory: () => {
       clearStoredRunHistory();
       runHistory = [];
-      selectedHistoryEntryId = null;
+      libraryState.selectedHistoryEntryId = null;
       return runHistory;
     },
     isSoundMuted: () => sound.isMuted(),
@@ -1327,7 +1284,7 @@ void bootstrapOnlineStartup();
 
 function targetGameplayFrame(now = performance.now()): number {
   // DESACOPLE TOTAL (online + solo): el frame de juego se ancla al reloj LOCAL monotónico
-  // (gameClockOriginMs), NO al del servidor. Antes online se anclaba a startsAtServerMs para que
+  // (runState.gameClockOriginMs), NO al del servidor. Antes online se anclaba a startsAtServerMs para que
   // el host resimulara reproduciendo los inputs del cliente —pero el host ya NO resimula (modelo
   // cliente-autoritativo: sendOnlineInputsToHost es no-op)—, así que ese anclaje solo lograba que
   // la red metiera tirones en tu propia partida: un snap de reloj (conexión mala / segundo plano)
@@ -1335,24 +1292,24 @@ function targetGameplayFrame(now = performance.now()): number {
   // dependen de la red. El garbage se telegrafía desde que lo recibís (ver applyOnlineAttack), así
   // que tampoco necesita una línea de frames compartida.
   //
-  // P2 (game feel): NUNCA forzamos gameFrame+1 (eso obligaba un frame de engine por rAF y aceleraba
+  // P2 (game feel): NUNCA forzamos runState.gameFrame+1 (eso obligaba un frame de engine por rAF y aceleraba
   // el juego ~3× en monitores >60Hz). Un rAF puede no producir frame nuevo (resolveGameplayFrame(f,f)
   // === f); loop() detecta ese caso y conserva los inputs recolectados hasta el próximo tick real.
-  const elapsedFrames = Math.floor((now - gameClockOriginMs) / GAME_FRAME_MS);
-  const target = resolveGameplayFrame(gameFrame, elapsedFrames);
+  const elapsedFrames = Math.floor((now - runState.gameClockOriginMs) / GAME_FRAME_MS);
+  const target = resolveGameplayFrame(runState.gameFrame, elapsedFrames);
   // Si la pestaña estuvo en segundo plano o hubo un stall grande, NO simulamos cientos de frames de
   // golpe (fast-forward violento de la gravedad + pico): reanclamos el reloj al frame actual y
   // seguimos suave. Un hitch normal (GC, <0.5 s) sí se recupera. Vale para solo y online por igual
   // ("confiar en el cliente": tu juego nunca se teletransporta, ni por la red ni por un freeze).
-  if (target - gameFrame > MAX_OFFLINE_RESUME_FRAMES) {
-    gameClockOriginMs = now - gameFrame * GAME_FRAME_MS;
-    return gameFrame;
+  if (target - runState.gameFrame > MAX_OFFLINE_RESUME_FRAMES) {
+    runState.gameClockOriginMs = now - runState.gameFrame * GAME_FRAME_MS;
+    return runState.gameFrame;
   }
   return target;
 }
 
 function syncGameplayClockToCurrentFrame(): void {
-  gameClockOriginMs = performance.now() - gameFrame * GAME_FRAME_MS;
+  runState.gameClockOriginMs = performance.now() - runState.gameFrame * GAME_FRAME_MS;
 }
 
 // Reancla el reloj del visor de repeticiones. Se llama al abrir cualquier visor
@@ -1410,10 +1367,10 @@ function boardMetrics(board: ReadonlyArray<ReadonlyArray<unknown>>): { filled: n
 
 function advanceGameToFrame(targetFrame: number, finalFrameInputs: GameInput[]): GameState {
   let state = engine.getState();
-  for (let frame = gameFrame + 1; frame <= targetFrame && canAdvanceGame(appMode, state.status); frame += 1) {
+  for (let frame = runState.gameFrame + 1; frame <= targetFrame && canAdvanceGame(appMode, state.status); frame += 1) {
     const inputs = frame === targetFrame ? finalFrameInputs : [];
     state = engine.tick(frame, inputs);
-    gameFrame = frame;
+    runState.gameFrame = frame;
     const events = engine.drainEvents();
     syncRunEffects(state, events);
     syncOnlineBattleEvents(events, state);
@@ -1479,7 +1436,7 @@ function handleOverlayInput(event: Event): void {
     // El nombre ya no se edita acá: siempre se usa el que da Luna Negra.
     if (field === 'join-code') identityState.joinCode = normalizeRoomId(target.value);
     if (field === 'bet-stake') betState.stakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
-    if (field === 'report-comment') reportComment = target.value.slice(0, 400);
+    if (field === 'report-comment') reportState.comment = target.value.slice(0, 400);
     const customKey = parseCustomSettingKey(target.dataset.customSetting);
     if (customKey && target.value !== '') {
       customSettings = saveCustomSettings(updateCustomSetting(customSettings, customKey, target.type === 'checkbox' ? target.checked : target.value));
@@ -1497,8 +1454,8 @@ function handleOverlayInput(event: Event): void {
 }
 
 function toggleAutoPlay(): void { // TRUCO AUTOPLAY
-  if (!autoPlayAccessGranted) return;
-  autoPlayEnabled = !autoPlayEnabled;
+  if (!autoPlayState.accessGranted) return;
+  autoPlayState.enabled = !autoPlayState.enabled;
   input.releaseAll();
 }
 
@@ -1518,9 +1475,9 @@ function handleOverlayPointerDown(event: PointerEvent): void {
   const control = target.closest<HTMLElement>('[data-ui-action="toggle-autoplay"]');
   if (!control) return;
   toggleAutoPlay();
-  ignoreNextAutoPlayClick = true;
+  autoPlayState.ignoreNextClick = true;
   window.setTimeout(() => {
-    ignoreNextAutoPlayClick = false;
+    autoPlayState.ignoreNextClick = false;
   }, 500);
   event.preventDefault();
   event.stopPropagation();
@@ -1542,8 +1499,8 @@ function handleOverlayClick(event: MouseEvent): void {
     return;
   }
   if (action === 'toggle-autoplay') { // TRUCO AUTOPLAY
-    if (ignoreNextAutoPlayClick) {
-      ignoreNextAutoPlayClick = false;
+    if (autoPlayState.ignoreNextClick) {
+      autoPlayState.ignoreNextClick = false;
       return;
     }
     toggleAutoPlay();
@@ -1590,7 +1547,7 @@ function handleOverlayClick(event: MouseEvent): void {
     }
     if (action === 'dev-bot-cadence') {
       devBotMatch?.setConfig({ inputCadenceFrames: Math.max(1, Number(control.dataset.value ?? '6')) });
-      lastDevBotOverlayHtml = '';
+      overlayState.lastDevBot = '';
       return;
     }
     if (action === 'dev-bot-next-round') {
@@ -1607,9 +1564,9 @@ function handleOverlayClick(event: MouseEvent): void {
       // Host e invitado: este botón alterna "listo". El host arranca la ronda
       // con la acción 'online-start' del botón central.
       void setOnlineReady(!currentOnlinePlayer()?.ready);
-    } else if (selectedPlayMode === 'local1v1') {
+    } else if (uiSelectionState.playMode === 'local1v1') {
       startLocalVersusMode();
-    } else if (selectedPlayMode === 'survival') {
+    } else if (uiSelectionState.playMode === 'survival') {
       startSurvivalRun();
     } else {
       startCustomRun();
@@ -1622,7 +1579,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'select-play-mode') {
     const next = parsePlayMode(control.dataset.mode);
     if (next) {
-      selectedPlayMode = next;
+      uiSelectionState.playMode = next;
       if (next === 'survival') ensureSurvivalTopsLoaded();
     }
   }
@@ -1654,7 +1611,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'custom-export') lastCustomExportName = exportCustomSettings();
   if (action === 'custom-tab') {
     const nextTab = parseCustomTab(control.dataset.tab);
-    if (nextTab) customTab = nextTab;
+    if (nextTab) uiSelectionState.customTab = nextTab;
   }
   if (action === 'custom-toggle') {
     const setting = parseCustomSettingKey(control.dataset.setting);
@@ -1738,33 +1695,33 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'clear-history') {
     clearStoredRunHistory();
     runHistory = [];
-    selectedHistoryEntryId = null;
-    libraryError = null;
+    libraryState.selectedHistoryEntryId = null;
+    libraryState.error = null;
   }
   if (action === 'play-history-replay') {
     const entry = findHistoryEntry(control.dataset.historyId);
     if (entry) startReplayPlayback(entry.replay, `History ${formatDateTime(entry.createdAt)}`);
-    else libraryError = 'Replay entry was not found.';
+    else libraryState.error = 'Replay entry was not found.';
   }
   if (action === 'export-history-replay') {
     const entry = findHistoryEntry(control.dataset.historyId);
     if (entry) {
       lastExportName = downloadReplayFile(entry.replay);
-      libraryError = null;
+      libraryState.error = null;
     } else {
-      libraryError = 'Replay entry was not found.';
+      libraryState.error = 'Replay entry was not found.';
     }
   }
   if (action === 'delete-history-entry') {
     const entry = findHistoryEntry(control.dataset.historyId);
     if (entry) {
       runHistory = deleteRunHistoryEntry(entry.id);
-      selectedHistoryEntryId = selectedHistoryEntryId === entry.id ? null : selectedHistoryEntryId;
+      libraryState.selectedHistoryEntryId = libraryState.selectedHistoryEntryId === entry.id ? null : libraryState.selectedHistoryEntryId;
       syncLibrarySelection();
-      libraryError = null;
+      libraryState.error = null;
       lastExportName = null;
     } else {
-      libraryError = 'Replay entry was not found.';
+      libraryState.error = 'Replay entry was not found.';
     }
   }
   if (action === 'replay-toggle') replayState.playback?.togglePaused();
@@ -2009,11 +1966,11 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   lastExportName = null;
   lastCustomExportName = null;
   replayState.importError = null;
-  libraryError = null;
+  libraryState.error = null;
   localRunError = null;
   replayState.importedName = null;
   replayState.playback = null;
-  currentRunKind = nextRunKind;
+  runState.currentRunKind = nextRunKind;
   // Online: main.ts conoce los tableros rivales y enruta el proyectil de ataque
   // hacia ellos (ver flyOnlineAttackProjectile). En solo, retroceso en tu borde.
   juice.setAttackRouting(nextRunKind === 'online' ? 'external' : 'auto');
@@ -2024,28 +1981,28 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
   // Replay multi-tablero: nueva ronda = nueva semilla; reseteamos la recolección.
   onlineReplayCollector.reset(seed);
   multiReplayState.broadcast = false;
-  gameFrame = 0;
-  gameClockOriginMs = performance.now();
-  savedRunHistoryEntry = false;
+  runState.gameFrame = 0;
+  runState.gameClockOriginMs = performance.now();
+  runState.savedRunHistoryEntry = false;
   leaderboardState.submittedSurvivalRun = false;
   leaderboardState.survivalRunRank = null;
-  runSplitTracker = new RunSplitTracker();
-  lastPieces = 0;
-  lastLines = 0;
+  runState.splitTracker = new RunSplitTracker();
+  runState.lastPieces = 0;
+  runState.lastLines = 0;
   lastStatus = engine.getState().status;
-  runMaxCombo = 0;
+  runState.maxCombo = 0;
   // Reseteamos el botón "Reportar" de la pantalla de resultados para la ronda nueva: así se
   // puede mandar un reporte fresco cada partida (y no queda pegado en "enviado"). El comentario
   // SÍ se conserva entre rondas a propósito (el jugador puede tipearlo mientras juega).
-  reportButtonState = 'idle';
+  reportState.buttonState = 'idle';
   if (nextMode === 'playing') {
     const isE2E = !!(window as any).__E2E__ || navigator.webdriver;
     if (isE2E) {
       appMode = 'playing';
     } else {
       appMode = 'soloCountdown';
-      soloCountdownStartsAtMs = performance.now() + 3000;
-      lastCountdownSecondPlayed = -1;
+      runState.soloCountdownStartsAtMs = performance.now() + 3000;
+      runState.lastCountdownSecondPlayed = -1;
     }
   } else {
     appMode = nextMode;
@@ -2055,11 +2012,11 @@ function startNewRun(nextSeed = randomSeed(), nextMode: AppMode = 'playing', nex
 }
 
 function restartCurrentRun(): void {
-  if (currentRunKind === 'survival') {
+  if (runState.currentRunKind === 'survival') {
     startSurvivalRun();
     return;
   }
-  if (currentRunKind === 'custom') {
+  if (runState.currentRunKind === 'custom') {
     if (!customSettings.allowRetry) return;
     startCustomRun();
     return;
@@ -2082,7 +2039,7 @@ function openCustomMode(): void {
   pendingConfirmAction = null;
   // Configurar una partida custom implica elegir la modalidad Custom: así el botón ▶
   // arranca custom (no survival) al volver del editor.
-  selectedPlayMode = 'custom';
+  uiSelectionState.playMode = 'custom';
   appMode = 'custom';
   settingsReturnMode = 'menu';
   input.releaseAll();
@@ -2126,12 +2083,12 @@ function goToMenu(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
   appMode = 'menu';
-  currentRunKind = 'custom';
+  runState.currentRunKind = 'custom';
   syncGameplayClockToCurrentFrame();
   settingsReturnMode = 'menu';
   replayState.playback = null;
   replayState.importedName = null;
-  libraryError = null;
+  libraryState.error = null;
   runHistory = loadRunHistory();
   input.releaseAll();
 }
@@ -2142,7 +2099,7 @@ function openReplayLibrary(): void {
   runHistory = loadRunHistory();
   appMode = 'library';
   settingsReturnMode = 'menu';
-  libraryError = null;
+  libraryState.error = null;
   lastExportName = null;
   syncLibrarySelection();
   input.releaseAll();
@@ -2738,7 +2695,7 @@ async function setOnlineRoomVisibility(value: string | undefined): Promise<void>
 // Sync de reglas en vivo: si el host edita la config custom estando en el lobby,
 // re-enviamos las reglas a la sala (debounced) para que apliquen al instante en
 // todos los clientes. Reusa el path completo de updateRoomSettings del server.
-let onlineRulesSyncTimer: ReturnType<typeof setTimeout> | null = null;
+// onlineNetState.rulesSyncTimer vive ahora en onlineNetState (ver imports).
 
 function canSyncOnlineRoomRules(): boolean {
   if (!roomState.current || !isOnlineHost() || roomState.current.status !== 'lobby') return false;
@@ -2752,9 +2709,9 @@ function canSyncOnlineRoomRules(): boolean {
 
 function scheduleOnlineRoomRulesSync(): void {
   if (!canSyncOnlineRoomRules()) return;
-  if (onlineRulesSyncTimer) clearTimeout(onlineRulesSyncTimer);
-  onlineRulesSyncTimer = setTimeout(() => {
-    onlineRulesSyncTimer = null;
+  if (onlineNetState.rulesSyncTimer) clearTimeout(onlineNetState.rulesSyncTimer);
+  onlineNetState.rulesSyncTimer = setTimeout(() => {
+    onlineNetState.rulesSyncTimer = null;
     void syncOnlineRoomRules();
   }, 350);
 }
@@ -2791,7 +2748,7 @@ async function syncOnlineRoomRules(): Promise<void> {
 // fijas, top justo); Custom → 'custom' (reglas editables). 1v1 local no es una sala
 // online (tiene su propio botón), así que cae a 'custom'.
 function roomMatchTypeForSelectedMode(): OnlineMatchType {
-  return selectedPlayMode === 'survival' ? 'battle' : 'custom';
+  return uiSelectionState.playMode === 'survival' ? 'battle' : 'custom';
 }
 
 // Modo actual de la sala derivado de su matchType (para resaltar la tarjeta activa
@@ -2807,7 +2764,7 @@ function roomPlayMode(): PlayMode {
 // Sale de la sala online y arranca el duelo local. Es la acción que confirma el
 // usuario al elegir "Duelo local" desde dentro de una sala.
 function leaveRoomAndStartLocalVersus(): void {
-  selectedPlayMode = 'local1v1';
+  uiSelectionState.playMode = 'local1v1';
   leaveOnlineRoom();
   startLocalVersusMode();
 }
@@ -2821,7 +2778,7 @@ async function switchOnlineRoomMode(mode: PlayMode): Promise<void> {
     return;
   }
   if (!roomState.current || !isOnlineHost() || roomState.current.status !== 'lobby') return;
-  selectedPlayMode = mode;
+  uiSelectionState.playMode = mode;
   if (mode === 'survival') ensureSurvivalTopsLoaded();
   const targetMatchType: OnlineMatchType = mode === 'survival' ? 'battle' : 'custom';
   if (roomState.current.matchType === targetMatchType) return; // ya está en ese modo
@@ -2926,8 +2883,8 @@ async function startDevBotMatch(): Promise<void> {
     return;
   }
   devBotMatch = bot;
-  autoPlayAccessGranted = true; // TRUCO AUTOPLAY: el jugador local también se automatiza
-  autoPlayEnabled = true;
+  autoPlayState.accessGranted = true; // TRUCO AUTOPLAY: el jugador local también se automatiza
+  autoPlayState.enabled = true;
   // startOnlineRoom exige ver a otro jugador en la sala (si no, arranca una run
   // solo): refrescamos la sala para que incluya al bot antes de arrancar.
   await pollOnlineRoom();
@@ -3041,7 +2998,7 @@ function openLeaderboard(tab: 'wins' | 'survival' = 'wins'): void {
 // precargamos los tops (se ven embebidos en su tarjeta).
 function openPlayMenu(): void {
   openModeMenu('playMenu');
-  if (selectedPlayMode === 'survival') ensureSurvivalTopsLoaded();
+  if (uiSelectionState.playMode === 'survival') ensureSurvivalTopsLoaded();
 }
 
 // Carga los dos rankings (victorias + tiempo) que se muestran dentro de la tarjeta
@@ -3723,7 +3680,7 @@ function resetOnlineRuntimeForNextRound(): void {
   onlineNetState.lastPeerBroadcastAt = 0;
   onlineNetState.lastKoBroadcastAt = 0;
   input.releaseAll();
-  lastCountdownSecondPlayed = -1;
+  runState.lastCountdownSecondPlayed = -1;
   if (roomState.current?.status === 'countdown' || roomState.current?.status === 'playing') appMode = 'onlineCountdown';
 }
 
@@ -3818,7 +3775,7 @@ function terminalRunFrame(state: GameState): number {
 // La repetición de los últimos segundos necesita inputs grabados; en custom las
 // repeticiones están deshabilitadas, así que no ofrecemos el botón.
 function canReplayLastSeconds(state: GameState): boolean {
-  return currentRunKind !== 'custom' && replay.inputs.length > 0 && terminalRunFrame(state) > 0;
+  return runState.currentRunKind !== 'custom' && replay.inputs.length > 0 && terminalRunFrame(state) > 0;
 }
 
 // Reproduce solo los últimos DEATH_REPLAY_SECONDS de la partida recién terminada,
@@ -3866,25 +3823,25 @@ function toGameInputs(inputs: ControlInput[], frame: number): GameInput[] {
 }
 
 function syncRunEffects(state: GameState, events: GameEvent[]): void {
-  runSplitTracker.record(state);
-  if (state.stats.combo > runMaxCombo) runMaxCombo = state.stats.combo;
-  const progressCue = soundCueForRunProgress(state, events, lastLines, lastPieces);
+  runState.splitTracker.record(state);
+  if (state.stats.combo > runState.maxCombo) runState.maxCombo = state.stats.combo;
+  const progressCue = soundCueForRunProgress(state, events, runState.lastLines, runState.lastPieces);
   if (progressCue) sound.play(progressCue);
   if (state.status !== lastStatus) {
     if (state.status === 'finished') sound.play('finish');
     if (state.status === 'gameover') sound.play('gameOver');
   }
-  lastPieces = state.stats.pieces;
-  lastLines = state.stats.lines;
+  runState.lastPieces = state.stats.pieces;
+  runState.lastLines = state.stats.lines;
   lastStatus = state.status;
-  if ((state.status === 'finished' || state.status === 'gameover') && !savedRunHistoryEntry) {
+  if ((state.status === 'finished' || state.status === 'gameover') && !runState.savedRunHistoryEntry) {
     const entry = createRunHistoryEntry(createExportedReplay(replay, state, inputSettings, undefined, currentRunSummary(state)));
     if (entry) runHistory = saveRunHistoryEntry(entry);
-    savedRunHistoryEntry = true;
+    runState.savedRunHistoryEntry = true;
   }
   // Modo Supervivencia: al perder, mandamos cuánto duró la partida al top mundial
   // (una sola vez por partida). El endless solo termina en 'gameover' (no hay meta).
-  if (currentRunKind === 'survival' && state.status === 'gameover' && !leaderboardState.submittedSurvivalRun) {
+  if (runState.currentRunKind === 'survival' && state.status === 'gameover' && !leaderboardState.submittedSurvivalRun) {
     leaderboardState.submittedSurvivalRun = true;
     const durationMs = Math.round(terminalRunFrame(state) * GAME_FRAME_MS);
     if (durationMs > 0) void submitSurvivalTime(durationMs);
@@ -3917,10 +3874,10 @@ function sendOnlineAttack(event: LineClearEvent, state: GameState): void {
   if (!roomState.current) return;
   attackState.sequence += 1;
   const attack = {
-    attackId: `${identityState.player.id}-${gameFrame}-${attackState.sequence}`,
+    attackId: `${identityState.player.id}-${runState.gameFrame}-${attackState.sequence}`,
     fromPlayerId: identityState.player.id,
     lines: event.outgoingLines,
-    holeSeed: (roomState.current.seed + gameFrame + attackState.sequence * 97) >>> 0,
+    holeSeed: (roomState.current.seed + runState.gameFrame + attackState.sequence * 97) >>> 0,
     frame: displayedElapsedFrames(state.stats),
   };
   // Autoridad descentralizada: cada jugador rutea su PROPIO ataque (elige objetivo
@@ -4092,7 +4049,7 @@ function processHostSimulationUpdate(update: HostSimulatedPlayer): void {
       reason: update.state.stats.gameOverReason,
       gameOverFrame: update.state.stats.gameOverFrame,
       simFrame: update.state.stats.frame,
-      hostFrame: gameFrame,
+      hostFrame: runState.gameFrame,
       lastInputSeq: update.lastProcessedInputSequence,
       consumedInputs: update.consumedInputCount,
       pendingInputs: update.pendingInputCount,
@@ -4142,16 +4099,16 @@ function syncOnline(): void {
   // snapshots que llegan por WebRTC. El host nunca es espectador (debe estar listo
   // para arrancar), así que la autoridad/relay no se ve afectada.
   if ((appMode === 'onlinePlaying' || hostStillAuthority) && !roundState.spectatorRound) {
-    if (appMode === 'onlinePlaying' && now - onlineLastDiagLogAt >= 2000) {
-      onlineLastDiagLogAt = now;
+    if (appMode === 'onlinePlaying' && now - onlineNetState.lastDiagLogAt >= 2000) {
+      onlineNetState.lastDiagLogAt = now;
       const serverFrame = roomState.current.startsAtServerMs
         ? Math.floor((onlineNowMs() - roomState.current.startsAtServerMs) / GAME_FRAME_MS)
         : null;
       logMp('heartbeat', {
         status: liveState.status,
-        localFrame: gameFrame,
+        localFrame: runState.gameFrame,
         serverFrame,
-        frameSkew: serverFrame === null ? null : serverFrame - gameFrame,
+        frameSkew: serverFrame === null ? null : serverFrame - runState.gameFrame,
         pieces: liveState.stats.pieces,
         lines: liveState.stats.lines,
         board: boardMetrics(liveState.board),
@@ -4182,14 +4139,14 @@ function syncOnline(): void {
   if (!roundState.spectatorRound) maybeBroadcastOwnReplay(liveState);
 }
 
-// Mientras el host juega, la simulación autoritativa avanza con su gameFrame.
-// Cuando su partida termina, gameFrame se congela (canAdvanceGame es false),
+// Mientras el host juega, la simulación autoritativa avanza con su runState.gameFrame.
+// Cuando su partida termina, runState.gameFrame se congela (canAdvanceGame es false),
 // así que derivamos el frame objetivo del reloj sincronizado con el servidor
 // para que las partidas remotas sigan corriendo hasta que la sala termine.
 function onlineAuthorityTargetFrame(state: GameState): number {
-  if (state.status === 'playing' || !roomState.current?.startsAtServerMs) return gameFrame;
+  if (state.status === 'playing' || !roomState.current?.startsAtServerMs) return runState.gameFrame;
   const elapsedFrames = Math.floor((onlineNowMs() - roomState.current.startsAtServerMs) / GAME_FRAME_MS);
-  return Math.max(gameFrame, elapsedFrames);
+  return Math.max(runState.gameFrame, elapsedFrames);
 }
 
 function shouldPollOnline(now: number): boolean {
@@ -4628,17 +4585,17 @@ function maybeStartOnlineRun(): void {
 
 // Sonido de cuenta regresiva compartido por solo y online: un beep por cada
 // segundo (3, 2, 1) y un acorde de arranque al llegar a cero. Idempotente dentro
-// de un mismo segundo gracias a lastCountdownSecondPlayed.
+// de un mismo segundo gracias a runState.lastCountdownSecondPlayed.
 function playCountdownAudio(remainingMs: number): void {
   const seconds = Math.ceil(remainingMs / 1000);
-  if (seconds === lastCountdownSecondPlayed) return;
-  lastCountdownSecondPlayed = seconds;
+  if (seconds === runState.lastCountdownSecondPlayed) return;
+  runState.lastCountdownSecondPlayed = seconds;
   if (seconds > 0) sound.play('countdownTick');
   else sound.play('countdownGo');
 }
 
 function updateSoloCountdown(): void {
-  const remainingMs = Math.max(0, soloCountdownStartsAtMs - performance.now());
+  const remainingMs = Math.max(0, runState.soloCountdownStartsAtMs - performance.now());
   playCountdownAudio(remainingMs);
   if (remainingMs === 0) {
     appMode = 'playing';
@@ -4760,7 +4717,7 @@ function broadcastOnlineSnapshot(state: GameState): void {
 // solo se vería el del perdedor. Los canales peer siguen abiertos hasta que la
 // sala cierra, así que muertos/espectadores también lo reciben.
 function maybeBroadcastOwnReplay(state: GameState): void {
-  if (currentRunKind !== 'online' || multiReplayState.broadcast) return;
+  if (runState.currentRunKind !== 'online' || multiReplayState.broadcast) return;
   const localTerminal = state.status === 'gameover' || state.status === 'finished';
   const roundOver = roomState.current?.status === 'finished';
   if (!localTerminal && !roundOver) return;
@@ -4936,23 +4893,23 @@ function applyOnlineAttack(attack: OnlineAttack): void {
     from: attack.fromPlayerId.slice(0, 6),
     lines: attack.lines,
     attackFrame: attack.frame,
-    gameFrame,
+    gameFrame: runState.gameFrame,
     holeSeed: attack.holeSeed,
     board: boardMetrics(beforeGarbage.board),
     pendingBefore: beforeGarbage.stats.pendingGarbage,
   });
-  // Telegrafiamos el garbage desde el frame LOCAL en que lo recibimos (gameFrame), NO desde el
+  // Telegrafiamos el garbage desde el frame LOCAL en que lo recibimos (runState.gameFrame), NO desde el
   // frame del atacante. Con relojes desacoplados (ver targetGameplayFrame) el frame del atacante no
   // significa nada en tu línea de tiempo; anclarlo a tu recepción da una ventana de reacción
-  // CONSTANTE (applyFrame = gameFrame + delay) sin importar la latencia —en vez de una ventana que
+  // CONSTANTE (applyFrame = runState.gameFrame + delay) sin importar la latencia —en vez de una ventana que
   // se acortaba cuanto peor la conexión—. El host ya no resimula, así que no hace falta que el
   // garbage caiga en el mismo frame en ambos lados.
-  engine.queueGarbage(attack.lines, attack.holeSeed, gameFrame, attack.id);
+  engine.queueGarbage(attack.lines, attack.holeSeed, runState.gameFrame, attack.id);
   // Registramos los valores REALES usados para que el replay reproduzca idéntico: queuedAtFrame =
-  // gameFrame en que se encoló (cuándo reaplicar), frame = misma ancla local que fija el applyFrame.
+  // runState.gameFrame en que se encoló (cuándo reaplicar), frame = misma ancla local que fija el applyFrame.
   recordGarbage(replay, {
-    queuedAtFrame: gameFrame,
-    frame: gameFrame,
+    queuedAtFrame: runState.gameFrame,
+    frame: runState.gameFrame,
     lines: attack.lines,
     holeSeed: attack.holeSeed,
     id: attack.id,
@@ -5069,8 +5026,8 @@ function createOnlineGameSnapshotFromState(
 function renderDevBotOverlay(): void {
   if (!devBotOverlayElement) return;
   const html = devBotMatch ? renderDevBotPanel() : '';
-  if (html === lastDevBotOverlayHtml) return;
-  lastDevBotOverlayHtml = html;
+  if (html === overlayState.lastDevBot) return;
+  overlayState.lastDevBot = html;
   devBotOverlayElement.innerHTML = html;
 }
 
@@ -5116,7 +5073,7 @@ function renderOverlay(state: GameState): void {
     <div class="brand">TETRA${soloRelax ? '<span class="brand-sub">MODO RELAX</span>' : ''}</div>
     ${soloRelax ? `<button class="gear-btn" type="button" data-ui-action="settings" aria-label="Ajustes" title="Ajustes">${gearIcon}</button>` : ''}
     ${soloRelax ? renderRelaxAudio() : ''}
-    ${autoPlayAccessGranted ? renderAutoPlayToggle() : ''}
+    ${autoPlayState.accessGranted ? renderAutoPlayToggle() : ''}
     <div class="help">${escapeHtml(helpText())}</div>
     ${soloRelax ? '' : (appMode === 'onlinePlaying' ? `<div class="audio-panel audio-panel--online">
       ${renderVolumeChannelRow('sfx')}
@@ -5135,48 +5092,48 @@ function renderOverlay(state: GameState): void {
     ${renderScreenOverlay(state)}
     ${renderTouchControls(state)}
   `;
-  if (html !== lastOverlayHtml) {
+  if (html !== overlayState.last) {
     const focusSnapshot = captureOverlayFieldFocus();
     const scrollSnapshot = captureOverlayScroll();
     overlayElement.innerHTML = html;
-    lastOverlayHtml = html;
+    overlayState.last = html;
     restoreOverlayFieldFocus(focusSnapshot);
     restoreOverlayScroll(scrollSnapshot);
   }
   maybeScrollDepositIntoView();
   // Toast compacto de KO: aparece arriba cuando paso a espectador (ya terminó la
   // animación de derrota, mi tablero está oculto) y se desvanece solo por CSS.
-  // Contenido congelado (onlineKoBanner) → se dibuja una vez y no parpadea.
-  const koHtml = onlineKoBanner && isOnlineSpectating()
-    ? renderOnlineKoToast(onlineKoBanner)
+  // Contenido congelado (deathState.onlineKoBanner) → se dibuja una vez y no parpadea.
+  const koHtml = deathState.onlineKoBanner && isOnlineSpectating()
+    ? renderOnlineKoToast(deathState.onlineKoBanner)
     : '';
-  if (koHtml !== lastKoOverlayHtml) {
+  if (koHtml !== overlayState.lastKo) {
     koOverlayElement.innerHTML = koHtml;
-    lastKoOverlayHtml = koHtml;
+    overlayState.lastKo = koHtml;
   }
   // HUD online en su propia capa: solo se repinta cuando cambia (garbage,
   // estrategia u objetivo), no cada frame, así el hover de los botones no titila.
   const hudHtml = appMode === 'onlinePlaying' ? renderOnlineHud() : '';
-  if (hudHtml !== lastHudOverlayHtml) {
+  if (hudHtml !== overlayState.lastHud) {
     hudOverlayElement.innerHTML = hudHtml;
-    lastHudOverlayHtml = hudHtml;
+    overlayState.lastHud = hudHtml;
   }
   // Toast de invitación durante partida: capa propia con caché para que los
   // botones no se recreen cada frame (el juego sigue corriendo detrás).
   const inviteHtml = lunaState.pendingLaunchRequest && lunaInviteShowsAsToast()
     ? renderLunaInviteToast(lunaState.pendingLaunchRequest)
     : '';
-  if (inviteHtml !== lastInviteOverlayHtml) {
+  if (inviteHtml !== overlayState.lastInvite) {
     inviteOverlayElement.innerHTML = inviteHtml;
-    lastInviteOverlayHtml = inviteHtml;
+    overlayState.lastInvite = inviteHtml;
   }
   document.body.classList.toggle('online-spectating', isOnlineSpectating());
   if (appMode === 'replayPlayback' && replayState.playback) updateReplayOverlay(replayState.playback.snapshot());
 }
 
 function renderAutoPlayToggle(): string { // TRUCO AUTOPLAY
-  const textColor = autoPlayEnabled ? 'rgba(255,255,255,0.84)' : 'rgba(255,255,255,0.24)';
-  const background = autoPlayEnabled ? 'rgba(80,200,120,0.26)' : 'rgba(255,255,255,0.01)';
+  const textColor = autoPlayState.enabled ? 'rgba(255,255,255,0.84)' : 'rgba(255,255,255,0.24)';
+  const background = autoPlayState.enabled ? 'rgba(80,200,120,0.26)' : 'rgba(255,255,255,0.01)';
   return `
     <button
       type="button"
@@ -5337,8 +5294,8 @@ function renderSoloResultsOverlay(state: GameState): string {
   const target = state.stats.targetLines;
   const pieces = state.stats.pieces;
   const pps = summary.pps.toFixed(1);
-  const combo = runMaxCombo;
-  const isSurvival = currentRunKind === 'survival';
+  const combo = runState.maxCombo;
+  const isSurvival = runState.currentRunKind === 'survival';
   const subtitle = isSurvival ? 'SUPERVIVENCIA' : target ? `OBJETIVO ${target} LÍNEAS` : 'CUSTOM';
   const badge = isClear
     ? '<div class="solo-results-badge solo-results-badge--clear">✓ OBJETIVO CUMPLIDO</div>'
@@ -5426,7 +5383,7 @@ function renderSurvivalRankWindow(rank: number, total: number): string {
 }
 
 function canRetryCurrentRun(): boolean {
-  return currentRunKind !== 'custom' || customSettings.allowRetry;
+  return runState.currentRunKind !== 'custom' || customSettings.allowRetry;
 }
 
 function renderTouchControls(state: GameState): string {
@@ -5804,7 +5761,7 @@ function renderEmptyLobbySlot(): string {
 }
 
 function renderSoloCountdownOverlay(): string {
-  const remainingMs = Math.max(0, soloCountdownStartsAtMs - performance.now());
+  const remainingMs = Math.max(0, runState.soloCountdownStartsAtMs - performance.now());
   return renderCountdownStage(remainingMs, '');
 }
 
@@ -5912,18 +5869,18 @@ function renderOnlineResultsOverlay(state: GameState): string {
 // + device + contexto de sala) con un comentario opcional del jugador. El estado del botón refleja
 // el envío en curso/hecho/fallido; el overlay se reconstruye cada frame, así que se actualiza solo.
 function renderReportBlock(): string {
-  const sending = reportButtonState === 'sending';
-  const sent = reportButtonState === 'sent';
+  const sending = reportState.buttonState === 'sending';
+  const sent = reportState.buttonState === 'sent';
   const includesWithdrawDiagnostics = roomBetEntryForLocalPlayer(roomState.current)?.payoutStatus === 'withdraw_pending';
   const label = sent ? '✓ ¡Gracias! Reporte enviado'
     : sending ? 'Enviando…'
-    : reportButtonState === 'error' ? '⚠ No se pudo enviar — reintentar'
+    : reportState.buttonState === 'error' ? '⚠ No se pudo enviar — reintentar'
     : '📨 Reportar problema';
-  const btnClass = `solo-results-btn solo-results-btn--ghost report-block-btn${sent ? ' is-sent' : ''}${reportButtonState === 'error' ? ' is-error' : ''}`;
+  const btnClass = `solo-results-btn solo-results-btn--ghost report-block-btn${sent ? ' is-sent' : ''}${reportState.buttonState === 'error' ? ' is-error' : ''}`;
   const disabledAttr = sending || sent ? ' disabled' : '';
   return `
     <div class="report-block">
-      <input type="text" class="report-comment" maxlength="400" value="${escapeHtml(reportComment)}"
+      <input type="text" class="report-comment" maxlength="400" value="${escapeHtml(reportState.comment)}"
         data-online-field="report-comment" autocomplete="off"
         placeholder="¿Qué pasó? (lag, tirones…) — opcional"${sent ? ' disabled' : ''} />
       <button class="${btnClass}" type="button" data-ui-action="report-perf"${disabledAttr}>${label}</button>
@@ -6536,7 +6493,7 @@ function ensureBetQr(key: string, payload: string): string | null {
     .then((url) => {
       betQrDataUrls.set(key, url);
       // El overlay se regenera solo cuando cambia el HTML; forzamos el repintado.
-      lastOverlayHtml = '';
+      overlayState.last = '';
     })
     .catch(() => {
       // Sin QR quedan los botones de cobrar/copiar.
@@ -7232,7 +7189,7 @@ function renderLibraryPanelContent(): string {
     ? `<div class="history-empty">${escapeHtml(libraryEmptyText())}</div>`
     : visibleEntries.map((entry) => renderLibraryRow(entry, selectedEntry?.id === entry.id)).join('');
   const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
-  const error = libraryError ? `<div class="panel-note panel-error">${escapeHtml(libraryError)}</div>` : '';
+  const error = libraryState.error ? `<div class="panel-note panel-error">${escapeHtml(libraryState.error)}</div>` : '';
   return `
       <section class="menu-panel history-panel library-panel" aria-label="Replay library">
         <div class="panel-eyebrow">HISTORIAL DE PARTIDAS</div>
@@ -7267,7 +7224,7 @@ export function renderLibraryOverlay(): string {
 }
 
 function renderLibraryFilterButton(filter: LibraryFilter, label: string): string {
-  const activeClass = libraryFilter === filter ? ' button-active' : '';
+  const activeClass = libraryState.filter === filter ? ' button-active' : '';
   return `<button class="${activeClass}" type="button" data-ui-action="library-filter" data-filter="${filter}">${label}</button>`;
 }
 
@@ -7403,7 +7360,7 @@ function renderCustomPanelContent(): string {
         </div>
         <div class="custom-tabs" aria-label="Secciones de custom">
           ${CUSTOM_TABS.map((tab) => `
-            <button class="${customTab === tab ? 'custom-tab-active' : ''}" type="button" data-ui-action="custom-tab" data-tab="${tab}">
+            <button class="${uiSelectionState.customTab === tab ? 'custom-tab-active' : ''}" type="button" data-ui-action="custom-tab" data-tab="${tab}">
               ${CUSTOM_TAB_LABELS[tab]}
             </button>
           `).join('')}
@@ -7432,7 +7389,7 @@ const CUSTOM_TAB_LABELS: Record<CustomTab, string> = {
 };
 
 function renderCustomTabBody(): string {
-  if (customTab === 'objective') {
+  if (uiSelectionState.customTab === 'objective') {
     return [
       renderCustomSection('Objetivo', [
         renderCustomSelect('Modo', 'objectiveMode', [['none', 'Ninguno'], ['lines', 'Líneas']]),
@@ -7440,7 +7397,7 @@ function renderCustomTabBody(): string {
       ]),
     ].join('');
   }
-  if (customTab === 'meta') {
+  if (uiSelectionState.customTab === 'meta') {
     return [
       renderCustomSection('Meta', [
         renderCustomStaticRow('Envío de repeticiones', 'No'),
@@ -7782,7 +7739,7 @@ function renderDashboardMenu(state: GameState): string {
   // sala, un gestor de 3 zonas donde solo la lista de jugadores scrollea (las
   // acciones Marcar listo / Empezar / Salir quedan SIEMPRE visibles). El loop
   // recomputa este string cada frame, así que cruzar el breakpoint reconstruye el
-  // DOM solo (renderOverlay difea contra lastOverlayHtml).
+  // DOM solo (renderOverlay difea contra overlayState.last).
   if (isMobileDashboard()) return renderMobileDashboard(state);
 
   const userDisplayName = identityState.name.trim() || 'Jugador';
@@ -7974,7 +7931,7 @@ function renderCustomConfigChips(): string {
 
 // Tarjetas de modalidad dentro de la sala (solo host, en lobby): cambiar de tarjeta
 // re-configura el matchType de la sala vía switchOnlineRoomMode. La tarjeta activa
-// refleja el matchType actual de la sala (no selectedPlayMode).
+// refleja el matchType actual de la sala (no uiSelectionState.playMode).
 function renderRoomModeCards(): string {
   const current = roomPlayMode();
   const cards = (['survival', 'custom', 'local1v1'] as PlayMode[])
@@ -7984,7 +7941,7 @@ function renderRoomModeCards(): string {
 }
 
 function renderModeSelectStage(): string {
-  const mode = selectedPlayMode;
+  const mode = uiSelectionState.playMode;
   const meta = playModeMeta(mode);
   const accent = modeAccent(mode);
   const cards = (['survival', 'custom', 'local1v1'] as PlayMode[])
@@ -8147,7 +8104,7 @@ function renderMobileTopsEmbed(): string {
 
 // Sin sala: pills de modo (fila compacta) + detalle scrollable + acciones ancladas.
 function renderMobileModeSelect(): string {
-  const mode = selectedPlayMode;
+  const mode = uiSelectionState.playMode;
   const meta = playModeMeta(mode);
   const pills = (['survival', 'custom', 'local1v1'] as PlayMode[]).map((m) => {
     const pm = playModeMeta(m);
@@ -8740,7 +8697,7 @@ function currentRunSummary(state: GameState): RunSummary {
       gameOverFrame: state.stats.gameOverFrame,
     },
     inputs: replay.inputs,
-    splits: runSplitTracker.getSplits(),
+    splits: runState.splitTracker.getSplits(),
   });
 }
 
@@ -9006,7 +8963,7 @@ function triggerWallImpact(
 
 function rulesForRun(mode: AppMode): GameRules {
   if (mode === 'onlinePlaying') return onlineRulesFromRoom();
-  if (currentRunKind === 'survival') return survivalRulesFromSettings(inputSettings);
+  if (runState.currentRunKind === 'survival') return survivalRulesFromSettings(inputSettings);
   return customRulesFromSettings(customSettings, inputSettings);
 }
 
@@ -9099,19 +9056,19 @@ function touchSourceId(pointerId: number): string {
 
 function setLibraryFilter(value: string | undefined): void {
   if (!isLibraryFilter(value)) return;
-  libraryFilter = value;
-  libraryError = null;
+  libraryState.filter = value;
+  libraryState.error = null;
   syncLibrarySelection();
 }
 
 function selectHistoryEntry(id: string | undefined): void {
   const entry = findHistoryEntry(id);
   if (!entry) {
-    libraryError = 'Replay entry was not found.';
+    libraryState.error = 'Replay entry was not found.';
     return;
   }
-  selectedHistoryEntryId = entry.id;
-  libraryError = null;
+  libraryState.selectedHistoryEntryId = entry.id;
+  libraryState.error = null;
 }
 
 function findHistoryEntry(id: string | undefined): RunHistoryEntry | null {
@@ -9122,25 +9079,25 @@ function findHistoryEntry(id: string | undefined): RunHistoryEntry | null {
 function syncLibrarySelection(): void {
   const visibleEntries = getVisibleLibraryEntries();
   if (visibleEntries.length === 0) {
-    selectedHistoryEntryId = null;
+    libraryState.selectedHistoryEntryId = null;
     return;
   }
-  if (!visibleEntries.some((entry) => entry.id === selectedHistoryEntryId)) {
-    selectedHistoryEntryId = visibleEntries[0].id;
+  if (!visibleEntries.some((entry) => entry.id === libraryState.selectedHistoryEntryId)) {
+    libraryState.selectedHistoryEntryId = visibleEntries[0].id;
   }
 }
 
 function getSelectedLibraryEntry(visibleEntries = getVisibleLibraryEntries()): RunHistoryEntry | null {
-  return visibleEntries.find((entry) => entry.id === selectedHistoryEntryId) ?? visibleEntries[0] ?? null;
+  return visibleEntries.find((entry) => entry.id === libraryState.selectedHistoryEntryId) ?? visibleEntries[0] ?? null;
 }
 
 function getVisibleLibraryEntries(): RunHistoryEntry[] {
   const entries = runHistory.filter((entry) => {
-    if (libraryFilter === 'clear' || libraryFilter === 'best') return entry.status === 'finished';
-    if (libraryFilter === 'topout') return entry.status === 'gameover';
+    if (libraryState.filter === 'clear' || libraryState.filter === 'best') return entry.status === 'finished';
+    if (libraryState.filter === 'topout') return entry.status === 'gameover';
     return true;
   });
-  if (libraryFilter === 'best') {
+  if (libraryState.filter === 'best') {
     return [...entries].sort((a, b) => a.elapsedFrames - b.elapsedFrames || a.createdAt.localeCompare(b.createdAt));
   }
   return entries;
@@ -9148,8 +9105,8 @@ function getVisibleLibraryEntries(): RunHistoryEntry[] {
 
 function libraryEmptyText(): string {
   if (runHistory.length === 0) return 'No saved runs yet.';
-  if (libraryFilter === 'clear' || libraryFilter === 'best') return 'No clears saved yet.';
-  if (libraryFilter === 'topout') return 'No top outs saved yet.';
+  if (libraryState.filter === 'clear' || libraryState.filter === 'best') return 'No clears saved yet.';
+  if (libraryState.filter === 'topout') return 'No top outs saved yet.';
   return 'No matching replays.';
 }
 

@@ -18,6 +18,10 @@ export interface OnlineNetState {
   lastSelfReportAt: number;
   lastPeerBroadcastAt: number;
   lastKoBroadcastAt: number;
+  // Última vez que se logueó diagnóstico de lag MP (throttle del log).
+  lastDiagLogAt: number;
+  // Timer de debounce para re-enviar las reglas custom a la sala como host (350ms).
+  rulesSyncTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export const onlineNetState: OnlineNetState = {
@@ -31,6 +35,8 @@ export const onlineNetState: OnlineNetState = {
   lastSelfReportAt: 0,
   lastPeerBroadcastAt: 0,
   lastKoBroadcastAt: 0,
+  lastDiagLogAt: 0,
+  rulesSyncTimer: null,
 };
 
 // Reloj del servidor anclado a un reloj LOCAL MONOTÓNICO (performance.now()), no a
