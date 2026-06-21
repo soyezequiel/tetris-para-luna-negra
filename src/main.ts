@@ -8,6 +8,7 @@ import { renderControls } from './ui/dashboard/controls';
 import type { PlayMode } from './ui/playMode';
 import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './ui/dashboard/modeCard';
 import { leaderboardState } from './state/leaderboardState';
+import { betState, DEFAULT_ONLINE_BET_STAKE_SATS } from './state/betState';
 import { mpLogEnabled } from './debugFlags';
 import { getPerfMarks, recordTask } from './perfMarks';
 import { importReplayJson } from './app/replayImport';
@@ -158,7 +159,6 @@ const ONLINE_POLL_MS = 1000;
 const ONLINE_ROOM_GONE_POLL_LIMIT = 5;
 const ONLINE_BET_POLL_MS = 2000;
 const ONLINE_BET_FAST_POLL_MS = 750;
-const DEFAULT_ONLINE_BET_STAKE_SATS = 50;
 // Ventana generosa: pagar copiando la invoice en otra app/billetera puede tardar
 // minutos. Además, mientras MI depósito siga pendiente se pollea rápido siempre
 // (ver maybeRefreshBet); esta ventana cubre los depósitos de los demás.
@@ -362,25 +362,9 @@ let lastDevBotOverlayHtml = '';
 let onlinePlayer = loadOnlinePlayer();
 let onlineName = onlinePlayer.name;
 let onlineJoinCode = '';
-let onlineStakeInput = String(DEFAULT_ONLINE_BET_STAKE_SATS);
-let onlineBetBusy = false;
-// Bandera dedicada al pago WebLN iniciado por el usuario. Separada de
-// onlineBetBusy (que el polling de la apuesta pone en true cada 750ms): si
-// compartieran flag, el botón "Pagar con extensión" se vería deshabilitado y
-// tragaría clicks cada vez que hay un poll en vuelo durante el depósito.
-let onlineBetPaying = false;
-// Bandera dedicada a la creación de la apuesta disparada por el host. Separada de
-// onlineBetBusy (que el polling pone en true cada 750ms) para poder mostrar el
-// estado "Creando apuesta…" sin que parpadee con cada poll en vuelo. Crear tarda
-// varios segundos porque Luna Negra genera un invoice Lightning por jugador (NWC).
-let onlineBetCreating = false;
-let onlineLastBetPollAt = 0;
-let onlineBetFastPollUntil = 0;
-let onlineBetRefreshQueued = false;
-// Guard de "festejo de pago una sola vez por apuesta": renderOnlineBetResult
-// corre en cada render, así que el festejo no se dispara ahí sino vía
-// maybeCelebratePayout() desde adoptOnlineRoom, marcando el betId ya festejado.
-let celebratedBetId: string | null = null;
+// El estado del flujo de apuesta online (stake input, flags busy/paying/creating,
+// timers de poll, guard de festejo) vive ahora en ./state/betState → ver betState
+// en los imports.
 let onlineRoom: OnlineRoom | null = null;
 let onlinePublicRooms: OnlineRoomSummary[] = [];
 // El estado del "Top mundial" (rankings de victorias y supervivencia) vive ahora
@@ -951,10 +935,10 @@ function buildPerfReport(): Record<string, unknown> {
       qrConnected: withdrawQr?.isConnected ?? false,
       qrComplete: withdrawQr?.complete ?? false,
       qrCacheEntries: betQrDataUrls.size,
-      onlineBetBusy,
-      onlineBetPaying,
+      betBusy: betState.busy,
+      betPaying: betState.paying,
       onlineRoomReopenInFlight,
-      lastBetPollAt: Math.round(onlineLastBetPollAt),
+      lastBetPollAt: Math.round(betState.lastPollAt),
       trace: betWithdrawalTrace.slice(),
     },
     // Diagnóstico de audio: para entender el "se escucha mal en el celular" (perfil
@@ -1582,7 +1566,7 @@ function handleOverlayInput(event: Event): void {
     const field = target.dataset.onlineField;
     // El nombre ya no se edita acá: siempre se usa el que da Luna Negra.
     if (field === 'join-code') onlineJoinCode = normalizeRoomId(target.value);
-    if (field === 'bet-stake') onlineStakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
+    if (field === 'bet-stake') betState.stakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
     if (field === 'report-comment') reportComment = target.value.slice(0, 400);
     const customKey = parseCustomSettingKey(target.dataset.customSetting);
     if (customKey && target.value !== '') {
@@ -3314,14 +3298,14 @@ async function restartOnlineRoom(): Promise<void> {
 }
 
 async function createOnlineBet(): Promise<void> {
-  if (!onlineRoom || onlineBetBusy) return;
+  if (!onlineRoom || betState.busy) return;
   const stakeSats = Number(readOnlineStakeInput());
   if (!Number.isInteger(stakeSats) || stakeSats <= 0) {
     onlineError = 'Ingresá un monto de apuesta válido (sats).';
     return;
   }
-  onlineBetBusy = true;
-  onlineBetCreating = true;
+  betState.busy = true;
+  betState.creating = true;
   try {
     const response = await onlineClient.createBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id, stakeSats });
     syncOnlineClock(response.serverNowMs);
@@ -3331,22 +3315,22 @@ async function createOnlineBet(): Promise<void> {
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
-    onlineBetBusy = false;
-    onlineBetCreating = false;
+    betState.busy = false;
+    betState.creating = false;
   }
 }
 
 function readOnlineStakeInput(): string {
   const field = overlayElement.querySelector<HTMLInputElement>('[data-online-field="bet-stake"]');
-  const value = (field?.value ?? onlineStakeInput).replace(/[^0-9]/g, '').slice(0, 7);
-  onlineStakeInput = value;
+  const value = (field?.value ?? betState.stakeInput).replace(/[^0-9]/g, '').slice(0, 7);
+  betState.stakeInput = value;
   if (field && field.value !== value) field.value = value;
   return value;
 }
 
 async function cancelOnlineBet(): Promise<void> {
-  if (!onlineRoom || onlineBetBusy) return;
-  onlineBetBusy = true;
+  if (!onlineRoom || betState.busy) return;
+  betState.busy = true;
   try {
     const response = await onlineClient.cancelBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
     syncOnlineClock(response.serverNowMs);
@@ -3355,13 +3339,13 @@ async function cancelOnlineBet(): Promise<void> {
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
-    onlineBetBusy = false;
+    betState.busy = false;
   }
 }
 
 async function retryOnlineBetInvoiceGeneration(): Promise<void> {
-  if (!onlineRoom || onlineBetBusy) return;
-  onlineBetBusy = true;
+  if (!onlineRoom || betState.busy) return;
+  betState.busy = true;
   try {
     const response = await onlineClient.retryBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
     syncOnlineClock(response.serverNowMs);
@@ -3371,13 +3355,13 @@ async function retryOnlineBetInvoiceGeneration(): Promise<void> {
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
-    onlineBetBusy = false;
+    betState.busy = false;
   }
 }
 
 async function settleOnlineBet(): Promise<void> {
-  if (!onlineRoom || onlineBetBusy) return;
-  onlineBetBusy = true;
+  if (!onlineRoom || betState.busy) return;
+  betState.busy = true;
   try {
     const response = await onlineClient.settleBet({ roomId: onlineRoom.id, playerId: onlinePlayer.id });
     syncOnlineClock(response.serverNowMs);
@@ -3386,7 +3370,7 @@ async function settleOnlineBet(): Promise<void> {
   } catch (error) {
     onlineError = onlineErrorText(error);
   } finally {
-    onlineBetBusy = false;
+    betState.busy = false;
   }
 }
 
@@ -3395,13 +3379,13 @@ async function refreshOnlineBet(
   options: { queueIfBusy?: boolean } = {},
 ): Promise<void> {
   if (!onlineRoom?.bet) return;
-  if (onlineBetBusy) {
-    if (options.queueIfBusy) onlineBetRefreshQueued = true;
+  if (betState.busy) {
+    if (options.queueIfBusy) betState.refreshQueued = true;
     return;
   }
   const requestedRoomId = onlineRoom.id;
-  onlineBetBusy = true;
-  onlineLastBetPollAt = performance.now();
+  betState.busy = true;
+  betState.lastPollAt = performance.now();
   try {
     const result = await requestOnlineBetRefresh(onlineRoom.id, onlinePlayer.id);
     syncOnlineClock(result.payload.serverNowMs);
@@ -3415,9 +3399,9 @@ async function refreshOnlineBet(
     );
     if (!silent) onlineError = onlineErrorText(error);
   } finally {
-    onlineBetBusy = false;
-    const shouldRefreshAgain = onlineBetRefreshQueued;
-    onlineBetRefreshQueued = false;
+    betState.busy = false;
+    const shouldRefreshAgain = betState.refreshQueued;
+    betState.refreshQueued = false;
     if (shouldRefreshAgain && onlineRoom?.id === requestedRoomId && isRefreshableRoomBet(onlineRoom.bet)) {
       void refreshOnlineBet(true, { queueIfBusy: true });
     }
@@ -3451,13 +3435,13 @@ function getWebLNProvider(): WebLNProvider | null {
 // se confirma por el polling normal del estado de la apuesta (depositStatus →
 // paid); acá solo disparamos el pago y aceleramos la detección.
 async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
-  if (!bolt11 || onlineBetPaying) return;
+  if (!bolt11 || betState.paying) return;
   const provider = getWebLNProvider();
   if (!provider) {
     onlineError = 'No se detectó una extensión Lightning (instalá Alby) o habilitá WebLN.';
     return;
   }
-  onlineBetPaying = true;
+  betState.paying = true;
   try {
     await provider.enable();
     await provider.sendPayment(bolt11);
@@ -3469,7 +3453,7 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
       ? `No se pudo pagar con la extensión: ${error.message}`
       : 'No se pudo pagar con la extensión.';
   } finally {
-    onlineBetPaying = false;
+    betState.paying = false;
   }
 }
 
@@ -3477,13 +3461,13 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
 // éxito se confirma por el polling normal (payoutStatus → claimed); acá solo
 // disparamos el retiro y aceleramos la detección.
 async function claimOnlineBetWithExtension(lnurl: string): Promise<void> {
-  if (!lnurl || onlineBetPaying) return;
+  if (!lnurl || betState.paying) return;
   const provider = getWebLNProvider();
   if (!provider || typeof provider.lnurl !== 'function') {
     onlineError = 'No se detectó una extensión Lightning (instalá Alby) o no soporta LNURL-withdraw.';
     return;
   }
-  onlineBetPaying = true;
+  betState.paying = true;
   try {
     await provider.enable();
     await provider.lnurl(lnurl);
@@ -3494,7 +3478,7 @@ async function claimOnlineBetWithExtension(lnurl: string): Promise<void> {
       ? `No se pudo cobrar con la extensión: ${error.message}`
       : 'No se pudo cobrar con la extensión.';
   } finally {
-    onlineBetPaying = false;
+    betState.paying = false;
   }
 }
 
@@ -3657,13 +3641,13 @@ function resetOnlineRoomState(): void {
   resetSpectatorFocus();
   onlineRoom = null;
   onlineError = null;
-  onlineStakeInput = String(DEFAULT_ONLINE_BET_STAKE_SATS);
-  onlineBetBusy = false;
-  onlineBetPaying = false;
-  onlineLastBetPollAt = 0;
-  onlineBetFastPollUntil = 0;
-  onlineBetRefreshQueued = false;
-  celebratedBetId = null;
+  betState.stakeInput = String(DEFAULT_ONLINE_BET_STAKE_SATS);
+  betState.busy = false;
+  betState.paying = false;
+  betState.lastPollAt = 0;
+  betState.fastPollUntil = 0;
+  betState.refreshQueued = false;
+  betState.celebratedBetId = null;
   onlineResultSubmitted = false;
   onlineRunStarted = false;
   onlineSpectatorRound = false;
@@ -3780,7 +3764,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   const roomRestarted = previousRoom?.status === 'finished' && protectedRoom.status === 'countdown';
   onlineRoom = protectedRoom;
   saveOnlineRoomSession(protectedRoom);
-  if (protectedRoom.bet?.status !== 'pending_deposits') onlineBetFastPollUntil = 0;
+  if (protectedRoom.bet?.status !== 'pending_deposits') betState.fastPollUntil = 0;
   onlineActiveRoundId = nextRoundId;
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
   maybeSubmitOnlineWin(protectedRoom);
@@ -3793,11 +3777,11 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
 function maybeCelebratePayout(): void {
   const bet = onlineRoom?.bet;
   if (!bet || bet.status !== 'settled') return;
-  if (celebratedBetId === bet.betId) return;
+  if (betState.celebratedBetId === bet.betId) return;
   const myEntry = myBetEntry(bet);
   const myPayout = myEntry?.payoutSats ?? 0;
   if (myPayout <= 0 || (myEntry?.payoutStatus !== 'paid' && myEntry?.payoutStatus !== 'claimed')) return;
-  celebratedBetId = bet.betId;
+  betState.celebratedBetId = bet.betId;
   celebratePayout({ sats: myPayout });
 }
 
@@ -4402,13 +4386,13 @@ function maybeRefreshBet(): void {
   // siga pendiente se pollea rápido siempre, así un pago hecho por fuera
   // (invoice copiada a otra billetera) se detecta apenas Luna lo registra.
   const fastPoll = bet.status === 'pending_deposits'
-    && (now < onlineBetFastPollUntil || hasOwnPendingDeposit(bet));
+    && (now < betState.fastPollUntil || hasOwnPendingDeposit(bet));
   const pollMs = fastPoll ? ONLINE_BET_FAST_POLL_MS : ONLINE_BET_POLL_MS;
-  if (onlineBetBusy) {
-    onlineBetRefreshQueued = true;
+  if (betState.busy) {
+    betState.refreshQueued = true;
     return;
   }
-  if (now - onlineLastBetPollAt < pollMs) return;
+  if (now - betState.lastPollAt < pollMs) return;
   void refreshOnlineBet(true, { queueIfBusy: true });
 }
 
@@ -4429,7 +4413,7 @@ function hasOwnPendingDeposit(bet: RoomBet): boolean {
 function armOnlineBetFastPolling(): void {
   const bet = onlineRoom?.bet;
   if (!bet || bet.status !== 'pending_deposits') return;
-  onlineBetFastPollUntil = Math.max(onlineBetFastPollUntil, performance.now() + ONLINE_BET_FAST_POLL_WINDOW_MS);
+  betState.fastPollUntil = Math.max(betState.fastPollUntil, performance.now() + ONLINE_BET_FAST_POLL_WINDOW_MS);
 }
 
 async function postOnlineProgress(state: GameState): Promise<void> {
@@ -6478,19 +6462,19 @@ function renderOnlineBetPanel(host: boolean): string {
     // con una sola persona en la sala no tiene sentido ofrecer el pozo.
     if (onlineRoom.players.length < 2) return '';
     const blocked = lunaNegraBettingBlockedReason();
-    const canCreate = !blocked && !onlineBetBusy && !onlineBetCreating;
+    const canCreate = !blocked && !betState.busy && !betState.creating;
     return `
-      <section class="online-bet-panel${onlineBetCreating ? ' online-bet-panel--creating' : ''}">
+      <section class="online-bet-panel${betState.creating ? ' online-bet-panel--creating' : ''}">
         <div class="online-bet-head">
           <span>Apuesta opcional</span>
           <small>Luna Negra</small>
         </div>
         <p class="online-bet-note">Pozo compartido: todos depositan lo mismo y el ganador cobra el saldo final.</p>
         <div class="online-bet-create-row">
-          <input type="text" inputmode="numeric" class="dash-input online-bet-input" maxlength="7" value="${escapeHtml(onlineStakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50"${onlineBetCreating ? ' disabled' : ''} />
-          <button class="dash-action-btn accent online-bet-create-button" type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>${onlineBetCreating ? `${BET_SPINNER}<span>Creando…</span>` : 'Crear'}</button>
+          <input type="text" inputmode="numeric" class="dash-input online-bet-input" maxlength="7" value="${escapeHtml(betState.stakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50"${betState.creating ? ' disabled' : ''} />
+          <button class="dash-action-btn accent online-bet-create-button" type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>${betState.creating ? `${BET_SPINNER}<span>Creando…</span>` : 'Crear'}</button>
         </div>
-        ${onlineBetCreating
+        ${betState.creating
           ? '<p class="online-bet-note">⏳ Generando los invoices de pago en Luna Negra… puede tardar unos segundos.</p>'
           : ''}
         ${blocked ? `<p class="online-bet-note online-bet-warning">Atención: ${escapeHtml(blocked)}</p>` : ''}
@@ -6518,7 +6502,7 @@ function renderOnlineBetPanel(host: boolean): string {
           : ''}
         ${myEntry!.bolt11 ? renderBetInvoiceQr(myEntry!.bolt11) : ''}
         <div class="online-bet-deposit-actions">
-          ${myEntry!.bolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myEntry!.bolt11)}"${onlineBetPaying ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : ''}
+          ${myEntry!.bolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myEntry!.bolt11)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : ''}
           ${myEntry!.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry!.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
           ${myEntry!.bolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry!.bolt11)}">Copiar invoice</button>` : ''}
           ${myEntry!.lnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry!.lnurl)}">Copiar LNURL</button>` : ''}
@@ -6538,7 +6522,7 @@ function renderOnlineBetPanel(host: boolean): string {
           ? `<p class="online-bet-note online-bet-warning">⚠️ No se pudo generar el invoice de pago: ${escapeHtml(myEntry!.depositError)}. Reintentando…</p>`
           : `<p class="online-bet-note">⏳ Generando el invoice de pago… Si tarda, tocá «Actualizar».</p>`}
         <div class="online-bet-deposit-actions">
-          <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
+          <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
         </div>
       </div>
     `
@@ -6546,7 +6530,7 @@ function renderOnlineBetPanel(host: boolean): string {
 
   const terminal = ['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status);
   const retryInvoice = canRetryBetInvoiceGeneration(bet, host)
-    ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-retry"${onlineBetBusy ? ' disabled' : ''}>Reintentar invoice</button>`
+    ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-retry"${betState.busy ? ' disabled' : ''}>Reintentar invoice</button>`
     : '';
 
   // Barra de progreso del pozo: cuántos depósitos entraron sobre el total. Da una
@@ -6584,9 +6568,9 @@ function renderOnlineBetPanel(host: boolean): string {
       ${myPaidConfirm}
       ${myDeposit}
       <div class="online-bet-actions">
-        <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button>
+        <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
         ${retryInvoice}
-        ${host && !terminal ? `<button class="dash-copy-btn dash-kick-btn" type="button" data-ui-action="online-bet-cancel"${onlineBetBusy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
+        ${host && !terminal ? `<button class="dash-copy-btn dash-kick-btn" type="button" data-ui-action="online-bet-cancel"${betState.busy ? ' disabled' : ''}>Cancelar apuesta</button>` : ''}
       </div>
     </section>
   `;
@@ -6683,7 +6667,7 @@ function renderOnlineBetWithdraw(entry: RoomBetParticipant, bet: RoomBet): strin
       <button class="dash-action-btn success online-bet-wallet-link" type="button" data-ui-action="online-bet-open-wallet" data-lnurl="${escapeHtml(lnurl)}">📱 Abrir wallet Lightning</button>
       ${renderBetWithdrawQr(lnurl)}
       <div class="online-bet-deposit-actions">
-        <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-claim-webln" data-lnurl="${escapeHtml(lnurl)}"${onlineBetPaying ? ' disabled' : ''}>⚡ Cobrar con extensión</button>
+        <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-claim-webln" data-lnurl="${escapeHtml(lnurl)}"${betState.paying ? ' disabled' : ''}>⚡ Cobrar con extensión</button>
         <button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(lnurl)}">Copiar LNURL</button>
       </div>
       <p class="bet-settle-hint">Compatible con Wallet of Satoshi y otras wallets que acepten enlaces Lightning/LNURL.</p>
@@ -6735,7 +6719,7 @@ function renderOnlineBetResult(): string {
             <div class="bet-settle-title">${BET_SPINNER}<span>¡Ganaste el pozo!</span></div>
             <div class="bet-settle-amount bet-settle-amount--pending">+${myAmount} <small>sats</small></div>
             <p class="bet-settle-hint">Tu retiro está pendiente, pero el QR todavía no está disponible. Tocá «Actualizar».</p>
-            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button></div>
+            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button></div>
           </div>
         `;
       case 'paid':
@@ -6761,7 +6745,7 @@ function renderOnlineBetResult(): string {
           <div class="bet-settle">
             <div class="bet-settle-title bet-settle-title--win"><span>Ganaste el pozo (+${myAmount} sats)</span></div>
             <p class="bet-settle-error">⚠️ El pago falló y Luna Negra lo reintentará automáticamente. Los sats siguen retenidos mientras tanto.</p>
-            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button></div>
+            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button></div>
           </div>
         `;
       case 'pending':
@@ -6772,7 +6756,7 @@ function renderOnlineBetResult(): string {
             <div class="bet-settle-title">${BET_SPINNER}<span>Procesando tu cobro…</span></div>
             <div class="bet-settle-amount bet-settle-amount--pending">+${myAmount} <small>sats</small></div>
             <p class="bet-settle-hint">Todavía no figura como pagado. Tocá «Actualizar» para consultar el estado.</p>
-            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${onlineBetBusy ? ' disabled' : ''}>Actualizar</button></div>
+            <div class="online-bet-deposit-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button></div>
           </div>
         `;
     }
@@ -6800,7 +6784,7 @@ function renderOnlineBetResult(): string {
       : '';
     // El host tiene un empujón manual por si el reporte automático no progresa.
     const settleAction = isHost
-      ? `<div class="online-bet-deposit-actions"><button type="button" data-ui-action="online-bet-settle"${onlineBetBusy ? ' disabled' : ''}>Reintentar cobro</button></div>`
+      ? `<div class="online-bet-deposit-actions"><button type="button" data-ui-action="online-bet-settle"${betState.busy ? ' disabled' : ''}>Reintentar cobro</button></div>`
       : '';
     const winnerBadge = amIWinner
       ? `<div class="bet-settle-amount bet-settle-amount--pending">Ganás +${bet.netPayoutSats.toLocaleString('es-AR')} <small>sats</small></div>`
