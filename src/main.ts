@@ -5511,6 +5511,7 @@ function renderSurvivalRankWindow(rank: number, total: number): string {
   return `
     <div class="solo-results-rankwin">
       <div class="rankwin-head">${medal ? `${medal} ` : ''}Puesto #${rank} <span>de ${total} en el mundo</span></div>
+      <div class="rankwin-sub">Ordenado por la mejor marca de cada jugador</div>
       <div class="rankwin-list">${rows}</div>
     </div>`;
 }
