@@ -1,5 +1,6 @@
 import type { SubmitScoreRequest } from '../src/online/protocol.js';
 import { getWinsLeaderboard, submitWin, LEADERBOARD_DEFAULT_LIMIT } from '../src/online/leaderboard.js';
+import { LUNA_BOARD_WINS, mirrorLunaScore } from '../src/online/lunaNegraLeaderboard.js';
 import { getLeaderboardStore, handleApiError, handleNodeApi, readJsonBody, sendJson } from '../src/online/vercelApi.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -21,8 +22,14 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   try {
     const store = getLeaderboardStore();
-    await submitWin(store, await readJsonBody<SubmitScoreRequest>(request));
+    const meta = await submitWin(store, await readJsonBody<SubmitScoreRequest>(request));
     const entries = await getWinsLeaderboard(store);
+    // Espejo a Luna Negra (§6): empujamos el TOTAL de victorias del jugador a su
+    // marcador (Luna se queda el mejor → el total acumulado siempre gana). Lo
+    // tomamos del ranking autoritativo recién actualizado. Best-effort, no
+    // bloquea ni rompe la respuesta.
+    const mine = entries.find((entry) => entry.playerId === meta.playerId);
+    if (mine) void mirrorLunaScore(LUNA_BOARD_WINS, meta.npub, mine.wins);
     return sendJson(200, { entries, serverNowMs: Date.now() });
   } catch (error) {
     return handleApiError(error);

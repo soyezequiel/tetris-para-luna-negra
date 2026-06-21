@@ -1,5 +1,6 @@
 import type { SubmitSurvivalRequest } from '../src/online/protocol.js';
 import { getSurvivalLeaderboard, submitSurvival, SURVIVAL_DEFAULT_LIMIT } from '../src/online/survivalLeaderboard.js';
+import { LUNA_BOARD_SURVIVAL, mirrorLunaScore } from '../src/online/lunaNegraLeaderboard.js';
 import { getSurvivalLeaderboardStore, handleApiError, handleNodeApi, readJsonBody, sendJson } from '../src/online/vercelApi.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -21,8 +22,11 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   try {
     const store = getSurvivalLeaderboardStore();
-    await submitSurvival(store, await readJsonBody<SubmitSurvivalRequest>(request));
+    const meta = await submitSurvival(store, await readJsonBody<SubmitSurvivalRequest>(request));
     const entries = await getSurvivalLeaderboard(store);
+    // Espejo a Luna Negra (§6): empujamos el tiempo en ms (Luna se queda el mejor
+    // → el récord más largo gana). Best-effort, no bloquea la respuesta.
+    void mirrorLunaScore(LUNA_BOARD_SURVIVAL, meta.npub, meta.bestMs);
     return sendJson(200, { entries, serverNowMs: Date.now() });
   } catch (error) {
     return handleApiError(error);
