@@ -173,6 +173,33 @@
   background: rgba(0, 245, 255, 0.13);
   border-color: rgba(0, 245, 255, 0.55);
 }
+.dash-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.dash-history-filter {
+  padding: 6px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: var(--dash-text-dim);
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.dash-history-filter:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.dash-history-filter.is-active {
+  border-color: rgba(0, 245, 255, 0.5);
+  background: rgba(0, 245, 255, 0.1);
+  color: var(--dash-neon-cyan);
+}
 .dash-history-list { display: flex; flex-direction: column; gap: 10px; }
 .dash-history-empty {
   margin: 0;
@@ -202,6 +229,7 @@
 .dash-history-time.is-topout { color: #eb445a; }
 .dash-history-label { flex: 1; font-size: 13px; }
 .dash-history-date { font-size: 11px; color: rgba(238, 240, 244, 0.4); }
+.dash-history-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .dash-history-view {
   padding: 7px 12px;
   border-radius: 9px;
@@ -218,21 +246,26 @@
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.22);
 }
-.dash-history-library {
+.dash-history-view.is-danger { color: #eb445a; border-color: rgba(235, 68, 90, 0.32); }
+.dash-history-view.is-danger:hover {
+  background: rgba(235, 68, 90, 0.12);
+  border-color: rgba(235, 68, 90, 0.55);
+}
+.dash-history-clear {
   margin-top: 16px;
   padding: 11px;
   width: 100%;
   border-radius: 11px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(235, 68, 90, 0.28);
   background: transparent;
-  color: var(--dash-text-dim);
+  color: #eb445a;
   font-family: 'Exo 2', sans-serif;
   font-weight: 700;
   font-size: 12.5px;
   cursor: pointer;
-  transition: background .15s, color .15s;
+  transition: background .15s, border-color .15s, color .15s;
 }
-.dash-history-library:hover { background: rgba(255, 255, 255, 0.04); color: #eef0f4; }
+.dash-history-clear:hover { background: rgba(235, 68, 90, 0.1); border-color: rgba(235, 68, 90, 0.5); }
 
 /* ── 7 · Inicio: pantalla de bienvenida (título TETRA degradado + CTA + stats) ── */
 .dash-welcome {

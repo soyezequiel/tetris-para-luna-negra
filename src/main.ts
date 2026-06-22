@@ -1691,7 +1691,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'export-replay') exportReplay();
   if (action === 'replay-last-seconds') startDeathReplay();
   if (action === 'import-replay') openReplayFilePicker();
-  if (action === 'replay-library' || action === 'run-history') openReplayLibrary();
+  if (action === 'replay-library' || action === 'run-history') openHistoryMenu();
   if (action === 'library-back' || action === 'history-back') goToMenu();
   if (action === 'library-filter') setLibraryFilter(control.dataset.filter);
   if (action === 'select-history-entry') selectHistoryEntry(control.dataset.historyId);
@@ -2099,27 +2099,18 @@ function goToMenu(): void {
   input.releaseAll();
 }
 
-function openReplayLibrary(): void {
-  bindingCapture = null;
-  pendingConfirmAction = null;
-  runHistory = loadRunHistory();
-  appMode = 'library';
-  settingsReturnMode = 'menu';
-  libraryState.error = null;
-  lastExportName = null;
-  syncLibrarySelection();
-  input.releaseAll();
-}
-
-// Vista "Historial" del dashboard: lista simple de replays recientes (diseño
-// "Tus replays"). La biblioteca completa con filtros/detalles vive en 'library'
-// y se alcanza desde el botón "Ver biblioteca completa" (replay-library).
+// Vista "Historial" del dashboard: lista ÚNICA de replays (diseño "Tus replays")
+// con filtros y acciones por fila (Ver/Exportar/Borrar) + Borrar historial. Antes
+// había una segunda pantalla 'library' con todo esto; se fusionó acá para no tener
+// dos vistas redundantes. syncLibrarySelection mantiene coherente el filtro activo.
 function openHistoryMenu(): void {
   bindingCapture = null;
   pendingConfirmAction = null;
   runHistory = loadRunHistory();
   appMode = 'historyMenu';
   settingsReturnMode = 'menu';
+  libraryState.error = null;
+  syncLibrarySelection();
   input.releaseAll();
 }
 
@@ -8213,7 +8204,7 @@ function renderDashboardCenterContent(_state: GameState): string {
     `;
   }
   if (mode === 'historyMenu') {
-    return renderHistory(runHistory.slice(0, 12));
+    return renderHistory(getVisibleLibraryEntries(), { filter: libraryState.filter, totalRuns: runHistory.length });
   }
   if (mode === 'configMenu') {
     const softDrop = inputSettings.softDropFactor >= INSTANT_SOFT_DROP_FACTOR

@@ -37,23 +37,36 @@ describe('renderWelcome', () => {
 });
 
 describe('renderHistory', () => {
-  it('muestra el estado vacío sin filas ni botón de biblioteca', () => {
+  it('muestra el estado vacío sin filas, filtros ni botón de borrar', () => {
     const html = renderHistory([]);
     expect(html).toContain('class="dash-history-empty"');
     expect(html).not.toContain('dash-history-row');
-    expect(html).not.toContain('Ver biblioteca completa');
+    expect(html).not.toContain('dash-history-filters');
+    expect(html).not.toContain('Borrar historial');
   });
 
-  it('renderiza una fila por entrada con tiempo, estado y botón de biblioteca', () => {
+  it('renderiza una fila por entrada con tiempo, estado y acciones', () => {
     const html = renderHistory([
       histEntry({ id: 'a', status: 'finished', elapsedFrames: 3600, lines: 40 }),
       histEntry({ id: 'b', status: 'gameover', elapsedFrames: 1800, lines: 12 }),
-    ]);
+    ], { filter: 'all', totalRuns: 2 });
     expect(html.match(/class="dash-history-row"/g)).toHaveLength(2);
     expect(html).toContain('1:00.000'); // 3600 frames con millis
     expect(html).toContain('is-clear'); // finished
     expect(html).toContain('is-topout'); // gameover
-    expect(html).toContain('Ver biblioteca completa');
+    // Filtros + acciones por fila (la antigua "biblioteca completa" ahora vive acá)
+    expect(html).toContain('dash-history-filters');
+    expect(html).toContain('data-ui-action="play-history-replay"');
+    expect(html).toContain('data-ui-action="export-history-replay"');
+    expect(html).toContain('data-ui-action="delete-history-entry"');
+    expect(html).toContain('Borrar historial');
+  });
+
+  it('con runs pero filtro sin coincidencias muestra vacío conservando filtros', () => {
+    const html = renderHistory([], { filter: 'topout', totalRuns: 5 });
+    expect(html).toContain('class="dash-history-empty"');
+    expect(html).toContain('dash-history-filters');
+    expect(html).toContain('Borrar historial');
   });
 });
 
