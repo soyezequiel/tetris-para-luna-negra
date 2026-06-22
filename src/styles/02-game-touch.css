@@ -1286,11 +1286,6 @@
     gap: 10px;
   }
 
-  .library-layout {
-    grid-template-columns: 1fr;
-    gap: 4px;
-  }
-
   .history-stats {
     grid-template-columns: repeat(2, auto);
     justify-content: start;

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderWelcome } from '../src/ui/dashboard/welcome';
 import { renderHistory } from '../src/ui/dashboard/history';
-import { renderControls } from '../src/ui/dashboard/controls';
 import { modeAccent, playModeMeta, renderModeCard } from '../src/ui/dashboard/modeCard';
 import type { RunHistoryEntry } from '../src/app/runHistory';
 
@@ -67,17 +66,6 @@ describe('renderHistory', () => {
     expect(html).toContain('class="dash-history-empty"');
     expect(html).toContain('dash-history-filters');
     expect(html).toContain('Borrar historial');
-  });
-});
-
-describe('renderControls', () => {
-  it('renderiza las filas DAS/ARR/Soft drop con los valores provistos', () => {
-    const html = renderControls({ das: '10 f', arr: '2 f', softDrop: '∞' });
-    expect(html).toContain('<h1 class="dash-controls-title">Controles</h1>');
-    expect(html.match(/class="dash-controls-row"/g)).toHaveLength(3);
-    expect(html).toContain('>10 f<');
-    expect(html).toContain('>2 f<');
-    expect(html).toContain('>∞<');
   });
 });
 

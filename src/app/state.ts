@@ -6,14 +6,12 @@ export type AppMode =
   | 'soloMenu'
   | 'multiplayerMenu'
   | 'historyMenu'
-  | 'configMenu'
   | 'custom'
   | 'playing'
   | 'paused'
   | 'settings'
   | 'replayPlayback'
   | 'onlineReplay'
-  | 'library'
   | 'leaderboard'
   | 'survivalTop'
   | 'onlineMenu'
@@ -29,8 +27,8 @@ export function canAdvanceGame(mode: AppMode, status: GameState['status']): bool
 }
 
 // Modos donde suena la música de fondo. Los menús (menu principal, solo,
-// multijugador, config, custom, librería, leaderboard, lobby online, settings)
-// quedan en silencio; la música arranca al entrar en una partida o repetición.
+// multijugador, custom, leaderboard, lobby online, settings) quedan en
+// silencio; la música arranca al entrar en una partida o repetición.
 const MUSIC_MODES: readonly AppMode[] = [
   'playing',
   'paused',
@@ -74,10 +72,8 @@ export function requiresRunConfirmation(
     || mode === 'soloMenu'
     || mode === 'multiplayerMenu'
     || mode === 'historyMenu'
-    || mode === 'configMenu'
     || mode === 'custom'
     || mode === 'replayPlayback'
-    || mode === 'library'
     || mode === 'leaderboard'
     || mode === 'survivalTop'
     || mode === 'onlineMenu'

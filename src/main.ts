@@ -7,7 +7,6 @@ import { renderModeSelectStage as renderModeSelectStageView, renderSmartPlayStag
 import { renderRoomPanelEmpty, renderRoomPanelActive } from './ui/dashboard/roomPanel';
 import { renderLeaderboardBody, renderLeaderboardPanel, renderSurvivalTopsEmbed as renderSurvivalTopsEmbedView } from './ui/dashboard/leaderboard';
 import { renderHistory } from './ui/dashboard/history';
-import { renderControls } from './ui/dashboard/controls';
 import type { PlayMode } from './ui/playMode';
 import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './ui/dashboard/modeCard';
 import { leaderboardState } from './state/leaderboardState';
@@ -44,7 +43,7 @@ import {
 } from './app/runHistory';
 import { soundCueForRunProgress } from './app/runEffects';
 import { nextAutoPlayInput } from './app/autoPlay'; // TRUCO AUTOPLAY
-import { createRunSummary, RunSplitTracker, type LineSplit, type RunSummary } from './app/runStats';
+import { createRunSummary, RunSplitTracker, type RunSummary } from './app/runStats';
 import { canAdvanceGame, canCommitLocalOnlineTerminal, gameOverReasonMessage, requiresRunConfirmation, shouldPlayMusic, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import {
   CUSTOM_NUMBER_SETTING_META,
@@ -4196,7 +4195,7 @@ function onlineAuthorityTargetFrame(state: GameState): number {
 
 function shouldPollOnline(now: number): boolean {
   if (onlineNetState.pollInFlight) return false;
-  if (!['menu', 'playMenu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'configMenu', 'custom', 'leaderboard', 'survivalTop', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults', 'onlineReplay', 'replayPlayback'].includes(appMode)) return false;
+  if (!['menu', 'playMenu', 'soloMenu', 'multiplayerMenu', 'historyMenu', 'custom', 'leaderboard', 'survivalTop', 'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults', 'onlineReplay', 'replayPlayback'].includes(appMode)) return false;
   return now - onlineNetState.lastPollAt >= ONLINE_POLL_MS;
 }
 
@@ -5278,9 +5277,7 @@ function renderScreenOverlay(state: GameState): string {
     || appMode === 'soloMenu'
     || appMode === 'multiplayerMenu'
     || appMode === 'historyMenu'
-    || appMode === 'configMenu'
     || appMode === 'custom'
-    || appMode === 'library'
     || appMode === 'leaderboard'
     || appMode === 'survivalTop'
     || appMode === 'onlineMenu'
@@ -7230,106 +7227,6 @@ function confirmMeta(action: DestructiveRunAction): string {
   return 'The current board and timer will be discarded.';
 }
 
-function renderLibraryPanelContent(): string {
-  syncLibrarySelection();
-  const visibleEntries = getVisibleLibraryEntries();
-  const selectedEntry = getSelectedLibraryEntry(visibleEntries);
-  const rows = visibleEntries.length === 0
-    ? `<div class="history-empty">${escapeHtml(libraryEmptyText())}</div>`
-    : visibleEntries.map((entry) => renderLibraryRow(entry, selectedEntry?.id === entry.id)).join('');
-  const exported = lastExportName ? `<div class="panel-note">Exported ${escapeHtml(lastExportName)}</div>` : '';
-  const error = libraryState.error ? `<div class="panel-note panel-error">${escapeHtml(libraryState.error)}</div>` : '';
-  return `
-      <section class="menu-panel history-panel library-panel" aria-label="Replay library">
-        <div class="panel-eyebrow">HISTORIAL DE PARTIDAS</div>
-        <h1 style="font-size: 36px; margin: 8px 0 16px; font-family: inherit; font-weight: 800;">Runs</h1>
-        <div class="library-toolbar" aria-label="Replay filters">
-          ${renderLibraryFilterButton('all', 'Todos')}
-          ${renderLibraryFilterButton('clear', 'Completadas')}
-          ${renderLibraryFilterButton('topout', 'Derrotas')}
-          ${renderLibraryFilterButton('best', 'Mejores tiempos')}
-        </div>
-        ${exported}
-        ${error}
-        <div class="library-layout">
-          <div class="history-list">${rows}</div>
-          ${renderLibraryDetails(selectedEntry)}
-        </div>
-        <div class="panel-actions" style="display: flex; gap: 12px; margin-top: 24px;">
-          <button class="dash-action-btn" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="library-back">Volver</button>
-          <button class="dash-action-btn accent" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="import-replay">Importar partida</button>
-          <button class="dash-action-btn danger" style="width: auto; padding: 10px 24px;" type="button" data-ui-action="clear-history"${runHistory.length === 0 ? ' disabled' : ''}>Borrar historial</button>
-        </div>
-      </section>
-  `;
-}
-
-export function renderLibraryOverlay(): string {
-  return `
-    <div class="menu-scrim">
-      ${renderLibraryPanelContent()}
-    </div>
-  `;
-}
-
-function renderLibraryFilterButton(filter: LibraryFilter, label: string): string {
-  const activeClass = libraryState.filter === filter ? ' button-active' : '';
-  return `<button class="${activeClass}" type="button" data-ui-action="library-filter" data-filter="${filter}">${label}</button>`;
-}
-
-function renderLibraryRow(entry: RunHistoryEntry, selected: boolean): string {
-  const activeClass = selected ? 'dash-copy-btn--active' : '';
-  return `
-    <article class="history-row library-row ${selected ? 'library-row-selected' : ''}">
-      <div>
-        <strong>${escapeHtml(formatHistoryStatus(entry.status))} ${escapeHtml(formatFrames(entry.elapsedFrames))}</strong>
-        <span>${escapeHtml(formatDateTime(entry.createdAt))} - seed ${entry.seed}</span>
-      </div>
-      <div class="history-stats">
-        <span>${entry.lines}L</span>
-        <span>${entry.pieces} piezas</span>
-        <span>${entry.pps.toFixed(2)} PPS</span>
-        <span>${entry.inputsPerPiece.toFixed(2)} IPP</span>
-      </div>
-      <button class="dash-copy-btn ${activeClass}" type="button" data-ui-action="select-history-entry" data-history-id="${escapeHtml(entry.id)}">${selected ? 'Seleccionado' : 'Detalles'}</button>
-    </article>
-  `;
-}
-
-function renderLibraryDetails(entry: RunHistoryEntry | null): string {
-  if (!entry) {
-    return `
-      <aside class="library-details" style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 24px; color: var(--dash-text-dim);">
-        <div class="panel-eyebrow" style="font-size: 11px; color: var(--dash-text-muted); font-weight: 800; letter-spacing: 1.5px;">SIN SELECCIÓN</div>
-        <p style="font-size: 13px; line-height: 1.5; margin-top: 8px;">Seleccioná una partida para ver detalles y controles de replay.</p>
-      </aside>
-    `;
-  }
-  const id = escapeHtml(entry.id);
-  return `
-    <aside class="library-details">
-      <div class="panel-eyebrow">DETALLES DE PARTIDA</div>
-      <h2>${escapeHtml(formatHistoryStatus(entry.status))} ${escapeHtml(formatFrames(entry.elapsedFrames))}</h2>
-      <dl>
-        <div><dt>Fecha</dt><dd>${escapeHtml(formatDateTime(entry.createdAt))}</dd></div>
-        <div><dt>Seed</dt><dd>${entry.seed}</dd></div>
-        <div><dt>Líneas</dt><dd>${entry.lines}/40</dd></div>
-        <div><dt>Piezas</dt><dd>${entry.pieces}</dd></div>
-        <div><dt>PPS</dt><dd>${entry.pps.toFixed(2)}</dd></div>
-        <div><dt>LPM</dt><dd>${entry.linesPerMinute.toFixed(1)}</dd></div>
-        <div><dt>Inputs</dt><dd>${entry.inputCount}</dd></div>
-        <div><dt>IPP</dt><dd>${entry.inputsPerPiece.toFixed(2)}</dd></div>
-      </dl>
-      ${renderSplitList(entry.splits)}
-      <div class="panel-actions replay-actions" style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px;">
-        <button class="dash-action-btn accent" type="button" data-ui-action="play-history-replay" data-history-id="${id}">Play replay</button>
-        <button class="dash-action-btn" type="button" data-ui-action="export-history-replay" data-history-id="${id}">Export</button>
-        <button class="dash-action-btn danger" type="button" data-ui-action="delete-history-entry" data-history-id="${id}">Delete</button>
-      </div>
-    </aside>
-  `;
-}
-
 function renderReplayOverlayShell(): string {
   const speedButtons = REPLAY_SPEEDS.map((speed) => (
     `<button type="button" data-ui-action="replay-speed" data-speed="${speed}">${speed}x</button>`
@@ -7742,7 +7639,6 @@ function isPersistentRoomPanelMode(mode: AppMode): boolean {
     || mode === 'soloMenu'
     || mode === 'multiplayerMenu'
     || mode === 'historyMenu'
-    || mode === 'configMenu'
     || mode === 'custom'
     || mode === 'leaderboard'
     || mode === 'survivalTop';
@@ -7797,8 +7693,8 @@ function renderDashboardMenu(state: GameState): string {
   // "Jugar" es el hub de modalidades; queda activo también en sus sub-vistas
   // (config custom y los tops de supervivencia, que viven dentro de la modalidad).
   const isPlayActive = appMode === 'playMenu' || appMode === 'custom' || appMode === 'leaderboard' || appMode === 'survivalTop';
-  const isHistoryActive = appMode === 'historyMenu' || appMode === 'library';
-  const isSettingsActive = appMode === 'configMenu' || (appMode === 'settings' && (settingsReturnMode === 'configMenu' || settingsReturnMode === 'menu'));
+  const isHistoryActive = appMode === 'historyMenu';
+  const isSettingsActive = appMode === 'settings' && settingsReturnMode === 'menu';
 
   const homeClass = isHomeActive ? 'dash-sidebar-btn--active' : '';
   const playClass = isPlayActive ? 'dash-sidebar-btn--active' : '';
@@ -7943,8 +7839,8 @@ function isMobileDashboard(): boolean {
 type DashTab = 'inicio' | 'jugar' | 'historial' | 'ajustes';
 
 function dashboardActiveTab(): DashTab {
-  if (appMode === 'historyMenu' || appMode === 'library') return 'historial';
-  if (appMode === 'configMenu' || appMode === 'settings') return 'ajustes';
+  if (appMode === 'historyMenu') return 'historial';
+  if (appMode === 'settings') return 'ajustes';
   if (appMode === 'playMenu' || appMode === 'custom' || appMode === 'leaderboard' || appMode === 'survivalTop') return 'jugar';
   // Con sala activa el hub ES el contexto de Jugar (ahí vive el gestor de sala y el
   // punto verde de la nav): resaltamos Jugar aunque appMode haya quedado en 'menu'.
@@ -8219,24 +8115,11 @@ function renderDashboardCenterContent(_state: GameState): string {
   if (mode === 'historyMenu') {
     return renderHistory(getVisibleLibraryEntries(), { filter: libraryState.filter, totalRuns: runHistory.length });
   }
-  if (mode === 'configMenu') {
-    const softDrop = inputSettings.softDropFactor >= INSTANT_SOFT_DROP_FACTOR
-      ? '∞'
-      : `${inputSettings.softDropFactor} G`;
-    return renderControls({
-      das: `${inputSettings.dasFrames} f`,
-      arr: `${inputSettings.arrFrames} f`,
-      softDrop,
-    });
-  }
   if (mode === 'leaderboard' || mode === 'survivalTop') {
     return renderLeaderboardPanelContent();
   }
   if (mode === 'custom') {
     return renderCustomPanelContent();
-  }
-  if (mode === 'library') {
-    return renderLibraryPanelContent();
   }
   if (mode === 'settings') {
     return renderSettingsPanelContent();
@@ -8463,20 +8346,6 @@ function currentRunSummary(state: GameState): RunSummary {
     inputs: replay.inputs,
     splits: runState.splitTracker.getSplits(),
   });
-}
-
-function renderSplitList(splits: LineSplit[]): string {
-  if (splits.length === 0) return '<div class="split-list split-list-empty">No 10-line split yet.</div>';
-  return `
-    <div class="split-list" aria-label="Line splits">
-      ${splits.map((split) => `
-        <div>
-          <span>${split.lines}L</span>
-          <strong>${escapeHtml(formatFrames(split.elapsedFrames))}</strong>
-        </div>
-      `).join('')}
-    </div>
-  `;
 }
 
 function helpText(): string {
@@ -8883,10 +8752,6 @@ function syncLibrarySelection(): void {
   }
 }
 
-function getSelectedLibraryEntry(visibleEntries = getVisibleLibraryEntries()): RunHistoryEntry | null {
-  return visibleEntries.find((entry) => entry.id === libraryState.selectedHistoryEntryId) ?? visibleEntries[0] ?? null;
-}
-
 function getVisibleLibraryEntries(): RunHistoryEntry[] {
   const entries = runHistory.filter((entry) => {
     if (libraryState.filter === 'clear' || libraryState.filter === 'best') return entry.status === 'finished';
@@ -8897,13 +8762,6 @@ function getVisibleLibraryEntries(): RunHistoryEntry[] {
     return [...entries].sort((a, b) => a.elapsedFrames - b.elapsedFrames || a.createdAt.localeCompare(b.createdAt));
   }
   return entries;
-}
-
-function libraryEmptyText(): string {
-  if (runHistory.length === 0) return 'No saved runs yet.';
-  if (libraryState.filter === 'clear' || libraryState.filter === 'best') return 'No clears saved yet.';
-  if (libraryState.filter === 'topout') return 'No top outs saved yet.';
-  return 'No matching replays.';
 }
 
 function isLibraryFilter(value: string | undefined): value is LibraryFilter {
@@ -8937,10 +8795,6 @@ function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
-}
-
-function formatHistoryStatus(status: RunHistoryEntry['status']): string {
-  return status === 'finished' ? 'CLEAR' : 'TOP OUT';
 }
 
 function isOnlineHost(): boolean {

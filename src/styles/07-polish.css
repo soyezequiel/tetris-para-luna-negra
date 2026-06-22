@@ -353,48 +353,6 @@
   margin-top: 4px;
 }
 
-/* ── 8 · Ajustes: vista "Controles" (filas DAS/ARR/Soft drop con valor Orbitron) ── */
-.dash-controls { animation: tetra-rise .35s ease both; }
-.dash-controls .dash-controls-title {
-  font-family: 'Orbitron', 'Arial Black', sans-serif !important;
-  font-weight: 800;
-  font-size: 28px;
-  margin: 6px 0 18px;
-  line-height: 1.1;
-}
-.dash-controls-list { display: flex; flex-direction: column; gap: 10px; }
-.dash-controls-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-radius: 13px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-}
-.dash-controls-row span { font-size: 13px; color: rgba(238, 240, 244, 0.7); }
-.dash-controls-row strong {
-  font-family: 'Orbitron', 'Arial Black', sans-serif;
-  font-weight: 700;
-  font-size: 14px;
-  color: var(--dash-neon-cyan);
-}
-.dash-controls-edit {
-  margin-top: 18px;
-  padding: 11px 16px;
-  width: 100%;
-  border-radius: 11px;
-  border: 1px solid rgba(0, 245, 255, 0.35);
-  background: rgba(0, 245, 255, 0.07);
-  color: var(--dash-neon-cyan);
-  font-family: 'Exo 2', sans-serif;
-  font-weight: 700;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background .15s, border-color .15s;
-}
-.dash-controls-edit:hover { background: rgba(0, 245, 255, 0.13); border-color: rgba(0, 245, 255, 0.55); }
-
 /* ── 9 · Supervivencia: el top embebido va como tarjeta (igual que la referencia) ── */
 .dash-survival-tops {
   margin-top: 26px;
@@ -429,8 +387,7 @@
   .dash-welcome-stat-label { font-size: 9px; }
 
   /* Historial: título en una línea + botón "Importar" (sin "replay"); sin eyebrow. */
-  .dash-history > .panel-eyebrow,
-  .dash-controls > .panel-eyebrow { display: none; }
+  .dash-history > .panel-eyebrow { display: none; }
   .dash-history .dash-history-title { font-size: 24px; }
   .dash-history-import-extra { display: none; }
 }
