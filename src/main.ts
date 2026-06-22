@@ -1602,7 +1602,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'leaderboard-tab-survival') setLeaderboardTab('survival');
   if (action === 'survival-top-open') openLeaderboard('survival');
   if (action === 'survival-start') startSurvivalRun();
-  if (action === 'config-menu') openModeMenu('configMenu');
+  if (action === 'config-menu') openSettingsTab();
   if (action === 'custom-open') openCustomMode();
   if (action === 'custom-back') goToMenu();
   if (action === 'custom-start') startCustomRun();
@@ -2074,6 +2074,19 @@ function openSettings(): void {
   settingsReturnMode = appMode === 'playing' && engine.getState().status === 'playing' ? 'paused' : appMode;
   if (appMode === 'playing' && engine.getState().status === 'playing') appMode = 'paused';
   appMode = 'settings';
+  input.releaseAll();
+}
+
+// Tab "Ajustes" del dashboard: abre DIRECTO los ajustes completos (bindings,
+// presets, timing, accesibilidad, audio, touch). Antes había una vista compacta
+// 'configMenu' (DAS/ARR/Soft drop) con un botón "Ajustes de controles" que recién
+// llevaba acá; se fusionó para no tener dos pantallas redundantes. returnMode
+// 'menu' hace que renderice como panel del dashboard (no como overlay de pausa).
+function openSettingsTab(): void {
+  bindingCapture = null;
+  pendingConfirmAction = null;
+  appMode = 'settings';
+  settingsReturnMode = 'menu';
   input.releaseAll();
 }
 
