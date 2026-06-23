@@ -7498,20 +7498,56 @@ function renderOnlineMiniBoard(snapshot: OnlineGameSnapshot): string {
 
 function onlineVisibleCells(snapshot: OnlineGameSnapshot): (string | null)[] {
   const hiddenRows = Math.max(0, snapshot.board.length - snapshot.visibleRows);
-  const board = Array.from({ length: snapshot.visibleRows }, (_, y) => {
+  const board: (string | null)[][] = Array.from({ length: snapshot.visibleRows }, (_, y) => {
     const sourceRow = snapshot.board[y + hiddenRows] ?? [];
     return Array.from({ length: snapshot.boardWidth }, (_, x) => sourceRow[x] ?? null);
   });
   if (snapshot.active) {
-    for (const cell of cellsFor(snapshot.active.type, snapshot.active.rotation)) {
-      const x = snapshot.active.x + cell.x;
-      const y = snapshot.active.y + cell.y - hiddenRows;
+    const active = snapshot.active;
+    const cells = cellsFor(active.type, active.rotation);
+    // Fantasma: dejo caer la pieza activa hasta chocar con la pila (o el piso) y la
+    // marco como rastro tenue donde aterrizaría. Se pinta ANTES que la pieza real para
+    // que la activa quede por encima donde se solapan. Respeta showGhost de la sala.
+    if (roomState.current?.rules?.showGhost !== false) {
+      const ghostY = onlineGhostDropY(snapshot, cells);
+      for (const cell of cells) {
+        const x = active.x + cell.x;
+        const y = ghostY + cell.y - hiddenRows;
+        if (y >= 0 && y < board.length && x >= 0 && x < snapshot.boardWidth && !board[y][x]) {
+          board[y][x] = 'ghost';
+        }
+      }
+    }
+    for (const cell of cells) {
+      const x = active.x + cell.x;
+      const y = active.y + cell.y - hiddenRows;
       if (y >= 0 && y < board.length && x >= 0 && x < snapshot.boardWidth) {
-        board[y][x] = snapshot.active.type;
+        board[y][x] = active.type;
       }
     }
   }
   return board.flat();
+}
+
+// Fila de aterrizaje del fantasma: la pieza activa cae hasta justo antes de colisionar
+// con la pila o el piso. Opera sobre coordenadas del board completo (incluye filas
+// ocultas), igual que GameEngine.getGhost pero a partir del snapshot del rival.
+function onlineGhostDropY(snapshot: OnlineGameSnapshot, cells: ReadonlyArray<{ x: number; y: number }>): number {
+  const active = snapshot.active!;
+  const height = snapshot.board.length;
+  const width = snapshot.boardWidth;
+  const collides = (originY: number): boolean => {
+    for (const c of cells) {
+      const x = active.x + c.x;
+      const y = originY + c.y;
+      if (x < 0 || x >= width || y >= height) return true;
+      if (y >= 0 && snapshot.board[y]?.[x]) return true;
+    }
+    return false;
+  };
+  let y = active.y;
+  while (!collides(y + 1)) y += 1;
+  return y;
 }
 
 function renderOnlineError(): string {
