@@ -702,4 +702,69 @@
     max-height: 38vh;
   }
 }
+
+/* Puerta de bienvenida (login Luna Negra / anónimo) */
+.login-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 24px 0;
+}
+
+.login-gate-card {
+  width: 100%;
+  max-width: 440px;
+  gap: 12px;
+  padding: 22px;
+  text-align: center;
+  align-items: stretch;
+}
+
+.login-gate-title {
+  margin: 0;
+  font-size: 26px;
+  font-family: "Arial Black", Arial, sans-serif;
+}
+
+.login-gate-subtitle {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: rgba(247, 247, 242, 0.72);
+}
+
+.login-gate-primary {
+  margin-top: 4px;
+}
+
+.login-gate-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+  color: rgba(247, 247, 242, 0.5);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.login-gate-sep::before,
+.login-gate-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--cs2-line);
+}
+
+.login-gate-field {
+  text-align: left;
+}
+
+.login-gate-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(247, 247, 242, 0.5);
+}
 

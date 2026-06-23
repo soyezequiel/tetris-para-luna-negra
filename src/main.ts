@@ -387,6 +387,13 @@ const LUNA_ORIGIN_KEY = 'stack40.lunaOrigin.v1';
 const LUNA_ENTER_ROOM_MESSAGE_TYPE = 'luna-negra:enter-room';
 const LUNA_LOGOUT_MESSAGE_TYPE = 'luna-negra:logout';
 const ONLINE_ROOM_SESSION_KEY = 'stack40.onlineRoomSession.v1';
+// Puerta de bienvenida (login Luna Negra / anónimo). El descarte ("continuar como
+// anónimo") se recuerda por la sesión de la pestaña: no reaparece al recargar pero
+// sí al abrir el juego de nuevo. lunaBootstrapDone evita que el gate parpadee antes
+// de que el arranque SSO resuelva si hay sesión guardada.
+const LOGIN_GATE_DISMISSED_KEY = 'stack40.loginGate.dismissed.v1';
+let loginGateDismissed = loadLoginGateDismissed();
+let lunaBootstrapDone = false;
 lunaState.trustedOrigin = loadTrustedLunaOrigin();
 // La presencia caduca a los 20s sin heartbeat (ver docs/luna-negra-social-spec.md).
 // Latimos cada 10s (la mitad del TTL) para que un jugador activo nunca expire,
@@ -1436,7 +1443,9 @@ function handleOverlayInput(event: Event): void {
   const target = event.target;
   if (target instanceof HTMLInputElement) {
     const field = target.dataset.onlineField;
-    // El nombre ya no se edita acá: siempre se usa el que da Luna Negra.
+    // En la sala el nombre lo da Luna Negra; el único lugar donde se edita es la
+    // puerta de bienvenida cuando el jugador elige seguir como anónimo.
+    if (field === 'anon-name') identityState.name = target.value.slice(0, 18);
     if (field === 'join-code') identityState.joinCode = normalizeRoomId(target.value);
     if (field === 'bet-stake') betState.stakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
     if (field === 'report-comment') reportState.comment = target.value.slice(0, 400);
@@ -1678,6 +1687,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-kick') kickOnlinePlayer(control.dataset.targetPlayerId ?? '');
   if (action === 'online-open-invite') openLunaInviteWindow();
   if (action === 'luna-login') openLunaLogin();
+  if (action === 'anon-continue') continueAsAnonymous();
   if (action === 'online-copy-code') {
     copyToClipboard(control.dataset.code ?? '');
   }
@@ -2215,6 +2225,9 @@ async function bootstrapOnlineStartup(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   rememberTrustedLunaOriginFromStartup(params);
   await bootstrapLunaSession();
+  // El arranque SSO terminó: a partir de acá la puerta de login ya puede decidir
+  // si mostrarse (sin flash) según haya o no identidad resuelta.
+  lunaBootstrapDone = true;
   const nextParams = new URLSearchParams(window.location.search);
   if (nextParams.get('inviteToken')?.trim()) {
     await bootstrapLunaNegraEntry();
@@ -2374,6 +2387,22 @@ function clearStoredLunaIdentity(): void {
     localStorage.removeItem(LUNA_IDENTITY_KEY);
   } catch {
     // localStorage puede estar bloqueado; limpiamos al menos la identidad en memoria.
+  }
+}
+
+function loadLoginGateDismissed(): boolean {
+  try {
+    return sessionStorage.getItem(LOGIN_GATE_DISMISSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveLoginGateDismissed(): void {
+  try {
+    sessionStorage.setItem(LOGIN_GATE_DISMISSED_KEY, '1');
+  } catch {
+    // Sin sessionStorage el descarte vive solo en memoria para esta pestaña.
   }
 }
 
@@ -2586,6 +2615,18 @@ async function openLunaInviteWindow(): Promise<void> {
   } finally {
     lunaState.inviteWindowBusy = false;
   }
+}
+
+// "Continuar como anónimo" desde la puerta de bienvenida: fija el nombre temporal
+// que el jugador tipeó (persistido en el perfil local) y descarta el gate por esta
+// sesión de pestaña. Sin login a Luna no hay amigos/invitaciones/apuestas, pero
+// puede jugar solo y online por código igual.
+function continueAsAnonymous(): void {
+  const name = identityState.name.trim().slice(0, 18) || 'Jugador';
+  identityState.player = saveOnlinePlayer({ ...identityState.player, name });
+  identityState.name = identityState.player.name;
+  loginGateDismissed = true;
+  saveLoginGateDismissed();
 }
 
 async function openLunaLogin(): Promise<void> {
@@ -5288,6 +5329,7 @@ function restoreOverlayScroll(snapshot: Map<string, number>): void {
 }
 
 function renderScreenOverlay(state: GameState): string {
+  if (shouldShowLoginGate()) return renderLoginGateOverlay();
   if (lunaState.pendingLaunchRequest && !lunaInviteShowsAsToast()) return renderLunaLaunchRequestOverlay(lunaState.pendingLaunchRequest);
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
@@ -5673,6 +5715,42 @@ function renderLobbyShell(main: string): string {
       </div>
     </div>
   `;
+}
+
+// Puerta de bienvenida: lo primero que ve quien NO tiene sesión de Luna Negra.
+// Empuja el login pero deja seguir como anónimo con un nombre temporal. Solo en el
+// menú principal y una vez resuelto el arranque SSO (sin flash); descartarla o
+// loguearse la hace desaparecer.
+function shouldShowLoginGate(): boolean {
+  return lunaBootstrapDone
+    && appMode === 'menu'
+    && !lunaState.identity
+    && !loginGateDismissed
+    && !roomState.current;
+}
+
+function renderLoginGateOverlay(): string {
+  const busy = lunaState.inviteWindowBusy;
+  return renderLobbyShell(`
+    <div class="login-gate">
+      <article class="cs2-card login-gate-card">
+        <div class="panel-eyebrow">LUNA NEGRA</div>
+        <h1 class="login-gate-title">Iniciá sesión</h1>
+        <p class="login-gate-subtitle">Entrá con tu cuenta de Luna Negra para ver a tus amigos, invitarlos a jugar, apostar en sats y aparecer en los marcadores.</p>
+        ${renderOnlineError()}
+        <button class="cs2-btn cs2-btn-accent login-gate-primary" type="button" data-ui-action="luna-login"${busy ? ' disabled' : ''}>
+          ${busy ? 'Abriendo…' : 'Iniciar sesión en Luna Negra'}
+        </button>
+        <div class="login-gate-sep"><span>o</span></div>
+        <label class="online-field login-gate-field">
+          <span>Tu nombre</span>
+          <input type="text" maxlength="18" value="${escapeHtml(identityState.name)}" data-online-field="anon-name" autocomplete="off" placeholder="Tu nombre" />
+        </label>
+        <button class="cs2-btn login-gate-anon" type="button" data-ui-action="anon-continue">Continuar como anónimo</button>
+        <p class="login-gate-note">Sin cuenta podés jugar solo y unirte a salas por código, pero no verás amigos ni invitaciones.</p>
+      </article>
+    </div>
+  `);
 }
 
 function renderOnlineMenuPanelContent(): string {
