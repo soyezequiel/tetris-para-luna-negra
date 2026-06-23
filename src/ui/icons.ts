@@ -72,6 +72,11 @@ export function rocketIcon(opts?: IconOptions): string {
   return svgWrap('<path d="M12 2c3.5 2 5.5 5.5 5.5 9.5 0 1.6-.3 2.9-.8 4l-1.7-1V12a3 3 0 1 0-6 0v2.5l-1.7 1c-.5-1.1-.8-2.4-.8-4C6.5 7.5 8.5 4 12 2zm-1 10a1 1 0 1 1 2 0v6l-1 2-1-2v-6z"/>', { size: 30, ...opts });
 }
 
+// Salir / cerrar sesión (flecha saliendo de una puerta). Material "logout".
+export function logoutIcon(opts?: IconOptions): string {
+  return svgWrap('<path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>', opts);
+}
+
 // ─── Glifos de trazo (stroke) ────────────────────────────────────────────────
 
 // Tilde de "listo" (smart-play stage del invitado).

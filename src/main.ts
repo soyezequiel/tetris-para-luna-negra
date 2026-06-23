@@ -1,6 +1,6 @@
 import './styles.css';
 import QRCode from 'qrcode';
-import { gearOutlineIcon, historyClockIcon, homeIcon, playIcon, settingsGearIcon, speakerIcon } from './ui/icons';
+import { gearOutlineIcon, historyClockIcon, homeIcon, logoutIcon, playIcon, settingsGearIcon, speakerIcon } from './ui/icons';
 import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
 import { renderModeSelectStage as renderModeSelectStageView, renderSmartPlayStage as renderSmartPlayStageView } from './ui/dashboard/smartPlay';
@@ -394,6 +394,9 @@ const ONLINE_ROOM_SESSION_KEY = 'stack40.onlineRoomSession.v1';
 const LOGIN_GATE_DISMISSED_KEY = 'stack40.loginGate.dismissed.v1';
 let loginGateDismissed = loadLoginGateDismissed();
 let lunaBootstrapDone = false;
+// Desplegable del perfil (topbar): lo abre el clic en .dash-user y un clic fuera lo
+// cierra. Es estado efímero de UI; el loop lo refleja en el próximo frame.
+let userMenuOpen = false;
 lunaState.trustedOrigin = loadTrustedLunaOrigin();
 // La presencia caduca a los 20s sin heartbeat (ver docs/luna-negra-social-spec.md).
 // Latimos cada 10s (la mitad del TTL) para que un jugador activo nunca expire,
@@ -1499,9 +1502,19 @@ function handleOverlayClick(event: MouseEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
   const control = target.closest<HTMLElement>('[data-ui-action]');
+  // Cualquier clic fuera del desplegable del perfil lo cierra (el propio toggle y el
+  // ítem "Cerrar sesión" lo gestionan aparte). Incluye clics en espacio vacío.
+  const clickedAction = control?.dataset.uiAction;
+  if (userMenuOpen && clickedAction !== 'toggle-user-menu' && clickedAction !== 'luna-logout') {
+    userMenuOpen = false;
+  }
   if (!control) return;
 
   const action = control.dataset.uiAction;
+  if (action === 'toggle-user-menu') {
+    userMenuOpen = !userMenuOpen;
+    return;
+  }
   if (action === 'cycle-touch-scheme') {
     cycleTouchScheme();
     return;
@@ -1687,6 +1700,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-kick') kickOnlinePlayer(control.dataset.targetPlayerId ?? '');
   if (action === 'online-open-invite') openLunaInviteWindow();
   if (action === 'luna-login') openLunaLogin();
+  if (action === 'luna-logout') logOut();
   if (action === 'anon-continue') continueAsAnonymous();
   if (action === 'online-copy-code') {
     copyToClipboard(control.dataset.code ?? '');
@@ -2412,6 +2426,24 @@ function saveLoginGateDismissed(): void {
   } catch {
     // Sin sessionStorage el descarte vive solo en memoria para esta pestaña.
   }
+}
+
+function clearLoginGateDismissed(): void {
+  try {
+    sessionStorage.removeItem(LOGIN_GATE_DISMISSED_KEY);
+  } catch {
+    // Sin sessionStorage no hay nada persistido que borrar.
+  }
+}
+
+// Cerrar sesión desde el desplegable del perfil: deja la sala si había una, borra la
+// identidad de Luna Negra y reabre la puerta de bienvenida (login Luna / anónimo).
+function logOut(): void {
+  userMenuOpen = false;
+  if (roomState.current) leaveOnlineRoom();
+  clearLunaIdentity();
+  loginGateDismissed = false;
+  clearLoginGateDismissed();
 }
 
 function clearLunaIdentity(): void {
@@ -7806,6 +7838,27 @@ function renderFloatingParticles(): string {
   `;
 }
 
+// Desplegable del perfil (estilo GitHub): cabecera con avatar + estado de sesión y
+// la acción "Cerrar sesión". Lo monta el topbar (desktop y móvil) cuando userMenuOpen
+// está activo; el clic en luna-logout dispara logOut().
+function renderUserMenuDropdown(displayName: string): string {
+  const status = lunaState.identity ? 'Conectado con Luna Negra' : 'Jugando como invitado';
+  return `
+    <div class="user-menu" role="menu">
+      <div class="user-menu-head">
+        ${renderOnlineAvatar({ name: displayName, avatarUrl: identityState.player.avatarUrl }, 'small')}
+        <div class="user-menu-id">
+          <strong>${escapeHtml(displayName)}</strong>
+          <span>${status}</span>
+        </div>
+      </div>
+      <button class="user-menu-item" type="button" role="menuitem" data-ui-action="luna-logout">
+        ${logoutIcon({ size: 18, fill: false })}
+        Cerrar sesión
+      </button>
+    </div>`;
+}
+
 function renderDashboardMenu(state: GameState): string {
   // Móvil (< 760px): layout dedicado de pantalla completa con nav inferior y, en
   // sala, un gestor de 3 zonas donde solo la lista de jugadores scrollea (las
@@ -7839,9 +7892,13 @@ function renderDashboardMenu(state: GameState): string {
       <header class="dash-topbar">
         <h1 class="dash-logo">TETRA</h1>
 
-        <div class="dash-user">
-          ${renderOnlineAvatar({ name: userDisplayName, avatarUrl: identityState.player.avatarUrl }, 'small', 'dash-user-avatar')}
-          <span class="dash-user-name">${escapeHtml(userDisplayName)}</span>
+        <div class="dash-user-wrap">
+          <button class="dash-user" type="button" data-ui-action="toggle-user-menu" aria-haspopup="true" aria-expanded="${userMenuOpen}">
+            ${renderOnlineAvatar({ name: userDisplayName, avatarUrl: identityState.player.avatarUrl }, 'small', 'dash-user-avatar')}
+            <span class="dash-user-name">${escapeHtml(userDisplayName)}</span>
+            <span class="dash-user-caret ${userMenuOpen ? 'is-open' : ''}" aria-hidden="true">▾</span>
+          </button>
+          ${userMenuOpen ? renderUserMenuDropdown(userDisplayName) : ''}
         </div>
       </header>
       
@@ -8008,10 +8065,14 @@ function renderMobileDashboard(state: GameState): string {
       ${renderFloatingParticles()}
       <header class="mdash-header">
         <span class="mdash-logo">TETRA</span>
-        <span class="mdash-user">
-          ${renderOnlineAvatar({ name: userDisplayName, avatarUrl: identityState.player.avatarUrl }, 'small', 'mdash-user-avatar')}
-          <span class="mdash-user-name">${escapeHtml(userDisplayName)}</span>
-        </span>
+        <div class="dash-user-wrap mdash-user-wrap">
+          <button class="mdash-user" type="button" data-ui-action="toggle-user-menu" aria-haspopup="true" aria-expanded="${userMenuOpen}">
+            ${renderOnlineAvatar({ name: userDisplayName, avatarUrl: identityState.player.avatarUrl }, 'small', 'mdash-user-avatar')}
+            <span class="mdash-user-name">${escapeHtml(userDisplayName)}</span>
+            <span class="dash-user-caret ${userMenuOpen ? 'is-open' : ''}" aria-hidden="true">▾</span>
+          </button>
+          ${userMenuOpen ? renderUserMenuDropdown(userDisplayName) : ''}
+        </div>
       </header>
       <main class="mdash-main">
         ${renderMobileMain(state)}

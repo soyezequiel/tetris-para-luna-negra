@@ -63,14 +63,119 @@
   100% { background-position: 200% 50%; }
 }
 
-.dash-user {
+.dash-user-wrap {
   margin-left: auto;
+  position: relative;
+}
+
+.dash-user {
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 14px;
   font-weight: 600;
   color: rgba(247, 247, 242, 0.85);
+  /* Reset de <button>: ahora el perfil es clickeable para abrir el desplegable. */
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 10px 4px 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.dash-user:hover,
+.dash-user[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dash-user-caret {
+  font-size: 11px;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.dash-user-caret.is-open {
+  transform: rotate(180deg);
+}
+
+/* Desplegable del perfil (estilo GitHub): cae bajo el avatar, anclado a la derecha. */
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(12, 14, 22, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: user-menu-in 0.12s ease;
+}
+
+@keyframes user-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.user-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 6px;
+}
+
+.user-menu-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.user-menu-id strong {
+  font-size: 14px;
+  color: rgba(247, 247, 242, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu-id span {
+  font-size: 12px;
+  color: rgba(247, 247, 242, 0.55);
+}
+
+.user-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(247, 247, 242, 0.88);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.user-menu-item:hover {
+  background: rgba(248, 113, 113, 0.14);
+  color: #fca5a5;
+}
+
+.user-menu-item svg {
+  flex: 0 0 auto;
 }
 
 .dash-user-avatar {
