@@ -430,6 +430,12 @@ window.setInterval(() => {
 }, LUNA_LAUNCH_POLL_MS);
 document.addEventListener('visibilitychange', syncOnlineVisibilityChange);
 window.addEventListener('focus', eagerRefreshBetIfPending);
+// Reabrir el juego que ya estaba abierto: re-iniciar la sesión de Luna si volvió con un
+// token fresco en la URL (bfcache no re-ejecuta el módulo; el foco cubre el resto).
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) void maybeReinitLunaSessionFromUrl();
+});
+window.addEventListener('focus', () => void maybeReinitLunaSessionFromUrl());
 replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
 overlayElement.addEventListener('input', handleOverlayInput);
@@ -2368,6 +2374,32 @@ async function bootstrapLunaSession(): Promise<void> {
   }
   if (!lunaState.identity) return;
   await syncLunaPresence();
+}
+
+// El token de Luna se consume UNA vez al cargar el módulo (bootstrapOnlineStartup). Si el
+// juego YA estaba abierto y Luna lo reabre con un ?lnToken= fresco, ese arranque no vuelve a
+// correr —pasa al restaurar desde bfcache (pageshow.persisted) o al re-enfocar la pestaña que
+// Luna navegó— y la sesión no iniciaría sola. Acá re-chequeamos cuando la pestaña vuelve al
+// frente: si quedó un token sin consumir en la URL, resolvemos la sesión igual. Idempotente y
+// sin spam: bootstrapLunaSession borra el token de la URL al terminar (éxito o fallo), así que
+// corre una sola vez por token nuevo. Guardado contra el arranque inicial (lunaBootstrapDone,
+// que aún está consumiendo el token) y contra reentrada por eventos solapados.
+let lunaSessionReinitInFlight = false;
+async function maybeReinitLunaSessionFromUrl(): Promise<void> {
+  if (!lunaBootstrapDone || lunaSessionReinitInFlight) return;
+  const params = new URLSearchParams(window.location.search);
+  const hasToken = Boolean(
+    params.get('lnToken')?.trim()
+    || params.get('entitlement')?.trim()
+    || params.get('lnDemo')?.trim(),
+  );
+  if (!hasToken) return;
+  lunaSessionReinitInFlight = true;
+  try {
+    await bootstrapLunaSession();
+  } finally {
+    lunaSessionReinitInFlight = false;
+  }
 }
 
 function applyLunaIdentity(identity: LunaIdentity): void {
@@ -5172,6 +5204,9 @@ function syncOnlineVisibilityChange(): void {
     syncOnlineBackground();
     return;
   }
+  // Reabrir el juego ya abierto desde Luna: si la pestaña volvió con un token fresco en
+  // la URL, iniciamos la sesión igual (no hubo recarga que dispare el arranque inicial).
+  void maybeReinitLunaSessionFromUrl();
   // Al volver al juego reanunciamos presencia de inmediato (sin esperar el
   // intervalo) para reaparecer como "jugando" apenas el jugador regresa.
   if (lunaState.identity) void syncLunaPresence();
