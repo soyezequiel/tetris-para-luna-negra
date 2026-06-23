@@ -1454,7 +1454,13 @@ function handleOverlayInput(event: Event): void {
     const field = target.dataset.onlineField;
     // En la sala el nombre lo da Luna Negra; el único lugar donde se edita es la
     // puerta de bienvenida cuando el jugador elige seguir como anónimo.
-    if (field === 'anon-name') identityState.name = target.value.slice(0, 18);
+    if (field === 'anon-name') {
+      identityState.name = target.value.slice(0, 18);
+      // No re-renderizamos (perdería el foco), así que togglear el botón a mano:
+      // "Continuar como anónimo" exige un nombre escrito.
+      const anonButton = document.querySelector<HTMLButtonElement>('[data-ui-action="anon-continue"]');
+      if (anonButton) anonButton.disabled = identityState.name.trim().length === 0;
+    }
     if (field === 'join-code') identityState.joinCode = normalizeRoomId(target.value);
     if (field === 'bet-stake') betState.stakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
     if (field === 'report-comment') reportState.comment = target.value.slice(0, 400);
@@ -2336,6 +2342,36 @@ function reportLunaSessionFailure(reason: string, token: string): void {
   }).catch((error) => console.warn('[luna-negra] no se pudo enviar el reporte del fallo de sesión', error));
 }
 
+function formatTokenSeconds(totalSec: number): string {
+  const s = Math.max(0, Math.round(totalSec));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m}m ${rem}s` : `${m}m`;
+}
+
+// Mensaje de la puerta de login cuando Luna rechaza la sesión. En vez del 401 mudo, decimos
+// la razón DE VERDAD: decodificamos el token (sin verificar) para saber si venció — el caso más
+// común, y ahí el motivo es definitivo sin depender del server. Si seguía vigente, fue la firma
+// o el emisor (el juego apunta a otra instancia de Luna). `serverReason` es lo que devolvió el
+// backend (cuando Luna mande el code real de jose, aparece como detalle).
+function describeLunaSessionFailure(serverReason: string, token: string): string {
+  const claims = peekJwtClaims(token);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = typeof claims?.exp === 'number' ? claims.exp : null;
+  let cause: string;
+  if (!claims) {
+    cause = 'el token de acceso no se pudo leer (no parece un entitlement válido)';
+  } else if (exp !== null && exp < nowSec) {
+    cause = `el token de acceso venció hace ${formatTokenSeconds(nowSec - exp)} (dura 5 min). Reabrí el juego desde Luna para obtener uno nuevo`;
+  } else if (exp !== null) {
+    cause = `el token seguía vigente (${formatTokenSeconds(exp - nowSec)} restantes), así que Luna lo rechazó por la firma o el emisor — el juego podría estar apuntando a otra instancia de Luna`;
+  } else {
+    cause = 'Luna lo rechazó y no se pudo determinar el motivo desde el token';
+  }
+  return `No pudimos validar tu sesión de Luna Negra: ${cause}. (detalle del servidor: ${serverReason}). Podés reintentar desde Luna o seguir como anónimo.`;
+}
+
 async function bootstrapLunaSession(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   // Aceptamos varios nombres por las dudas; el contrato es ?lnToken=<entitlement>.
@@ -2361,7 +2397,7 @@ async function bootstrapLunaSession(): Promise<void> {
       // salas públicas del arranque pisa este último. Causas típicas: LUNA_NEGRA_BASE_URL
       // del deploy apunta a un store que no minteó este token, o el token expiró (~5 min).
       const reason = error instanceof Error ? error.message : 'error desconocido';
-      lunaState.sessionError = `No pudimos validar tu sesión de Luna Negra (${reason}). Podés reintentar desde Luna o seguir como anónimo.`;
+      lunaState.sessionError = describeLunaSessionFailure(reason, freshToken);
       // Reporte automático del fallo (a Discord vía /api/report). Manda los claims del
       // token SIN verificar para que el propio reporte diga la causa sin entrar por SSH.
       reportLunaSessionFailure(reason, freshToken);
@@ -5878,6 +5914,10 @@ function shouldShowLoginGate(): boolean {
 
 function renderLoginGateOverlay(): string {
   const busy = lunaState.inviteWindowBusy;
+  // No mostramos el nombre por defecto ("Player"): dejamos el campo vacío para
+  // que el jugador se vea forzado a escribir uno antes de continuar.
+  const enteredName = identityState.name.trim() === 'Player' ? '' : identityState.name;
+  const canContinue = enteredName.trim().length > 0;
   return renderLobbyShell(`
     <div class="login-gate">
       <article class="cs2-card login-gate-card">
@@ -5891,9 +5931,9 @@ function renderLoginGateOverlay(): string {
         <div class="login-gate-sep"><span>o</span></div>
         <label class="online-field login-gate-field">
           <span>Tu nombre</span>
-          <input type="text" maxlength="18" value="${escapeHtml(identityState.name)}" data-online-field="anon-name" autocomplete="off" placeholder="Tu nombre" />
+          <input type="text" maxlength="18" value="${escapeHtml(enteredName)}" data-online-field="anon-name" autocomplete="off" placeholder="Tu nombre" />
         </label>
-        <button class="cs2-btn login-gate-anon" type="button" data-ui-action="anon-continue">Continuar como anónimo</button>
+        <button class="cs2-btn login-gate-anon" type="button" data-ui-action="anon-continue"${canContinue ? '' : ' disabled'}>Continuar como anónimo</button>
         <p class="login-gate-note">Sin cuenta podés jugar solo y unirte a salas por código, pero no verás amigos ni invitaciones.</p>
       </article>
     </div>

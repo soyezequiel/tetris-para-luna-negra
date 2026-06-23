@@ -114,8 +114,21 @@ export async function resolveLunaSession(
     throw new OnlineRoomError(`No se pudo contactar a Luna Negra en ${url} (${reason}).`, 502);
   }
   if (!response.ok) {
+    // Propagamos el motivo REAL que manda Luna ({ error: { code, message } }) en vez de un
+    // 401 mudo: así la puerta de login dice por qué (token vencido / firma / emisor) en lugar
+    // de "rechazó la sesión" a secas. Si el body no trae detalle, cae al genérico.
+    const body = (await response.json().catch(() => null)) as
+      | { error?: { code?: string; message?: string } | string }
+      | null;
+    const detail =
+      typeof body?.error === 'object' && body.error
+        ? [body.error.message, body.error.code].filter(Boolean).join(' · ')
+        : typeof body?.error === 'string'
+          ? body.error
+          : '';
+    const suffix = detail ? `: ${detail}` : '.';
     throw new OnlineRoomError(
-      `Luna Negra rechazó la sesión (HTTP ${response.status}).`,
+      `Luna Negra rechazó la sesión (HTTP ${response.status})${suffix}`,
       response.status === 401 ? 401 : 502,
     );
   }
