@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>TETRA · status de servicios</title>
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --card: #131826;
+      --border: #232a3d;
+      --text: #e6e9f0;
+      --muted: #8b93a7;
+      --ok: #3ecf8e;
+      --warn: #f5b942;
+      --critical: #f0584b;
+      --unknown: #5a6478;
+      --error: #c94b8e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      padding: 24px 16px 64px;
+    }
+    .wrap { max-width: 820px; margin: 0 auto; }
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+    h1 { font-size: 22px; margin: 0; letter-spacing: 0.5px; }
+    h1 span { color: var(--muted); font-weight: 400; }
+    .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+    .bar-actions { display: flex; gap: 8px; align-items: center; }
+    button {
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+    }
+    button:hover { border-color: var(--muted); }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 16px 18px; margin-bottom: 12px;
+    }
+    .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+    .dot.ok { background: var(--ok); }
+    .dot.warn { background: var(--warn); }
+    .dot.critical { background: var(--critical); }
+    .dot.unknown { background: var(--unknown); }
+    .dot.error { background: var(--error); }
+    .card-name { font-size: 16px; font-weight: 600; flex: 1 1 auto; }
+    .badge { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }
+    .note { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+    .err { color: var(--error); font-size: 12px; margin: 6px 0 0; font-family: ui-monospace, monospace; }
+    .metric { margin-top: 12px; }
+    .metric-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; }
+    .metric-row .val { color: var(--muted); }
+    .track { height: 8px; background: #0b0e14; border-radius: 6px; overflow: hidden; }
+    .fill { height: 100%; border-radius: 6px; transition: width 0.3s; }
+    .fill.ok { background: var(--ok); }
+    .fill.warn { background: var(--warn); }
+    .fill.critical { background: var(--critical); }
+    .fill.unknown { background: var(--unknown); }
+    a { color: #7aa2ff; font-size: 13px; }
+    .links { margin-top: 12px; }
+    .loading, .fatal { color: var(--muted); padding: 40px 0; text-align: center; }
+    .fatal { color: var(--critical); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>TETRA <span>· status</span></h1>
+      <div class="bar-actions">
+        <span class="sub" id="stamp"></span>
+        <button id="refresh">Actualizar</button>
+      </div>
+    </header>
+    <p class="sub">Uso real de cada servicio vs. los límites de su plan. Verde &lt;70% · amarillo 70–90% · rojo ≥90%.</p>
+    <div id="content"><div class="loading">Cargando…</div></div>
+  </div>
+
+  <script>
+    const content = document.getElementById('content');
+    const stamp = document.getElementById('stamp');
+    document.getElementById('refresh').addEventListener('click', load);
+
+    function fmt(n, unit) {
+      if (n === null || n === undefined) return '—';
+      if (unit === 'bytes') {
+        const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let v = n, i = 0;
+        while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+        return (Math.round(v * 10) / 10) + ' ' + u[i];
+      }
+      return n.toLocaleString('es');
+    }
+
+    function metricHtml(m) {
+      const usedTxt = fmt(m.used, m.unit);
+      const limitTxt = m.limit === null ? '—' : fmt(m.limit, m.unit);
+      const pct = m.pct;
+      const cls = pct === null ? 'unknown' : pct >= 90 ? 'critical' : pct >= 70 ? 'warn' : 'ok';
+      const width = pct === null ? 0 : Math.min(100, pct);
+      const right = m.limit === null
+        ? usedTxt
+        : usedTxt + ' / ' + limitTxt + (pct === null ? '' : ' · ' + pct + '%');
+      const per = m.period ? ' (' + m.period + ')' : '';
+      return '<div class="metric">'
+        + '<div class="metric-row"><span>' + m.label + per + '</span><span class="val">' + right + '</span></div>'
+        + '<div class="track"><div class="fill ' + cls + '" style="width:' + width + '%"></div></div>'
+        + '</div>';
+    }
+
+    function cardHtml(s) {
+      const badge = s.configured ? '' : '<span class="badge">no configurado</span>';
+      const link = s.dashboardUrl ? '<div class="links"><a href="' + s.dashboardUrl + '" target="_blank" rel="noopener">Abrir dashboard ↗</a></div>' : '';
+      const note = s.note ? '<p class="note">' + s.note + '</p>' : '';
+      const err = s.error ? '<p class="err">' + s.error + '</p>' : '';
+      const metrics = (s.metrics || []).map(metricHtml).join('');
+      return '<div class="card">'
+        + '<div class="card-head"><span class="dot ' + s.status + '"></span>'
+        + '<span class="card-name">' + s.name + '</span>' + badge + '</div>'
+        + note + err + metrics + link
+        + '</div>';
+    }
+
+    async function load() {
+      content.innerHTML = '<div class="loading">Cargando…</div>';
+      try {
+        const res = await fetch('/api/status' + location.search, { cache: 'no-store' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          content.innerHTML = '<div class="fatal">HTTP ' + res.status + ' · ' + (body.error || 'sin detalle')
+            + (res.status === 401 || res.status === 503 ? '<br><br>Agregá <code>?token=TU_STATUS_TOKEN</code> a la URL.' : '') + '</div>';
+          return;
+        }
+        const data = await res.json();
+        content.innerHTML = data.services.map(cardHtml).join('');
+        stamp.textContent = 'actualizado ' + new Date(data.generatedAtMs).toLocaleTimeString('es');
+      } catch (e) {
+        content.innerHTML = '<div class="fatal">No se pudo cargar: ' + e + '</div>';
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
