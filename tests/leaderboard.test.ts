@@ -8,13 +8,16 @@ import {
 import { OnlineRoomError } from '../src/online/roomService';
 
 function baseInput(overrides: Partial<Parameters<typeof submitWin>[1]> = {}) {
-  return {
+  const merged = {
     playerId: 'player-1',
     name: 'Ana',
     avatarUrl: null,
-    npub: null,
     ...overrides,
   };
+  // El top solo lista jugadores con sesión de Luna Negra (npub). Por defecto simulamos
+  // uno identificado, derivando el npub del playerId; los tests que prueban invitados
+  // pasan `npub: null` explícito.
+  return { npub: `npub-${merged.playerId}`, ...merged };
 }
 
 describe('submitWin', () => {
@@ -66,6 +69,14 @@ describe('submitWin', () => {
     expect(top.length).toBe(LEADERBOARD_MAX_ENTRIES);
     expect(top[0].playerId).toBe('star');
     expect(top[0].wins).toBe(5);
+  });
+
+  it('excludes guests without a Luna Negra session (no npub) from the top', async () => {
+    const store = new MemoryLeaderboardStore();
+    await submitWin(store, baseInput({ playerId: 'guest', name: 'Invitado', npub: null }));
+    await submitWin(store, baseInput({ playerId: 'member', name: 'Miembro' }));
+    const top = await getWinsLeaderboard(store);
+    expect(top.map((entry) => entry.playerId)).toEqual(['member']);
   });
 
   it('defaults a blank name to Jugador', async () => {

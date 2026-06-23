@@ -25,10 +25,19 @@ export class MemoryLeaderboardStore implements LeaderboardStore {
   private entries = new Map<string, LeaderboardEntry>();
 
   async topWins(limit: number): Promise<LeaderboardEntry[]> {
-    return [...this.entries.values()].sort(compareEntries).slice(0, clampLimit(limit));
+    // El top mundial solo lista a jugadores con sesión de Luna Negra (npub). El filtro
+    // va también acá —no solo en recordWin— para esconder entradas de invitados que
+    // pudieran haber quedado persistidas de antes de aplicar esta regla.
+    return [...this.entries.values()]
+      .filter((entry) => entry.npub)
+      .sort(compareEntries)
+      .slice(0, clampLimit(limit));
   }
 
   async recordWin(meta: LeaderboardWinMeta): Promise<void> {
+    // Sin sesión de Luna Negra (sin npub) no se entra al top: lo descartamos en silencio
+    // para que el ranking solo cuente jugadores identificados.
+    if (!meta.npub) return;
     const current = this.entries.get(meta.playerId);
     this.entries.set(meta.playerId, { ...meta, wins: (current?.wins ?? 0) + 1 });
     if (this.entries.size > LEADERBOARD_MAX_ENTRIES) {

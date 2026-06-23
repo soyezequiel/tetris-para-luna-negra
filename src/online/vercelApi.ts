@@ -194,12 +194,17 @@ class UpstashLeaderboardStore implements LeaderboardStore {
     const metas = await upstashCommand<(string | null)[] | null>(this.url, this.token, [
       'HMGET', winsMetaKey(), ...members,
     ]);
-    return members.map((member, index) => (
-      parseLeaderboardEntry(member, scores.get(member) ?? 0, metas?.[index] ?? null)
-    ));
+    // El top mundial solo lista a jugadores con sesión de Luna Negra (npub). Filtramos
+    // también al leer para esconder entradas de invitados persistidas de antes de la regla.
+    return members
+      .map((member, index) => parseLeaderboardEntry(member, scores.get(member) ?? 0, metas?.[index] ?? null))
+      .filter((entry) => entry.npub);
   }
 
   async recordWin(meta: LeaderboardWinMeta): Promise<void> {
+    // Sin sesión de Luna Negra (sin npub) no se entra al top: lo descartamos en silencio
+    // para que el ranking solo cuente jugadores identificados.
+    if (!meta.npub) return;
     await upstashCommand(this.url, this.token, [
       'EVAL', LEADERBOARD_WIN_SCRIPT, 2,
       winsKey(), winsMetaKey(),
