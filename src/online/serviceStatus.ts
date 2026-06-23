@@ -165,26 +165,40 @@ async function checkUpstash(): Promise<ServiceCheck> {
 
   const metrics: Metric[] = [];
   let error: string | undefined;
+  // Upstash NO expone su cuota de comandos por API... salvo cuando la superás: ahí el
+  // error trae "Limit: X, Usage: Y" y de ahí sacamos la métrica real (al 100% = 🔴).
+  let quota: Metric | null = null;
+  const captureQuota = (e: unknown): void => {
+    const match = /Limit:\s*(\d+),\s*Usage:\s*(\d+)/i.exec(e instanceof Error ? e.message : String(e));
+    if (match) quota = metric('Comandos (cuota del plan)', Number(match[2]), Number(match[1]), undefined, 'mes');
+  };
+
   try {
     const keys = await upstashCommand<number>(url, token, ['DBSIZE']);
     metrics.push({ label: 'Claves almacenadas', used: Number(keys) || 0, limit: null, pct: null });
   } catch (e) {
+    captureQuota(e);
     error = errText(e);
   }
   try {
     const info = await upstashCommand<string>(url, token, ['INFO']);
     const used = parseUsedMemory(info);
     if (used !== null) metrics.push(metric('Memoria usada', used, UPSTASH_MAX_BYTES, 'bytes', 'total'));
-  } catch {
-    // INFO puede no estar habilitado en algunos planes: lo dejamos pasar.
+  } catch (e) {
+    captureQuota(e); // INFO también puede chocar con el límite; si no, lo ignoramos.
   }
+  // La cuota va primero: es la métrica que importa para los límites.
+  if (quota) metrics.unshift(quota);
 
   const status = metrics.length === 0
     ? (error ? 'error' : 'unknown')
     : worst(...metrics.map((m) => statusFromPct(m.pct)));
   return {
-    id, name, configured: true, status, dashboardUrl, metrics, error,
-    note: 'Cuota de comandos/día: revisala en el dashboard (free ~10k/día); no se expone por la API de Redis.',
+    id, name, configured: true, status, dashboardUrl, metrics,
+    error: quota ? undefined : error, // si capturamos la cuota, el "error" ya está dicho en la métrica
+    note: quota
+      ? 'Cuota de comandos del plan AGOTADA: Upstash rechaza comandos. Si ya migraste todo a Cloudflare, desconectá Upstash (quitá las env vars en Vercel).'
+      : 'Cuota de comandos: revisala en el dashboard; solo se expone por API cuando la superás.',
   };
 }
 
