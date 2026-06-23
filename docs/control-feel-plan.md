@@ -1,5 +1,8 @@
 # Plan de Game Feel: Controles (solo + multijugador)
 
+> **Documento histórico** de planificación. Para el estado actual del juego, ver el
+> [README](../README.md).
+
 Objetivo: que mover, rotar y soltar piezas se sienta más ágil, suave y preciso,
 estilo TETR.IO, **sin** rediseñar la lógica ni perder el "peso" actual del juego.
 Mejora fina y progresiva, no un cambio brusco.

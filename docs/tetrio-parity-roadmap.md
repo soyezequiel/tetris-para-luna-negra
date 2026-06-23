@@ -1,5 +1,8 @@
 # Roadmap TETR.IO-Inspired Multiplayer Parity
 
+> **Documento histórico** de planificación. Para el estado actual del juego, ver el
+> [README](../README.md).
+
 Este plan cubre los puntos 1, 2, 3 y 6 de la comparacion con TETR.IO:
 
 1. Modos, escala y ecosistema online.
