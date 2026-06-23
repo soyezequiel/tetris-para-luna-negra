@@ -21,7 +21,12 @@ interface LunaConfig {
 }
 
 function readConfig(): LunaConfig {
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
+  // OJO con el .trim(): lunaGet/lunaPost concatenan `${baseUrl}${path}` (string),
+  // NO usan new URL(). Un espacio/salto de línea al final de la env (típico al
+  // pegarla en Vercel) producía fetch('https://host\n/api/v1/session') → throw →
+  // null → 401, MIENTRAS que buildLunaLoginUrl (new URL) lo toleraba: login andaba
+  // pero la sesión SSO no. Por eso trimeamos antes de sacar los slashes finales.
+  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').trim().replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
   if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
   if (!apiKey) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
@@ -94,8 +99,27 @@ export async function resolveLunaSession(
   token: string,
 ): Promise<{ identity: LunaIdentity; source: 'luna-negra' }> {
   const config = readConfig();
-  // Valida el token de sesión contra Luna Negra y devuelve la identidad.
-  const payload = await lunaGet<LunaSessionPayload>(config, '/api/v1/session', token);
+  // Valida el token de sesión contra Luna Negra y devuelve la identidad. A
+  // diferencia de lunaGet (que se traga el motivo y devuelve null), acá surface-amos
+  // la causa REAL del fallo para que la puerta de login no muestre un 401 mudo:
+  //   · throw de fetch  → URL/red rota (p. ej. baseUrl con basura → 502).
+  //   · HTTP no-2xx     → el store rechazó (401 token vencido/inválido, 403 WAF…).
+  //   · payload sin npub → respuesta inesperada.
+  const url = `${config.baseUrl}/api/v1/session`;
+  let response: Response;
+  try {
+    response = await lunaFetch(url, { method: 'GET' }, token);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'fetch falló';
+    throw new OnlineRoomError(`No se pudo contactar a Luna Negra en ${url} (${reason}).`, 502);
+  }
+  if (!response.ok) {
+    throw new OnlineRoomError(
+      `Luna Negra rechazó la sesión (HTTP ${response.status}).`,
+      response.status === 401 ? 401 : 502,
+    );
+  }
+  const payload = (await response.json().catch(() => null)) as LunaSessionPayload | null;
   if (!payload?.npub) {
     throw new OnlineRoomError('Sesión de Luna Negra inválida o expirada.', 401);
   }
