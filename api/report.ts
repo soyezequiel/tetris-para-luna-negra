@@ -79,7 +79,22 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 interface ReportPayload {
+  kind?: unknown;
+  url?: unknown;
   comment?: unknown;
+  // Fallo de validación de sesión de Luna Negra (401). Lo manda automáticamente el cliente
+  // cuando el entitlement no valida; los claims van decodificados SIN verificar (diagnóstico).
+  lunaSession?: {
+    reason?: unknown;
+    hasToken?: unknown;
+    tokenExpired?: unknown;
+    tokenAgeSec?: unknown;
+    secsPastExp?: unknown;
+    iss?: unknown;
+    aud?: unknown;
+    scope?: unknown;
+    likelyCause?: unknown;
+  };
   device?: { userAgent?: unknown; cores?: unknown; dpr?: unknown; viewport?: unknown; transport?: unknown };
   context?: { appMode?: unknown; roomId?: unknown; players?: unknown; isHost?: unknown };
   betWithdrawal?: {
@@ -120,6 +135,10 @@ interface ReportPayload {
 
 // Resumen legible para el mensaje de Discord (≤2000 chars). El detalle completo va adjunto.
 function buildDiscordSummary(report: ReportPayload): string {
+  // Los reportes de fallo de sesión de Luna Negra no traen métricas de lag: resumen propio.
+  if (report.kind === 'luna-session-failure' || report.lunaSession) {
+    return buildLunaSessionSummary(report);
+  }
   const s = report.session ?? {};
   const ctx = report.context ?? {};
   const dev = report.device ?? {};
@@ -143,6 +162,24 @@ function buildDiscordSummary(report: ReportPayload): string {
     buildAudioLine(report.audio),
     buildMarksLine(report.marks),
   ].filter((line): line is string => line !== null);
+  return lines.join('\n').slice(0, 1990);
+}
+
+// Resumen de un fallo de validación de sesión de Luna Negra (401). La línea clave es
+// `causa probable`: la deriva el cliente de si el token ya estaba vencido (expiración,
+// benigno) o seguía vigente (firma/baseURL mismatch → revisar LUNA_NEGRA_BASE_URL).
+function buildLunaSessionSummary(report: ReportPayload): string {
+  const ls = report.lunaSession ?? {};
+  const bool = (v: unknown): string => (v === true ? 'sí' : v === false ? 'no' : '—');
+  const lines = [
+    '🔒 **Sesión de Luna Negra rechazada (401)**',
+    `💬 ${str(ls.reason)}`,
+    `🎯 causa probable: **${str(ls.likelyCause)}**`,
+    `🎟️ token: presente=${bool(ls.hasToken)} vencido=${bool(ls.tokenExpired)} edad=${str(ls.tokenAgeSec)}s pasado_exp=${str(ls.secsPastExp)}s`,
+    `🏷️ iss=\`${str(ls.iss)}\` aud=\`${str(ls.aud)}\` scope=\`${str(ls.scope)}\``,
+    `🔗 ${str(report.url)}`,
+    `🖥️ ${str(report.device?.userAgent)}`,
+  ];
   return lines.join('\n').slice(0, 1990);
 }
 

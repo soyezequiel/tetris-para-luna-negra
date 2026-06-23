@@ -2261,6 +2261,75 @@ async function bootstrapOnlineStartup(): Promise<void> {
 // nombre, avatar) contra /api/luna-negra/session y PERSISTIMOS LA IDENTIDAD, no el
 // token. En recargas posteriores sin token, restauramos la identidad guardada
 // (presencia y amigos usan la API key del servidor, no el token del usuario).
+// Decodifica los claims de un JWT SIN verificar la firma. Solo diagnóstico: queremos
+// saber si el entitlement ya estaba vencido cuando Luna lo rechazó (exp es 5 min). No
+// confiamos en estos datos para nada de seguridad. null si el token no es decodificable.
+function peekJwtClaims(token: string): Record<string, unknown> | null {
+  try {
+    const part = token.split('.')[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
+    return JSON.parse(atob(b64 + pad)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// Reporte automático cuando Luna Negra rechaza la validación de sesión (el 401 que tira
+// al jugador a invitado). Decodifica los claims del token SIN verificar para distinguir la
+// causa sin entrar por SSH a la laptop: si el token ya estaba vencido cuando Luna lo rechazó
+// → expiración (benigno, reentrar desde Luna); si seguía vigente → la firma no matcheó
+// (LUNA_NEGRA_BASE_URL apunta a otra Luna) o iss/aud no coinciden. Fire-and-forget: nunca
+// bloquea ni rompe la puerta de login. Va al mismo canal de Discord que el botón "Reportar".
+function reportLunaSessionFailure(reason: string, token: string): void {
+  const claims = peekJwtClaims(token);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = typeof claims?.exp === 'number' ? claims.exp : null;
+  const iat = typeof claims?.iat === 'number' ? claims.iat : null;
+  const expired = exp !== null ? exp < nowSec : null;
+  const audClaim = claims?.aud;
+  const report = {
+    generatedAt: new Date().toISOString(),
+    kind: 'luna-session-failure',
+    comment: `Sesión de Luna Negra rechazada: ${reason}`,
+    // El token va en la URL; lo redactamos para no filtrar el entitlement crudo al reporte.
+    url: (() => {
+      try {
+        return window.location.href.replace(/([?&](?:lnToken|entitlement|lnDemo)=)[^&]*/gi, '$1<redacted>');
+      } catch {
+        return null;
+      }
+    })(),
+    device: {
+      userAgent: navigator.userAgent,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+    },
+    lunaSession: {
+      reason,
+      hasToken: Boolean(token),
+      // Claims SIN verificar (no incluimos la firma ni el token crudo). Lo que discrimina
+      // la causa: si tokenExpired es true fue expiración; si es false, mismatch de firma/claims.
+      tokenExpired: expired,
+      tokenAgeSec: iat !== null ? nowSec - iat : null,
+      secsPastExp: exp !== null ? nowSec - exp : null,
+      iss: typeof claims?.iss === 'string' ? claims.iss : null,
+      aud: typeof audClaim === 'string' ? audClaim : Array.isArray(audClaim) ? audClaim.join(',') : null,
+      scope: typeof claims?.scope === 'string' ? claims.scope : null,
+      likelyCause: expired === true
+        ? 'token-expirado'
+        : expired === false
+          ? 'firma-o-baseURL-mismatch'
+          : 'desconocido (token no decodificable)',
+    },
+  };
+  void fetch('/api/report', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(report),
+  }).catch((error) => console.warn('[luna-negra] no se pudo enviar el reporte del fallo de sesión', error));
+}
+
 async function bootstrapLunaSession(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   // Aceptamos varios nombres por las dudas; el contrato es ?lnToken=<entitlement>.
@@ -2287,6 +2356,9 @@ async function bootstrapLunaSession(): Promise<void> {
       // del deploy apunta a un store que no minteó este token, o el token expiró (~5 min).
       const reason = error instanceof Error ? error.message : 'error desconocido';
       lunaState.sessionError = `No pudimos validar tu sesión de Luna Negra (${reason}). Podés reintentar desde Luna o seguir como anónimo.`;
+      // Reporte automático del fallo (a Discord vía /api/report). Manda los claims del
+      // token SIN verificar para que el propio reporte diga la causa sin entrar por SSH.
+      reportLunaSessionFailure(reason, freshToken);
     } finally {
       removeLunaSessionParamsFromUrl();
     }
