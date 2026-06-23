@@ -912,6 +912,28 @@
   box-shadow: 0 0 22px rgba(0, 229, 255, 0.4);
 }
 
+/* Línea de comparación contra tu mejor marca previa: cuánto mejoraste o cuánto te
+   faltó. La variante --new resalta en verde cuando estrenás o batís el récord. */
+.solo-results-record {
+  margin: 2px 0 4px;
+  padding: 7px 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+  color: var(--dash-text-dim);
+  text-align: center;
+}
+
+.solo-results-record--new {
+  color: var(--dash-success);
+  background: rgba(57, 212, 154, 0.12);
+  border-color: rgba(57, 212, 154, 0.5);
+  box-shadow: 0 0 20px rgba(57, 212, 154, 0.3);
+}
+
 /* Mini-tabla del top centrada en el jugador (3 arriba + vos + 3 abajo). Reemplaza
    la frase suelta del puesto por una lista compacta que se entiende de un vistazo. */
 .solo-results-rankwin {

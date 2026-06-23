@@ -10,6 +10,7 @@ import { renderHistory } from './ui/dashboard/history';
 import type { PlayMode } from './ui/playMode';
 import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './ui/dashboard/modeCard';
 import { leaderboardState } from './state/leaderboardState';
+import type { SurvivalRunRank } from './state/leaderboardState';
 import { betState, DEFAULT_ONLINE_BET_STAKE_SATS } from './state/betState';
 import { lunaState, type PendingLunaLaunchRequest } from './state/lunaState';
 import { spectatorState } from './state/spectatorState';
@@ -3124,23 +3125,45 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
     return;
   }
   leaderboardState.survivalRunRank = { status: 'loading' };
+  const FETCH_LIMIT = 200;
   try {
-    await onlineClient.submitSurvival({
-      playerId: identityState.player.id,
+    // Una sola lectura alcanza: leemos el top ACTUAL antes de registrar. Nos da (a) mi
+    // récord previo, para comparar, y (b) las marcas de los demás, para proyectar dónde
+    // caería esta partida. Las marcas ajenas no cambian al registrar la mía, así que no
+    // hace falta releer después.
+    const snapshot = await onlineClient.getSurvivalLeaderboard(FETCH_LIMIT);
+    leaderboardState.survivalEntries = snapshot.entries;
+    const myId = identityState.player.id;
+    const mine = snapshot.entries.find((entry) => entry.playerId === myId);
+    const previousBestMs = mine ? mine.bestMs : null;
+
+    // Puesto proyectado de ESTA partida: contra las marcas de los demás (excluyo mi
+    // entrada vieja para no contarme dos veces). Empate = no superás, quedás detrás.
+    const others = snapshot.entries.filter((entry) => entry.playerId !== myId);
+    const above = others.filter((entry) => entry.bestMs > durationMs).length;
+    const projectedRank = above + 1;
+    const projectedOutsideTop = above >= others.length && others.length >= FETCH_LIMIT;
+
+    // Fijamos el resultado ANTES de registrar para que un fallo del envío (best-effort)
+    // no borre la comparación y el puesto, que ya tenemos calculados.
+    leaderboardState.survivalRunRank = {
+      status: 'done',
+      thisRunMs: durationMs,
+      previousBestMs,
+      improvedRecord: previousBestMs === null || durationMs > previousBestMs,
+      projectedRank,
+      projectedOutsideTop,
+      total: others.length + 1,
+    };
+
+    // El server guarda el MÁXIMO por jugador; registramos best-effort sin esperar.
+    void onlineClient.submitSurvival({
+      playerId: myId,
       name: identityState.name.trim() || identityState.player.name,
       avatarUrl: identityState.player.avatarUrl,
       npub,
       durationMs,
     });
-    // Tras registrar (el server guarda el MÁXIMO por jugador), releemos el ranking
-    // y buscamos mi posición. Pedimos un tope amplio para ubicarme aunque no esté
-    // entre los primeros; si ni así aparezco, quedo "fuera del top".
-    const response = await onlineClient.getSurvivalLeaderboard(200);
-    leaderboardState.survivalEntries = response.entries;
-    const index = response.entries.findIndex((entry) => entry.playerId === identityState.player.id);
-    leaderboardState.survivalRunRank = index >= 0
-      ? { status: 'ranked', rank: index + 1, total: response.entries.length }
-      : { status: 'unranked' };
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
     leaderboardState.survivalRunRank = { status: 'error' };
@@ -5326,7 +5349,7 @@ function renderScreenOverlay(state: GameState): string {
 function renderDeathStudyHint(): string {
   return `
     <div class="death-study-hint">
-      <span class="death-study-hint-tag">TOP OUT</span>
+      <span class="death-study-hint-tag">PERDISTE</span>
       <span class="death-study-hint-text">Observá tu tablero — así quedó al perder</span>
     </div>
   `;
@@ -5342,13 +5365,13 @@ function renderSoloResultsOverlay(state: GameState): string {
   const pps = summary.pps.toFixed(1);
   const combo = runState.maxCombo;
   const isSurvival = runState.currentRunKind === 'survival';
-  const subtitle = isSurvival ? 'SUPERVIVENCIA' : target ? `OBJETIVO ${target} LÍNEAS` : 'CUSTOM';
+  const subtitle = isSurvival ? 'SOBREVIVISTE' : target ? `OBJETIVO ${target} LÍNEAS` : 'CUSTOM';
   const badge = isClear
     ? '<div class="solo-results-badge solo-results-badge--clear">✓ OBJETIVO CUMPLIDO</div>'
     : `<div class="solo-results-badge solo-results-badge--fail">${escapeHtml(gameOverReasonMessage(state.stats.gameOverReason))}</div>`;
   const verdict = isClear
-    ? '<div class="solo-results-verdict solo-results-verdict--clear">CLEAR</div>'
-    : '<div class="solo-results-verdict solo-results-verdict--fail">TOP OUT</div>';
+    ? '<div class="solo-results-verdict solo-results-verdict--clear">¡LO LOGRASTE!</div>'
+    : '<div class="solo-results-verdict solo-results-verdict--fail">PERDISTE</div>';
   return `
     <div class="menu-scrim solo-results-scrim">
       <div class="solo-results">
@@ -5386,45 +5409,63 @@ function renderSurvivalRankBlock(): string {
   if (r.status === 'guest') {
     return '<div class="solo-results-rank">Iniciá sesión en Luna Negra para competir en el top mundial</div>';
   }
-  if (r.status === 'unranked') {
-    return '<div class="solo-results-rank">Todavía fuera del top mundial — ¡seguí intentando!</div>';
-  }
   if (r.status === 'error') {
     return '<div class="solo-results-rank">No se pudo calcular tu puesto</div>';
   }
-  // Ranqueado: en vez de una sola frase, mostramos una mini-tabla con tu vecindario
-  // del ranking (hasta 3 arriba y 3 abajo) y tu fila resaltada. Da contexto de un
-  // vistazo —a quién le ganás y a quién perseguís— sin abrir el top completo.
-  return renderSurvivalRankWindow(r.rank, r.total);
+  // Resultado completo: primero cómo te fue contra tu récord, después en qué puesto
+  // del mundo entrarías con el tiempo de esta partida (mini-tabla con vecinos).
+  return renderSurvivalRecordLine(r) + renderSurvivalProjectedWindow(r);
 }
 
-// Mini-tabla del top centrada en el jugador: tu fila + vecinos inmediatos.
-function renderSurvivalRankWindow(rank: number, total: number): string {
-  const myIndex = rank - 1;
-  // 2 arriba + vos + 2 abajo: suficiente contexto de vecinos sin que la pantalla
-  // de resultados crezca de más y obligue a scrollear.
-  const start = Math.max(0, myIndex - 2);
-  const end = Math.min(leaderboardState.survivalEntries.length, myIndex + 3);
+// Línea de comparación contra tu mejor marca anterior: récord nuevo, primera marca, o
+// cuánto te faltó para igualarlo.
+function renderSurvivalRecordLine(r: Extract<SurvivalRunRank, { status: 'done' }>): string {
+  if (r.previousBestMs === null) {
+    return '<div class="solo-results-record solo-results-record--new">🎉 ¡Tu primera marca registrada!</div>';
+  }
+  const prevTime = formatFrames(Math.round(r.previousBestMs / GAME_FRAME_MS));
+  if (r.improvedRecord) {
+    const delta = formatFrames(Math.round((r.thisRunMs - r.previousBestMs) / GAME_FRAME_MS));
+    return `<div class="solo-results-record solo-results-record--new">🎉 ¡Nuevo récord! +${escapeHtml(delta)} sobre tu marca anterior (${escapeHtml(prevTime)})</div>`;
+  }
+  const delta = formatFrames(Math.round((r.previousBestMs - r.thisRunMs) / GAME_FRAME_MS));
+  return `<div class="solo-results-record">Tu récord sigue en ${escapeHtml(prevTime)} — te faltaron ${escapeHtml(delta)}</div>`;
+}
+
+// Mini-tabla "si te agregaran con este puntaje": las marcas ajenas + una fila virtual
+// "Vos" con el tiempo de ESTA partida, insertada donde caería. Responde literalmente
+// la pregunta, sin depender de lo que el server ya tenga guardado (que es tu máximo).
+function renderSurvivalProjectedWindow(r: Extract<SurvivalRunRank, { status: 'done' }>): string {
   const myId = identityState.player.id;
-  const rows = leaderboardState.survivalEntries.slice(start, end).map((entry, i) => {
+  type Row = { name: string; ms: number; mine: boolean };
+  const rows: Row[] = leaderboardState.survivalEntries
+    .filter((entry) => entry.playerId !== myId)
+    .map((entry) => ({ name: entry.name, ms: entry.bestMs, mine: false }));
+  const insertAt = Math.min(r.projectedRank - 1, rows.length);
+  rows.splice(insertAt, 0, { name: 'Vos', ms: r.thisRunMs, mine: true });
+  // 2 arriba + vos + 2 abajo: contexto de vecinos sin que la pantalla crezca de más.
+  const start = Math.max(0, insertAt - 2);
+  const end = Math.min(rows.length, insertAt + 3);
+  const body = rows.slice(start, end).map((row, i) => {
     const position = start + i + 1;
-    const mine = entry.playerId === myId;
     const pos = position === 1 ? '🥇' : position === 2 ? '🥈' : position === 3 ? '🥉' : `#${position}`;
-    const time = formatFrames(Math.round(entry.bestMs / GAME_FRAME_MS));
-    const name = mine ? 'Vos' : entry.name;
+    const time = formatFrames(Math.round(row.ms / GAME_FRAME_MS));
     return `
-      <div class="rankwin-row${mine ? ' rankwin-row--me' : ''}">
+      <div class="rankwin-row${row.mine ? ' rankwin-row--me' : ''}">
         <span class="rankwin-pos">${escapeHtml(pos)}</span>
-        <span class="rankwin-name">${escapeHtml(name)}</span>
+        <span class="rankwin-name">${escapeHtml(row.name)}</span>
         <span class="rankwin-time">${escapeHtml(time)}</span>
       </div>`;
   }).join('');
-  const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '';
+  const medal = r.projectedRank === 1 ? '🥇' : r.projectedRank === 2 ? '🥈' : r.projectedRank === 3 ? '🥉' : '';
+  const head = r.projectedOutsideTop
+    ? `Con este tiempo quedás fuera del top ${rows.length - 1}`
+    : `${medal ? `${medal} ` : ''}Entrarías en el puesto #${r.projectedRank} <span>de ${r.total} en el mundo</span>`;
   return `
     <div class="solo-results-rankwin">
-      <div class="rankwin-head">${medal ? `${medal} ` : ''}Puesto #${rank} <span>de ${total} en el mundo</span></div>
-      <div class="rankwin-sub">Ordenado por la mejor marca de cada jugador</div>
-      <div class="rankwin-list">${rows}</div>
+      <div class="rankwin-head">${head}</div>
+      <div class="rankwin-sub">Si te sumaran con el tiempo de esta partida</div>
+      <div class="rankwin-list">${body}</div>
     </div>`;
 }
 

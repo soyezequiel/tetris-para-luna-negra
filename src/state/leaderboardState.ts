@@ -7,12 +7,27 @@
 // Parte de PR7 (encapsular los globals de main.ts por dominio).
 import type { LeaderboardEntry, SurvivalEntry } from '../online/protocol';
 
-// Puesto del jugador en el top de supervivencia tras la última partida (se calcula
-// al terminar, en game over, y se muestra en la pantalla de resultados).
+// Resultado del jugador en el top de supervivencia tras la última partida (se
+// calcula al terminar, en game over, y se muestra en la pantalla de resultados).
+// El estado 'done' lleva todo lo necesario para responder dos preguntas: ¿mejoré mi
+// récord? y ¿en qué puesto del mundo entraría con el tiempo de ESTA partida?
 export type SurvivalRunRank =
   | { status: 'loading' }
-  | { status: 'ranked'; rank: number; total: number }
-  | { status: 'unranked' }
+  | {
+      status: 'done';
+      // Tiempo (ms) de la partida recién jugada.
+      thisRunMs: number;
+      // Mejor marca previa (ms) o null si es la primera marca registrada.
+      previousBestMs: number | null;
+      // true si esta partida superó (o estrenó) tu récord.
+      improvedRecord: boolean;
+      // Puesto que ocuparías si te agregaran con el tiempo de esta partida.
+      projectedRank: number;
+      // true si esta partida cae más allá del top consultado (no se puede ubicar).
+      projectedOutsideTop: boolean;
+      // Total de jugadores en el mundo, contándote a vos.
+      total: number;
+    }
   | { status: 'guest' }
   | { status: 'error' };
 
