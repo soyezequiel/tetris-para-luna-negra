@@ -2261,10 +2261,18 @@ async function bootstrapLunaSession(): Promise<void> {
       const response = await lunaSocialClient.resolveSession(freshToken);
       applyLunaIdentity(response.identity);
       saveStoredLunaIdentity(response.identity);
+      lunaState.sessionError = null;
     } catch (error) {
       // Si Luna Negra rechaza un token fresco, la identidad cacheada ya no prueba sesión.
       console.warn('[luna-negra] No se pudo resolver la sesión desde el token; entrando como invitado.', error);
       clearLunaIdentity();
+      // Abriste el juego DESDE Luna (venías con token) pero la validación falló:
+      // dejá visible la razón en la puerta de login en vez de caer mudo a invitado.
+      // Usamos lunaState.sessionError (no onlineNetState.error) porque el refresco de
+      // salas públicas del arranque pisa este último. Causas típicas: LUNA_NEGRA_BASE_URL
+      // del deploy apunta a un store que no minteó este token, o el token expiró (~5 min).
+      const reason = error instanceof Error ? error.message : 'error desconocido';
+      lunaState.sessionError = `No pudimos validar tu sesión de Luna Negra (${reason}). Podés reintentar desde Luna o seguir como anónimo.`;
     } finally {
       removeLunaSessionParamsFromUrl();
     }
@@ -5737,7 +5745,7 @@ function renderLoginGateOverlay(): string {
         <div class="panel-eyebrow">LUNA NEGRA</div>
         <h1 class="login-gate-title">Iniciá sesión</h1>
         <p class="login-gate-subtitle">Entrá con tu cuenta de Luna Negra para ver a tus amigos, invitarlos a jugar, apostar en sats y aparecer en los marcadores.</p>
-        ${renderOnlineError()}
+        ${lunaState.sessionError ? `<div class="panel-note panel-error">${escapeHtml(lunaState.sessionError)}</div>` : ''}
         <button class="cs2-btn cs2-btn-accent login-gate-primary" type="button" data-ui-action="luna-login"${busy ? ' disabled' : ''}>
           ${busy ? 'Abriendo…' : 'Iniciar sesión en Luna Negra'}
         </button>

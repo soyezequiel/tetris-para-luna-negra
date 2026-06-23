@@ -9,6 +9,10 @@ export type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: s
 export interface LunaState {
   // Identidad SSO de Luna Negra (npub + token), o null si no hay sesión.
   identity: LunaIdentity | null;
+  // Razón por la que falló el último canje de token SSO (abriste el juego desde
+  // Luna con ?lnToken pero la validación no resolvió). La puerta de login la
+  // muestra para que el fallo no sea mudo. null = sin error pendiente.
+  sessionError: string | null;
   inviteWindowBusy: boolean;
   inviteNotice: string | null;
   // Momento en que se copió el link de invitación de la sala, para mostrar un
@@ -28,6 +32,7 @@ export interface LunaState {
 
 export const lunaState: LunaState = {
   identity: null,
+  sessionError: null,
   inviteWindowBusy: false,
   inviteNotice: null,
   roomInviteLinkCopiedAt: 0,
