@@ -54,7 +54,7 @@ import {
   winnerBetNpubsFromRoom,
 } from '../src/online/roomService';
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
-import { createBetForRoom, maybeReportRoomBetResult, refreshRoomBet, settleRoomBet } from '../src/online/lunaNegraBets';
+import { createBetForRoom, maybeReportRoomBetResult, refreshRoomBet, settleRoomBet, syncBetParticipantsWithRoom } from '../src/online/lunaNegraBets';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
 import { GET as lunaNegraApiGet } from '../api/luna-negra/[action]';
 import { decidePeerKoAction } from '../src/online/peerKoAuthority';
@@ -1971,6 +1971,70 @@ describe('core stacker engine', () => {
     vi.unstubAllGlobals();
     delete process.env.LUNA_NEGRA_BASE_URL;
     delete process.env.LUNA_NEGRA_API_KEY;
+  });
+
+  it('cancels (refunds all) a funded bet when a participant leaves the lobby', async () => {
+    const store = new MemoryRoomStore();
+    let room = await createRoom(store, { playerId: 'host-player-l', npub: 'npub-host-l', name: 'Host', visibility: 'private' }, 1000);
+    room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-l', npub: 'npub-guest-l', name: 'Guest' }, 1010);
+
+    room.bet = {
+      betId: 'bet-leave-refund',
+      status: 'funded',
+      stakeSats: 50,
+      potSats: 100,
+      potTargetSats: 100,
+      feeSats: 0,
+      feePct: 0,
+      netPayoutSats: 100,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [
+        { npub: 'npub-host-l', playerId: 'host-player-l', depositStatus: 'paid', bolt11: null, lnurl: null, payUrl: null, depositError: null, payoutSats: null, payoutStatus: 'none', withdrawLnurl: null, withdrawUrl: null },
+        { npub: 'npub-guest-l', playerId: 'guest-player-l', depositStatus: 'paid', bolt11: null, lnurl: null, payUrl: null, depositError: null, payoutSats: null, payoutStatus: 'none', withdrawLnurl: null, withdrawUrl: null },
+      ],
+      winnerNpubs: null,
+      resultReported: false,
+      settlementError: null,
+      createdByPlayerId: 'host-player-l',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1010,
+    };
+    await store.saveRoom(room);
+
+    // El invitado que ya había fondeado se va de la sala (sigue en lobby).
+    const left = await leaveRoom(store, { roomId: room.id, playerId: 'guest-player-l' }, 1020);
+    expect(left.room?.players.map((player) => player.id)).toEqual(['host-player-l']);
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/cancel')) return Response.json({ ok: true, status: 'cancelled' });
+      // GET de detalle tras cancelar: Luna ya reembolsó a todos.
+      return Response.json({
+        betId: 'bet-leave-refund',
+        status: 'refunded',
+        participants: [
+          { npub: 'npub-host-l', depositStatus: 'refunded', payoutStatus: 'none' },
+          { npub: 'npub-guest-l', depositStatus: 'refunded', payoutStatus: 'none' },
+        ],
+      });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    try {
+      const synced = await syncBetParticipantsWithRoom(store, room.id, 1030);
+      // Se llamó al cancel de Luna (reembolso a todos los que pagaron).
+      expect(fetchSpy.mock.calls.some(([input]) => String(input).includes('/cancel'))).toBe(true);
+      // El pozo queda terminal: el host lo verá reembolsado y podrá recrear.
+      expect(synced.bet?.status).toBe('refunded');
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env.LUNA_NEGRA_BASE_URL;
+      delete process.env.LUNA_NEGRA_API_KEY;
+    }
   });
 
   it('parses the Luna Negra friends response and reports source luna-negra', async () => {

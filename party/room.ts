@@ -1,5 +1,5 @@
 import { Server, getServerByName, type Connection, type WSMessage } from 'partyserver';
-import { getRoomState, HOST_STALE_MS, MemoryRoomStore, normalizeRoomId, OnlineRoomError, PLAYER_ABANDON_MS } from '../src/online/roomService.js';
+import { getRoomState, HOST_STALE_MS, MemoryRoomStore, normalizeRoomId, OnlineRoomError, PLAYER_ABANDON_MS, roomHasPendingPayout } from '../src/online/roomService.js';
 import {
   dispatchRoomAction,
   lobbyUpdateForRoom,
@@ -35,6 +35,14 @@ const ABANDON_AT_STORAGE_KEY = 'abandonAt';
  * el socket). Override con la var PARTY_ABANDON_GRACE_MS (tests/dev).
  */
 const DEFAULT_ABANDON_GRACE_MS = 15_000;
+
+/**
+ * Gracia (mucho más larga) cuando la sala tiene un cobro/reembolso de apuesta sin
+ * resolver. Borrar la sala se llevaría el QR de retiro del ganador (típicamente un
+ * invitado) antes de que alcance a cobrar; con esto sobrevive hasta que cobre, se
+ * reclame o expire. Override con PARTY_PAYOUT_ABANDON_GRACE_MS (tests/dev).
+ */
+const DEFAULT_PAYOUT_ABANDON_GRACE_MS = 10 * 60_000;
 
 /**
  * Un Durable Object = una sala. El estado vive en RAM (MemoryRoomStore) y los
@@ -98,7 +106,7 @@ export class RoomServer extends Server<Env> {
     //  1) marcamos abandonAt → el alarm unificado borra el storage local (anti-fantasma);
     //  2) el LOBBY arma la remoción de su lista — el alarm de la RoomParty no puede
     //     avisarle (sin acceso a otros DO desde onAlarm), así que la gracia vive allá.
-    const grace = this.abandonGraceMs();
+    const grace = await this.abandonGraceForRoom();
     await this.ctx.storage.put(ROOM_ID_STORAGE_KEY, this.name);
     await this.ctx.storage.put(ABANDON_AT_STORAGE_KEY, Date.now() + grace);
     await this.postToLobby({ op: 'arm-removal', roomId: this.name, graceMs: grace });
@@ -123,6 +131,15 @@ export class RoomServer extends Server<Env> {
     if ([...this.getConnections()].length === 0) {
       const abandonAt = await this.ctx.storage.get<number>(ABANDON_AT_STORAGE_KEY);
       if (abandonAt != null && Date.now() >= abandonAt) {
+        // Red de seguridad: si quedó un cobro/reembolso sin resolver (ganador
+        // invitado con retiro pendiente), NO borramos: re-armamos con la gracia
+        // larga para que el QR sobreviva hasta que cobre, se reclame o expire.
+        const room = await this.store.getRoom(roomId);
+        if (room && roomHasPendingPayout(room)) {
+          await this.ctx.storage.put(ABANDON_AT_STORAGE_KEY, Date.now() + this.payoutAbandonGraceMs());
+          await this.rescheduleAlarm(roomId);
+          return;
+        }
         await this.clearRoomStorage(roomId);
         return; // sala abandonada eliminada; nada que empujar
       }
@@ -210,6 +227,19 @@ export class RoomServer extends Server<Env> {
 
   private abandonGraceMs(): number {
     return Number(this.env.PARTY_ABANDON_GRACE_MS) || DEFAULT_ABANDON_GRACE_MS;
+  }
+
+  private payoutAbandonGraceMs(): number {
+    return Number(this.env.PARTY_PAYOUT_ABANDON_GRACE_MS) || DEFAULT_PAYOUT_ABANDON_GRACE_MS;
+  }
+
+  /**
+   * Gracia de abandono según la sala: si tiene un cobro/reembolso de apuesta sin
+   * resolver, usamos la gracia larga (no perder el QR del ganador); si no, la normal.
+   */
+  private async abandonGraceForRoom(): Promise<number> {
+    const room = await this.store.getRoom(this.name);
+    return room && roomHasPendingPayout(room) ? this.payoutAbandonGraceMs() : this.abandonGraceMs();
   }
 
   /** Empuja el room a todas las conexiones y lo persiste (sobrevive hibernación). */

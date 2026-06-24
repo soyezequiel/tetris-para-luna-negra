@@ -15,5 +15,6 @@ export interface Env {
   Leaderboard: DurableObjectNamespace<LeaderboardServer>;
   SurvivalLeaderboard: DurableObjectNamespace<SurvivalLeaderboardServer>;
   PARTY_ABANDON_GRACE_MS?: string;
+  PARTY_PAYOUT_ABANDON_GRACE_MS?: string;
   PARTY_BRIDGE_TOKEN?: string;
 }

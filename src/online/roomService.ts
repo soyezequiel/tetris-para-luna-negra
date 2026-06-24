@@ -503,6 +503,13 @@ async function leaveRoomOnce(
   }
 
   if (room.players.length === 0) {
+    // Si queda un cobro/reembolso sin resolver, NO borramos la sala vacía: el QR de
+    // retiro del ganador vive en room.bet y el invitado tiene que poder volver a él.
+    if (roomHasPendingPayout(room)) {
+      room.updatedAtServerMs = nowMs;
+      await persistRoom(store, room);
+      return { room, hostMigratedTo: null };
+    }
     await removeRoomEverywhere(store, room.id);
     return { room: null, hostMigratedTo: null };
   }
@@ -776,7 +783,7 @@ export async function listPublicRooms(
   const visible = rooms
     .filter((room): room is OnlineRoom => room !== null && room.visibility === 'public')
     .filter((room) => {
-      if (isRoomAbandoned(room, nowMs)) {
+      if (isRoomAbandoned(room, nowMs) && !roomHasPendingPayout(room)) {
         abandoned.push(room.id);
         return false;
       }
@@ -850,7 +857,10 @@ async function getRoomStateOnce(
   // Sala abandonada (chequeado tras refrescar la presencia del que pollea, así un
   // miembro presente nunca borra su propia sala): se elimina y se responde como
   // inexistente; los clientes manejan el 404 saliendo al menú.
-  if (isRoomAbandoned(room, nowMs)) {
+  // No barremos una sala con un cobro/reembolso de apuesta sin resolver: borrarla se
+  // llevaría el QR de retiro del ganador (típicamente un invitado) antes de que cobre.
+  // Vive hasta que el payout se resuelva (claimed/paid/forfeited) o expire su TTL.
+  if (isRoomAbandoned(room, nowMs) && !roomHasPendingPayout(room)) {
     await removeRoomEverywhere(store, room.id);
     throw new OnlineRoomError('Room not found.', 404);
   }
@@ -1620,6 +1630,16 @@ function normalizeBetStatus(value: unknown): RoomBetStatus {
 
 export function isTerminalRoomBetStatus(status: RoomBetStatus): boolean {
   return status === 'settled' || status === 'cancelled' || status === 'expired' || status === 'refunded';
+}
+
+/**
+ * ¿La sala tiene un cobro/reembolso de apuesta sin resolver? Si lo tiene, NO debe
+ * borrarse por abandono: el QR de retiro del ganador (típicamente un invitado) vive
+ * embebido en `room.bet` y es el único lugar de la UI donde puede recuperarlo. Mismo
+ * criterio que el guard de reopenRoom. Ver [[online-mixed-bet-no-nostr]].
+ */
+export function roomHasPendingPayout(room: OnlineRoom): boolean {
+  return !!room.bet && hasUnresolvedRoomBetPayout(room.bet);
 }
 
 /** Cobros/reembolsos que todavía requieren conservar la apuesta y sus handles. */

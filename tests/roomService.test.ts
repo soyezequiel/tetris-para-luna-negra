@@ -9,6 +9,7 @@ import {
   HOST_UNREACHABLE_MS,
   isRoundReady,
   joinRoom,
+  leaveRoom,
   listPublicRooms,
   MemoryRoomStore,
   PLAYER_ABANDON_MS,
@@ -18,12 +19,13 @@ import {
   ROOM_START_DELAY_MS,
   RoomVersionConflictError,
   setPlayerReady,
+  setRoomBet,
   startRoom,
   updateProgress,
   updateRoomSettings,
   type RoomStore,
 } from '../src/online/roomService';
-import type { EliminateRequest, OnlineRoom, ProgressRequest } from '../src/online/protocol';
+import type { EliminateRequest, OnlineRoom, ProgressRequest, RoomBet, RoomBetPayoutStatus } from '../src/online/protocol';
 
 const HOST_ID = 'host-player-1';
 const GUEST_ID = 'guest-player-1';
@@ -452,6 +454,80 @@ describe('room abandonment cleanup', () => {
     // Otro poll dentro de ROOM_ABANDONED_MS desde el anterior: la sala sigue viva.
     const stillThere = await getRoomState(store, created.id, 1_000_000 + ROOM_ABANDONED_MS + 5, HOST_ID);
     expect(stillThere.id).toBe(created.id);
+  });
+
+  // Una apuesta liquidada cuyo ganador (invitado) todavía no reclamó su retiro:
+  // el QR vive en room.bet y NO debe borrarse por abandono. Ver roomHasPendingPayout.
+  function pendingPayoutBet(payoutStatus: RoomBetPayoutStatus, winnerPlayerId = GUEST_ID): RoomBet {
+    return {
+      betId: 'bet-1',
+      status: 'settled',
+      stakeSats: 10,
+      potSats: 20,
+      potTargetSats: 20,
+      feeSats: 1,
+      feePct: 0,
+      netPayoutSats: 19,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [{
+        npub: 'guest-ephemeral-npub',
+        playerId: winnerPlayerId,
+        depositStatus: 'paid',
+        bolt11: null,
+        lnurl: null,
+        payUrl: null,
+        depositError: null,
+        payoutSats: 19,
+        payoutStatus,
+        withdrawLnurl: 'lnurl1withdrawqr',
+        withdrawUrl: null,
+      }],
+      winnerNpubs: ['guest-ephemeral-npub'],
+      resultReported: true,
+      settlementError: null,
+      createdByPlayerId: HOST_ID,
+      createdAtServerMs: 0,
+      updatedAtServerMs: 0,
+    };
+  }
+
+  it('keeps an abandoned room alive while a winner withdraw is pending', async () => {
+    const store = new MemoryRoomStore();
+    const t = 1_000_000;
+    const created = await createRoom(store, { playerId: HOST_ID, name: 'Host', visibility: 'private' }, t);
+    await setRoomBet(store, created.id, pendingPayoutBet('withdraw_pending'), t);
+
+    const room = await getRoomState(store, created.id, t + ROOM_ABANDONED_MS + 1);
+    expect(room.id).toBe(created.id);
+    expect(room.bet?.participants[0]?.withdrawLnurl).toBe('lnurl1withdrawqr');
+    expect(await store.getRoom(created.id)).not.toBeNull();
+  });
+
+  it('deletes the abandoned room once the withdraw is claimed', async () => {
+    const store = new MemoryRoomStore();
+    const t = 1_000_000;
+    const created = await createRoom(store, { playerId: HOST_ID, name: 'Host', visibility: 'private' }, t);
+    await setRoomBet(store, created.id, pendingPayoutBet('claimed'), t);
+
+    await expect(
+      getRoomState(store, created.id, t + ROOM_ABANDONED_MS + 1),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(await store.getRoom(created.id)).toBeNull();
+  });
+
+  it('keeps the empty room when the last player leaves with a withdraw pending', async () => {
+    const store = new MemoryRoomStore();
+    const t = 1_000_000;
+    const created = await createRoom(store, { playerId: HOST_ID, name: 'Host', visibility: 'private' }, t);
+    await setRoomBet(store, created.id, pendingPayoutBet('withdraw_pending', HOST_ID), t);
+
+    const { room } = await leaveRoom(store, { roomId: created.id, playerId: HOST_ID }, t);
+    expect(room).not.toBeNull();
+    expect(room?.players).toHaveLength(0);
+    expect(room?.bet?.participants[0]?.withdrawLnurl).toBe('lnurl1withdrawqr');
+    expect(await store.getRoom(created.id)).not.toBeNull();
   });
 
   it('removes abandoned public rooms from the listing', async () => {

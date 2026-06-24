@@ -310,11 +310,15 @@ export async function createBetForRoom(
 }
 
 /**
- * Mantiene la apuesta pendiente en sincronía con los jugadores de la sala: si
- * alguien entró (o salió) después de que el host creó la apuesta y todavía NO
- * hubo ningún depósito, se cancela la apuesta en Luna Negra y se recrea con el
- * mismo stake incluyendo a todos los jugadores actuales. Con depósitos ya
- * hechos no se toca (no podemos cambiar participantes sin perder pagos).
+ * Mantiene la apuesta en sincronía con los jugadores de la sala mientras está en
+ * el lobby (antes de arrancar):
+ *  - Sin depósitos todavía: si alguien entró o salió, se cancela en Luna y se
+ *    recrea con el mismo stake incluyendo a todos los jugadores actuales.
+ *  - Con depósitos ya hechos: no se pueden cambiar participantes sin perder pagos,
+ *    así que si alguien que YA estaba en el pozo se fue de la sala, cancelamos el
+ *    pozo en Luna —reembolso a TODOS los que pagaron— y dejamos el estado terminal;
+ *    el host lo vuelve a crear con el roster actual. Sin esto, el que fondeó y se
+ *    fue forfeiteaba su stake al pozo. Ver [[online-mixed-bet-no-nostr]].
  * Best-effort: ante cualquier falla devuelve la sala sin cambios.
  */
 export async function syncBetParticipantsWithRoom(
@@ -324,12 +328,35 @@ export async function syncBetParticipantsWithRoom(
 ): Promise<OnlineRoom> {
   const room = await loadRoom(store, roomId);
   const bet = room.bet;
-  if (!bet || bet.status !== 'pending_deposits') return room;
+  if (!bet || isTerminalRoomBetStatus(bet.status)) return room;
   if (room.status !== 'lobby') return room;
   if (!isLunaNegraApiConfigured()) return room;
   const anyDeposit = bet.depositsReceived > 0
     || bet.participants.some((participant) => participant.depositStatus === 'paid');
-  if (anyDeposit) return room;
+
+  // Con depósitos: solo actuamos si un participante del pozo dejó la sala. No se
+  // puede recrear sin perder pagos, así que cancelamos (refund a todos) y listo.
+  if (anyDeposit) {
+    const activePlayerIds = new Set(room.players.map((player) => player.id));
+    const someoneLeft = bet.participants.some(
+      (participant) => participant.playerId && !activePlayerIds.has(participant.playerId),
+    );
+    if (!someoneLeft) return room;
+    try {
+      const config = readApiConfig();
+      await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' });
+      const refreshed = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
+      if (refreshed.bet && isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
+      // El GET no reflejó la cancelación: forzamos el estado terminal igual (como
+      // hace cancelRoomBet) para que el host vea el reembolso y pueda recrear.
+      const cancelled: RoomBet = { ...(refreshed.bet ?? bet), status: 'cancelled', updatedAtServerMs: nowMs };
+      return setRoomBet(store, roomId, cancelled, nowMs);
+    } catch {
+      return loadRoom(store, roomId).catch(() => room);
+    }
+  }
+
+  if (bet.status !== 'pending_deposits') return room;
   // Comparamos por jugador de la sala (playerId), no por npub: los invitados no
   // tienen npub propio (es efímero), así que el conjunto estable es el de jugadores.
   const desired = [...new Set(room.players.map((player) => player.id))].sort();
