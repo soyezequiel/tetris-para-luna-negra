@@ -1171,19 +1171,28 @@
     padding: 14px;
   }
 
+  /* Grilla de rivales: bloque compacto arriba a la derecha (no de ancho completo) que
+     crece hacia abajo. Su alto se topa ANTES de los controles táctiles (--touch-inset,
+     medido del DOM real) y hace scroll interno si hay muchísimos rivales, así nunca
+     tapa los botones ni se desparrama sobre el centro del tablero. */
   .online-versus-grid {
-    top: auto;
-    right: 14px;
-    bottom: max(88px, env(safe-area-inset-bottom));
-    left: 14px;
+    top: 88px;
+    right: 8px;
+    bottom: auto;
+    left: auto;
     justify-items: end;
-    max-width: none;
+    max-width: 62vw;
+    max-height: calc(100dvh - 88px - var(--touch-inset, 150px) - 8px);
   }
 
   .online-peer-boards {
     grid-template-columns: repeat(var(--online-peer-columns), var(--online-peer-card-width));
-    gap: 6px;
-    overflow: hidden;
+    gap: 5px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 100%;
+    pointer-events: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .online-peer-board-head {
@@ -1203,6 +1212,35 @@
     width: 18px;
     height: 18px;
     font-size: 7px;
+  }
+
+  /* HUD de objetivo (garbage entrante + estrategias 1–5): en celular las chips
+     envolvían en un bloque que tapaba SOFT/DROP. Lo anclamos JUSTO encima de los
+     controles (--touch-inset) como una sola fila que hace scroll horizontal. */
+  .online-hud {
+    left: 10px;
+    right: 10px;
+    bottom: calc(var(--touch-inset, 150px) + 6px);
+    transform: none;
+    max-width: none;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: 5px 8px;
+  }
+
+  .online-hud-incoming,
+  .online-target-chip,
+  .online-target-now,
+  .online-target-manual-chip {
+    flex: 0 0 auto;
+  }
+
+  .online-target-chips,
+  .online-target-manual {
+    flex-wrap: nowrap;
   }
 
   .persistent-menu-shell {

@@ -372,6 +372,10 @@ export class PixiGameRenderer {
       this.measuredViewportW = this.width;
       this.measuredViewportH = this.height;
       this.touchInsetDirty = false;
+      // Publicamos el alto real de los controles táctiles como variable CSS para que
+      // los overlays HTML (HUD de objetivo, grilla de rivales) se anclen JUSTO encima
+      // de ellos sin adivinar píxeles. Sin controles (desktop) queda en 0.
+      document.documentElement.style.setProperty('--touch-inset', `${this.cachedTouchInset}px`);
     }
     return this.cachedTouchInset;
   }

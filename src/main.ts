@@ -7361,16 +7361,18 @@ function onlinePeerGridLayout(playerCount: number): { columns: number; cardWidth
   const height = window.innerHeight;
   const columns = onlinePeerGridColumns(playerCount, width);
   const rows = Math.ceil(playerCount / columns);
-  const gap = width < 760 ? 6 : 8;
+  const gap = width < 760 ? 5 : 8;
+  // En celular la grilla es un bloque compacto anclado arriba a la derecha (no de
+  // ancho completo), así que su presupuesto de ancho es acotado y los tableros chicos.
   const panelWidth = width < 760
-    ? Math.max(240, width - 28)
+    ? Math.min(220, width * 0.6)
     : width < 1120
       ? Math.max(176, width * 0.22)
       : Math.min(420, width * 0.32);
-  const availableHeight = Math.max(240, height - (width < 760 ? 168 : 118));
+  const availableHeight = Math.max(240, height - (width < 760 ? 220 : 118));
   const widthBound = (panelWidth - gap * (columns - 1)) / columns;
   const heightBound = (availableHeight - gap * (rows - 1)) / rows / 2.42;
-  const minWidth = width < 760 ? 44 : 54;
+  const minWidth = width < 760 ? 38 : 54;
   const maxWidth = onlinePeerMaxCardWidth(playerCount, width);
   return {
     columns,
@@ -7379,7 +7381,7 @@ function onlinePeerGridLayout(playerCount: number): { columns: number; cardWidth
 }
 
 function onlinePeerMaxCardWidth(playerCount: number, width: number): number {
-  if (width < 760) return playerCount <= 2 ? 110 : 82;
+  if (width < 760) return playerCount <= 2 ? 74 : playerCount <= 6 ? 54 : 44;
   if (playerCount <= 1) return 190;
   if (playerCount <= 2) return 165;
   if (playerCount <= 4) return 145;
@@ -7387,7 +7389,7 @@ function onlinePeerMaxCardWidth(playerCount: number, width: number): number {
 }
 
 function onlinePeerGridColumns(playerCount: number, width: number): number {
-  if (width < 760) return Math.min(playerCount, playerCount <= 2 ? 2 : 4);
+  if (width < 760) return Math.min(playerCount, playerCount <= 2 ? 2 : 3);
   if (playerCount <= 1) return 1;
   if (playerCount <= 4) return 2;
   if (playerCount <= 9) return 3;
