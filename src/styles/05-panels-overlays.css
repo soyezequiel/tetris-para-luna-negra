@@ -1143,13 +1143,14 @@
   margin-bottom: 10px;
 }
 
-/* Navegador de salas públicas (pestaña Jugar, móvil) */
+/* Navegador de salas públicas (pestaña Jugar, móvil): zona ANCLADA entre el
+   detalle scrollable y las acciones, así siempre se ve sin deslizar la pantalla.
+   La lista de salas tiene su propio scroll interno acotado si hay muchas. */
 .mdash-rooms {
-  padding: 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  margin-top: 8px;
+  flex: none;
+  padding: 12px 18px;
+  background: rgba(255, 255, 255, 0.02);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 .mdash-rooms-head {
   display: flex;
@@ -1200,7 +1201,13 @@
   cursor: pointer;
 }
 .mdash-join-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.mdash-room-rows { display: flex; flex-direction: column; gap: 8px; }
+.mdash-room-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 168px;
+  overflow-y: auto;
+}
 .mdash-rooms-empty {
   padding: 16px 12px;
   text-align: center;

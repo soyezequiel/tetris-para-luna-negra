@@ -8371,8 +8371,8 @@ function renderMobileModeSelect(): string {
         ${customChips}
         ${mode === 'custom' ? `<button class="mdash-btn mdash-btn--ghost-purple mdash-config-btn" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>` : ''}
         ${extra}
-        ${publicRoomsBrowser}
       </div>
+      ${publicRoomsBrowser}
       <div class="mdash-actions">
         <button class="mdash-cta" type="button" data-ui-action="${primaryAction}" aria-label="${escapeHtml(primaryLabel)}">
           ${playIcon({ size: 20 })}
