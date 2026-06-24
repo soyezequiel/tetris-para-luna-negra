@@ -6704,6 +6704,29 @@ function renderOnlineBetPanel(host: boolean): string {
   }
 
   const myEntry = myBetEntry(bet);
+
+  // Apuesta ya resuelta: el panel del lobby/dashboard debe reflejar el RESULTADO
+  // (incluido el QR de retiro del ganador invitado), no las filas de depósito.
+  // Antes, un ganador invitado que tocaba «Siguiente» y volvía al menú se quedaba
+  // sin forma de cobrar: la sala conserva su `withdrawLnurl` (no se reabre con un
+  // retiro pendiente), pero el único UI acá eran las filas "PAGADA". Reusamos
+  // renderOnlineBetResult, que ya maneja ganador/perdedor/reembolso y el retiro
+  // LNURL del invitado. Ver [[bet-payout-survives-abandon-gc]] (fix #3).
+  if (['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status)) {
+    return `
+      <section class="online-bet-panel">
+        <div class="online-bet-head">
+          <span>Apuesta · ${escapeHtml(betStatusLabel(bet.status))}</span>
+          <small>${bet.feePct ? `comisión ${bet.feePct}%` : `comisión ${bet.feeSats} sats`}</small>
+        </div>
+        ${renderOnlineBetResult()}
+        <div class="online-bet-actions">
+          <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
+        </div>
+      </section>
+    `;
+  }
+
   const rows = bet.participants.map((entry) => `
     <div class="online-bet-row">
       <span>${escapeHtml(betParticipantName(entry))}</span>
