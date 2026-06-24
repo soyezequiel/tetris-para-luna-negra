@@ -282,6 +282,11 @@ export async function createBetForRoom(
       victoryCondition: input.victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
       roomId: room.id,
       metadata: { roomId: room.id },
+      // Resiliencia del pozo: si algún jugador arrastra un npub de una sesión vieja que
+      // Luna ya no reconoce (cuenta borrada / DB reseteada), que ese asiento se degrade a
+      // invitado (cobra por LNURL-withdraw) en vez de tirar abajo TODA la apuesta. Sin
+      // esto, en una sala grande basta un npub fantasma para bloquear el pozo entero.
+      unknownNpubsAsGuests: true,
     },
   });
 
