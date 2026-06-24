@@ -120,6 +120,10 @@ export class PixiGameRenderer {
   // cuando cambia el viewport, se invalida el layout (resize/cambio de esquema táctil) o pasa
   // un umbral de tiempo como red de seguridad.
   private cachedTouchInset = 0;
+  // Alto reservado para el HUD online inferior (.online-hud) en DESKTOP: es position:fixed
+  // y NO es .touch-controls, así que el tablero no lo reservaba y la barra (que envuelve en
+  // varias filas con muchos rivales) tapaba el fondo del tablero.
+  private cachedHudInset = 0;
   private lastTouchMeasureMs = 0;
   private measuredViewportW = 0;
   private measuredViewportH = 0;
@@ -360,9 +364,10 @@ export class PixiGameRenderer {
     const viewportChanged = this.width !== this.measuredViewportW || this.height !== this.measuredViewportH;
     if (this.touchInsetDirty || viewportChanged || now - this.lastTouchMeasureMs > 250) {
       const touchEl = document.querySelector('.touch-controls') as HTMLElement | null;
+      const restoreEl = document.querySelector('.touch-controls-restore');
       if (touchEl && touchEl.offsetHeight > 0) {
         this.cachedTouchInset = Math.max(0, this.height - touchEl.getBoundingClientRect().top) + 8;
-      } else if (document.querySelector('.touch-controls-restore')) {
+      } else if (restoreEl) {
         // Controles ocultos: sólo el botón chico "Controles" abajo a la derecha.
         this.cachedTouchInset = 64;
       } else {
@@ -374,10 +379,23 @@ export class PixiGameRenderer {
       this.touchInsetDirty = false;
       // Publicamos el alto real de los controles táctiles como variable CSS para que
       // los overlays HTML (HUD de objetivo, grilla de rivales) se anclen JUSTO encima
-      // de ellos sin adivinar píxeles. Sin controles (desktop) queda en 0.
+      // de ellos sin adivinar píxeles. Sin controles (desktop) queda en 0. OJO: esta
+      // variable NO debe incluir el alto del HUD online, porque en móvil el HUD se ancla
+      // con ella (var(--touch-inset)) y se empujaría a sí mismo en un bucle.
       document.documentElement.style.setProperty('--touch-inset', `${this.cachedTouchInset}px`);
+
+      // En DESKTOP (sin controles táctiles ni botón de restaurar) el HUD online inferior
+      // flota en position:fixed y, con muchos rivales, sus chips de estrategia envuelven en
+      // 2–3 filas creciendo hacia arriba. El tablero no lo reservaba y la barra lo tapaba.
+      // Medimos su alto y reservamos ese espacio (el layout toma el máximo de ambos insets).
+      const hudEl = (!touchEl && !restoreEl)
+        ? document.querySelector('.online-hud') as HTMLElement | null
+        : null;
+      this.cachedHudInset = hudEl && hudEl.offsetHeight > 0
+        ? Math.max(0, this.height - hudEl.getBoundingClientRect().top) + 8
+        : 0;
     }
-    return this.cachedTouchInset;
+    return Math.max(this.cachedTouchInset, this.cachedHudInset);
   }
 
   private layout(state?: GameState): void {
