@@ -8445,7 +8445,7 @@ function renderMobileRoomManager(): string {
           ${visToggle}
         </div>
       </div>
-      <!-- JUGADORES (único scroll) -->
+      <!-- JUGADORES + APUESTA (único scroll) -->
       <div class="mdash-room-players mdash-scroll">
         <div class="mdash-room-players-head"><span>Jugadores</span><span>${readyCount}/${total} listos</span></div>
         ${renderOnlineError()}
@@ -8453,6 +8453,7 @@ function renderMobileRoomManager(): string {
           ${playersHtml}
           ${inviteBtn}
         </div>
+        ${renderOnlineBetPanel(host)}
       </div>
       <!-- ACCIONES (ancladas, siempre visibles) -->
       <div class="mdash-room-actions">
