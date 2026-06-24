@@ -1143,6 +1143,104 @@
   margin-bottom: 10px;
 }
 
+/* Navegador de salas públicas (pestaña Jugar, móvil) */
+.mdash-rooms {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  margin-top: 8px;
+}
+.mdash-rooms-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.mdash-rooms-head .mdash-tops-title { margin-bottom: 0; }
+.mdash-rooms-refresh {
+  flex: none;
+  padding: 6px 11px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--dash-text);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.mdash-rooms-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+.mdash-join-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.mdash-join-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 42px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 10, 18, 0.6);
+  color: var(--dash-text);
+  font-family: inherit;
+  font-size: 13px;
+}
+.mdash-join-input::placeholder { color: rgba(238, 240, 244, 0.35); }
+.mdash-join-btn {
+  flex: none;
+  min-height: 42px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  background: rgba(0, 240, 255, 0.1);
+  color: var(--dash-neon-cyan);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mdash-join-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.mdash-room-rows { display: flex; flex-direction: column; gap: 8px; }
+.mdash-rooms-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: rgba(238, 240, 244, 0.5);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.mdash-room-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mdash-room-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mdash-room-row-info strong { font-size: 13px; font-weight: 800; }
+.mdash-room-row-info span {
+  font-size: 11px;
+  color: rgba(238, 240, 244, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mdash-room-join {
+  flex: none;
+  min-height: 38px;
+  padding: 8px 15px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  background: rgba(0, 240, 255, 0.1);
+  color: var(--dash-neon-cyan);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.mdash-room-join:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ACCIONES ancladas (Jugar sin sala) */
 .mdash-actions {
   flex: none;

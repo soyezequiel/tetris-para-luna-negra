@@ -2846,7 +2846,7 @@ async function kickOnlinePlayer(targetPlayerId: string): Promise<void> {
 // La lista de salas públicas solo se auto-refresca cuando el jugador la está
 // mirando (dashboard/menú online, sin sala propia y con la pestaña al frente).
 // Así ve salas nuevas sin recargar, sin pegarle a la API jugando o en segundo plano.
-const ROOM_BROWSER_APP_MODES: AppMode[] = ['menu', 'multiplayerMenu', 'onlineMenu'];
+const ROOM_BROWSER_APP_MODES: AppMode[] = ['menu', 'playMenu', 'multiplayerMenu', 'onlineMenu'];
 
 function shouldAutoRefreshPublicRooms(): boolean {
   if (document.hidden) return false;
@@ -8307,6 +8307,37 @@ function renderMobileTopsEmbed(): string {
     </div>`;
 }
 
+// Navegador de salas públicas para móvil: unirse por código o tocar una sala de
+// la lista. Reusa las mismas acciones del navegador de escritorio (online-refresh,
+// online-join, online-join-public). Faltaba en la pestaña Jugar móvil, así que no
+// había forma de ver/entrar a salas públicas desde el celular.
+function renderMobilePublicRooms(): string {
+  const rooms = roomState.publicRooms;
+  const list = rooms.length === 0
+    ? '<div class="mdash-rooms-empty">No hay salas públicas. Creá una o probá de nuevo.</div>'
+    : rooms.map((room) => `
+      <article class="mdash-room-row">
+        ${renderOnlineAvatar({ name: room.hostName, avatarUrl: room.hostAvatarUrl }, 'small', 'mdash-room-row-avatar')}
+        <div class="mdash-room-row-info">
+          <strong>${escapeHtml(room.id)}</strong>
+          <span>${escapeHtml(room.hostName)} · ${escapeHtml(matchTypeLabel(room.matchType))} · ${room.playerCount} jugador${room.playerCount === 1 ? '' : 'es'}</span>
+        </div>
+        <button class="mdash-room-join" type="button" data-ui-action="online-join-public" data-room-id="${escapeHtml(room.id)}"${onlineNetState.busy ? ' disabled' : ''}>Unirse</button>
+      </article>`).join('');
+  return `
+    <div class="mdash-rooms">
+      <div class="mdash-rooms-head">
+        <span class="mdash-tops-title">Salas públicas</span>
+        <button class="mdash-rooms-refresh" type="button" data-ui-action="online-refresh"${onlineNetState.busy ? ' disabled' : ''}>↻ Refrescar</button>
+      </div>
+      <div class="mdash-join-row">
+        <input class="mdash-join-input" type="text" maxlength="${ROOM_ID_MAX_LENGTH}" value="${escapeHtml(identityState.joinCode)}" data-online-field="join-code" autocomplete="off" placeholder="Código de sala" aria-label="Código de sala" />
+        <button class="mdash-join-btn" type="button" data-ui-action="online-join"${onlineNetState.busy ? ' disabled' : ''}>Unirse</button>
+      </div>
+      <div class="mdash-room-rows">${list}</div>
+    </div>`;
+}
+
 // Sin sala: pills de modo (fila compacta) + detalle scrollable + acciones ancladas.
 function renderMobileModeSelect(): string {
   const mode = uiSelectionState.playMode;
@@ -8321,6 +8352,9 @@ function renderMobileModeSelect(): string {
   }).join('');
 
   const extra = mode === 'survival' ? renderMobileTopsEmbed() : '';
+  // local1v1 es 1v1 en la misma compu (sin online): no tiene sentido el navegador
+  // de salas públicas ahí.
+  const publicRoomsBrowser = mode === 'local1v1' ? '' : renderMobilePublicRooms();
   const customChips = mode === 'custom' ? renderMobileCustomChips() : '';
   const primaryAction = mode === 'local1v1' ? 'local-versus' : 'sidebar-play';
   const primaryLabel = meta.solo;
@@ -8337,6 +8371,7 @@ function renderMobileModeSelect(): string {
         ${customChips}
         ${mode === 'custom' ? `<button class="mdash-btn mdash-btn--ghost-purple mdash-config-btn" type="button" data-ui-action="custom-open">⚙ Configurar partida</button>` : ''}
         ${extra}
+        ${publicRoomsBrowser}
       </div>
       <div class="mdash-actions">
         <button class="mdash-cta" type="button" data-ui-action="${primaryAction}" aria-label="${escapeHtml(primaryLabel)}">
