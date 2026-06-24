@@ -736,7 +736,13 @@ async function eliminatePlayerOnce(
   requireSelfOrHostAuthority(room, request.authorityPlayerId, request.playerId);
   if (!requestMatchesRoomSeed(room, request.seed)) return room;
   const player = requirePlayer(room, request.playerId);
-  if (player.status === 'winner' || room.winnerPlayerId === player.id) return room;
+  if (player.status === 'winner' || room.winnerPlayerId === player.id) {
+    // Normalmente ignoramos la "muerte" de un ganador: re-reportes/strays no deben
+    // destronarlo. Excepción: doble-KO reportado tarde, donde el ganador coronado
+    // pudo morir ANTES y que su paquete llegara después por lag. Ver recrownIfWinnerDiedFirst.
+    await recrownIfWinnerDiedFirst(store, room, player, request, nowMs);
+    return room;
+  }
   if (player.status !== 'eliminated') {
     player.status = 'eliminated';
     player.ready = true;
@@ -765,6 +771,63 @@ async function eliminatePlayerOnce(
   room.updatedAtServerMs = nowMs;
   await persistRoom(store, room);
   return room;
+}
+
+/** Frames sobrevividos por un jugador (frame de eliminación, o el último elapsed). */
+function survivalFrame(player: OnlinePlayer): number {
+  return player.eliminatedAtFrame ?? player.elapsedFrames;
+}
+
+/**
+ * Corrige al ganador en un doble-KO reportado tarde. En el modelo cliente-
+ * autoritativo cada quien reporta su propia muerte; si dos mueren casi juntos, el
+ * PRIMER reporte que llega al DO corona al otro como único vivo
+ * (finishRoomIfOnlyOneAlive). Pero ese "ganador" pudo morir ANTES y que su paquete
+ * llegara después por lag: sin esto el pozo lo decide el orden de llegada de los
+ * paquetes, no quién aguantó más. Si el ganador reporta su muerte a un frame
+ * ANTERIOR al del rival eliminado que más aguantó, sobrevivió menos → re-coronamos
+ * al rival. Empate exacto de frame: se queda el ganador actual (determinista, sin
+ * destronar por un paquete tardío). Devuelve true si re-coronó. Ver
+ * [[online-client-authoritative]].
+ */
+async function recrownIfWinnerDiedFirst(
+  store: RoomStore,
+  room: OnlineRoom,
+  winner: OnlinePlayer,
+  request: EliminateRequest,
+  nowMs: number,
+): Promise<boolean> {
+  if (room.status !== 'finished') return false;
+  // El ganador todavía no tenía muerte propia registrada (si la tiene, ya se procesó).
+  if (winner.eliminatedAtFrame !== null) return false;
+  const eliminated = room.players.filter((player) => player.id !== winner.id && player.status === 'eliminated');
+  if (eliminated.length === 0) return false;
+  const topRival = eliminated.reduce((best, player) => (survivalFrame(player) > survivalFrame(best) ? player : best));
+  const incomingFrame = normalizeNonNegativeInteger(request.frame);
+  // El ganador aguantó al menos tanto como el mejor rival: se queda (incluye empate).
+  if (incomingFrame >= survivalFrame(topRival)) return false;
+
+  // El ganador murió antes que el rival que más aguantó: se invierten los roles.
+  winner.status = 'eliminated';
+  winner.alive = false;
+  winner.ready = true;
+  winner.eliminatedAtFrame = incomingFrame;
+  winner.eliminatedAtServerMs = nowMs;
+  winner.finishedAtServerMs = nowMs;
+  winner.lines = normalizeNonNegativeInteger(request.lines);
+  winner.pieces = normalizeNonNegativeInteger(request.pieces);
+  winner.elapsedFrames = normalizeNonNegativeInteger(request.elapsedFrames);
+  winner.game = request.game ?? winner.game;
+  winner.updatedAtServerMs = nowMs;
+  topRival.status = 'winner';
+  topRival.alive = true;
+  topRival.ready = true;
+  topRival.finishedAtServerMs = topRival.finishedAtServerMs ?? nowMs;
+  topRival.updatedAtServerMs = nowMs;
+  room.winnerPlayerId = topRival.id;
+  room.updatedAtServerMs = nowMs;
+  await persistRoom(store, room);
+  return true;
 }
 
 export async function listPublicRooms(

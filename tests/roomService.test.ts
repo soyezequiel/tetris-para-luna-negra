@@ -759,3 +759,60 @@ describe('eliminatePlayer idempotency', () => {
     expect(repeated.status).not.toBe('finished');
   });
 });
+
+describe('double-KO winner determinism', () => {
+  // Cada jugador reporta SU PROPIA muerte (authorityPlayerId === playerId) con su
+  // frame de muerte; así modelamos el doble-KO con reportes que llegan en cierto orden.
+  function selfEliminate(room: OnlineRoom, playerId: string, frame: number): EliminateRequest {
+    return {
+      roomId: room.id,
+      authorityPlayerId: playerId,
+      playerId,
+      seed: room.seed,
+      frame,
+      lines: 5,
+      pieces: 20,
+      elapsedFrames: frame,
+    };
+  }
+
+  it('re-crowns the longer survivor when the loser death is reported first', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createPlayingRoom(store);
+
+    // HOST aguantó MÁS (murió en el frame 100) pero su paquete llega PRIMERO por lag,
+    // así que GUEST queda coronado como único vivo.
+    const afterFirst = await eliminatePlayer(store, selfEliminate(room, HOST_ID, 100));
+    expect(afterFirst.status).toBe('finished');
+    expect(afterFirst.winnerPlayerId).toBe(GUEST_ID);
+
+    // Llega tarde la muerte de GUEST (murió antes, frame 90): aguantó menos → se
+    // re-corona a HOST, que sobrevivió hasta el frame 100.
+    const afterSecond = await eliminatePlayer(store, selfEliminate(room, GUEST_ID, 90));
+    expect(afterSecond.winnerPlayerId).toBe(HOST_ID);
+    expect(afterSecond.players.find((player) => player.id === HOST_ID)?.status).toBe('winner');
+    expect(afterSecond.players.find((player) => player.id === GUEST_ID)?.status).toBe('eliminated');
+  });
+
+  it('keeps the crowned winner when they legitimately survived longer', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createPlayingRoom(store);
+
+    // HOST murió antes (frame 90) y su muerte llega primero → GUEST coronado.
+    await eliminatePlayer(store, selfEliminate(room, HOST_ID, 90));
+    // GUEST reporta su muerte tarde, pero aguantó MÁS (frame 100): NO se destrona.
+    const afterSecond = await eliminatePlayer(store, selfEliminate(room, GUEST_ID, 100));
+    expect(afterSecond.winnerPlayerId).toBe(GUEST_ID);
+    expect(afterSecond.players.find((player) => player.id === GUEST_ID)?.status).toBe('winner');
+  });
+
+  it('keeps the crowned winner on an exact frame tie (deterministic)', async () => {
+    const store = new MemoryRoomStore();
+    const room = await createPlayingRoom(store);
+
+    await eliminatePlayer(store, selfEliminate(room, HOST_ID, 100));
+    // Empate exacto de frame: un paquete tardío no destrona al ganador ya coronado.
+    const afterSecond = await eliminatePlayer(store, selfEliminate(room, GUEST_ID, 100));
+    expect(afterSecond.winnerPlayerId).toBe(GUEST_ID);
+  });
+});
