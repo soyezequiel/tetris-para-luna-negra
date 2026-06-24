@@ -50,6 +50,17 @@ export const PLAYER_STALE_MS = 10_000;
  */
 export const HOST_STALE_MS = 15_000;
 /**
+ * Margen sin presencia de un jugador NO-host durante una ronda activa antes de
+ * sacarlo de la ronda (cerró la pestaña / se le cayó la conexión sin morir ni
+ * llamar a /leave). Sin esto, un invitado que abandona queda `alive=true` para
+ * siempre y la sala se cuelga sin coronar a nadie. Holgado respecto al refresco
+ * de presencia (≤6s en un jugador que pollea cada 1s) y un toque mayor que
+ * HOST_STALE_MS: la caída del host es más urgente (bloquea la autoridad) y solo
+ * miramos la presencia de los demás cuando el room sigue fresco (un host vivo
+ * escribiendo); si el room entero está stale, manda applyHostFailover.
+ */
+export const PLAYER_ABANDON_MS = 20_000;
+/**
  * Umbral más corto para la migración a pedido de un cliente (`requestHostFailover`):
  * cuando un jugador vivo reporta que su canal WebRTC al host está caído, no hace
  * falta esperar los HOST_STALE_MS pasivos. El servidor igual confirma que el host
@@ -826,7 +837,16 @@ async function getRoomStateOnce(
   }
   // El failover corre antes de marcar updatedAtServerMs: mide la inactividad del
   // host contra la última escritura real, no contra la transición de countdown.
+  // Frescura del room ANTES del failover: si dispara, pisa updatedAtServerMs con
+  // nowMs y enmascararía que el room venía stale. Solo barremos jugadores ausentes
+  // cuando la autoridad seguía viva escribiendo; con el room stale, los timestamps
+  // por-jugador son todos igual de viejos (nadie polleó) y manda el host failover.
+  const roomWasFresh = (room.status === 'playing' || room.status === 'countdown')
+    && nowMs - room.updatedAtServerMs <= HOST_STALE_MS;
   if (applyHostFailover(room, nowMs)) changed = true;
+  // Tras el host: los demás jugadores que dejaron de mostrar presencia salen de la
+  // ronda, así una sala no queda colgada porque un invitado cerró la pestaña.
+  if (roomWasFresh && applyAbandonedPlayers(room, nowMs)) changed = true;
   // Sala abandonada (chequeado tras refrescar la presencia del que pollea, así un
   // miembro presente nunca borra su propia sala): se elimina y se responde como
   // inexistente; los clientes manejan el 404 saliendo al menú.
@@ -1209,6 +1229,36 @@ function applyHostFailover(room: OnlineRoom, nowMs: number, staleMs: number = HO
   }
 
   if (changed) room.updatedAtServerMs = nowMs;
+  return changed;
+}
+
+/**
+ * Saca de la ronda a los jugadores NO-host que dejaron de mostrar presencia
+ * (cerraron la pestaña / se les cayó la conexión sin morir ni llamar a /leave).
+ * Sin esto un invitado que abandona a mitad de ronda queda `alive=true` para
+ * siempre y `finishRoomIfOnlyOneAlive` nunca corona a nadie: la sala se cuelga.
+ * El host tiene su propia red (`applyHostFailover`, que además migra la autoridad),
+ * así que acá lo excluimos. Es el equivalente, para una ronda activa, del
+ * des-readyeo de los stale en el lobby. Devuelve true si mutó la sala.
+ * Ver [[online-host-failover]].
+ */
+function applyAbandonedPlayers(room: OnlineRoom, nowMs: number): boolean {
+  if (room.status !== 'playing' && room.status !== 'countdown') return false;
+  let changed = false;
+  for (const player of room.players) {
+    if (player.id === room.hostPlayerId) continue; // al host lo maneja applyHostFailover
+    if (isTerminalPlayer(player) || !player.alive) continue;
+    if (nowMs - player.updatedAtServerMs <= PLAYER_ABANDON_MS) continue;
+    player.status = 'eliminated';
+    player.alive = false;
+    player.ready = true;
+    player.eliminatedAtFrame = player.eliminatedAtFrame ?? normalizeNonNegativeInteger(player.elapsedFrames);
+    player.eliminatedAtServerMs = nowMs;
+    player.finishedAtServerMs = nowMs;
+    player.updatedAtServerMs = nowMs;
+    changed = true;
+  }
+  if (changed) finishRoomIfOnlyOneAlive(room, nowMs);
   return changed;
 }
 

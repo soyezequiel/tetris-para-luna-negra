@@ -1,5 +1,5 @@
 import { Server, getServerByName, type Connection, type WSMessage } from 'partyserver';
-import { getRoomState, HOST_STALE_MS, MemoryRoomStore, normalizeRoomId, OnlineRoomError } from '../src/online/roomService.js';
+import { getRoomState, HOST_STALE_MS, MemoryRoomStore, normalizeRoomId, OnlineRoomError, PLAYER_ABANDON_MS } from '../src/online/roomService.js';
 import {
   dispatchRoomAction,
   lobbyUpdateForRoom,
@@ -244,7 +244,18 @@ export class RoomServer extends Server<Env> {
     const room = await this.store.getRoom(roomId);
     if (room) {
       if (room.status === 'countdown' && room.startsAtServerMs != null) deadlines.push(room.startsAtServerMs);
-      if (room.status === 'countdown' || room.status === 'playing') deadlines.push(room.updatedAtServerMs + HOST_STALE_MS + 1);
+      if (room.status === 'countdown' || room.status === 'playing') {
+        deadlines.push(room.updatedAtServerMs + HOST_STALE_MS + 1);
+        // Drop-out de un jugador no-host: el alarm despierta cuando el más viejo
+        // sin presencia vence su gracia, así limpiamos aunque nadie más pollee.
+        for (const player of room.players) {
+          if (player.id === room.hostPlayerId) continue;
+          if (player.status === 'eliminated' || player.status === 'winner'
+            || player.status === 'won' || player.status === 'lost'
+            || player.finishedAtServerMs != null) continue;
+          deadlines.push(player.updatedAtServerMs + PLAYER_ABANDON_MS + 1);
+        }
+      }
     }
     return deadlines.length ? Math.min(...deadlines) : null;
   }

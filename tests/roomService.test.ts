@@ -11,6 +11,7 @@ import {
   joinRoom,
   listPublicRooms,
   MemoryRoomStore,
+  PLAYER_ABANDON_MS,
   PLAYER_STALE_MS,
   requestHostFailover,
   ROOM_ABANDONED_MS,
@@ -148,7 +149,23 @@ async function buildPlayingRoom(
   };
   const room = await updateProgress(store, progress, startedAtMs);
   expect(room.status).toBe('playing');
-  return room;
+  // Los invitados muestran presencia al arranque (self-report: refresca su
+  // updatedAtServerMs sin mover el reloj del room), reflejando que pollean. Sin
+  // esto el harness los dejaría "ausentes" desde createdAt y el barrido de
+  // abandono (applyAbandonedPlayers) los sacaría sin que se hayan ido.
+  let latest = room;
+  for (const guestId of guestIds) {
+    latest = await updateProgress(store, {
+      roomId: room.id,
+      authorityPlayerId: guestId,
+      playerId: guestId,
+      seed: room.seed,
+      lines: 0,
+      pieces: 1,
+      elapsedFrames: 1,
+    }, startedAtMs);
+  }
+  return latest;
 }
 
 describe('host failover on disconnect', () => {
@@ -263,6 +280,101 @@ describe('host failover on disconnect', () => {
     expect(recovered.status).toBe('finished');
     expect(recovered.winnerPlayerId).toBeNull();
     expect(recovered.players.find((player) => player.id === HOST_ID)?.status).toBe('eliminated');
+  });
+});
+
+describe('non-host player abandonment during a round', () => {
+  // Mantiene el room "fresco" simulando que el host sigue escribiendo (progreso de
+  // autoridad mueve room.updatedAtServerMs), así el barrido de abandono corre.
+  const hostKeepalive = (store: RoomStore, room: OnlineRoom, atMs: number) =>
+    updateProgress(store, {
+      roomId: room.id,
+      authorityPlayerId: HOST_ID,
+      playerId: HOST_ID,
+      seed: room.seed,
+      lines: 0,
+      pieces: 5,
+      elapsedFrames: 50,
+    }, atMs);
+
+  // Self-report de un invitado: refresca SU presencia sin mover el reloj del room.
+  const guestPresence = (store: RoomStore, room: OnlineRoom, playerId: string, atMs: number) =>
+    updateProgress(store, {
+      roomId: room.id,
+      authorityPlayerId: playerId,
+      playerId,
+      seed: room.seed,
+      lines: 0,
+      pieces: 5,
+      elapsedFrames: 50,
+    }, atMs);
+
+  it('crowns the host when the lone guest abandons mid-round (1v1)', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 8_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID], startedAtMs);
+
+    // El invitado dejó de pollear en `startedAtMs`. El host sigue escribiendo justo
+    // antes del poll, así el room está fresco (no es un caso de host failover) pero
+    // el invitado ya superó su gracia de ausencia.
+    const sweepAt = startedAtMs + PLAYER_ABANDON_MS + 2_000;
+    await hostKeepalive(store, room, sweepAt - 1);
+    const recovered = await getRoomState(store, room.id, sweepAt);
+
+    expect(recovered.status).toBe('finished');
+    expect(recovered.winnerPlayerId).toBe(HOST_ID);
+    const guest = recovered.players.find((player) => player.id === GUEST_ID);
+    expect(guest?.status).toBe('eliminated');
+    expect(guest?.alive).toBe(false);
+  });
+
+  it('drops the absent guest but keeps the round going with the survivors', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 9_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID, THIRD_ID], startedAtMs);
+
+    // Host y THIRD siguen presentes (escriben justo antes del poll); GUEST se fue.
+    const sweepAt = startedAtMs + PLAYER_ABANDON_MS + 2_000;
+    await hostKeepalive(store, room, sweepAt - 1);
+    await guestPresence(store, room, THIRD_ID, sweepAt - 1);
+    const recovered = await getRoomState(store, room.id, sweepAt);
+
+    expect(recovered.status).toBe('playing');
+    expect(recovered.players.find((player) => player.id === GUEST_ID)?.status).toBe('eliminated');
+    expect(recovered.players.find((player) => player.id === THIRD_ID)?.alive).toBe(true);
+    expect(recovered.players.find((player) => player.id === HOST_ID)?.alive).toBe(true);
+  });
+
+  it('does not drop a guest that keeps showing presence', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 10_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID], startedAtMs);
+
+    // Mismo instante de barrido, pero el invitado refrescó su presencia recién: no
+    // debe salir de la ronda.
+    const sweepAt = startedAtMs + PLAYER_ABANDON_MS + 2_000;
+    await hostKeepalive(store, room, sweepAt - 1);
+    await guestPresence(store, room, GUEST_ID, sweepAt - 1);
+    const recovered = await getRoomState(store, room.id, sweepAt);
+
+    expect(recovered.status).toBe('playing');
+    expect(recovered.players.find((player) => player.id === GUEST_ID)?.alive).toBe(true);
+  });
+
+  it('defers to host failover instead of sweeping when the whole room is stale', async () => {
+    const store = new MemoryRoomStore();
+    const startedAtMs = 11_000_000;
+    const room = await buildPlayingRoom(store, [HOST_ID, GUEST_ID, THIRD_ID], startedAtMs);
+
+    // Nadie escribe: el room queda stale. El barrido de abandono NO debe correr
+    // (timestamps por-jugador igual de viejos); manda el host failover, que migra
+    // la autoridad y mantiene la ronda con dos jugadores.
+    const recovered = await getRoomState(store, room.id, startedAtMs + HOST_STALE_MS + 1);
+
+    expect(recovered.status).toBe('playing');
+    expect(recovered.hostPlayerId).not.toBe(HOST_ID);
+    const survivors = recovered.players.filter((player) => player.alive);
+    expect(survivors).toHaveLength(2);
   });
 });
 
