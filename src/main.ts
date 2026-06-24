@@ -2145,6 +2145,9 @@ function goToMenu(): void {
   replayState.importedName = null;
   libraryState.error = null;
   runHistory = loadRunHistory();
+  // La pantalla de Inicio muestra "Victorias" desde el ranking mundial; refrescamos
+  // al volver al menú para que la stat esté al día (best-effort, se autodeduplica).
+  void refreshLeaderboard();
   input.releaseAll();
 }
 
@@ -2263,6 +2266,9 @@ async function bootstrapOnlineStartup(): Promise<void> {
     await bootstrapJoinLink(nextParams.get('join')!.trim());
     return;
   }
+  // Precargamos el ranking de victorias para que la stat "Victorias" del Inicio
+  // aparezca sin tener que entrar al Top (best-effort, ya con la identidad resuelta).
+  void refreshLeaderboard();
   if (await restoreOnlineRoomSession()) return;
   void refreshPublicRooms();
 }
