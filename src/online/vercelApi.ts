@@ -230,7 +230,10 @@ class PartyBridgeLeaderboardStore implements LeaderboardStore {
 
   async topWins(limit: number): Promise<LeaderboardEntry[]> {
     const payload = await this.request('GET', `?limit=${encodeURIComponent(String(limit))}`);
-    return Array.isArray(payload.entries) ? payload.entries : [];
+    // El top mundial solo lista jugadores con sesión de Luna Negra (npub). Re-filtramos
+    // acá —además del DO— para que la regla valga aunque el Worker desplegado sea viejo
+    // o devuelva invitados: el bridge nunca deja pasar entradas sin npub.
+    return Array.isArray(payload.entries) ? payload.entries.filter((entry) => entry.npub) : [];
   }
 
   async recordWin(meta: LeaderboardWinMeta): Promise<void> {
@@ -290,7 +293,10 @@ class PartyBridgeSurvivalStore implements SurvivalLeaderboardStore {
 
   async topTimes(limit: number): Promise<SurvivalEntry[]> {
     const payload = await this.request('GET', `?limit=${encodeURIComponent(String(limit))}`);
-    return Array.isArray(payload.entries) ? payload.entries : [];
+    // El top mundial solo lista jugadores con sesión de Luna Negra (npub). Re-filtramos
+    // acá —además del DO— para que la regla valga aunque el Worker desplegado sea viejo
+    // o devuelva invitados: el bridge nunca deja pasar entradas sin npub.
+    return Array.isArray(payload.entries) ? payload.entries.filter((entry) => entry.npub) : [];
   }
 
   async recordTime(meta: SurvivalTimeMeta): Promise<void> {
