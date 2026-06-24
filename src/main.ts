@@ -7107,27 +7107,49 @@ function spectatorPeers(): OnlinePlayer[] {
   return rankPlayers(roomState.current.players).filter((player) => player.id !== identityState.player.id);
 }
 
-// Rival enfocado en el tablero principal. Respeta la elección manual mientras
-// ese jugador siga en la sala; si no, sigue al líder (primer ranking).
-function spectatorFocusPlayer(): OnlinePlayer | null {
+// ¿Sigue jugando este rival? El espectador solo debe seguir a quien está en pie:
+// rankPlayers ordena a los muertos (winner/eliminated/lost) ANTES que a los
+// 'playing', así que sin este filtro el auto-foco aterriza en un jugador muerto.
+function isPeerStillPlaying(player: OnlinePlayer): boolean {
+  return player.alive
+    && player.status !== 'eliminated'
+    && player.status !== 'lost'
+    && player.status !== 'disconnected'
+    && player.status !== 'winner'
+    && player.status !== 'won';
+}
+
+// Conjunto de rivales enfocables: solo los que siguen en pie. Si ya no queda
+// nadie vivo (la ronda está por cerrar) cae a la lista completa para no quedar
+// con el canvas vacío.
+function spectatorFocusPool(): OnlinePlayer[] {
   const peers = spectatorPeers();
-  if (peers.length === 0) return null;
+  const alive = peers.filter(isPeerStillPlaying);
+  return alive.length > 0 ? alive : peers;
+}
+
+// Rival enfocado en el tablero principal. Respeta la elección manual mientras
+// ese jugador SIGA VIVO; si murió (o se fue), salta automáticamente al siguiente
+// rival en pie, así un muerto no se queda pegado en el canvas del espectador.
+function spectatorFocusPlayer(): OnlinePlayer | null {
+  const pool = spectatorFocusPool();
+  if (pool.length === 0) return null;
   if (spectatorState.focusId) {
-    const manual = peers.find((player) => player.id === spectatorState.focusId);
+    const manual = pool.find((player) => player.id === spectatorState.focusId);
     if (manual) return manual;
   }
-  return peers[0];
+  return pool[0];
 }
 
 // Cambia el foco al siguiente/anterior rival (flechas o click). Fija el id manual
-// para que deje de auto-seguir al líder hasta que ese jugador se vaya.
+// para que deje de auto-seguir al líder hasta que ese jugador muera o se vaya.
 function cycleSpectatorFocus(direction: 1 | -1): void {
-  const peers = spectatorPeers();
-  if (peers.length <= 1) return;
+  const pool = spectatorFocusPool();
+  if (pool.length <= 1) return;
   const current = spectatorFocusPlayer();
-  const index = current ? peers.findIndex((player) => player.id === current.id) : -1;
+  const index = current ? pool.findIndex((player) => player.id === current.id) : -1;
   const base = index >= 0 ? index : 0;
-  const next = peers[(base + direction + peers.length) % peers.length];
+  const next = pool[(base + direction + pool.length) % pool.length];
   spectatorState.focusId = next.id;
 }
 
