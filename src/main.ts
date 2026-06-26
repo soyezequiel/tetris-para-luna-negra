@@ -438,6 +438,10 @@ window.addEventListener('pageshow', (event) => {
 window.addEventListener('focus', () => void maybeReinitLunaSessionFromUrl());
 replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
+// Tocar cualquier QR de apuesta (pago o cobro) lo amplía a pantalla completa para
+// escanearlo más fácil. Delegado en document porque los QR se re-renderizan dentro
+// de paneles distintos (overlay general y panel lateral del dashboard).
+document.addEventListener('click', handleBetQrZoomClick);
 overlayElement.addEventListener('input', handleOverlayInput);
 overlayElement.addEventListener('change', handleOverlayInput);
 overlayElement.addEventListener('pointerdown', handleOverlayPointerDown);
@@ -6824,6 +6828,45 @@ function renderOnlineBetPanel(host: boolean): string {
       </div>
     </section>
   `;
+}
+
+// Lightbox para ampliar el QR: al tocar un QR de apuesta (pago o cobro) lo
+// mostramos enorme y centrado para escanearlo cómodo. Se cierra tocando fuera,
+// con la X o con Escape. Reusamos el src del QR clickeado (ya cacheado).
+let betQrLightbox: HTMLDivElement | null = null;
+function handleBetQrZoomClick(event: MouseEvent): void {
+  const target = event.target;
+  if (!(target instanceof HTMLImageElement)) return;
+  if (!target.classList.contains('online-bet-qr')) return;
+  if (!target.src) return;
+  openBetQrLightbox(target.src, target.alt);
+}
+
+function openBetQrLightbox(src: string, alt: string): void {
+  if (!betQrLightbox) {
+    betQrLightbox = document.createElement('div');
+    betQrLightbox.className = 'bet-qr-lightbox';
+    betQrLightbox.addEventListener('click', () => closeBetQrLightbox());
+    document.body.appendChild(betQrLightbox);
+  }
+  betQrLightbox.innerHTML = `
+    <button class="bet-qr-lightbox-close" type="button" aria-label="Cerrar">✕</button>
+    <img class="bet-qr-lightbox-img" src="${src}" alt="${alt}" decoding="async" />
+    <span class="bet-qr-lightbox-hint">Escaneá con tu billetera Lightning · tocá para cerrar</span>
+  `;
+  betQrLightbox.classList.add('is-open');
+  document.addEventListener('keydown', handleBetQrLightboxKey);
+}
+
+function closeBetQrLightbox(): void {
+  if (!betQrLightbox) return;
+  betQrLightbox.classList.remove('is-open');
+  betQrLightbox.innerHTML = '';
+  document.removeEventListener('keydown', handleBetQrLightboxKey);
+}
+
+function handleBetQrLightboxKey(event: KeyboardEvent): void {
+  if (event.key === 'Escape') closeBetQrLightbox();
 }
 
 // QR grande y de alto contraste de la invoice Lightning, pensado para escanear

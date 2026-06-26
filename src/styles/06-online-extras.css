@@ -43,6 +43,70 @@
   background: #fff;
   /* Sin suavizado: módulos nítidos para que el celular lo lea de una. */
   image-rendering: pixelated;
+  /* Tocar el QR lo amplía a pantalla completa para escanearlo más fácil. */
+  cursor: zoom-in;
+}
+
+/* ───────────── Lightbox: QR ampliado a pantalla completa ───────────── */
+
+.bet-qr-lightbox {
+  display: none;
+}
+
+.bet-qr-lightbox.is-open {
+  display: flex;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: zoom-out;
+  animation: bet-qr-lightbox-in 120ms ease-out;
+}
+
+@keyframes bet-qr-lightbox-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.bet-qr-lightbox-img {
+  width: min(86vw, 86vh, 520px);
+  height: auto;
+  border-radius: 14px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+  image-rendering: pixelated;
+}
+
+.bet-qr-lightbox-hint {
+  color: rgba(247, 247, 242, 0.85);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.bet-qr-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(247, 247, 242, 0.14);
+  color: #f7f7f2;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.bet-qr-lightbox-close:hover {
+  background: rgba(247, 247, 242, 0.26);
 }
 
 .online-bet-qr-loading {
