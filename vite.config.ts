@@ -9,8 +9,10 @@ import * as leaderboard from './api/leaderboard';
 import * as survival from './api/survival';
 import * as report from './api/report';
 import * as status from './api/status';
-import * as hardTestReport from './api/hard-test-report';
-import * as hardTestLunaMock from './api/hard-test/luna-mock';
+// Endpoints DEV-only del hard test: viven fuera de api/ para que Vercel NO los cuente
+// como funciones serverless (el plan Hobby tope a 12). vite los cablea al dev server.
+import * as hardTestReport from './dev-api/hard-test-report';
+import * as hardTestLunaMock from './dev-api/hard-test/luna-mock';
 
 type LocalApiHandler = (request: Request) => Response | Promise<Response>;
 type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
