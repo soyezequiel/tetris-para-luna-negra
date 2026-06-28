@@ -14,6 +14,7 @@ import type {
   RoomBetPayoutStatus,
   RoomBetStatus,
 } from './protocol';
+import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
 
 interface LunaConfig {
   baseUrl: string;
@@ -63,6 +64,8 @@ export const LUNA_NEGRA_MIN_STAKE_SATS = 1;
 export const LUNA_NEGRA_MAX_STAKE_SATS = 1_000_000;
 
 function readApiConfig(): LunaConfig {
+  // Mock dev (hard test): sentinels válidos para no exigir env de Luna real.
+  if (isLunaMockEnabled()) return { baseUrl: 'mock://luna-negra', apiKey: 'mock' };
   const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
   if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
@@ -71,6 +74,7 @@ function readApiConfig(): LunaConfig {
 }
 
 export function isLunaNegraApiConfigured(): boolean {
+  if (isLunaMockEnabled()) return true;
   return Boolean(
     (process.env.LUNA_NEGRA_BASE_URL ?? '').trim()
     && (process.env.LUNA_NEGRA_API_KEY ?? '').trim(),
@@ -96,6 +100,8 @@ async function lunaFetch<T>(
   path: string,
   init: { method: 'GET' | 'POST'; body?: unknown } = { method: 'GET' },
 ): Promise<T> {
+  // Mock dev (hard test): el money-path corre en memoria, sin red.
+  if (isLunaMockEnabled()) return lunaMockFetch<T>(path, init);
   const headers: Record<string, string> = {
     authorization: `Bearer ${config.apiKey}`,
   };

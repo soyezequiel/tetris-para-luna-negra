@@ -9,6 +9,8 @@ import * as leaderboard from './api/leaderboard';
 import * as survival from './api/survival';
 import * as report from './api/report';
 import * as status from './api/status';
+import * as hardTestReport from './api/hard-test-report';
+import * as hardTestLunaMock from './api/hard-test/luna-mock';
 
 type LocalApiHandler = (request: Request) => Response | Promise<Response>;
 type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
@@ -25,6 +27,7 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/rooms/attack', roomsAction],
   ['/api/rooms/create', roomsAction],
   ['/api/rooms/eliminate', roomsAction],
+  ['/api/rooms/failover', roomsAction],
   ['/api/rooms/join', roomsAction],
   ['/api/rooms/kick', roomsAction],
   ['/api/rooms/leave', roomsAction],
@@ -57,6 +60,9 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/survival', survival],
   ['/api/report', report],
   ['/api/status', status],
+  // HARD TEST (dev): reporte a Discord + toggle del mock de Luna.
+  ['/api/hard-test-report', hardTestReport],
+  ['/api/hard-test/luna-mock', hardTestLunaMock],
 ]);
 
 export default defineConfig({

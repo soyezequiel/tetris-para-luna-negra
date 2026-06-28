@@ -319,6 +319,25 @@ let touchHapticsEnabled: boolean = best.touchHaptics;   // navigator.vibrate on/
 // BOT DEV: oponente simulado para ver el flujo multijugador completo en modo dev
 // (ver src/dev/devBotOpponent.ts). Solo existe detrás de import.meta.env.DEV.
 let devBotMatch: import('./dev/devBotOpponent').DevBotOpponent | null = null;
+// HARD TEST: sala de 8 (vos con autoplay + 7 bots) para ejercitar caminos no felices
+// (host se cae / abandono / doble-KO) + apuesta mock + reporte a Discord. Solo en DEV.
+const hardTestBots: import('./dev/devBotOpponent').DevBotOpponent[] = [];
+let hardTestRun: import('./dev/hardTestHarness').HardTestRun | null = null;
+// Cuando está en true, el host (vos) deja de escribirle al servidor: simula su caída
+// para disparar el host failover. Lo prende el inyector de caos del harness.
+let hardTestSuppressHostWrites = false;
+// Jugadores cuyo progreso/ataques/KO el host deja de relayar: simula un abandono
+// silencioso (pestaña cerrada) para disparar applyAbandonedPlayers en el servidor.
+const hardTestSuppressedPlayers = new Set<string>();
+// Cadencia (1 acción cada N frames) de los bots del hard test. Algo más lenta que el
+// default (6) para espaciar las muertes: así el observer no se saltea la ventana de
+// "pocos vivos" con la que se dispara la caída del host (ver hardTestHarness).
+const HARD_TEST_BOT_CADENCE_FRAMES = 8;
+// Config elegida en el panel dev (qué caminos activar + apuesta mock).
+const hardTestConfig = {
+  scenarios: { hostDisconnect: true, playerAbandon: true, doubleKo: true },
+  withMockedBet: true,
+};
 // DUELO LOCAL: sesión del modo 1v1 en la misma compu (overlay propio). Mientras
 // está activa, el loop principal queda en pausa (ver loopBody).
 let localVersusSession: LocalVersusSession | null = null;
@@ -996,10 +1015,11 @@ function loopBody(): void {
     const gameInputs = toGameInputs(controlInputs, candidateFrame);
     // TRUCO AUTOPLAY: inyecta la acción del bot como si fuera una tecla más.
     if (autoPlayState.enabled) {
-      // BOT DEV: en una partida vs bot el autoplay local se frena al mismo ritmo
-      // del oponente (a toda velocidad la ronda dura ~10s y no se ve nada).
-      const devBotPaced = import.meta.env.DEV && devBotMatch
-        ? candidateFrame % devBotMatch.getConfig().inputCadenceFrames === 0
+      // BOT DEV / HARD TEST: en una partida vs bots el autoplay local se frena al
+      // mismo ritmo del oponente (a toda velocidad la ronda dura ~10s y no se ve nada).
+      const botPacer = devBotMatch ?? hardTestBots[0] ?? null;
+      const devBotPaced = import.meta.env.DEV && botPacer
+        ? candidateFrame % botPacer.getConfig().inputCadenceFrames === 0
         : true;
       const botAction = devBotPaced ? nextAutoPlayInput(state) : null;
       if (botAction) gameInputs.push({ frame: candidateFrame, action: botAction });
@@ -1055,7 +1075,10 @@ function loopBody(): void {
     // syncOnlineClock() corre dentro de syncOnline(); recogemos el snap que haya disparado.
     perfFrame.clockSnapMs = onlineClockState.snapMsThisFrame;
   }
-  if (import.meta.env.DEV) devBotMatch?.frame(); // BOT DEV: avanza al oponente simulado
+  if (import.meta.env.DEV) { // BOT DEV / HARD TEST: avanza a los oponentes simulados
+    devBotMatch?.frame();
+    for (const bot of hardTestBots) bot.frame();
+  }
   syncRivalDangerCues(); // sonido cuando un rival vivo entra en peligro crítico
   syncRivalDeathSounds(); // sonido de derrota de un rival (espectador y en juego)
   syncRivalPieceSounds(); // sonidos atenuados de pieza de los rivales mientras juego
@@ -1593,6 +1616,20 @@ function handleOverlayClick(event: MouseEvent): void {
     }
     if (action === 'dev-bot-next-round') {
       void startOnlineRoom();
+      return;
+    }
+    if (action === 'hard-test-toggle') {
+      const key = control.dataset.key ?? '';
+      if (key === 'withMockedBet') hardTestConfig.withMockedBet = !hardTestConfig.withMockedBet;
+      else if (key === 'hostDisconnect' || key === 'playerAbandon' || key === 'doubleKo') {
+        hardTestConfig.scenarios[key] = !hardTestConfig.scenarios[key];
+      }
+      overlayState.lastDevBot = '';
+      renderDevBotOverlay();
+      return;
+    }
+    if (action === 'hard-test-run') {
+      void startHardTest();
       return;
     }
   }
@@ -3122,34 +3159,45 @@ async function createOnlineRoom(
 // activa el autoplay local (la partida corre sola de ambos lados) y arranca la
 // ronda por el flujo normal del host. El bridge conecta los hooks del bot a los
 // mismos handlers que usaría el peer broadcast WebRTC.
-async function startDevBotMatch(): Promise<void> {
-  if (!import.meta.env.DEV || devBotMatch) return;
-  await createOnlineRoom('private');
-  if (!roomState.current) return;
-  const { DevBotOpponent } = await import('./dev/devBotOpponent');
-  const bot = new DevBotOpponent({
+// Bridge compartido por el bot dev único y los 7 bots del hard test: conecta los
+// hooks del bot a los mismos handlers que usaría el peer broadcast WebRTC. Las
+// entregas que ESCRIBEN al servidor (ataque, KO) se cortan cuando el host está
+// suprimido (simula su caída) o cuando ESE jugador fue dado por abandonado.
+function makeOnlineBotBridge(): import('./dev/devBotOpponent').DevBotBridge {
+  return {
     getRoom: () => roomState.current,
     getNowMs: onlineNowMs,
     botRules: () => onlineRulesFromRoom(roomState.current),
     deliverAttackIntent: (intent) => {
+      if (hardTestSuppressedPlayers.has(intent.fromPlayerId)) return;
       // Mismo camino que onAttackIntent del peer broadcast: el host rutea.
-      if (roomState.current && isOnlineHost()) commitOnlineAttack(intent);
+      if (roomState.current && isOnlineHost() && !hardTestSuppressHostWrites) commitOnlineAttack(intent);
     },
     deliverSnapshot: (playerId, game) => {
+      if (hardTestSuppressedPlayers.has(playerId)) return;
       // Mismo camino que el snapshot por peer: display local + relay del host
       // al servidor vía relayPeerProgressToServer (mantiene fresco al bot).
       rememberPeerDisplaySnapshot(playerId, game);
       applyPeerSnapshot(playerId, playerId, game);
     },
     commitKo: (report) => {
-      void commitOnlineElimination(report);
+      if (hardTestSuppressedPlayers.has(report.playerId)) return;
+      if (!hardTestSuppressHostWrites) void commitOnlineElimination(report);
     },
     deliverReplay: (report) => {
       // Mismo camino que onReplay del peer real: el bot no es un peer WebRTC, así
       // que entrega su log por acá para aparecer en la repetición multi-tablero.
       collectPeerReplay(report.playerId, { type: 'replay', ...report });
     },
-  }, onlineClient);
+  };
+}
+
+async function startDevBotMatch(): Promise<void> {
+  if (!import.meta.env.DEV || devBotMatch) return;
+  await createOnlineRoom('private');
+  if (!roomState.current) return;
+  const { DevBotOpponent } = await import('./dev/devBotOpponent');
+  const bot = new DevBotOpponent(makeOnlineBotBridge(), onlineClient);
   try {
     await bot.join(roomState.current.id);
   } catch (error) {
@@ -3164,6 +3212,146 @@ async function startDevBotMatch(): Promise<void> {
   // solo): refrescamos la sala para que incluya al bot antes de arrancar.
   await pollOnlineRoom();
   await startOnlineRoom();
+}
+
+// HARD TEST: arranca la corrida de 8 jugadores con los caminos no felices elegidos.
+// Implementa HardTestHost con closures sobre los internals del online stack y deja
+// que el harness orqueste (caos + observer + evaluación + reporte a Discord).
+async function startHardTest(): Promise<void> {
+  if (!import.meta.env.DEV) return;
+  if (hardTestRun && !hardTestRunFinished(hardTestRun)) return;
+  const [{ DevBotOpponent }, { HardTestRun }] = await Promise.all([
+    import('./dev/devBotOpponent'),
+    import('./dev/hardTestHarness'),
+  ]);
+  const webhookUrl = (import.meta.env.VITE_HARD_TEST_WEBHOOK_URL ?? '').trim();
+
+  const host: import('./dev/hardTestHarness').HardTestHost = {
+    selfPlayerId: () => identityState.player.id,
+    nowMs: onlineNowMs,
+    createRoom: async () => {
+      await createOnlineRoom('private');
+      return roomState.current;
+    },
+    getRoom: () => roomState.current,
+    spawnBot: async () => {
+      // Cadencia lenta a propósito: alarga la ronda (más frames antes de los KO) para
+      // que las ventanas de caos (2–4.5s) y el failover (host+15s) ocurran a mitad de
+      // ronda y no después de que el host (vos) gane sola. El autoplay del host se
+      // acompasa a esta misma cadencia (botPacer en el loop).
+      const bot = new DevBotOpponent(makeOnlineBotBridge(), onlineClient, { inputCadenceFrames: HARD_TEST_BOT_CADENCE_FRAMES });
+      await bot.join(roomState.current!.id);
+      hardTestBots.push(bot);
+      return bot;
+    },
+    setAutoplay: (on) => { autoPlayState.accessGranted = on; autoPlayState.enabled = on; },
+    poll: () => pollOnlineRoom(),
+    startRound: () => startOnlineRoom(),
+    setLunaMock: async (on) => {
+      await fetch(`/api/hard-test/luna-mock?on=${on ? '1' : '0'}`, { method: 'POST' }).catch(() => {});
+    },
+    createBet: async (stakeSats) => {
+      const room = roomState.current;
+      if (!room) throw new Error('sin sala');
+      const response = await fetch('/api/bets/create', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ roomId: room.id, playerId: identityState.player.id, stakeSats }),
+      });
+      if (!response.ok) throw new Error(`bet create HTTP ${response.status}`);
+      const data = await response.json() as { room?: OnlineRoom };
+      if (data.room) adoptOnlineRoom(data.room, 'bet-refresh');
+    },
+    refreshBet: async () => {
+      const room = roomState.current;
+      if (!room) return;
+      const response = await fetch('/api/bets/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ roomId: room.id, playerId: identityState.player.id }),
+      });
+      const data = await response.json().catch(() => null) as { room?: OnlineRoom } | null;
+      if (data?.room) adoptOnlineRoom(data.room, 'bet-refresh');
+    },
+    suppressHostWrites: (on) => { hardTestSuppressHostWrites = on; },
+    suppressPlayer: (playerId, on) => { if (on) hardTestSuppressedPlayers.add(playerId); else hardTestSuppressedPlayers.delete(playerId); },
+    cleanup: async () => {
+      // Saca al host de la sala (dispone bots, limpia supresión, roomState.current=null)
+      // ANTES de apagar el mock: así el cliente deja de pollear la apuesta en la pantalla
+      // de resultados. Si no, el ganador invitado queda con un retiro LNURL pendiente y el
+      // poll seguiría golpeando /api/bets/refresh — que daría 500 con el mock ya apagado.
+      resetOnlineRoomState();
+      goToMenu();
+      await host.setLunaMock(false);
+    },
+    sendReport: async (result) => {
+      if (!webhookUrl) return { ok: false, detail: 'falta VITE_HARD_TEST_WEBHOOK_URL en .env.local' };
+      try {
+        const response = await fetch('/api/hard-test-report', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ webhookUrl, report: result }),
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '');
+          return { ok: false, detail: `HTTP ${response.status} ${detail.slice(0, 120)}` };
+        }
+        return { ok: true, detail: 'ok' };
+      } catch (error) {
+        return { ok: false, detail: String(error).slice(0, 120) };
+      }
+    },
+  };
+
+  const config = {
+    playerCount: 8,
+    scenarios: { ...hardTestConfig.scenarios },
+    withMockedBet: hardTestConfig.withMockedBet,
+    stakeSats: DEFAULT_ONLINE_BET_STAKE_SATS,
+  };
+  const run = new HardTestRun(host, config, () => { overlayState.lastDevBot = ''; renderDevBotOverlay(); });
+  hardTestRun = run;
+  // Inspección dev del hard test desde la consola: window.__ht() devuelve fase, estado
+  // de la sala (staleness por jugador/sala), supresión activa y el resultado/checks.
+  (window as unknown as { __ht?: unknown }).__ht = () => {
+    const room = roomState.current;
+    const now = onlineNowMs();
+    return {
+      suppressHost: hardTestSuppressHostWrites,
+      suppressed: [...hardTestSuppressedPlayers],
+      bots: hardTestBots.length,
+      phase: run.phase,
+      now,
+      result: run.result && { pass: run.result.pass, checks: run.result.checks },
+      reportStatus: run.reportStatus,
+      timeline: (run as unknown as { timeline: unknown[] }).timeline,
+      room: room && {
+        status: room.status,
+        host: room.hostPlayerId.slice(-6),
+        winner: room.winnerPlayerId?.slice(-6) ?? null,
+        roomStaleMs: now - room.updatedAtServerMs,
+        bet: room.bet?.status ?? null,
+        players: room.players.map((p) => ({
+          id: p.id.slice(-6),
+          alive: p.alive,
+          status: p.status,
+          staleMs: now - p.updatedAtServerMs,
+        })),
+      },
+    };
+  };
+  renderDevBotOverlay();
+  try {
+    await run.run();
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+  } finally {
+    renderDevBotOverlay();
+  }
+}
+
+function hardTestRunFinished(run: import('./dev/hardTestHarness').HardTestRun): boolean {
+  return run.result !== null;
 }
 
 async function joinOnlineRoom(roomId: string): Promise<void> {
@@ -3795,9 +3983,13 @@ async function leaveCurrentRoomBeforeNew(targetRoomId?: string): Promise<void> {
 }
 
 function resetOnlineRoomState(): void {
-  if (import.meta.env.DEV) { // BOT DEV: salir de la sala mata al bot (antes de perder roomState.current)
+  if (import.meta.env.DEV) { // BOT DEV / HARD TEST: salir de la sala mata a los bots
     devBotMatch?.dispose();
     devBotMatch = null;
+    for (const bot of hardTestBots) bot.dispose();
+    hardTestBots.length = 0;
+    hardTestSuppressedPlayers.clear();
+    hardTestSuppressHostWrites = false;
   }
   clearOnlineRoomSession();
   restoreLocalMusicPlaylist();
@@ -4148,6 +4340,11 @@ function syncRunEffects(state: GameState, events: GameEvent[]): void {
 
 function syncOnlineBattleEvents(events: GameEvent[], state: GameState): void {
   if (appMode !== 'onlinePlaying' || !roomState.current) return;
+  // HARD TEST: un host "caído" tampoco rutea sus propios ataques (sendAttack ESCRIBE
+  // al servidor y bumpea room.updatedAtServerMs). Es el último escritor que faltaba
+  // gatear; sin esto el tablero autoplay del host refresca la sala y el failover
+  // pasivo (HOST_STALE_MS) nunca dispara.
+  if (hardTestSuppressHostWrites) return;
   // Cliente-autoritativo: cada jugador (host o invitado) declara sus propios ataques a
   // partir de SUS líneas. Antes solo el host generaba ataques (los de los invitados los
   // derivaba de la simulación que divergía); ahora nacen del motor real de cada cliente.
@@ -4415,20 +4612,24 @@ function syncOnline(): void {
         lastAuthFrame: hostAuthorityState.lastAuthoritativeFrame,
       });
     }
-    if (isOnlineHost()) advanceHostAuthority(onlineAuthorityTargetFrame(liveState));
-    else { flushOnlineInputOutbox(); maybePostSelfProgressFallback(now, liveState); maybeRequestHostFailover(now, liveState); }
+    // HARD TEST: cuando se simula la caída del host, vos (host) dejás de escribirle
+    // al servidor (autoridad, relay, progreso, resultado). Los reads (poll) siguen,
+    // así el room queda stale y dispara applyHostFailover.
+    const hostWritesOk = isOnlineHost() && !hardTestSuppressHostWrites;
+    if (hostWritesOk) advanceHostAuthority(onlineAuthorityTargetFrame(liveState));
+    else if (!isOnlineHost()) { flushOnlineInputOutbox(); maybePostSelfProgressFallback(now, liveState); maybeRequestHostFailover(now, liveState); }
     applyRoomAttacks(roomState.current);
     if (shouldBroadcastPeerSnapshot(now)) broadcastOnlineSnapshot(liveState);
-    if (isOnlineHost()) relayPeerProgressToServer();
+    if (hostWritesOk) relayPeerProgressToServer();
     // El host postea progreso mientras la sala siga en ronda AUNQUE su propia
     // partida haya terminado: es el único escritor del servidor, y si los canales
     // peer no traen snapshots para relayar (WebRTC caído), la sala quedaría
     // HOST_STALE_MS sin escrituras y applyHostFailover cortaría la ronda con
     // jugadores todavía vivos. El servidor trata el progreso de un jugador
     // terminal como keepalive (no toca sus stats).
-    if (isOnlineHost() && roomStillRunning && shouldPostOnlineProgress(now)) postOnlineProgress(liveState);
-    if (liveState.status === 'finished' && !roundState.resultSubmitted) postOnlineResult(liveState);
-    if (liveState.status === 'gameover') postOnlineElimination(liveState);
+    if (hostWritesOk && roomStillRunning && shouldPostOnlineProgress(now)) postOnlineProgress(liveState);
+    if (liveState.status === 'finished' && !roundState.resultSubmitted && !hardTestSuppressHostWrites) postOnlineResult(liveState);
+    if (liveState.status === 'gameover' && !hardTestSuppressHostWrites) postOnlineElimination(liveState);
   }
   // FUERA del bloque anterior: un cliente NO-host que muere y pasa a 'onlineResults'
   // deja de entrar ahí, pero su partida ya terminó y todavía sigue conectado como
@@ -4518,7 +4719,10 @@ async function pollOnlineRoom(): Promise<void> {
     }
     onlineNetState.error = null;
     roundState.roomGonePolls = 0;
-    maybeRefreshBet();
+    // HARD TEST: el refresh de la apuesta ESCRIBE al servidor (setRoomBet bumpea
+    // room.updatedAtServerMs). Si el host suprimido lo siguiera llamando, mantendría
+    // la sala "fresca" y applyHostFailover nunca dispararía. Entra al set de supresión.
+    if (!hardTestSuppressHostWrites) maybeRefreshBet();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
     if (error instanceof OnlineApiError && error.status === 404) {
@@ -4911,6 +5115,11 @@ function syncOnlinePeers(room: OnlineRoom): void {
     playerId: identityState.player.id,
     sendSignal: (signal) => {
       if (!roomState.current) return;
+      // HARD TEST: el señaling WebRTC ESCRIBE al servidor (addPeerSignal bumpea
+      // room.updatedAtServerMs). Un host realmente caído tampoco señaliza, así que
+      // entra al set de supresión; si no, la sala nunca se ve stale y el failover
+      // pasivo (HOST_STALE_MS) jamás dispara.
+      if (hardTestSuppressHostWrites) return;
       void onlineClient.sendPeerSignal({
         roomId: roomState.current.id,
         fromPlayerId: identityState.player.id,
@@ -5133,6 +5342,8 @@ function relayPeerProgressToServer(): void {
   const now = performance.now();
   for (const player of roomState.current.players) {
     if (player.id === identityState.player.id) continue;
+    // HARD TEST: un jugador "abandonado" deja de ser relayado → el servidor lo barre.
+    if (hardTestSuppressedPlayers.has(player.id)) continue;
     if (player.status === 'eliminated' || player.status === 'won' || player.status === 'lost') continue;
     const snapshot = peerState.displaySnapshots.get(player.id);
     if (!snapshot || !isCurrentOnlineGame(snapshot) || snapshot.status !== 'playing') continue;
@@ -5330,10 +5541,48 @@ function createOnlineGameSnapshotFromState(
 // Vive en su propia capa (devBotOverlayElement) y solo se redibuja al cambiar.
 function renderDevBotOverlay(): void {
   if (!devBotOverlayElement) return;
-  const html = devBotMatch ? renderDevBotPanel() : '';
+  // Mostramos el panel solo en pantallas de menú/sala (no tapa la partida solo).
+  const showPanel = ['menu', 'playMenu', 'soloMenu', 'historyMenu', 'leaderboard', 'survivalTop',
+    'roomLobby', 'onlineCountdown', 'onlinePlaying', 'onlineResults'].includes(appMode);
+  const html = showPanel ? renderHardTestPanel() + (devBotMatch ? renderDevBotPanel() : '') : '';
   if (html === overlayState.lastDevBot) return;
   overlayState.lastDevBot = html;
   devBotOverlayElement.innerHTML = html;
+}
+
+// HARD TEST: launcher + estado en vivo. Vive arriba a la izquierda; el panel del bot
+// dev único (si está activo) queda abajo.
+function renderHardTestPanel(): string {
+  const btn = 'pointer-events:auto;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.85);border:1px solid rgba(255,255,255,0.18);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;';
+  const on = 'background:rgba(80,200,120,0.32);border-color:rgba(80,200,120,0.6);';
+  const sc = hardTestConfig.scenarios;
+  const toggle = (key: string, label: string, active: boolean) =>
+    `<button type="button" style="${btn}${active ? on : ''}" data-ui-action="hard-test-toggle" data-key="${key}">${active ? '☑' : '☐'} ${label}</button>`;
+  const running = hardTestRun !== null && hardTestRun.result === null;
+  const runBtn = `<button type="button" style="${btn}${running ? 'opacity:0.5;' : on}" data-ui-action="hard-test-run">${running ? 'Corriendo…' : '▶ Correr hard test (8)'}</button>`;
+  let statusHtml = '';
+  if (hardTestRun) {
+    const phase = escapeHtml(hardTestRun.phase);
+    const checks = hardTestRun.result
+      ? hardTestRun.result.checks.map((c) => `<div style="color:${c.pass ? '#7fd' : '#f88'};">${c.pass ? '✅' : '❌'} ${escapeHtml(c.name)}: ${escapeHtml(c.detail)}</div>`).join('')
+      : '';
+    const reportLine = hardTestRun.reportStatus ? `<div style="color:rgba(255,255,255,0.6);">📤 ${escapeHtml(hardTestRun.reportStatus)}</div>` : '';
+    statusHtml = `<div style="font-size:10px;line-height:1.5;max-width:340px;max-height:240px;overflow:auto;">
+      <div style="color:rgba(255,255,255,0.8);">⏱ ${phase}</div>${checks}${reportLine}</div>`;
+  }
+  return `
+    <div style="position:fixed;left:12px;top:12px;z-index:80;display:flex;flex-direction:column;gap:6px;background:rgba(10,12,18,0.86);border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:10px;font-family:monospace;pointer-events:auto;">
+      <div style="font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.5);">HARD TEST · 8 jugadores (vos + 7 bots)</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${toggle('hostDisconnect', 'host se cae', sc.hostDisconnect)}
+        ${toggle('playerAbandon', 'abandono', sc.playerAbandon)}
+        ${toggle('doubleKo', 'doble-KO', sc.doubleKo)}
+        ${toggle('withMockedBet', 'apuesta (mock)', hardTestConfig.withMockedBet)}
+      </div>
+      <div style="display:flex;gap:6px;">${runBtn}</div>
+      ${statusHtml}
+    </div>
+  `;
 }
 
 function renderDevBotPanel(): string {
