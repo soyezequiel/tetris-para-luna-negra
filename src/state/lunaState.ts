@@ -6,6 +6,27 @@ import type { LunaIdentity, LunaLaunchRequest } from '../online/protocol';
 // Un launch request de Luna ya normalizado (con el roomId saneado listo para unirse).
 export type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: string };
 
+// Método de login Nostr 2.0 elegido en la puerta de bienvenida.
+export type NostrLoginTab = 'extension' | 'qr' | 'bunker' | 'local';
+
+// Estado del flujo de login Nostr 2.0 (firmante en el navegador). El signer
+// activo y el `{ signer, nsec }` recién generado viven fuera del estado
+// serializable (en main.ts), porque no son representables como HTML/JSON.
+export interface NostrLoginState {
+  tab: NostrLoginTab;
+  busy: boolean;
+  error: string | null;
+  // Flujo QR / "abrir en la app" (Nostr Connect).
+  qrUri: string | null;
+  qrDataUrl: string | null;
+  authUrl: string | null;
+  // Inputs editables.
+  bunkerInput: string;
+  nsecInput: string;
+  // nsec recién generado para respaldar (se muestra una sola vez).
+  generatedNsec: string | null;
+}
+
 export interface LunaState {
   // Identidad SSO de Luna Negra (npub + token), o null si no hay sesión.
   identity: LunaIdentity | null;
@@ -28,6 +49,8 @@ export interface LunaState {
   pendingLaunchRequest: PendingLunaLaunchRequest | null;
   // Ids de launch requests que el usuario ya descartó (no volver a ofrecerlos).
   ignoredLaunchRequestIds: Set<string>;
+  // Login Nostr 2.0 (firmante en el navegador).
+  nostrLogin: NostrLoginState;
 }
 
 export const lunaState: LunaState = {
@@ -41,4 +64,15 @@ export const lunaState: LunaState = {
   launchPollInFlight: false,
   pendingLaunchRequest: null,
   ignoredLaunchRequestIds: new Set<string>(),
+  nostrLogin: {
+    tab: 'extension',
+    busy: false,
+    error: null,
+    qrUri: null,
+    qrDataUrl: null,
+    authUrl: null,
+    bunkerInput: '',
+    nsecInput: '',
+    generatedNsec: null,
+  },
 };

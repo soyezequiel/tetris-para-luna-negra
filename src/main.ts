@@ -12,7 +12,7 @@ import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './u
 import { leaderboardState } from './state/leaderboardState';
 import type { SurvivalRunRank } from './state/leaderboardState';
 import { betState, DEFAULT_ONLINE_BET_STAKE_SATS } from './state/betState';
-import { lunaState, type PendingLunaLaunchRequest } from './state/lunaState';
+import { lunaState, type NostrLoginTab, type PendingLunaLaunchRequest } from './state/lunaState';
 import { spectatorState } from './state/spectatorState';
 import { replayState, multiReplayState, type MultiReplayCard } from './state/replayState';
 import { onlineNetState, onlineClockState, onlineFailoverState } from './state/onlineNetState';
@@ -106,6 +106,16 @@ import { createOnlineClient } from './online/partyClient';
 import { LunaSocialClient } from './online/lunaNegraFriendsClient';
 import type { HostSimulatedPlayer } from './online/hostAuthority';
 import { saveOnlinePlayer } from './online/playerIdentity';
+import {
+  clearActiveSigner,
+  createNip07Signer,
+  generateLocalSigner,
+  importNsec,
+  restoreSigner,
+  type LunaSigner,
+  type StoredSigner,
+} from './online/nostrSigner';
+import { loginWithSigner } from './online/nostrLogin';
 import { decidePeerKoAction } from './online/peerKoAuthority';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayMessage } from './online/peerBroadcast';
 import { OnlineReplayCollector } from './app/multiplayerReplay';
@@ -1488,6 +1498,8 @@ function handleOverlayInput(event: Event): void {
       const anonButton = document.querySelector<HTMLButtonElement>('[data-ui-action="anon-continue"]');
       if (anonButton) anonButton.disabled = identityState.name.trim().length === 0;
     }
+    if (field === 'nostr-bunker') lunaState.nostrLogin.bunkerInput = target.value.trim();
+    if (field === 'nostr-nsec') lunaState.nostrLogin.nsecInput = target.value.trim();
     if (field === 'join-code') identityState.joinCode = normalizeRoomId(target.value);
     if (field === 'bet-stake') betState.stakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
     if (field === 'report-comment') reportState.comment = target.value.slice(0, 400);
@@ -1755,6 +1767,14 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'luna-login') openLunaLogin();
   if (action === 'luna-logout') logOut();
   if (action === 'anon-continue') continueAsAnonymous();
+  if (action === 'nostr-tab') selectNostrLoginTab((control.dataset.tab as NostrLoginTab | undefined) ?? 'extension');
+  if (action === 'nostr-login-extension') void loginWithNostrExtension();
+  if (action === 'nostr-login-bunker') void loginWithNostrBunker();
+  if (action === 'nostr-generate-key') generateNostrLocalKey();
+  if (action === 'nostr-login-generated') void loginWithGeneratedNostrKey();
+  if (action === 'nostr-login-import') void loginWithImportedNostrKey();
+  if (action === 'nostr-copy-qr') copyToClipboard(lunaState.nostrLogin.qrUri ?? '');
+  if (action === 'nostr-copy-nsec') copyToClipboard(lunaState.nostrLogin.generatedNsec ?? '');
   if (action === 'online-copy-code') {
     copyToClipboard(control.dataset.code ?? '');
   }
@@ -2294,6 +2314,10 @@ function removeLunaNegraTokenFromUrl(): void {
 async function bootstrapOnlineStartup(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   rememberTrustedLunaOriginFromStartup(params);
+  // Rehidrata el firmante Nostr 2.0 persistido (sesión por extensión/bunker/clave
+  // local). Best-effort y en paralelo: deja el signer en memoria para firmar
+  // features Nostr; no bloquea el arranque del SSO.
+  void restoreSigner();
   await bootstrapLunaSession();
   // El arranque SSO terminó: a partir de acá la puerta de login ya puede decidir
   // si mostrarse (sin flash) según haya o no identidad resuelta.
@@ -2637,6 +2661,9 @@ function clearLunaIdentity(): void {
   lunaState.identity = null;
   lunaState.inviteNotice = null;
   lunaState.pendingLaunchRequest = null;
+  // Cierra y olvida el firmante Nostr (sesión 2.0) junto con la identidad.
+  clearActiveSigner();
+  resetNostrLoginFlow();
   clearStoredLunaIdentity();
   if (!roomState.current) {
     identityState.player = saveOnlinePlayer({ id: '', name: 'Player', avatarUrl: null });
@@ -2852,6 +2879,7 @@ function continueAsAnonymous(): void {
   const name = identityState.name.trim().slice(0, 18) || 'Jugador';
   identityState.player = saveOnlinePlayer({ ...identityState.player, name });
   identityState.name = identityState.player.name;
+  resetNostrLoginFlow();
   loginGateDismissed = true;
   saveLoginGateDismissed();
 }
@@ -2867,6 +2895,162 @@ async function openLunaLogin(): Promise<void> {
     onlineNetState.error = onlineErrorText(error);
   } finally {
     lunaState.inviteWindowBusy = false;
+  }
+}
+
+// ─────────────────────── Login Nostr 2.0 (firmante local) ───────────────────────
+// Login directo con un firmante Nostr (NIP-07 extensión / NIP-46 bunker o QR /
+// clave local), sin depender del SSO `?lnToken=` de Luna. Produce la MISMA
+// `LunaIdentity` que el SSO, así que el resto de la app no cambia. Ver
+// src/online/nostrLogin.ts y nostrSigner.ts (porteados del repo de Luna Negra).
+
+// El `{ signer, nsec }` recién generado vive fuera del estado serializable: el
+// signer no es representable como HTML. Se descarta al cerrar la puerta.
+let nostrGeneratedSigner: { signer: LunaSigner; nsec: string } | null = null;
+// AbortController del handshake NIP-46 por QR en curso (se cancela al cambiar de
+// pestaña o cerrar la puerta).
+let nostrQrAbort: AbortController | null = null;
+
+// Finaliza cualquier método de login Nostr: resuelve identidad y la adopta igual
+// que el SSO (applyLunaIdentity + persistencia). Al setear lunaState.identity la
+// puerta de login desaparece sola (shouldShowLoginGate).
+async function finishNostrLogin(signer: LunaSigner, stored: StoredSigner): Promise<void> {
+  if (lunaState.nostrLogin.busy) return;
+  lunaState.nostrLogin.busy = true;
+  lunaState.nostrLogin.error = null;
+  try {
+    const identity = await loginWithSigner(signer, stored);
+    applyLunaIdentity(identity);
+    saveStoredLunaIdentity(identity);
+    lunaState.sessionError = null;
+    resetNostrLoginFlow();
+    void syncLunaPresence();
+  } catch (error) {
+    lunaState.nostrLogin.error = error instanceof Error ? error.message : 'Error de login';
+  } finally {
+    lunaState.nostrLogin.busy = false;
+  }
+}
+
+// Limpia el flujo de login Nostr (al loguearse, cerrar la puerta o cambiar de tab).
+function resetNostrLoginFlow(): void {
+  cancelNostrQrFlow();
+  nostrGeneratedSigner = null;
+  lunaState.nostrLogin.qrUri = null;
+  lunaState.nostrLogin.qrDataUrl = null;
+  lunaState.nostrLogin.authUrl = null;
+  lunaState.nostrLogin.generatedNsec = null;
+  lunaState.nostrLogin.nsecInput = '';
+}
+
+function cancelNostrQrFlow(): void {
+  nostrQrAbort?.abort();
+  nostrQrAbort = null;
+}
+
+function selectNostrLoginTab(tab: NostrLoginTab): void {
+  if (lunaState.nostrLogin.tab === tab) return;
+  cancelNostrQrFlow();
+  lunaState.nostrLogin.tab = tab;
+  lunaState.nostrLogin.error = null;
+  lunaState.nostrLogin.authUrl = null;
+  if (tab === 'qr') void startNostrQrFlow();
+}
+
+// NIP-07: firma con la extensión del navegador (nos2x / Alby).
+async function loginWithNostrExtension(): Promise<void> {
+  if (lunaState.nostrLogin.busy) return;
+  if (typeof window === 'undefined' || !window.nostr) {
+    lunaState.nostrLogin.error = 'No se encontró una extensión Nostr. Instalá nos2x o Alby, o usá otro método.';
+    return;
+  }
+  await finishNostrLogin(createNip07Signer(), { method: 'nip07' });
+}
+
+// NIP-46 por bunker:// pegado a mano (o NIP-05).
+async function loginWithNostrBunker(): Promise<void> {
+  const input = lunaState.nostrLogin.bunkerInput.trim();
+  if (!input || lunaState.nostrLogin.busy) return;
+  lunaState.nostrLogin.busy = true;
+  lunaState.nostrLogin.error = null;
+  try {
+    const { connectBunker } = await import('./online/nostrNip46');
+    const { signer, stored } = await connectBunker(input, (url) => {
+      lunaState.nostrLogin.authUrl = url;
+    });
+    lunaState.nostrLogin.busy = false;
+    await finishNostrLogin(signer, stored);
+  } catch (error) {
+    lunaState.nostrLogin.error = error instanceof Error ? error.message : 'No se pudo conectar al bunker';
+    lunaState.nostrLogin.busy = false;
+  }
+}
+
+// NIP-46 por QR / "abrir en la app" (Amber, nsec.app, Primal).
+async function startNostrQrFlow(): Promise<void> {
+  cancelNostrQrFlow();
+  const ctrl = new AbortController();
+  nostrQrAbort = ctrl;
+  lunaState.nostrLogin.qrUri = null;
+  lunaState.nostrLogin.qrDataUrl = null;
+  lunaState.nostrLogin.authUrl = null;
+  lunaState.nostrLogin.error = null;
+  try {
+    const { startNostrConnect } = await import('./online/nostrNip46');
+    const { uri, established } = startNostrConnect({
+      onauth: (url) => {
+        if (!ctrl.signal.aborted) lunaState.nostrLogin.authUrl = url;
+      },
+      signal: ctrl.signal,
+    });
+    if (ctrl.signal.aborted) return;
+    lunaState.nostrLogin.qrUri = uri;
+    // El QR se dibuja con canvas; navegadores con anti-fingerprinting lo bloquean y
+    // toDataURL lanza. No es un fallo de conexión: el usuario puede copiar el enlace.
+    try {
+      lunaState.nostrLogin.qrDataUrl = await QRCode.toDataURL(uri, {
+        margin: 2,
+        width: 240,
+        errorCorrectionLevel: 'M',
+      });
+    } catch {
+      lunaState.nostrLogin.qrDataUrl = null;
+    }
+    const { signer, stored } = await established;
+    if (ctrl.signal.aborted) {
+      void signer.close?.();
+      return;
+    }
+    await finishNostrLogin(signer, stored);
+  } catch (error) {
+    if (!ctrl.signal.aborted) {
+      lunaState.nostrLogin.error = error instanceof Error ? error.message : 'No se pudo conectar con el firmante remoto';
+    }
+  }
+}
+
+// Clave local: genera una nsec nueva (se muestra una vez para respaldar).
+function generateNostrLocalKey(): void {
+  if (lunaState.nostrLogin.busy) return;
+  lunaState.nostrLogin.error = null;
+  nostrGeneratedSigner = generateLocalSigner();
+  lunaState.nostrLogin.generatedNsec = nostrGeneratedSigner.nsec;
+}
+
+async function loginWithGeneratedNostrKey(): Promise<void> {
+  if (!nostrGeneratedSigner) return;
+  await finishNostrLogin(nostrGeneratedSigner.signer, { method: 'local', nsec: nostrGeneratedSigner.nsec });
+}
+
+// Clave local: importa una nsec existente.
+async function loginWithImportedNostrKey(): Promise<void> {
+  const nsec = lunaState.nostrLogin.nsecInput.trim();
+  if (!nsec || lunaState.nostrLogin.busy) return;
+  try {
+    const signer = importNsec(nsec);
+    await finishNostrLogin(signer, { method: 'local', nsec });
+  } catch (error) {
+    lunaState.nostrLogin.error = error instanceof Error ? error.message : 'nsec inválido';
   }
 }
 
@@ -6187,6 +6371,8 @@ function renderLoginGateOverlay(): string {
         <button class="cs2-btn cs2-btn-accent login-gate-primary" type="button" data-ui-action="luna-login"${busy ? ' disabled' : ''}>
           ${busy ? 'Abriendo…' : 'Iniciar sesión en Luna Negra'}
         </button>
+        <div class="login-gate-sep"><span>o con tu identidad Nostr</span></div>
+        ${renderNostrLoginMethods()}
         <div class="login-gate-sep"><span>o</span></div>
         <label class="online-field login-gate-field">
           <span>Tu nombre</span>
@@ -6197,6 +6383,83 @@ function renderLoginGateOverlay(): string {
       </article>
     </div>
   `);
+}
+
+// Métodos de login Nostr 2.0 (firmante en el navegador): extensión NIP-07, Nostr
+// Connect por QR, bunker://, y clave local. Equivalente vanilla del login-modal de
+// Luna Negra. El estado vive en lunaState.nostrLogin.
+const NOSTR_LOGIN_TABS: { id: NostrLoginTab; label: string }[] = [
+  { id: 'extension', label: 'Extensión' },
+  { id: 'qr', label: 'QR' },
+  { id: 'bunker', label: 'Bunker' },
+  { id: 'local', label: 'Clave local' },
+];
+
+function renderNostrLoginMethods(): string {
+  const s = lunaState.nostrLogin;
+  const tabs = NOSTR_LOGIN_TABS.map((t) => `
+    <button class="nostr-login-tab${s.tab === t.id ? ' is-active' : ''}" type="button" data-ui-action="nostr-tab" data-tab="${t.id}" aria-pressed="${s.tab === t.id}">${t.label}</button>
+  `).join('');
+  return `
+    <div class="nostr-login">
+      <div class="nostr-login-tabs" role="tablist">${tabs}</div>
+      <div class="nostr-login-panel">${renderNostrLoginPanel()}</div>
+      ${s.error ? `<p class="panel-note panel-error nostr-login-error">${escapeHtml(s.error)}</p>` : ''}
+    </div>
+  `;
+}
+
+function renderNostrLoginPanel(): string {
+  const s = lunaState.nostrLogin;
+  const busy = s.busy;
+  if (s.tab === 'extension') {
+    const hasExtension = typeof window !== 'undefined' && Boolean(window.nostr);
+    return `
+      <p class="nostr-login-hint">Usá tu extensión del navegador (nos2x, Alby).</p>
+      <button class="cs2-btn cs2-btn-accent nostr-login-action" type="button" data-ui-action="nostr-login-extension"${busy || !hasExtension ? ' disabled' : ''}>${busy ? 'Conectando…' : 'Conectar con la extensión'}</button>
+      ${hasExtension ? '' : '<p class="login-gate-note">No se encontró una extensión Nostr. Instalá nos2x o Alby, o usá otro método.</p>'}
+    `;
+  }
+  if (s.tab === 'qr') {
+    const qr = s.qrDataUrl
+      ? `<img class="nostr-login-qr" src="${escapeHtml(s.qrDataUrl)}" alt="Código QR de Nostr Connect" width="240" height="240" />`
+      : `<div class="nostr-login-qr nostr-login-qr-empty">${s.qrUri ? 'Este navegador bloquea el QR. Copiá el enlace y pegalo en tu firmante.' : 'Generando QR…'}</div>`;
+    return `
+      <p class="nostr-login-hint">Escaneá con <strong>Amber</strong> o <strong>nsec.app</strong> y aprobá la conexión.</p>
+      ${qr}
+      ${s.qrUri ? `<button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="nostr-copy-qr">Copiar enlace nostrconnect://</button>` : ''}
+      ${s.authUrl ? `<a class="nostr-login-authlink" href="${escapeHtml(s.authUrl)}" target="_blank" rel="noopener noreferrer">Tu firmante pide autorización: abrir enlace ↗</a>` : ''}
+      <p class="nostr-login-waiting">Esperando conexión…</p>
+    `;
+  }
+  if (s.tab === 'bunker') {
+    return `
+      <p class="nostr-login-hint">Pegá la URL <code>bunker://…</code> de tu firmante remoto, o tu NIP-05 (<code>usuario@dominio</code>).</p>
+      <input class="online-field-input nostr-login-input" type="text" autocomplete="off" placeholder="bunker://… o usuario@dominio" value="${escapeHtml(s.bunkerInput)}" data-online-field="nostr-bunker" />
+      <button class="cs2-btn cs2-btn-accent nostr-login-action" type="button" data-ui-action="nostr-login-bunker"${busy || !s.bunkerInput.trim() ? ' disabled' : ''}>${busy ? 'Conectando…' : 'Conectar'}</button>
+      ${s.authUrl ? `<a class="nostr-login-authlink" href="${escapeHtml(s.authUrl)}" target="_blank" rel="noopener noreferrer">Tu firmante pide autorización: abrir enlace ↗</a>` : ''}
+    `;
+  }
+  // local
+  if (s.generatedNsec) {
+    return `
+      <p class="nostr-login-hint">Tu clave nueva. Guardala: se muestra una sola vez y es la única forma de recuperar tu cuenta.</p>
+      <div class="nostr-login-nsec">${escapeHtml(s.generatedNsec)}</div>
+      <div class="nostr-login-row">
+        <button class="cs2-btn cs2-btn-ghost" type="button" data-ui-action="nostr-copy-nsec">Copiar</button>
+        <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="nostr-login-generated"${busy ? ' disabled' : ''}>${busy ? 'Conectando…' : 'Continuar'}</button>
+      </div>
+    `;
+  }
+  return `
+    <p class="nostr-login-hint">Generá una clave nueva o importá tu <code>nsec</code>.</p>
+    <p class="login-gate-note nostr-login-warn">⚠ La clave queda guardada en este navegador sin cifrar. No uses tu identidad principal en una compu compartida.</p>
+    <button class="cs2-btn cs2-btn-ghost nostr-login-action" type="button" data-ui-action="nostr-generate-key"${busy ? ' disabled' : ''}>Generar clave nueva</button>
+    <div class="nostr-login-row">
+      <input class="online-field-input nostr-login-input" type="password" autocomplete="off" placeholder="nsec1…" value="${escapeHtml(s.nsecInput)}" data-online-field="nostr-nsec" />
+      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="nostr-login-import"${busy || !s.nsecInput.trim() ? ' disabled' : ''}>Importar</button>
+    </div>
+  `;
 }
 
 function renderOnlineMenuPanelContent(): string {

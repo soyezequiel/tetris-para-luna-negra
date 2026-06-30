@@ -767,4 +767,134 @@
   line-height: 1.4;
   color: rgba(247, 247, 242, 0.5);
 }
+
+/* Métodos de login Nostr 2.0 (extensión / QR / bunker / clave local) */
+.nostr-login {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nostr-login-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.nostr-login-tab {
+  flex: 1;
+  padding: 7px 4px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(247, 247, 242, 0.6);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nostr-login-tab:hover {
+  color: rgba(247, 247, 242, 0.9);
+}
+
+.nostr-login-tab.is-active {
+  background: rgba(157, 140, 255, 0.16);
+  color: #cfc4ff;
+  box-shadow: inset 0 0 0 1px rgba(157, 140, 255, 0.3);
+}
+
+.nostr-login-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-height: 132px;
+}
+
+.nostr-login-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(247, 247, 242, 0.72);
+  text-align: left;
+}
+
+.nostr-login-hint code,
+.nostr-login-nsec {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.nostr-login-action {
+  width: 100%;
+}
+
+.nostr-login-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--cs2-line);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--cs2-text, #f7f7f2);
+  font-size: 13px;
+}
+
+.nostr-login-row {
+  display: flex;
+  gap: 8px;
+}
+
+.nostr-login-row .nostr-login-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.nostr-login-qr {
+  align-self: center;
+  width: 200px;
+  height: 200px;
+  border-radius: 12px;
+  background: #fff;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.nostr-login-qr-empty {
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(247, 247, 242, 0.5);
+  font-size: 12px;
+  text-align: center;
+  padding: 16px;
+}
+
+.nostr-login-nsec {
+  word-break: break-all;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 196, 0, 0.35);
+  background: rgba(0, 0, 0, 0.3);
+  color: #ffd479;
+  font-size: 12px;
+  text-align: left;
+}
+
+.nostr-login-authlink,
+.nostr-login-waiting {
+  font-size: 12px;
+  color: rgba(157, 140, 255, 0.9);
+  text-align: center;
+}
+
+.nostr-login-warn {
+  color: #e8a99a !important;
+  text-align: left;
+}
+
+.nostr-login-error {
+  text-align: left;
+}
 
