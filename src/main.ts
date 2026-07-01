@@ -442,7 +442,11 @@ lunaState.trustedOrigin = loadTrustedLunaOrigin();
 const LUNA_PRESENCE_TTL_MS = 20000;
 const LUNA_PRESENCE_HEARTBEAT_MS = LUNA_PRESENCE_TTL_MS / 2;
 const LUNA_LAUNCH_POLL_MS = 2_000;
-const CHALLENGE_CONTACT_LIMIT = 120;
+// Tope de contactos que listamos en el selector de reto. Alto a propósito: mucha
+// gente sigue a cientos de cuentas y con 120 quedaban afuera (y el buscador no los
+// encontraba). fetchProfiles resuelve nombres/avatares en lotes, así que subirlo
+// no ahoga los relays.
+const CHALLENGE_CONTACT_LIMIT = 1000;
 const CHALLENGE_INCOMING_LIMIT = 5;
 let challengeInboxPubkey: string | null = null;
 let challengeInboxStarting = false;

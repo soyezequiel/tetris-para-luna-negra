@@ -47,10 +47,16 @@ export async function fetchProfile(pubkey: string): Promise<NostrProfile | null>
   }
 }
 
+// Muchos relays limitan cuántos eventos devuelven por suscripción (~500). Si
+// pedimos los kind:0 de cientos de follows en un solo filtro, los que sobran se
+// pierden y esos amigos quedan sin nombre/avatar. Partimos en lotes chicos.
+const PROFILE_BATCH_SIZE = 100;
+
 /**
- * Trae los perfiles de varias pubkeys en una sola query (para la lista de amigos).
- * Se queda con el kind:0 más reciente por autor. Best-effort: devuelve un mapa
- * (posiblemente parcial) y nunca lanza.
+ * Trae los perfiles de varias pubkeys (para la lista de amigos), en lotes para no
+ * chocar con el límite de eventos por suscripción de los relays. Se queda con el
+ * kind:0 más reciente por autor. Best-effort: devuelve un mapa (posiblemente
+ * parcial) y nunca lanza.
  */
 export async function fetchProfiles(
   pubkeys: string[],
@@ -58,23 +64,33 @@ export async function fetchProfiles(
   const result = new Map<string, NostrProfile>();
   const unique = [...new Set(pubkeys)].filter((p) => /^[0-9a-f]{64}$/.test(p));
   if (unique.length === 0) return result;
-  try {
-    const evs = await getPool().querySync(PROFILE_RELAYS, {
-      kinds: [0],
-      authors: unique,
-    });
-    const newestAt = new Map<string, number>();
-    for (const ev of evs) {
-      const prev = newestAt.get(ev.pubkey);
-      if (prev !== undefined && ev.created_at <= prev) continue;
-      const profile = parseProfile(ev.content);
-      if (!profile) continue;
-      newestAt.set(ev.pubkey, ev.created_at);
-      result.set(ev.pubkey, profile);
-    }
-  } catch {
-    /* relays caídos: devolvemos lo que haya (posiblemente vacío) */
+
+  const batches: string[][] = [];
+  for (let i = 0; i < unique.length; i += PROFILE_BATCH_SIZE) {
+    batches.push(unique.slice(i, i + PROFILE_BATCH_SIZE));
   }
+
+  const newestAt = new Map<string, number>();
+  await Promise.all(
+    batches.map(async (authors) => {
+      try {
+        const evs = await getPool().querySync(PROFILE_RELAYS, {
+          kinds: [0],
+          authors,
+        });
+        for (const ev of evs) {
+          const prev = newestAt.get(ev.pubkey);
+          if (prev !== undefined && ev.created_at <= prev) continue;
+          const profile = parseProfile(ev.content);
+          if (!profile) continue;
+          newestAt.set(ev.pubkey, ev.created_at);
+          result.set(ev.pubkey, profile);
+        }
+      } catch {
+        /* relays caídos para este lote: seguimos con los demás */
+      }
+    }),
+  );
   return result;
 }
 
