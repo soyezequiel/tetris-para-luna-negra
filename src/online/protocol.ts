@@ -477,6 +477,14 @@ export interface LunaLoginUrlResponse {
   serverNowMs: number;
 }
 
+/** Identidad del juego en Luna Negra (config server-side), para poblar el gameId
+ * de una sesión Nostr 2.0 (que no lo trae del token). `null` si no está configurado. */
+export interface LunaGameInfoResponse {
+  gameId: string | null;
+  slug: string | null;
+  serverNowMs: number;
+}
+
 export interface LunaLaunchRequest {
   id: string;
   roomId: string;

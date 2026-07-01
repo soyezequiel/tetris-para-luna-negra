@@ -58,6 +58,15 @@ export async function GET(request: Request): Promise<Response> {
     if (action === 'login-url') {
       return sendJson(200, { url: buildLunaLoginUrl(), serverNowMs: Date.now() });
     }
+    if (action === 'game-info') {
+      // Expone el gameId (cuid) y slug del juego —ya configurados server-side para
+      // apuestas/marcadores— al cliente. Lo usa el login Nostr 2.0 para poblar
+      // identity.gameId (sin él, invitar/apostar quedan gateados). No es secreto:
+      // el gameId ya viajaba en la sesión SSO 1.0 y en las URLs de invitación.
+      const gameId = (process.env.LUNA_NEGRA_GAME_ID ?? '').trim() || null;
+      const slug = (process.env.LUNA_NEGRA_GAME_SLUG ?? '').trim() || null;
+      return sendJson(200, { gameId, slug, serverNowMs: Date.now() });
+    }
     if (action === 'launch-request') {
       const npub = queryParam(request, 'npub');
       if (!npub) throw new OnlineRoomError('Falta el npub.', 400);

@@ -2480,6 +2480,9 @@ async function bootstrapLunaSession(): Promise<void> {
     if (stored) applyLunaIdentity(stored);
   }
   if (!lunaState.identity) return;
+  // Sesión Nostr 2.0 restaurada sin gameId (o SSO viejo sin él): completarlo para
+  // que invitar/apostar no queden gateados. Best-effort, no bloquea presencia.
+  void ensureLunaGameId();
   await syncLunaPresence();
 }
 
@@ -2924,11 +2927,31 @@ async function finishNostrLogin(signer: LunaSigner, stored: StoredSigner): Promi
     saveStoredLunaIdentity(identity);
     lunaState.sessionError = null;
     resetNostrLoginFlow();
+    void ensureLunaGameId();
     void syncLunaPresence();
   } catch (error) {
     lunaState.nostrLogin.error = error instanceof Error ? error.message : 'Error de login';
   } finally {
     lunaState.nostrLogin.busy = false;
+  }
+}
+
+// El login Nostr 2.0 no trae el gameId (eso lo daba la sesión SSO). Sin él, invitar
+// amigos y crear apuestas desde el panel quedan gateados (caen a "iniciar sesión").
+// Acá lo completamos desde la config server-side (LUNA_NEGRA_GAME_ID, el mismo que
+// usan apuestas/marcadores) y re-guardamos la identidad. Best-effort: si el server
+// no lo tiene configurado, la sesión sigue válida sin invitar/apostar.
+async function ensureLunaGameId(): Promise<void> {
+  if (!lunaState.identity || lunaState.identity.gameId) return;
+  try {
+    const info = await lunaSocialClient.gameInfo();
+    if (!lunaState.identity || lunaState.identity.gameId) return;
+    if (!info.gameId) return;
+    const identity = { ...lunaState.identity, gameId: info.gameId };
+    lunaState.identity = identity;
+    saveStoredLunaIdentity(identity);
+  } catch (error) {
+    console.warn('[luna-negra] no se pudo resolver el gameId del juego', error);
   }
 }
 

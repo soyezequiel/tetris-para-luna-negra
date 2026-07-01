@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import * as health from './api/health';
 import * as lunaNegraAction from './api/luna-negra/[action]';
 import * as lunaNegraEnter from './api/rooms/luna-negra/enter';
@@ -20,9 +20,11 @@ type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
 const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/health', health],
   ['/api/luna-negra/friends', lunaNegraAction],
+  ['/api/luna-negra/game-info', lunaNegraAction],
   ['/api/luna-negra/invite', lunaNegraAction],
   ['/api/luna-negra/invite-window', lunaNegraAction],
   ['/api/luna-negra/launch-request', lunaNegraAction],
+  ['/api/luna-negra/login-url', lunaNegraAction],
   ['/api/luna-negra/presence', lunaNegraAction],
   ['/api/luna-negra/session', lunaNegraAction],
 
@@ -67,7 +69,16 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/hard-test/luna-mock', hardTestLunaMock],
 ]);
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Las rutas API locales (dev) leen `process.env` (LUNA_NEGRA_*, etc.). Vite solo
+  // expone las VITE_* a `import.meta.env`, así que cargamos los .env a mano y los
+  // volcamos a process.env para que el middleware de API funcione en `npm run dev`.
+  // Solo dev: en Vercel el process.env ya viene poblado por la plataforma.
+  const env = loadEnv(mode, process.cwd(), '');
+  for (const [key, value] of Object.entries(env)) {
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+  return {
   server: {
     port: 5173,
   },
@@ -100,6 +111,7 @@ export default defineConfig({
       },
     },
   },
+  };
 });
 
 async function toWebRequest(req: import('node:http').IncomingMessage): Promise<Request> {

@@ -3,6 +3,7 @@ import type {
   LunaInviteRequest,
   LunaInviteResponse,
   LunaInviteWindowResponse,
+  LunaGameInfoResponse,
   LunaLaunchRequestResponse,
   LunaLoginUrlResponse,
   LunaPresenceRequest,
@@ -37,6 +38,10 @@ export class LunaSocialClient {
 
   loginUrl(): Promise<LunaLoginUrlResponse> {
     return this.get('/login-url');
+  }
+
+  gameInfo(): Promise<LunaGameInfoResponse> {
+    return this.get('/game-info');
   }
 
   launchRequest(npub: string): Promise<LunaLaunchRequestResponse> {
