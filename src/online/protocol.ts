@@ -404,13 +404,6 @@ export interface LunaIdentity {
   gameId: string | null;
 }
 
-export interface LunaSessionResponse {
-  identity: LunaIdentity;
-  serverNowMs: number;
-  /** Siempre 'luna-negra': la identidad viene del proveedor real. */
-  source: 'luna-negra';
-}
-
 export interface LunaFriend {
   npub: string;
   name: string;
@@ -467,12 +460,6 @@ export interface LunaInviteResponse {
 
 export interface LunaInviteWindowResponse {
   /** URL first-party de Luna Negra que renderiza el selector de amigos. */
-  url: string;
-  serverNowMs: number;
-}
-
-export interface LunaLoginUrlResponse {
-  /** URL first-party de Luna Negra para iniciar sesión y lanzar este juego. */
   url: string;
   serverNowMs: number;
 }

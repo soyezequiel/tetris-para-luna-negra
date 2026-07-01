@@ -720,13 +720,10 @@ test.describe('TETRA browser flows', () => {
 
   test('enters a Luna Negra room from an accepted invite message in the open game', async ({ page }) => {
     await mockOnlineApi(page);
-    await page.addInitScript(() => {
-      window.localStorage.clear();
-    });
+    await addStoredLunaIdentity(page, { trustedOrigin: 'https://luna.example' });
 
-    await page.goto('/?lnToken=fake-session&lnOrigin=https%3A%2F%2Fluna.example');
+    await page.goto('/');
     await expect.poll(() => appMode(page)).toBe('menu');
-    await expect.poll(() => page.evaluate(() => window.location.search.includes('lnOrigin'))).toBe(false);
 
     await page.evaluate(() => {
       window.dispatchEvent(new MessageEvent('message', {
@@ -748,14 +745,12 @@ test.describe('TETRA browser flows', () => {
 
   test('clears the Luna Negra identity when Luna Negra logs out', async ({ page }) => {
     await mockOnlineApi(page);
-    await page.addInitScript(() => {
-      window.localStorage.clear();
-    });
+    await addStoredLunaIdentity(page, { trustedOrigin: 'https://luna.example' });
 
-    await page.goto('/?lnToken=fake-session&lnOrigin=https%3A%2F%2Fluna.example');
+    await page.goto('/');
 
     await expect.poll(() => page.evaluate(() => window.stack40.getLunaIdentity()?.npub ?? null)).not.toBeNull();
-    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('stack40.lunaIdentity.v1'))).not.toBeNull();
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('stack40.lunaState.identity.v1'))).not.toBeNull();
 
     await page.evaluate(() => {
       window.dispatchEvent(new MessageEvent('message', {
@@ -765,73 +760,9 @@ test.describe('TETRA browser flows', () => {
     });
 
     await expect.poll(() => page.evaluate(() => window.stack40.getLunaIdentity())).toBeNull();
-    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('stack40.lunaIdentity.v1'))).toBeNull();
-    await expect(action(page, 'luna-login').first()).toBeVisible();
-  });
-
-  test('shows a Luna Negra login button when the player has no session', async ({ page }) => {
-    await mockOnlineApi(page);
-    let loginUrlRequests = 0;
-    await page.route('**/api/luna-negra/login-url', async (route) => {
-      loginUrlRequests += 1;
-      await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({
-          url: `${new URL(route.request().url()).origin}/luna-login-test`,
-          serverNowMs: Date.now(),
-        }),
-      });
-    });
-    await page.addInitScript(() => {
-      window.localStorage.clear();
-    });
-
-    await page.goto('/');
-
-    const loginButton = action(page, 'luna-login').first();
-    await expect(page.getByText(/Luna Negra/).first()).toBeVisible();
-    await expect(loginButton).toBeVisible();
-    await expect(loginButton).toHaveText('Iniciar sesión');
-    await loginButton.click();
-
-    await expect.poll(() => loginUrlRequests).toBe(1);
-    await page.waitForURL('**/luna-login-test');
-  });
-
-  test('enters a Luna Negra room from a pending launch request in the open game', async ({ page }) => {
-    await mockOnlineApi(page);
-    let deliveredLaunch = false;
-    await page.route('**/api/luna-negra/launch-request**', async (route) => {
-      const body = deliveredLaunch
-        ? { request: null, source: 'luna-negra', serverNowMs: Date.now() }
-        : {
-          request: {
-            id: 'launch-1',
-            roomId: 'abc12345',
-            inviteToken: 'fake-invite-token',
-            slug: 'TETRA',
-            title: 'TETRA',
-            gameUrl: 'http://127.0.0.1:5173/',
-          },
-          source: 'luna-negra',
-          serverNowMs: Date.now(),
-        };
-      deliveredLaunch = true;
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
-    });
-    await page.addInitScript(() => {
-      window.localStorage.clear();
-    });
-
-    await page.goto('/?lnDemo=AlreadyOpen');
-
-    await expect(page.getByRole('heading', { name: 'Te invitaron a ABC12345' })).toBeVisible({ timeout: 7000 });
-    await page.getByRole('button', { name: 'Unirme' }).click();
-
-    await expect.poll(() => appMode(page), { timeout: 7000 }).toBe('roomLobby');
-    await expect.poll(() => page.evaluate(() => window.stack40.getOnlineRoom()?.id)).toBe('ABC12345');
-    await expect(page.getByText('SALA PRIVADA ABC12345')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.stack40.getOnlinePlayer().id)).toBe('pubkey-host-luna');
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('stack40.lunaState.identity.v1'))).toBeNull();
+    // Sin identidad, la puerta de login Nostr 2.0 reaparece en el menú.
+    await expect(page.locator('.nostr-login').first()).toBeVisible();
   });
 
   test('enters a Luna Negra room from a pending launch request with stored identity', async ({ page }) => {
@@ -991,17 +922,22 @@ test.describe('TETRA browser flows', () => {
   });
 });
 
-async function addStoredLunaIdentity(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function addStoredLunaIdentity(page: Page, opts: { trustedOrigin?: string } = {}): Promise<void> {
+  await page.addInitScript((trustedOrigin) => {
     window.localStorage.clear();
-    window.localStorage.setItem('stack40.lunaIdentity.v1', JSON.stringify({
+    // Login 2.0: la sesión se rehidrata desde la identidad Nostr persistida
+    // (misma clave que usa el juego, stack40.lunaState.identity.v1).
+    window.localStorage.setItem('stack40.lunaState.identity.v1', JSON.stringify({
       npub: 'npub-already-open',
       pubkey: 'pubkey-already-open',
       name: 'Already Open',
       avatarUrl: null,
       gameId: 'tetra-game',
     }));
-  });
+    // Origen de Luna confiado para los postMessage de "entrar a sala" (se lee de
+    // localStorage al arrancar, ver loadTrustedLunaOrigin).
+    if (trustedOrigin) window.localStorage.setItem('stack40.lunaOrigin.v1', trustedOrigin);
+  }, opts.trustedOrigin ?? '');
 }
 
 async function mockAvatarImage(page: Page, url: string): Promise<void> {
@@ -1051,24 +987,6 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
   await page.route('**/api/report', async (route) => {
     requests.lastReport = route.request().postDataJSON() as MockReportPayload;
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-  });
-
-  await page.route('**/api/luna-negra/session**', async (route) => {
-    const token = new URL(route.request().url()).searchParams.get('token') ?? 'Already Open';
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        identity: {
-          npub: 'npub-already-open',
-          pubkey: 'pubkey-already-open',
-          name: token === 'fake-session' ? 'Luna Player' : token,
-          avatarUrl: null,
-          gameId: 'tetra-game',
-        },
-        source: 'luna-negra',
-        serverNowMs: Date.now(),
-      }),
-    });
   });
 
   await page.route('**/api/bets/**', async (route) => {

@@ -6,7 +6,6 @@ import {
   heartbeatLunaPresence,
   listLunaFriends,
   consumeLunaLaunchRequest,
-  resolveLunaSession,
   sendLunaInvite,
 } from '../../src/online/lunaNegraSocial.js';
 import { OnlineRoomError, loadRoom, normalizeRoomId } from '../../src/online/roomService.js';
@@ -30,12 +29,6 @@ export default function handler(request: IncomingMessage, response: ServerRespon
 export async function GET(request: Request): Promise<Response> {
   try {
     const action = actionFromRequest(request);
-    if (action === 'session') {
-      const token = queryParam(request, 'token');
-      if (!token) throw new OnlineRoomError('Falta el token de sesión de Luna Negra.', 400);
-      const { identity, source } = await resolveLunaSession(token);
-      return sendJson(200, { identity, source, serverNowMs: Date.now() });
-    }
     if (action === 'friends') {
       const npub = queryParam(request, 'npub');
       if (!npub) throw new OnlineRoomError('Falta el npub.', 400);
@@ -54,9 +47,6 @@ export async function GET(request: Request): Promise<Response> {
         throw new OnlineRoomError('Solo el host puede invitar amigos.', 403);
       }
       return sendJson(200, { url: buildInviteWindowUrl(gameId, roomId), serverNowMs: Date.now() });
-    }
-    if (action === 'login-url') {
-      return sendJson(200, { url: buildLunaLoginUrl(), serverNowMs: Date.now() });
     }
     if (action === 'game-info') {
       // Expone el gameId (cuid) y slug del juego —ya configurados server-side para
@@ -136,14 +126,3 @@ function buildInviteWindowUrl(gameId: string, roomId: string): string {
   return url.toString();
 }
 
-function buildLunaLoginUrl(): string {
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL is not configured.', 500);
-  const slug = normalizeLunaGameSlug(process.env.LUNA_NEGRA_GAME_SLUG ?? 'tetris-beta');
-  return new URL(`/game/${slug}`, baseUrl).toString();
-}
-
-function normalizeLunaGameSlug(value: string): string {
-  const slug = value.trim().toLowerCase();
-  return /^[a-z0-9_-]+$/.test(slug) ? slug : 'tetris-beta';
-}

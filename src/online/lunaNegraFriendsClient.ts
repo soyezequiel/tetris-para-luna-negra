@@ -5,19 +5,13 @@ import type {
   LunaInviteWindowResponse,
   LunaGameInfoResponse,
   LunaLaunchRequestResponse,
-  LunaLoginUrlResponse,
   LunaPresenceRequest,
-  LunaSessionResponse,
 } from './protocol';
 
 // Cliente del frontend para la capa social de Luna Negra. Habla con los
 // endpoints proxy /api/luna-negra/* (la API key vive en el servidor).
 export class LunaSocialClient {
   constructor(private readonly basePath = '/api/luna-negra') {}
-
-  resolveSession(token: string): Promise<LunaSessionResponse> {
-    return this.get(`/session?token=${encodeURIComponent(token)}`);
-  }
 
   listFriends(npub: string): Promise<LunaFriendsResponse> {
     return this.get(`/friends?npub=${encodeURIComponent(npub)}`);
@@ -34,10 +28,6 @@ export class LunaSocialClient {
   inviteWindow(gameId: string, roomId: string, playerId: string): Promise<LunaInviteWindowResponse> {
     const params = new URLSearchParams({ gameId, roomId, playerId });
     return this.get(`/invite-window?${params.toString()}`);
-  }
-
-  loginUrl(): Promise<LunaLoginUrlResponse> {
-    return this.get('/login-url');
   }
 
   gameInfo(): Promise<LunaGameInfoResponse> {

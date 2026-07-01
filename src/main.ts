@@ -459,12 +459,6 @@ window.setInterval(() => {
 }, LUNA_LAUNCH_POLL_MS);
 document.addEventListener('visibilitychange', syncOnlineVisibilityChange);
 window.addEventListener('focus', eagerRefreshBetIfPending);
-// Reabrir el juego que ya estaba abierto: re-iniciar la sesión de Luna si volvió con un
-// token fresco en la URL (bfcache no re-ejecuta el módulo; el foco cubre el resto).
-window.addEventListener('pageshow', (event) => {
-  if (event.persisted) void maybeReinitLunaSessionFromUrl();
-});
-window.addEventListener('focus', () => void maybeReinitLunaSessionFromUrl());
 replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
 // Tocar cualquier QR de apuesta (pago o cobro) lo amplía a pantalla completa para
@@ -1764,7 +1758,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-leave') leaveOnlineRoom();
   if (action === 'online-kick') kickOnlinePlayer(control.dataset.targetPlayerId ?? '');
   if (action === 'online-open-invite') openLunaInviteWindow();
-  if (action === 'luna-login') openLunaLogin();
+  if (action === 'luna-login') reopenLoginGate();
   if (action === 'luna-logout') logOut();
   if (action === 'anon-continue') continueAsAnonymous();
   if (action === 'nostr-tab') selectNostrLoginTab((control.dataset.tab as NostrLoginTab | undefined) ?? 'extension');
@@ -2316,11 +2310,11 @@ async function bootstrapOnlineStartup(): Promise<void> {
   rememberTrustedLunaOriginFromStartup(params);
   // Rehidrata el firmante Nostr 2.0 persistido (sesión por extensión/bunker/clave
   // local). Best-effort y en paralelo: deja el signer en memoria para firmar
-  // features Nostr; no bloquea el arranque del SSO.
+  // features Nostr; no bloquea el arranque.
   void restoreSigner();
-  await bootstrapLunaSession();
-  // El arranque SSO terminó: a partir de acá la puerta de login ya puede decidir
-  // si mostrarse (sin flash) según haya o no identidad resuelta.
+  await restoreLunaIdentity();
+  // El arranque terminó: a partir de acá la puerta de login ya puede decidir si
+  // mostrarse (sin flash) según haya o no identidad Nostr persistida.
   lunaBootstrapDone = true;
   const nextParams = new URLSearchParams(window.location.search);
   if (nextParams.get('inviteToken')?.trim()) {
@@ -2338,178 +2332,18 @@ async function bootstrapOnlineStartup(): Promise<void> {
   void refreshPublicRooms();
 }
 
-// Login automático. El juego se abre desde Luna Negra con el entitlement JWT en
-// ?lnToken= (en desarrollo, ?lnDemo=Nombre). Ese token EXPIRA a los ~5 min y solo
-// sirve para canjearlo UNA vez al cargar: lo cambiamos por la identidad (npub,
-// nombre, avatar) contra /api/luna-negra/session y PERSISTIMOS LA IDENTIDAD, no el
-// token. En recargas posteriores sin token, restauramos la identidad guardada
-// (presencia y amigos usan la API key del servidor, no el token del usuario).
-// Decodifica los claims de un JWT SIN verificar la firma. Solo diagnóstico: queremos
-// saber si el entitlement ya estaba vencido cuando Luna lo rechazó (exp es 5 min). No
-// confiamos en estos datos para nada de seguridad. null si el token no es decodificable.
-function peekJwtClaims(token: string): Record<string, unknown> | null {
-  try {
-    const part = token.split('.')[1];
-    if (!part) return null;
-    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
-    const pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
-    return JSON.parse(atob(b64 + pad)) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-// Reporte automático cuando Luna Negra rechaza la validación de sesión (el 401 que tira
-// al jugador a invitado). Decodifica los claims del token SIN verificar para distinguir la
-// causa sin entrar por SSH a la laptop: si el token ya estaba vencido cuando Luna lo rechazó
-// → expiración (benigno, reentrar desde Luna); si seguía vigente → la firma no matcheó
-// (LUNA_NEGRA_BASE_URL apunta a otra Luna) o iss/aud no coinciden. Fire-and-forget: nunca
-// bloquea ni rompe la puerta de login. Va al mismo canal de Discord que el botón "Reportar".
-function reportLunaSessionFailure(reason: string, token: string): void {
-  const claims = peekJwtClaims(token);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const exp = typeof claims?.exp === 'number' ? claims.exp : null;
-  const iat = typeof claims?.iat === 'number' ? claims.iat : null;
-  const expired = exp !== null ? exp < nowSec : null;
-  const audClaim = claims?.aud;
-  const report = {
-    generatedAt: new Date().toISOString(),
-    kind: 'luna-session-failure',
-    comment: `Sesión de Luna Negra rechazada: ${reason}`,
-    // El token va en la URL; lo redactamos para no filtrar el entitlement crudo al reporte.
-    url: (() => {
-      try {
-        return window.location.href.replace(/([?&](?:lnToken|entitlement|lnDemo)=)[^&]*/gi, '$1<redacted>');
-      } catch {
-        return null;
-      }
-    })(),
-    device: {
-      userAgent: navigator.userAgent,
-      viewport: `${window.innerWidth}x${window.innerHeight}`,
-    },
-    lunaSession: {
-      reason,
-      hasToken: Boolean(token),
-      // Claims SIN verificar (no incluimos la firma ni el token crudo). Lo que discrimina
-      // la causa: si tokenExpired es true fue expiración; si es false, mismatch de firma/claims.
-      tokenExpired: expired,
-      tokenAgeSec: iat !== null ? nowSec - iat : null,
-      secsPastExp: exp !== null ? nowSec - exp : null,
-      iss: typeof claims?.iss === 'string' ? claims.iss : null,
-      aud: typeof audClaim === 'string' ? audClaim : Array.isArray(audClaim) ? audClaim.join(',') : null,
-      scope: typeof claims?.scope === 'string' ? claims.scope : null,
-      likelyCause: expired === true
-        ? 'token-expirado'
-        : expired === false
-          ? 'firma-o-baseURL-mismatch'
-          : 'desconocido (token no decodificable)',
-    },
-  };
-  void fetch('/api/report', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(report),
-  }).catch((error) => console.warn('[luna-negra] no se pudo enviar el reporte del fallo de sesión', error));
-}
-
-function formatTokenSeconds(totalSec: number): string {
-  const s = Math.max(0, Math.round(totalSec));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return rem ? `${m}m ${rem}s` : `${m}m`;
-}
-
-// Mensaje de la puerta de login cuando Luna rechaza la sesión. En vez del 401 mudo, decimos
-// la razón DE VERDAD: decodificamos el token (sin verificar) para saber si venció — el caso más
-// común, y ahí el motivo es definitivo sin depender del server. Si seguía vigente, fue la firma
-// o el emisor (el juego apunta a otra instancia de Luna). `serverReason` es lo que devolvió el
-// backend (cuando Luna mande el code real de jose, aparece como detalle).
-function describeLunaSessionFailure(serverReason: string, token: string): string {
-  const claims = peekJwtClaims(token);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const exp = typeof claims?.exp === 'number' ? claims.exp : null;
-  let cause: string;
-  if (!claims) {
-    cause = 'el token de acceso no se pudo leer (no parece un entitlement válido)';
-  } else if (exp !== null && exp < nowSec) {
-    cause = `el token de acceso venció hace ${formatTokenSeconds(nowSec - exp)} (dura 5 min). Reabrí el juego desde Luna para obtener uno nuevo`;
-  } else if (exp !== null) {
-    cause = `el token seguía vigente (${formatTokenSeconds(exp - nowSec)} restantes), así que Luna lo rechazó por la firma o el emisor — el juego podría estar apuntando a otra instancia de Luna`;
-  } else {
-    cause = 'Luna lo rechazó y no se pudo determinar el motivo desde el token';
-  }
-  return `No pudimos validar tu sesión de Luna Negra: ${cause}. (detalle del servidor: ${serverReason}). Podés reintentar desde Luna o seguir como anónimo.`;
-}
-
-async function bootstrapLunaSession(): Promise<void> {
-  const params = new URLSearchParams(window.location.search);
-  // Aceptamos varios nombres por las dudas; el contrato es ?lnToken=<entitlement>.
-  const freshToken = (
-    params.get('lnToken')?.trim()
-    || params.get('entitlement')?.trim()
-    || params.get('lnDemo')?.trim()
-    || ''
-  ).trim();
-  if (freshToken) {
-    try {
-      const response = await lunaSocialClient.resolveSession(freshToken);
-      applyLunaIdentity(response.identity);
-      saveStoredLunaIdentity(response.identity);
-      lunaState.sessionError = null;
-    } catch (error) {
-      // Si Luna Negra rechaza un token fresco, la identidad cacheada ya no prueba sesión.
-      console.warn('[luna-negra] No se pudo resolver la sesión desde el token; entrando como invitado.', error);
-      clearLunaIdentity();
-      // Abriste el juego DESDE Luna (venías con token) pero la validación falló:
-      // dejá visible la razón en la puerta de login en vez de caer mudo a invitado.
-      // Usamos lunaState.sessionError (no onlineNetState.error) porque el refresco de
-      // salas públicas del arranque pisa este último. Causas típicas: LUNA_NEGRA_BASE_URL
-      // del deploy apunta a un store que no minteó este token, o el token expiró (~5 min).
-      const reason = error instanceof Error ? error.message : 'error desconocido';
-      lunaState.sessionError = describeLunaSessionFailure(reason, freshToken);
-      // Reporte automático del fallo (a Discord vía /api/report). Manda los claims del
-      // token SIN verificar para que el propio reporte diga la causa sin entrar por SSH.
-      reportLunaSessionFailure(reason, freshToken);
-    } finally {
-      removeLunaSessionParamsFromUrl();
-    }
-  } else {
-    const stored = loadStoredLunaIdentity();
-    if (stored) applyLunaIdentity(stored);
-  }
+// Restaura la identidad Nostr 2.0 persistida (npub/pubkey/nombre/avatar) al arrancar.
+// El login lo hace el firmante en el navegador (ver online/nostrLogin.ts + el flujo
+// de la puerta de bienvenida); acá solo rehidratamos lo guardado en localStorage.
+// Presencia y amigos usan la API key del servidor, no una sesión del usuario.
+async function restoreLunaIdentity(): Promise<void> {
+  const stored = loadStoredLunaIdentity();
+  if (stored) applyLunaIdentity(stored);
   if (!lunaState.identity) return;
-  // Sesión Nostr 2.0 restaurada sin gameId (o SSO viejo sin él): completarlo para
-  // que invitar/apostar no queden gateados. Best-effort, no bloquea presencia.
+  // La identidad Nostr no trae gameId: completarlo para que invitar/apostar no
+  // queden gateados. Best-effort, no bloquea presencia.
   void ensureLunaGameId();
   await syncLunaPresence();
-}
-
-// El token de Luna se consume UNA vez al cargar el módulo (bootstrapOnlineStartup). Si el
-// juego YA estaba abierto y Luna lo reabre con un ?lnToken= fresco, ese arranque no vuelve a
-// correr —pasa al restaurar desde bfcache (pageshow.persisted) o al re-enfocar la pestaña que
-// Luna navegó— y la sesión no iniciaría sola. Acá re-chequeamos cuando la pestaña vuelve al
-// frente: si quedó un token sin consumir en la URL, resolvemos la sesión igual. Idempotente y
-// sin spam: bootstrapLunaSession borra el token de la URL al terminar (éxito o fallo), así que
-// corre una sola vez por token nuevo. Guardado contra el arranque inicial (lunaBootstrapDone,
-// que aún está consumiendo el token) y contra reentrada por eventos solapados.
-let lunaSessionReinitInFlight = false;
-async function maybeReinitLunaSessionFromUrl(): Promise<void> {
-  if (!lunaBootstrapDone || lunaSessionReinitInFlight) return;
-  const params = new URLSearchParams(window.location.search);
-  const hasToken = Boolean(
-    params.get('lnToken')?.trim()
-    || params.get('entitlement')?.trim()
-    || params.get('lnDemo')?.trim(),
-  );
-  if (!hasToken) return;
-  lunaSessionReinitInFlight = true;
-  try {
-    await bootstrapLunaSession();
-  } finally {
-    lunaSessionReinitInFlight = false;
-  }
 }
 
 function applyLunaIdentity(identity: LunaIdentity): void {
@@ -2684,12 +2518,9 @@ function loadTrustedLunaOrigin(): string | null {
 }
 
 function rememberTrustedLunaOriginFromStartup(params: URLSearchParams): void {
-  const hasLunaEntry =
-    Boolean(params.get('inviteToken')?.trim())
-    || Boolean(params.get('lnToken')?.trim())
-    || Boolean(params.get('entitlement')?.trim())
-    || Boolean(params.get('lnDemo')?.trim());
-  if (!hasLunaEntry) return;
+  // Solo confiamos el origen de Luna cuando el juego se abre desde un invite de sala
+  // (?inviteToken=): habilita los postMessage de "entrar a sala" desde esa pestaña.
+  if (!params.get('inviteToken')?.trim()) return;
 
   const origin =
     parseHttpOrigin(params.get('lnOrigin') ?? '')
@@ -2748,15 +2579,6 @@ function parseHttpOrigin(value: string): string | null {
 
 function isHttpOrigin(origin: string): boolean {
   return /^https?:\/\//.test(origin);
-}
-
-function removeLunaSessionParamsFromUrl(): void {
-  const url = new URL(window.location.href);
-  url.searchParams.delete('lnToken');
-  url.searchParams.delete('entitlement');
-  url.searchParams.delete('lnDemo');
-  url.searchParams.delete('lnOrigin');
-  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }
 
 // El jugador "está jugando" solo si tiene el juego visible en primer plano. Si
@@ -2887,18 +2709,14 @@ function continueAsAnonymous(): void {
   saveLoginGateDismissed();
 }
 
-async function openLunaLogin(): Promise<void> {
-  if (onlineNetState.busy || lunaState.inviteWindowBusy) return;
-  lunaState.inviteWindowBusy = true;
-  onlineNetState.error = null;
-  try {
-    const response = await lunaSocialClient.loginUrl();
-    window.location.href = response.url;
-  } catch (error) {
-    onlineNetState.error = onlineErrorText(error);
-  } finally {
-    lunaState.inviteWindowBusy = false;
-  }
+// "Iniciar sesión" desde cualquier lado (badge de identidad, invitar amigos): en la
+// 2.0 el login es la puerta de bienvenida con los métodos Nostr. La reabrimos
+// des-descartándola y volviendo al menú, donde se renderiza.
+function reopenLoginGate(): void {
+  if (lunaState.identity) return;
+  loginGateDismissed = false;
+  clearLoginGateDismissed();
+  if (!roomState.current && appMode !== 'menu') goToMenu();
 }
 
 // ─────────────────────── Login Nostr 2.0 (firmante local) ───────────────────────
@@ -2925,7 +2743,6 @@ async function finishNostrLogin(signer: LunaSigner, stored: StoredSigner): Promi
     const identity = await loginWithSigner(signer, stored);
     applyLunaIdentity(identity);
     saveStoredLunaIdentity(identity);
-    lunaState.sessionError = null;
     resetNostrLoginFlow();
     void ensureLunaGameId();
     void syncLunaPresence();
@@ -5668,9 +5485,6 @@ function syncOnlineVisibilityChange(): void {
     syncOnlineBackground();
     return;
   }
-  // Reabrir el juego ya abierto desde Luna: si la pestaña volvió con un token fresco en
-  // la URL, iniciamos la sesión igual (no hubo recarga que dispare el arranque inicial).
-  void maybeReinitLunaSessionFromUrl();
   // Al volver al juego reanunciamos presencia de inmediato (sin esperar el
   // intervalo) para reaparecer como "jugando" apenas el jugador regresa.
   if (lunaState.identity) void syncLunaPresence();
@@ -6379,7 +6193,6 @@ function shouldShowLoginGate(): boolean {
 }
 
 function renderLoginGateOverlay(): string {
-  const busy = lunaState.inviteWindowBusy;
   // No mostramos el nombre por defecto ("Player"): dejamos el campo vacío para
   // que el jugador se vea forzado a escribir uno antes de continuar.
   const enteredName = identityState.name.trim() === 'Player' ? '' : identityState.name;
@@ -6388,13 +6201,8 @@ function renderLoginGateOverlay(): string {
     <div class="login-gate">
       <article class="cs2-card login-gate-card">
         <div class="panel-eyebrow">LUNA NEGRA</div>
-        <h1 class="login-gate-title">Iniciá sesión</h1>
-        <p class="login-gate-subtitle">Entrá con tu cuenta de Luna Negra para ver a tus amigos, invitarlos a jugar, apostar en sats y aparecer en los marcadores.</p>
-        ${lunaState.sessionError ? `<div class="panel-note panel-error">${escapeHtml(lunaState.sessionError)}</div>` : ''}
-        <button class="cs2-btn cs2-btn-accent login-gate-primary" type="button" data-ui-action="luna-login"${busy ? ' disabled' : ''}>
-          ${busy ? 'Abriendo…' : 'Iniciar sesión en Luna Negra'}
-        </button>
-        <div class="login-gate-sep"><span>o con tu identidad Nostr</span></div>
+        <h1 class="login-gate-title">Iniciá sesión con Nostr</h1>
+        <p class="login-gate-subtitle">Entrá con tu identidad Nostr (extensión, firmante remoto o clave) para ver a tus amigos, invitarlos a jugar, apostar en sats y aparecer en los marcadores.</p>
         ${renderNostrLoginMethods()}
         <div class="login-gate-sep"><span>o</span></div>
         <label class="online-field login-gate-field">
