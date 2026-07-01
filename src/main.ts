@@ -443,6 +443,10 @@ lunaState.trustedOrigin = loadTrustedLunaOrigin();
 const LUNA_PRESENCE_TTL_MS = 20000;
 const LUNA_PRESENCE_HEARTBEAT_MS = LUNA_PRESENCE_TTL_MS / 2;
 const LUNA_LAUNCH_POLL_MS = 2_000;
+// Presencia 1.0 (REST → Luna Negra firma el kind:30315). Apagada para probar la
+// 2.0 (Nostr firmado por el jugador) en aislamiento: con las dos prendidas Luna
+// Negra recibe ambas y no se ve cuál manda. Poné en `true` para reactivar la REST.
+const LUNA_REST_PRESENCE_ENABLED = false;
 // Presencia Nostr 2.0 (NIP-38): cada latido es una FIRMA (con un bunker NIP-46
 // puede ser un prompt), así que la re-publicamos mucho más espaciada que la REST.
 // Igual se dispara al toque cuando cambia el estado (online↔in-game). El evento
@@ -2652,16 +2656,18 @@ function isPlayerActivelyPresent(): boolean {
 // (in-game). Alimenta el orden del panel de amigos de los demás.
 async function syncLunaPresence(): Promise<void> {
   if (!lunaState.identity || !isPlayerActivelyPresent()) return;
-  try {
-    await lunaSocialClient.heartbeat({
-      npub: lunaState.identity.npub,
-      name: identityState.player.name,
-      avatarUrl: identityState.player.avatarUrl,
-      status: roomState.current ? 'in-game' : 'online',
-      roomId: roomState.current?.id ?? null,
-    });
-  } catch {
-    // La presencia es best-effort.
+  if (LUNA_REST_PRESENCE_ENABLED) {
+    try {
+      await lunaSocialClient.heartbeat({
+        npub: lunaState.identity.npub,
+        name: identityState.player.name,
+        avatarUrl: identityState.player.avatarUrl,
+        status: roomState.current ? 'in-game' : 'online',
+        roomId: roomState.current?.id ?? null,
+      });
+    } catch {
+      // La presencia es best-effort.
+    }
   }
   // Presencia 2.0 firmada por el jugador (NIP-38). Se cuelga del mismo latido que
   // la REST, pero con su propio throttle (no re-firma en cada llamada). Independiente:
