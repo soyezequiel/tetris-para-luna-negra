@@ -120,6 +120,7 @@ import {
 import { loginWithSigner } from './online/nostrLogin';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
+import { clearPresenceEvent, publishPresence, type PresenceStatus } from './online/nostrPresence';
 import { fetchContacts } from './online/nostrContacts';
 import { fetchProfiles, profileName } from './online/nostrProfile';
 import { decidePeerKoAction } from './online/peerKoAuthority';
@@ -442,6 +443,14 @@ lunaState.trustedOrigin = loadTrustedLunaOrigin();
 const LUNA_PRESENCE_TTL_MS = 20000;
 const LUNA_PRESENCE_HEARTBEAT_MS = LUNA_PRESENCE_TTL_MS / 2;
 const LUNA_LAUNCH_POLL_MS = 2_000;
+// Presencia Nostr 2.0 (NIP-38): cada latido es una FIRMA (con un bunker NIP-46
+// puede ser un prompt), así que la re-publicamos mucho más espaciada que la REST.
+// Igual se dispara al toque cuando cambia el estado (online↔in-game). El evento
+// caduca a los PRESENCE_TTL_SEC (240s) si dejamos de latir.
+const NOSTR_PRESENCE_REPUBLISH_MS = 120_000;
+let nostrPresenceLastStatus: PresenceStatus | null = null;
+let nostrPresenceLastPublishAt = 0;
+let nostrPresenceInFlight = false;
 // Tope de contactos que listamos en el selector de reto. Alto a propósito: mucha
 // gente sigue a cientos de cuentas y con 120 quedaban afuera (y el buscador no los
 // encontraba). fetchProfiles resuelve nombres/avatares en lotes, así que subirlo
@@ -2545,6 +2554,9 @@ function clearLunaIdentity(): void {
   challengeInboxPubkey = null;
   challengeInboxStarting = false;
   stopChallengeInbox();
+  // Limpia la presencia NIP-38 mientras el firmante sigue activo (clearActiveSigner
+  // lo cierra a continuación), para no quedar "Jugando TETRA" hasta que caduque.
+  clearNostrPresence();
   // Cierra y olvida el firmante Nostr (sesión 2.0) junto con la identidad.
   clearActiveSigner();
   resetNostrLoginFlow();
@@ -2651,6 +2663,42 @@ async function syncLunaPresence(): Promise<void> {
   } catch {
     // La presencia es best-effort.
   }
+  // Presencia 2.0 firmada por el jugador (NIP-38). Se cuelga del mismo latido que
+  // la REST, pero con su propio throttle (no re-firma en cada llamada). Independiente:
+  // si la REST falló, igual queremos publicar el estado en Nostr.
+  void syncNostrPresence();
+}
+
+// Publica la presencia NIP-38 (kind:30315) firmada por el propio jugador, si hay
+// una sesión Nostr 2.0 (firmante activo). Sólo re-firma cuando cambia el estado o
+// cuando el último evento está por caducar (NOSTR_PRESENCE_REPUBLISH_MS), para no
+// molestar al firmante en cada latido. Best-effort.
+async function syncNostrPresence(): Promise<void> {
+  if (!lunaState.identity || !isPlayerActivelyPresent() || nostrPresenceInFlight) return;
+  const signer = getActiveSigner();
+  if (!signer) return;
+  const status: PresenceStatus = roomState.current ? 'in-game' : 'online';
+  const stale = Date.now() - nostrPresenceLastPublishAt >= NOSTR_PRESENCE_REPUBLISH_MS;
+  if (status === nostrPresenceLastStatus && !stale) return;
+  nostrPresenceInFlight = true;
+  try {
+    if (await publishPresence(signer, status)) {
+      nostrPresenceLastStatus = status;
+      nostrPresenceLastPublishAt = Date.now();
+    }
+  } finally {
+    nostrPresenceInFlight = false;
+  }
+}
+
+// Limpia la presencia Nostr al cerrar sesión (evento vacío + expiración inmediata),
+// para que "Jugando TETRA" desaparezca sin esperar el TTL. Debe llamarse ANTES de
+// clearActiveSigner() (necesita el firmante todavía activo).
+function clearNostrPresence(): void {
+  const signer = getActiveSigner();
+  nostrPresenceLastStatus = null;
+  nostrPresenceLastPublishAt = 0;
+  if (signer) void clearPresenceEvent(signer);
 }
 
 async function syncLunaLaunchRequest(): Promise<void> {
