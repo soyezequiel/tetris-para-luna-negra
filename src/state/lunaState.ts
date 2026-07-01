@@ -2,6 +2,7 @@
 // ventana de invitar amigos, requests de "entrar a sala" que llegan por postMessage
 // desde Luna). Objeto mutable fuera de main.ts, igual que el resto de PR7.
 import type { LunaIdentity, LunaLaunchRequest } from '../online/protocol';
+import type { ParsedChallenge } from '../online/nostrChallenge';
 
 // Un launch request de Luna ya normalizado (con el roomId saneado listo para unirse).
 export type PendingLunaLaunchRequest = LunaLaunchRequest & { normalizedRoomId: string };
@@ -27,6 +28,29 @@ export interface NostrLoginState {
   generatedNsec: string | null;
 }
 
+export interface NostrChallengeFriend {
+  pubkey: string;
+  npub: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
+export type IncomingNostrChallenge = ParsedChallenge & {
+  fromName: string;
+  fromAvatarUrl: string | null;
+};
+
+export interface NostrChallengeState {
+  pickerOpen: boolean;
+  loading: boolean;
+  error: string | null;
+  query: string;
+  loadedForPubkey: string | null;
+  friends: NostrChallengeFriend[];
+  sendingPubkey: string | null;
+  incoming: IncomingNostrChallenge[];
+}
+
 export interface LunaState {
   // Identidad Nostr 2.0 (npub/pubkey/nombre/avatar), o null si no hay sesión.
   identity: LunaIdentity | null;
@@ -47,6 +71,8 @@ export interface LunaState {
   ignoredLaunchRequestIds: Set<string>;
   // Login Nostr 2.0 (firmante en el navegador).
   nostrLogin: NostrLoginState;
+  // Invitaciones 2.0: retos NIP-17 + amigos NIP-02.
+  challenge: NostrChallengeState;
 }
 
 export const lunaState: LunaState = {
@@ -69,5 +95,15 @@ export const lunaState: LunaState = {
     bunkerInput: '',
     nsecInput: '',
     generatedNsec: null,
+  },
+  challenge: {
+    pickerOpen: false,
+    loading: false,
+    error: null,
+    query: '',
+    loadedForPubkey: null,
+    friends: [],
+    sendingPubkey: null,
+    incoming: [],
   },
 };

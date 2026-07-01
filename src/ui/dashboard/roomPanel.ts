@@ -57,8 +57,10 @@ export interface RoomPanelActiveData {
   players: RoomPlayerEntry[];
   /** ¿Se copió recién el link de invitación? (cambia el label del botón) */
   inviteLinkCopied: boolean;
-  /** Sin gameId de Luna: no se puede invitar, se ofrece iniciar sesión. */
+  /** Sin identidad/signer compatible: no se puede invitar, se ofrece iniciar sesión. */
   inviteUnavailable: boolean;
+  inviteAction: string;
+  inviteLabel: string;
   inviteWindowBusy: boolean;
   busy: boolean;
   onlineErrorHtml: string;
@@ -123,7 +125,7 @@ export function renderRoomPanelActive(data: RoomPanelActiveData): string {
   const {
     roomId, isPrivate, host, inLobby, readyCount, playerCount, matchText, statusText,
     visibilityText, speedLevelText, roomPurposeText, players, inviteLinkCopied,
-    inviteUnavailable, inviteWindowBusy, busy, onlineErrorHtml, visibilityToggleHtml, betPanelHtml,
+    inviteUnavailable, inviteAction, inviteLabel, inviteWindowBusy, busy, onlineErrorHtml, visibilityToggleHtml, betPanelHtml,
   } = data;
   const roomPurposeIcon = shieldCrestIcon({ size: 16, ariaHidden: true });
 
@@ -157,7 +159,7 @@ export function renderRoomPanelActive(data: RoomPanelActiveData): string {
     <button class="dash-copy-btn" type="button" data-ui-action="online-copy-invite-link">${inviteLinkCopied ? '¡Link copiado!' : 'Copiar link'}</button>
     ${inviteUnavailable
       ? `<button class="dash-copy-btn" type="button" data-ui-action="luna-login"${busy || inviteWindowBusy ? ' disabled' : ''}>${inviteWindowBusy ? 'Abriendo...' : 'Iniciar sesión'}</button>`
-      : `<button class="dash-copy-btn" type="button" data-ui-action="online-open-invite"${busy || inviteWindowBusy ? ' disabled' : ''}>${inviteWindowBusy ? 'Abriendo...' : 'Invitar amigos'}</button>`}
+      : `<button class="dash-copy-btn" type="button" data-ui-action="${escapeHtml(inviteAction)}"${busy || inviteWindowBusy ? ' disabled' : ''}>${inviteWindowBusy ? 'Abriendo...' : escapeHtml(inviteLabel)}</button>`}
   `;
 
   return `

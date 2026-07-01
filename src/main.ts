@@ -1,5 +1,6 @@
 import './styles.css';
 import QRCode from 'qrcode';
+import { nip19 } from 'nostr-tools';
 import { gearOutlineIcon, historyClockIcon, homeIcon, logoutIcon, playIcon, settingsGearIcon, speakerIcon } from './ui/icons';
 import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
@@ -110,12 +111,17 @@ import {
   clearActiveSigner,
   createNip07Signer,
   generateLocalSigner,
+  getActiveSigner,
   importNsec,
   restoreSigner,
   type LunaSigner,
   type StoredSigner,
 } from './online/nostrSigner';
 import { loginWithSigner } from './online/nostrLogin';
+import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
+import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
+import { fetchContacts } from './online/nostrContacts';
+import { fetchProfiles, profileName } from './online/nostrProfile';
 import { decidePeerKoAction } from './online/peerKoAuthority';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayMessage } from './online/peerBroadcast';
 import { OnlineReplayCollector } from './app/multiplayerReplay';
@@ -157,6 +163,8 @@ hudOverlayElement.addEventListener('click', handleOverlayClick);
 const inviteOverlayElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(inviteOverlayElement);
 inviteOverlayElement.addEventListener('click', handleOverlayClick);
+inviteOverlayElement.addEventListener('input', handleOverlayInput);
+inviteOverlayElement.addEventListener('change', handleOverlayInput);
 // BOT DEV: capa propia para el panel de control del bot, fuera del overlay
 // general (que se reescribe cada frame durante la partida online) para que sus
 // botones no se recreen a 60fps y los clicks/hover funcionen.
@@ -434,6 +442,10 @@ lunaState.trustedOrigin = loadTrustedLunaOrigin();
 const LUNA_PRESENCE_TTL_MS = 20000;
 const LUNA_PRESENCE_HEARTBEAT_MS = LUNA_PRESENCE_TTL_MS / 2;
 const LUNA_LAUNCH_POLL_MS = 2_000;
+const CHALLENGE_CONTACT_LIMIT = 120;
+const CHALLENGE_INCOMING_LIMIT = 5;
+let challengeInboxPubkey: string | null = null;
+let challengeInboxStarting = false;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -1494,6 +1506,7 @@ function handleOverlayInput(event: Event): void {
     }
     if (field === 'nostr-bunker') lunaState.nostrLogin.bunkerInput = target.value.trim();
     if (field === 'nostr-nsec') lunaState.nostrLogin.nsecInput = target.value.trim();
+    if (field === 'challenge-search') lunaState.challenge.query = target.value.slice(0, 80);
     if (field === 'join-code') identityState.joinCode = normalizeRoomId(target.value);
     if (field === 'bet-stake') betState.stakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
     if (field === 'report-comment') reportState.comment = target.value.slice(0, 400);
@@ -1594,6 +1607,26 @@ function handleOverlayClick(event: MouseEvent): void {
   }
   if (action === 'report-perf') {
     void sendPerfReport();
+    return;
+  }
+  if (action === 'online-challenge-open') {
+    void openNostrChallengePicker();
+    return;
+  }
+  if (action === 'online-challenge-close') {
+    closeNostrChallengePicker();
+    return;
+  }
+  if (action === 'online-challenge-send') {
+    void sendNostrChallenge(control.dataset.pubkey ?? '');
+    return;
+  }
+  if (action === 'online-challenge-accept') {
+    void acceptIncomingNostrChallenge(control.dataset.challengeId ?? '');
+    return;
+  }
+  if (action === 'online-challenge-dismiss') {
+    dismissIncomingNostrChallenge(control.dataset.challengeId ?? '');
     return;
   }
   if (hasBlockingModal()) return;
@@ -2311,8 +2344,9 @@ async function bootstrapOnlineStartup(): Promise<void> {
   // Rehidrata el firmante Nostr 2.0 persistido (sesión por extensión/bunker/clave
   // local). Best-effort y en paralelo: deja el signer en memoria para firmar
   // features Nostr; no bloquea el arranque.
-  void restoreSigner();
+  const signerRestore = restoreSigner();
   await restoreLunaIdentity();
+  void signerRestore.then(() => ensureNostrChallengeInbox());
   // El arranque terminó: a partir de acá la puerta de login ya puede decidir si
   // mostrarse (sin flash) según haya o no identidad Nostr persistida.
   lunaBootstrapDone = true;
@@ -2356,6 +2390,7 @@ function applyLunaIdentity(identity: LunaIdentity): void {
   });
   identityState.name = identityState.player.name;
   void syncLunaLaunchRequest();
+  void ensureNostrChallengeInbox();
 }
 
 async function bootstrapJoinLink(roomId: string): Promise<void> {
@@ -2498,6 +2533,14 @@ function clearLunaIdentity(): void {
   lunaState.identity = null;
   lunaState.inviteNotice = null;
   lunaState.pendingLaunchRequest = null;
+  lunaState.challenge.pickerOpen = false;
+  lunaState.challenge.loading = false;
+  lunaState.challenge.error = null;
+  lunaState.challenge.sendingPubkey = null;
+  lunaState.challenge.incoming = [];
+  challengeInboxPubkey = null;
+  challengeInboxStarting = false;
+  stopChallengeInbox();
   // Cierra y olvida el firmante Nostr (sesión 2.0) junto con la identidad.
   clearActiveSigner();
   resetNostrLoginFlow();
@@ -2694,6 +2737,275 @@ async function openLunaInviteWindow(): Promise<void> {
   } finally {
     lunaState.inviteWindowBusy = false;
   }
+}
+
+type InviteActionModel = {
+  action: string;
+  label: string;
+  status: string;
+  unavailable: boolean;
+};
+
+function inviteActionModel(): InviteActionModel {
+  if (lunaState.identity?.pubkey && getActiveSigner()) {
+    return {
+      action: 'online-challenge-open',
+      label: 'Retar amigo',
+      status: 'Retos 1v1 por Nostr NIP-17.',
+      unavailable: false,
+    };
+  }
+  if (lunaState.identity?.gameId) {
+    return {
+      action: 'online-open-invite',
+      label: 'Invitar amigo',
+      status: 'Luna Negra abre la lista de amigos.',
+      unavailable: false,
+    };
+  }
+  return {
+    action: 'luna-login',
+    label: 'Iniciar sesión',
+    status: 'Inicia sesión con Nostr para retar a tus amigos.',
+    unavailable: true,
+  };
+}
+
+async function requireNostrChallengeSigner(): Promise<LunaSigner | null> {
+  if (!lunaState.identity?.pubkey) {
+    onlineNetState.error = 'Inicia sesión con Nostr para retar amigos.';
+    reopenLoginGate();
+    return null;
+  }
+  let signer = getActiveSigner();
+  if (!signer) signer = await restoreSigner();
+  if (!signer) {
+    onlineNetState.error = 'No hay un firmante Nostr activo para cifrar el reto.';
+    return null;
+  }
+  if (!signer.nip44Encrypt || !signer.nip44Decrypt) {
+    onlineNetState.error = 'Tu firmante Nostr no soporta NIP-44, necesario para retos NIP-17.';
+    return null;
+  }
+  try {
+    const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    if (signerPubkey !== lunaState.identity.pubkey.trim().toLowerCase()) {
+      onlineNetState.error = 'El firmante activo no coincide con la sesión Nostr de TETRA.';
+      return null;
+    }
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+    return null;
+  }
+  return signer;
+}
+
+async function openNostrChallengePicker(): Promise<void> {
+  if (lunaState.challenge.pickerOpen && lunaState.challenge.loading) return;
+  const signer = await requireNostrChallengeSigner();
+  if (!signer) return;
+  let myPubkey = '';
+  try {
+    myPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+    return;
+  }
+
+  lunaState.challenge.pickerOpen = true;
+  lunaState.challenge.error = null;
+  lunaState.challenge.query = '';
+  input.releaseAll();
+
+  if (lunaState.challenge.loadedForPubkey === myPubkey) return;
+
+  lunaState.challenge.loading = true;
+  lunaState.challenge.friends = [];
+  try {
+    const contacts = (await fetchContacts(myPubkey)).slice(0, CHALLENGE_CONTACT_LIMIT);
+    const profiles = await fetchProfiles(contacts);
+    lunaState.challenge.friends = contacts.map((pubkey) => {
+      const profile = profiles.get(pubkey) ?? null;
+      const npub = nip19.npubEncode(pubkey);
+      return {
+        pubkey,
+        npub,
+        name: (profileName(profile) ?? shortNpub(npub)).slice(0, 32),
+        avatarUrl: profile?.picture ?? null,
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    lunaState.challenge.loadedForPubkey = myPubkey;
+  } catch (error) {
+    lunaState.challenge.error = onlineErrorText(error);
+  } finally {
+    lunaState.challenge.loading = false;
+  }
+}
+
+function closeNostrChallengePicker(): void {
+  lunaState.challenge.pickerOpen = false;
+  lunaState.challenge.error = null;
+  lunaState.challenge.sendingPubkey = null;
+  if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
+  input.releaseAll();
+}
+
+async function sendNostrChallenge(pubkey: string): Promise<void> {
+  const toPubkey = pubkey.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(toPubkey) || lunaState.challenge.sendingPubkey) return;
+  const signer = await requireNostrChallengeSigner();
+  if (!signer) {
+    lunaState.challenge.error = onlineNetState.error;
+    return;
+  }
+
+  lunaState.challenge.sendingPubkey = toPubkey;
+  lunaState.challenge.error = null;
+  lunaState.inviteNotice = null;
+  try {
+    if (!roomState.current) {
+      await createOnlineRoom('private');
+    }
+    if (!roomState.current) {
+      throw new Error(onlineNetState.error ?? 'No se pudo crear la sala para el reto.');
+    }
+    const roomId = roomState.current.id;
+    const friend = lunaState.challenge.friends.find((candidate) => candidate.pubkey === toPubkey);
+    const giftWrap = await buildChallengeGiftWrap(signer, {
+      toPubkey,
+      roomId,
+      joinUrl: buildRoomInviteLink(roomId),
+      message: 'Te reto a una partida de TETRA.',
+    });
+    const published = await publishChallenge(giftWrap, toPubkey);
+    if (!published) throw new Error('No se pudo publicar el reto en los relays Nostr.');
+    lunaState.challenge.pickerOpen = false;
+    lunaState.challenge.query = '';
+    lunaState.inviteNotice = `Reto enviado a ${friend?.name ?? shortNpub(nip19.npubEncode(toPubkey))}.`;
+    onlineNetState.error = null;
+  } catch (error) {
+    lunaState.challenge.error = onlineErrorText(error);
+    onlineNetState.error = lunaState.challenge.error;
+  } finally {
+    lunaState.challenge.sendingPubkey = null;
+  }
+}
+
+async function ensureNostrChallengeInbox(): Promise<void> {
+  const identityPubkey = lunaState.identity?.pubkey?.trim().toLowerCase() ?? '';
+  if (!identityPubkey) {
+    if (challengeInboxPubkey) stopChallengeInbox();
+    challengeInboxPubkey = null;
+    return;
+  }
+  if (challengeInboxPubkey === identityPubkey || challengeInboxStarting) return;
+  if (challengeInboxPubkey && challengeInboxPubkey !== identityPubkey) {
+    stopChallengeInbox();
+    challengeInboxPubkey = null;
+  }
+  challengeInboxStarting = true;
+  try {
+    let signer = getActiveSigner();
+    if (!signer) signer = await restoreSigner();
+    if (!signer?.nip44Decrypt) return;
+    const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    if (signerPubkey !== identityPubkey) return;
+    startChallengeInbox(signer, signerPubkey, handleIncomingNostrChallenge);
+    challengeInboxPubkey = signerPubkey;
+  } catch {
+    // Recibir retos es best-effort.
+  } finally {
+    challengeInboxStarting = false;
+  }
+}
+
+function handleIncomingNostrChallenge(challenge: ParsedChallenge): void {
+  const exists = lunaState.challenge.incoming.some((candidate) =>
+    candidate.giftWrapId === challenge.giftWrapId
+    || (challenge.rumorId !== null && candidate.rumorId === challenge.rumorId)
+  );
+  if (exists) return;
+  const incoming = {
+    ...challenge,
+    fromName: shortNpub(challenge.fromNpub),
+    fromAvatarUrl: null,
+  };
+  lunaState.challenge.incoming = prependUniqueChallenges(
+    lunaState.challenge.incoming,
+    incoming,
+    CHALLENGE_INCOMING_LIMIT,
+  );
+  void enrichIncomingNostrChallenge(challenge.giftWrapId, challenge.fromPubkey);
+}
+
+async function enrichIncomingNostrChallenge(challengeId: string, pubkey: string): Promise<void> {
+  try {
+    const profile = (await fetchProfiles([pubkey])).get(pubkey) ?? null;
+    const name = profileName(profile);
+    const avatarUrl = profile?.picture ?? null;
+    if (!name && !avatarUrl) return;
+    lunaState.challenge.incoming = lunaState.challenge.incoming.map((challenge) =>
+      challenge.giftWrapId === challengeId
+        ? {
+            ...challenge,
+            fromName: (name ?? challenge.fromName).slice(0, 32),
+            fromAvatarUrl: avatarUrl ?? challenge.fromAvatarUrl,
+          }
+        : challenge
+    );
+  } catch {
+    // Perfil del remitente best-effort.
+  }
+}
+
+function prependUniqueChallenges(
+  current: typeof lunaState.challenge.incoming,
+  incoming: typeof lunaState.challenge.incoming[number],
+  limit: number,
+): typeof lunaState.challenge.incoming {
+  return [
+    incoming,
+    ...current.filter((candidate) =>
+      candidate.giftWrapId !== incoming.giftWrapId
+      && (incoming.rumorId === null || candidate.rumorId !== incoming.rumorId)
+    ),
+  ].slice(0, limit);
+}
+
+async function acceptIncomingNostrChallenge(challengeId: string): Promise<void> {
+  const challenge = lunaState.challenge.incoming.find((candidate) => candidate.giftWrapId === challengeId);
+  if (!challenge) return;
+  dismissIncomingNostrChallenge(challengeId);
+  await enterNostrChallengeRoom(challenge);
+}
+
+function dismissIncomingNostrChallenge(challengeId: string): void {
+  lunaState.challenge.incoming = lunaState.challenge.incoming.filter((candidate) => candidate.giftWrapId !== challengeId);
+}
+
+async function enterNostrChallengeRoom(challenge: ParsedChallenge): Promise<void> {
+  let roomId = normalizeRoomId(challenge.roomId ?? '');
+  try {
+    const url = new URL(challenge.joinUrl, window.location.href);
+    if (url.origin !== window.location.origin) {
+      onlineNetState.error = 'El reto apunta a otro origen y fue bloqueado.';
+      return;
+    }
+    roomId = normalizeRoomId(url.searchParams.get('join') ?? roomId);
+  } catch {
+    onlineNetState.error = 'El reto trae un link de sala inválido.';
+    return;
+  }
+  if (!roomId) {
+    onlineNetState.error = 'El reto no trae una sala válida.';
+    return;
+  }
+  openOnlineMenu();
+  await joinOnlineRoom(roomId);
+}
+
+function shortNpub(npub: string): string {
+  return npub.length > 18 ? `${npub.slice(0, 10)}…${npub.slice(-6)}` : npub;
 }
 
 // "Continuar como anónimo" desde la puerta de bienvenida: fija el nombre temporal
@@ -5695,12 +6007,12 @@ function renderOverlay(state: GameState): void {
   }
   // Toast de invitación durante partida: capa propia con caché para que los
   // botones no se recreen cada frame (el juego sigue corriendo detrás).
-  const inviteHtml = lunaState.pendingLaunchRequest && lunaInviteShowsAsToast()
-    ? renderLunaInviteToast(lunaState.pendingLaunchRequest)
-    : '';
+  const inviteHtml = renderInviteOverlayHtml();
   if (inviteHtml !== overlayState.lastInvite) {
+    const inviteFocus = captureInviteOverlayFieldFocus();
     inviteOverlayElement.innerHTML = inviteHtml;
     overlayState.lastInvite = inviteHtml;
+    restoreInviteOverlayFieldFocus(inviteFocus);
   }
   document.body.classList.toggle('online-spectating', isOnlineSpectating());
   if (appMode === 'replayPlayback' && replayState.playback) updateReplayOverlay(replayState.playback.snapshot());
@@ -5754,6 +6066,36 @@ function restoreOverlayFieldFocus(snapshot: OverlayFieldFocusSnapshot | null): v
   if (!field) return;
   field.focus({ preventScroll: true });
   if (field instanceof HTMLInputElement && snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
+    field.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+  }
+}
+
+type InviteFieldFocusSnapshot = {
+  field: string;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+};
+
+function captureInviteOverlayFieldFocus(): InviteFieldFocusSnapshot | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLInputElement)) return null;
+  if (!inviteOverlayElement.contains(active)) return null;
+  const field = active.dataset.onlineField;
+  if (!field) return null;
+  return {
+    field,
+    selectionStart: active.selectionStart,
+    selectionEnd: active.selectionEnd,
+  };
+}
+
+function restoreInviteOverlayFieldFocus(snapshot: InviteFieldFocusSnapshot | null): void {
+  if (!snapshot) return;
+  const field = Array.from(inviteOverlayElement.querySelectorAll<HTMLInputElement>('[data-online-field]'))
+    .find((candidate) => candidate.dataset.onlineField === snapshot.field);
+  if (!field) return;
+  field.focus({ preventScroll: true });
+  if (snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
     field.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
   }
 }
@@ -6140,7 +6482,9 @@ function renderLunaLaunchRequestOverlay(request: PendingLunaLaunchRequest): stri
 function hasBlockingModal(): boolean {
   // La invitación de Luna durante una partida NO bloquea: se muestra como toast
   // clicable (ver renderLunaInviteToast) y el juego sigue corriendo.
-  return pendingConfirmAction !== null || (lunaState.pendingLaunchRequest !== null && !lunaInviteShowsAsToast());
+  return pendingConfirmAction !== null
+    || lunaState.challenge.pickerOpen
+    || (lunaState.pendingLaunchRequest !== null && !lunaInviteShowsAsToast());
 }
 
 // Con el juego corriendo (o pausado), la invitación se presenta como toast no
@@ -6163,6 +6507,82 @@ function renderLunaInviteToast(request: PendingLunaLaunchRequest): string {
       <div class="luna-invite-toast-actions">
         <button class="luna-invite-toast-btn luna-invite-toast-btn-accept" type="button" data-ui-action="luna-launch-accept">Unirme</button>
         <button class="luna-invite-toast-btn" type="button" data-ui-action="luna-launch-cancel">Ignorar</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderInviteOverlayHtml(): string {
+  if (lunaState.challenge.pickerOpen) return renderNostrChallengePicker();
+  const incoming = lunaState.challenge.incoming[0];
+  if (incoming) return renderNostrChallengeToast(incoming);
+  if (lunaState.pendingLaunchRequest && lunaInviteShowsAsToast()) {
+    return renderLunaInviteToast(lunaState.pendingLaunchRequest);
+  }
+  return '';
+}
+
+function renderNostrChallengePicker(): string {
+  const state = lunaState.challenge;
+  const query = state.query.trim().toLowerCase();
+  const friends = query
+    ? state.friends.filter((friend) =>
+        friend.name.toLowerCase().includes(query)
+        || friend.npub.toLowerCase().includes(query)
+      )
+    : state.friends;
+  const body = state.loading
+    ? '<div class="challenge-empty">Cargando amigos desde Nostr...</div>'
+    : friends.length === 0
+      ? `<div class="challenge-empty">${state.friends.length === 0 ? 'No encontré follows NIP-02 para esta cuenta.' : 'No hay amigos que coincidan.'}</div>`
+      : friends.map((friend) => {
+          const sending = state.sendingPubkey === friend.pubkey;
+          return `
+            <div class="challenge-friend-row">
+              ${renderOnlineAvatar({ name: friend.name, avatarUrl: friend.avatarUrl }, 'small', 'challenge-friend-avatar')}
+              <div class="challenge-friend-copy">
+                <strong>${escapeHtml(friend.name)}</strong>
+                <span>${escapeHtml(friend.npub)}</span>
+              </div>
+              <button class="challenge-send-btn" type="button" data-ui-action="online-challenge-send" data-pubkey="${escapeHtml(friend.pubkey)}"${sending || onlineNetState.busy ? ' disabled' : ''}>
+                ${sending ? 'Enviando...' : 'Retar'}
+              </button>
+            </div>`;
+        }).join('');
+
+  return `
+    <div class="menu-scrim challenge-scrim">
+      <section class="menu-panel challenge-panel" aria-label="Retar amigo por Nostr">
+        <div class="panel-eyebrow">NOSTR NIP-17</div>
+        <h1>Retar amigo</h1>
+        <p>Elegí un contacto de tu lista NIP-02. TETRA le manda un DM cifrado con el link de esta sala.</p>
+        <label class="challenge-search">
+          <span>Buscar</span>
+          <input type="search" value="${escapeHtml(state.query)}" data-online-field="challenge-search" autocomplete="off" placeholder="Nombre o npub" />
+        </label>
+        ${state.error ? `<div class="challenge-error">${escapeHtml(state.error)}</div>` : ''}
+        <div class="challenge-friend-list">${body}</div>
+        <div class="challenge-actions">
+          <button class="cs2-btn" type="button" data-ui-action="online-challenge-close">Cerrar</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderNostrChallengeToast(challenge: typeof lunaState.challenge.incoming[number]): string {
+  const room = challenge.roomId ? `Sala ${challenge.roomId}` : 'Partida 1v1';
+  return `
+    <div class="luna-invite-toast challenge-toast" role="status" aria-live="polite">
+      <div class="luna-invite-toast-body challenge-toast-body">
+        ${renderOnlineAvatar({ name: challenge.fromName, avatarUrl: challenge.fromAvatarUrl }, 'small', 'challenge-toast-avatar')}
+        <span class="luna-invite-toast-eyebrow">RETO NOSTR</span>
+        <strong>${escapeHtml(challenge.fromName)} te retó a jugar</strong>
+        <span class="challenge-toast-room">${escapeHtml(room)}</span>
+      </div>
+      <div class="luna-invite-toast-actions">
+        <button class="luna-invite-toast-btn luna-invite-toast-btn-accept" type="button" data-ui-action="online-challenge-accept" data-challenge-id="${escapeHtml(challenge.giftWrapId)}">Entrar</button>
+        <button class="luna-invite-toast-btn" type="button" data-ui-action="online-challenge-dismiss" data-challenge-id="${escapeHtml(challenge.giftWrapId)}">Ignorar</button>
       </div>
     </div>
   `;
@@ -6437,18 +6857,14 @@ export function renderOnlineLobbyOverlay(): string {
 
 function renderLunaInviteAction(host: boolean): string {
   if (!host) return '';
-  const unavailable = !lunaState.identity?.gameId;
+  const model = inviteActionModel();
   const status = lunaState.inviteNotice
     ? lunaState.inviteNotice
-    : unavailable
-      ? 'Entrá desde Luna Negra para ver amigos e invitarlos.'
-      : 'Luna Negra abre la lista de amigos.';
-  const action = unavailable ? 'luna-login' : 'online-open-invite';
-  const label = unavailable ? 'Iniciar sesión' : 'Invitar amigo';
+    : model.status;
   return `
     <section class="cs2-invite-action" aria-label="Invitar amigo">
-      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="${action}"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>
-        ${lunaState.inviteWindowBusy ? 'Abriendo...' : label}
+      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="${model.action}"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>
+        ${lunaState.inviteWindowBusy ? 'Abriendo...' : model.label}
       </button>
       <span>${escapeHtml(status)}</span>
     </section>
@@ -8836,7 +9252,7 @@ function renderMobileRoomManager(): string {
   const startReason = !ready
     ? 'Marcate listo para poder empezar'
     : (readyCount < 2 ? 'Necesitás al menos 2 jugadores listos' : 'Todo listo · arrancá la partida');
-  const inviteUnavailable = !lunaState.identity?.gameId;
+  const inviteModel = inviteActionModel();
 
   const playersHtml = room.players.map((candidate) => {
     const isSelf = candidate.id === identityState.player.id;
@@ -8853,9 +9269,9 @@ function renderMobileRoomManager(): string {
       </div>`;
   }).join('');
 
-  const inviteBtn = inviteUnavailable
+  const inviteBtn = inviteModel.unavailable
     ? `<button class="mdash-add-friend" type="button" data-ui-action="luna-login"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo…' : 'Iniciar sesión para invitar'}</button>`
-    : `<button class="mdash-add-friend" type="button" data-ui-action="online-open-invite"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo…' : '+ Invitar amigos'}</button>`;
+    : `<button class="mdash-add-friend" type="button" data-ui-action="${inviteModel.action}"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo…' : inviteModel.label}</button>`;
 
   const visToggle = host && isLobby
     ? `<button class="mdash-vis-toggle ${isPublic ? 'is-public' : ''}" type="button" role="switch" aria-checked="${isPublic}" aria-label="${isPublic ? 'Sala pública' : 'Sala privada'}" data-ui-action="online-visibility-toggle"${onlineNetState.busy ? ' disabled' : ''}>
@@ -9027,7 +9443,7 @@ function renderSurvivalLeaderboardBody(): string {
 // visibilidad, apuesta) y los avatares se pre-renderizan acá.
 function renderDashboardRoomPanel(): string {
   const room = roomState.current;
-  const inviteUnavailable = !lunaState.identity?.gameId;
+  const inviteModel = inviteActionModel();
 
   if (!room) {
     return renderRoomPanelEmpty({
@@ -9070,7 +9486,9 @@ function renderDashboardRoomPanel(): string {
       isReady: candidate.ready,
     })),
     inviteLinkCopied: roomInviteLinkRecentlyCopied(),
-    inviteUnavailable,
+    inviteUnavailable: inviteModel.unavailable,
+    inviteAction: inviteModel.action,
+    inviteLabel: inviteModel.label,
     inviteWindowBusy: lunaState.inviteWindowBusy,
     busy: onlineNetState.busy,
     onlineErrorHtml: renderOnlineError(),
