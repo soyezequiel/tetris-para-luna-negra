@@ -20,12 +20,20 @@ import {
 import type { LunaSigner } from './nostrSigner';
 import { DM_RELAYS, getPool, randomizedTimestamp } from './nostrRelays';
 
-// Coordenada del juego (30023:<tienda>:<slug>). Sirve para etiquetar el reto como
-// "de TETRA" y filtrar los entrantes. Configurable por env; el fallback alcanza
-// porque lo accionable es el `url` (link de la sala), no esta etiqueta.
+// Coordenada real del juego en Luna Negra: `30023:<tienda-pubkey>:<slug>`, la
+// dirección del listado kind:30023 que publica la tienda (verificado en relays:
+// #d="tetra-tetris-copia" → pubkey ed13c4…cc4d3, título "Tetra (Pre-alfa)").
+//
+// El reto (§5) sólo la usa de ETIQUETA (lo accionable es el `url`), pero la
+// presencia NIP-38 (§3 2.0) la pone en el tag `a` y Luna Negra filtra los
+// kind:30315 por ESE coord exacto: si no coincide, no detecta "Jugando TETRA".
+// Por eso el fallback debe ser el coord real, no un placeholder. Override por env
+// (VITE_TETRA_GAME_COORD) para self-hosts o si se re-publica bajo otra tienda.
+const TETRA_GAME_COORD_FALLBACK =
+  '30023:ed13c471be6bff9195a6261d8cbd6c7ab6efe79a7947b208d2b6f066b99cc4d3:tetra-tetris-copia';
 export const TETRA_GAME_COORD: string =
   ((import.meta as unknown as { env?: Record<string, string | undefined> }).env
-    ?.VITE_TETRA_GAME_COORD ?? '').trim() || '30023:tetra:tetra';
+    ?.VITE_TETRA_GAME_COORD ?? '').trim() || TETRA_GAME_COORD_FALLBACK;
 
 const RUMOR_KIND = 14;
 const SEAL_KIND = 13;
