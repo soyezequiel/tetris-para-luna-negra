@@ -84,22 +84,56 @@ function writeStoredSigner(stored: StoredSigner | null): void {
   }
 }
 
+// --- Aviso de firma (hook de UI) ---
+
+// La app registra un notificador que se dispara ANTES de cada firma de evento, para
+// avisarle al usuario qué está firmando (un toast). Se cablea acá, en el ÚNICO punto
+// por el que pasan todas las firmas (el signer activo), así ninguna feature tiene que
+// acordarse de avisar. Best-effort: si el aviso falla, la firma sigue igual.
+let signEventNotifier: ((event: UnsignedEvent) => void) | null = null;
+
+export function setSignEventNotifier(fn: ((event: UnsignedEvent) => void) | null): void {
+  signEventNotifier = fn;
+}
+
+// Envuelve un signer para que cada `signEvent` dispare el notificador antes de firmar.
+// Los métodos del signer son closures (no usan `this`), así que el spread es seguro.
+function withSignNotice(signer: LunaSigner): LunaSigner {
+  return {
+    ...signer,
+    signEvent: (event) => {
+      try {
+        signEventNotifier?.(event);
+      } catch {
+        // El aviso nunca debe romper ni demorar la firma.
+      }
+      return signer.signEvent(event);
+    },
+  };
+}
+
 // --- Signer activo (singleton en memoria) ---
 
 let active: LunaSigner | null = null;
+
+// Toda asignación de `active` pasa por acá para quedar envuelta con el aviso de firma
+// y centralizar el punto de verdad del singleton.
+function setActive(signer: LunaSigner | null): void {
+  active = signer ? withSignNotice(signer) : null;
+}
 
 export function getActiveSigner(): LunaSigner | null {
   return active;
 }
 
 export function setActiveSigner(signer: LunaSigner, stored: StoredSigner): void {
-  active = signer;
+  setActive(signer);
   writeStoredSigner(stored);
 }
 
 export function clearActiveSigner(): void {
   const prev = active;
-  active = null;
+  setActive(null);
   writeStoredSigner(null);
   void prev?.close?.();
 }
@@ -115,12 +149,12 @@ export async function restoreSigner(): Promise<LunaSigner | null> {
   try {
     if (stored.method === 'nip07') {
       if (typeof window === 'undefined' || !window.nostr) return null;
-      active = createNip07Signer();
+      setActive(createNip07Signer());
     } else if (stored.method === 'local') {
-      active = importNsec(stored.nsec);
+      setActive(importNsec(stored.nsec));
     } else {
       const { restoreBunkerSigner } = await import('./nostrNip46');
-      active = await restoreBunkerSigner(stored.clientNsec, stored.bunker);
+      setActive(await restoreBunkerSigner(stored.clientNsec, stored.bunker));
     }
     return active;
   } catch {

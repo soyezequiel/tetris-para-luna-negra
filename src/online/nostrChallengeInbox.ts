@@ -11,8 +11,12 @@ import type { LunaSigner } from './nostrSigner';
 // Lo que devuelve pool.subscribeMany: un handle para cerrar la suscripción.
 type SubCloser = { close: () => void };
 
-import { DM_RELAYS, getPool } from './nostrRelays';
-import { parseChallengeGiftWrap, type ParsedChallenge } from './nostrChallenge';
+import { getPool } from './nostrRelays';
+import {
+  parseChallengeGiftWrap,
+  resolveDmInboxRelays,
+  type ParsedChallenge,
+} from './nostrChallenge';
 
 const SEEN_KEY = 'stack40.challenge_seen.v1';
 // Ventana de escucha: los gift-wrap llevan created_at aleatorizado hasta 2 días
@@ -77,19 +81,27 @@ export function startChallengeInbox(
     })();
   };
 
-  try {
-    sub = getPool().subscribeMany(
-      DM_RELAYS,
-      {
-        kinds: [1059],
-        '#p': [me],
-        since: Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS,
-      },
-      { onevent },
-    );
-  } catch {
-    /* no se pudo abrir la suscripción: quedará sin recibir (best-effort) */
-  }
+  // Escuchamos en el MISMO conjunto de relays donde un emisor publicaría el reto
+  // hacia mí: DM_RELAYS ∪ mis propios kind:10050. Si solo miráramos DM_RELAYS,
+  // perderíamos los retos que llegan a mi bandeja NIP-17 declarada en otro cliente.
+  // resolveDmInboxRelays es async, así que abrimos la suscripción cuando resuelve;
+  // si para entonces ya cerraron, no la abrimos.
+  void resolveDmInboxRelays(me)
+    .then((relays) => {
+      if (closed) return;
+      sub = getPool().subscribeMany(
+        relays,
+        {
+          kinds: [1059],
+          '#p': [me],
+          since: Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS,
+        },
+        { onevent },
+      );
+    })
+    .catch(() => {
+      /* no se pudo abrir la suscripción: quedará sin recibir (best-effort) */
+    });
 
   const stop = () => {
     if (closed) return;

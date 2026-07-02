@@ -114,8 +114,10 @@ import {
   getActiveSigner,
   importNsec,
   restoreSigner,
+  setSignEventNotifier,
   type LunaSigner,
   type StoredSigner,
+  type UnsignedEvent,
 } from './online/nostrSigner';
 import { loginWithSigner } from './online/nostrLogin';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
@@ -186,6 +188,12 @@ multiReplayOverlayElement.addEventListener('click', handleOverlayClick);
 // overlay general (que se reescribe por frame) para que su animación no se reinicie.
 const gamepadToastElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(gamepadToastElement);
+// Pila de avisos de firma Nostr (esquina inferior derecha). Le informa al usuario qué
+// evento firma su extensión cada vez. Se cablea al signer vía setSignEventNotifier.
+const signToastElement = document.createElement('div');
+signToastElement.className = 'sign-toast-stack';
+(overlay.parentElement ?? document.body).appendChild(signToastElement);
+setSignEventNotifier(notifySignEvent);
 const VOLUME_WHEEL_STEP = 0.05;
 // Tope de cambio de volumen por evento de rueda: una muesca de mouse puede
 // reportar deltaY enorme; sin tope, un solo notch saltaría medio volumen.
@@ -7289,6 +7297,71 @@ function renderOnlineKoToast(banner: { placement: string; won: boolean }): strin
       ${banner.placement ? `<span class="online-ko-toast-place">${escapeHtml(banner.placement)}</span>` : ''}
     </div>
   `;
+}
+
+// ── Avisos de firma Nostr ────────────────────────────────────────────────────
+// Antes de cada firma (marcador, presencia, reto) mostramos un toast que explica
+// qué está firmando la extensión. La presencia (kind:30315) se firma seguido, así
+// que solo se avisa la PRIMERA vez (flag persistido); el resto avisa cada vez.
+const SIGN_NOTICE_PRESENCE_KEY = 'stack40.sign_notice.presence.v1';
+const SIGN_TOAST_MS = 4500;
+
+function presenceNoticeShown(): boolean {
+  try {
+    return localStorage.getItem(SIGN_NOTICE_PRESENCE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markPresenceNoticeShown(): void {
+  try {
+    localStorage.setItem(SIGN_NOTICE_PRESENCE_KEY, '1');
+  } catch {
+    // Sin storage el aviso reaparecerá en la próxima sesión; no es grave.
+  }
+}
+
+// Texto amable por tipo de evento. Devuelve null para kinds que no queremos anunciar.
+function describeSignEvent(kind: number): { icon: string; text: string } | null {
+  switch (kind) {
+    case 31337: // marcador (score addressable)
+      return { icon: '🏆', text: 'Firmando tu puntaje para el marcador (Nostr).' };
+    case 30315: // presencia NIP-38
+      return { icon: '🎮', text: 'Firmando tu presencia «Jugando TETRA» (Nostr).' };
+    case 13: // seal NIP-59 de un reto 1v1 (NIP-17)
+      return { icon: '⚔️', text: 'Firmando un reto cifrado para tu rival (Nostr).' };
+    default:
+      return { icon: '🔑', text: `Firmando un evento Nostr (kind ${kind}).` };
+  }
+}
+
+// Notificador cableado al signer (setSignEventNotifier). Corre justo antes de firmar.
+function notifySignEvent(event: UnsignedEvent): void {
+  const info = describeSignEvent(event.kind);
+  if (!info) return;
+  if (event.kind === 30315) {
+    if (presenceNoticeShown()) return; // presencia: solo la primera vez
+    markPresenceNoticeShown();
+  }
+  showSignToast(info.icon, info.text);
+}
+
+// Píldora no invasiva que se apila en la esquina y se va sola. No roba clicks.
+function showSignToast(icon: string, text: string): void {
+  const pill = document.createElement('div');
+  pill.className = 'sign-toast';
+  pill.setAttribute('role', 'status');
+  pill.setAttribute('aria-live', 'polite');
+  // `icon` es un emoji literal nuestro; solo el texto puede necesitar escape.
+  pill.innerHTML = `
+    <span class="sign-toast-icon" aria-hidden="true">${icon}</span>
+    <span class="sign-toast-text">${escapeHtml(text)}</span>
+  `;
+  signToastElement.appendChild(pill);
+  // Tope de pila: si se acumulan, sacamos el más viejo.
+  while (signToastElement.childElementCount > 3) signToastElement.firstElementChild?.remove();
+  setTimeout(() => pill.remove(), SIGN_TOAST_MS);
 }
 
 // Aviso de conexión/desconexión de mandos. Vive en su propia capa persistente

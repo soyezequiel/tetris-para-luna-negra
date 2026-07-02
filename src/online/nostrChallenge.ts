@@ -216,7 +216,7 @@ export async function publishChallenge(
   giftWrap: Event,
   toPubkey: string,
 ): Promise<boolean> {
-  const relays = await recipientDmRelays(toPubkey);
+  const relays = await resolveDmInboxRelays(toPubkey);
   try {
     await Promise.any(getPool().publish(relays, giftWrap));
     return true;
@@ -226,13 +226,18 @@ export async function publishChallenge(
   }
 }
 
-/** Lee la lista NIP-17 de relays de DM del destinatario (kind:10050) + fallback. */
-async function recipientDmRelays(toPubkey: string): Promise<string[]> {
+/**
+ * Lee la lista NIP-17 de relays de DM de un pubkey (kind:10050) unida al fallback
+ * `DM_RELAYS`. La usan LOS DOS lados y por eso debe ser simétrica: el emisor publica
+ * el reto acá, y el receptor DEBE escuchar acá también, o el reto llega a un relay
+ * que el destinatario nunca lee (bug de invitación que no aparece). Best-effort.
+ */
+export async function resolveDmInboxRelays(pubkey: string): Promise<string[]> {
   const relays = new Set(DM_RELAYS);
   try {
     const evs = await getPool().querySync(DM_RELAYS, {
       kinds: [10050],
-      authors: [toPubkey],
+      authors: [pubkey.trim().toLowerCase()],
     });
     if (evs.length > 0) {
       const newest = evs.reduce((a, b) => (b.created_at > a.created_at ? b : a));
