@@ -121,6 +121,7 @@ import { loginWithSigner } from './online/nostrLogin';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
 import { clearPresenceEvent, publishPresence, type PresenceStatus } from './online/nostrPresence';
+import { NOSTR_BOARD_SURVIVAL, NOSTR_BOARD_WINS, publishScore } from './online/nostrLeaderboard';
 import { fetchContacts } from './online/nostrContacts';
 import { fetchProfiles, profileName } from './online/nostrProfile';
 import { decidePeerKoAction } from './online/peerKoAuthority';
@@ -3908,12 +3909,19 @@ async function refreshLeaderboard(): Promise<void> {
 // Best-effort: el tablero global es secundario, nunca corta el juego local.
 async function submitLeaderboardWin(): Promise<void> {
   try {
-    await onlineClient.submitScore({
+    const response = await onlineClient.submitScore({
       playerId: identityState.player.id,
       name: identityState.name.trim() || identityState.player.name,
       avatarUrl: identityState.player.avatarUrl,
       npub: lunaState.identity?.npub ?? null,
     });
+    // Marcador 2.0 (Nostr, §6): el jugador firma su TOTAL de victorias como kind:31337
+    // y lo publica a los relays. Complementa el espejo REST 1.0 (server-side) — mismo
+    // board 'victorias', mismo ranking. Solo si hay sesión Nostr 2.0 (firmante activo);
+    // best-effort, no bloquea.
+    const mine = response.entries.find((entry) => entry.playerId === identityState.player.id);
+    const signer = getActiveSigner();
+    if (mine && signer) void publishScore(signer, NOSTR_BOARD_WINS, mine.wins);
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
   }
@@ -3987,6 +3995,14 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
       npub,
       durationMs,
     });
+
+    // Marcador 2.0 (Nostr, §6): el jugador firma su MEJOR tiempo (ms) como kind:31337
+    // y lo publica a los relays. Complementa el espejo REST 1.0 — mismo board
+    // 'supervivencia', mismas unidades (ms), mismo ranking. Solo si hay sesión Nostr
+    // 2.0 (firmante activo); best-effort, no bloquea.
+    const bestMs = Math.max(previousBestMs ?? 0, durationMs);
+    const signer = getActiveSigner();
+    if (signer) void publishScore(signer, NOSTR_BOARD_SURVIVAL, bestMs);
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
     leaderboardState.survivalRunRank = { status: 'error' };
