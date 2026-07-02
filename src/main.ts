@@ -2363,7 +2363,13 @@ async function bootstrapOnlineStartup(): Promise<void> {
   // features Nostr; no bloquea el arranque.
   const signerRestore = restoreSigner();
   await restoreLunaIdentity();
-  void signerRestore.then(() => ensureNostrChallengeInbox());
+  void signerRestore.then(() => {
+    void ensureNostrChallengeInbox();
+    // El syncNostrPresence del restore de identidad corrió ANTES de que el
+    // firmante estuviera listo (van en paralelo) y se salteó: republicamos ya,
+    // sin esperar el próximo latido de 10s, para figurar "jugando" al abrir.
+    void syncNostrPresence();
+  });
   // El arranque terminó: a partir de acá la puerta de login ya puede decidir si
   // mostrarse (sin flash) según haya o no identidad Nostr persistida.
   lunaBootstrapDone = true;
@@ -2408,6 +2414,10 @@ function applyLunaIdentity(identity: LunaIdentity): void {
   identityState.name = identityState.player.name;
   void syncLunaLaunchRequest();
   void ensureNostrChallengeInbox();
+  // Presencia 2.0 al toque tras el login (con signer ya activo); si el firmante
+  // todavía no está (restore en paralelo), el hook de bootstrapOnlineStartup o el
+  // próximo latido la cubren. El throttle interno evita firmar de más.
+  void syncNostrPresence();
 }
 
 async function bootstrapJoinLink(roomId: string): Promise<void> {
