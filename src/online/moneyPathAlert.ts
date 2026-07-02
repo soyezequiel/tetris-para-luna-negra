@@ -27,6 +27,83 @@ interface ErrorInfo {
   message: string;
 }
 
+// Snapshot de la configuración del server relevante para el flujo de plata. Solo
+// booleanos y el nombre del backend activo: NUNCA valores de secretos. Sirve para
+// que la alerta diga *qué falta* en este entorno (típico: env vars que están en
+// producción pero no en el deploy preview).
+interface MoneyPathConfig {
+  betStore: 'partyserver' | 'upstash' | 'memory';
+  hasApiKey: boolean;
+  hasBaseUrl: boolean;
+  hasGameId: boolean;
+  hasPartyBridgeToken: boolean;
+  hasUpstash: boolean;
+}
+
+function readMoneyPathConfig(): MoneyPathConfig {
+  const hasPartyBridgeToken = Boolean((process.env.PARTY_BRIDGE_TOKEN ?? '').trim());
+  const hasUpstash = Boolean(
+    (process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL ?? '').trim()
+    && (process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN ?? '').trim(),
+  );
+  return {
+    // Mismo orden de resolución que getBetRoomStore(): partyserver > upstash > memoria.
+    betStore: hasPartyBridgeToken ? 'partyserver' : (hasUpstash ? 'upstash' : 'memory'),
+    hasApiKey: Boolean((process.env.LUNA_NEGRA_API_KEY ?? '').trim()),
+    hasBaseUrl: Boolean((process.env.LUNA_NEGRA_BASE_URL ?? '').trim()),
+    hasGameId: Boolean((process.env.LUNA_NEGRA_GAME_ID ?? '').trim()),
+    hasPartyBridgeToken,
+    hasUpstash,
+  };
+}
+
+function tick(ok: boolean): string {
+  return ok ? '✅' : '❌';
+}
+
+/**
+ * Líneas de diagnóstico para la alerta: un snapshot de config (qué store se está
+ * usando y qué env vars faltan) y, cuando el fallo es un 404 de "sala no encontrada",
+ * una pista de la causa raíz más probable (mismatch de transporte / env vars ausentes
+ * en este entorno). El objetivo es que la alerta baste para saber *qué configurar*
+ * sin ir a leer el código.
+ */
+function diagnosticLines(info: ErrorInfo, cfg: MoneyPathConfig): string[] {
+  const lines: string[] = [
+    `🔧 store apuestas=\`${cfg.betStore}\` · API_KEY ${tick(cfg.hasApiKey)}`
+    + ` · BASE_URL ${tick(cfg.hasBaseUrl)} · GAME_ID ${tick(cfg.hasGameId)}`,
+  ];
+
+  const roomNotFound = info.status === 404
+    || /room not found|sala no encontrada/i.test(info.message);
+  if (roomNotFound) {
+    if (cfg.betStore === 'memory') {
+      lines.push(
+        '💡 El store de apuestas es en-memoria (falta `PARTY_BRIDGE_TOKEN` y Upstash en'
+        + ' este entorno): es efímero por instancia y NUNCA ve las salas del transporte'
+        + ' WebSocket. Configurá `PARTY_BRIDGE_TOKEN` + `PARTY_BRIDGE_URL` en ESTE deploy'
+        + ' (preview) apuntando al mismo partyserver que usa el cliente.',
+      );
+    } else {
+      lines.push(
+        `💡 La sala no está en el store \`${cfg.betStore}\`. Probable mismatch de transporte:`
+        + ' el cliente creó la sala en otro backend (p. ej. WebSocket/Cloudflare) mientras'
+        + ' esta API lee otro. Verificá que cliente y bet API apunten al MISMO transporte y,'
+        + ' si usás partyserver, que `PARTY_BRIDGE_URL` sea el mismo host en ambos.',
+      );
+    }
+  }
+
+  const missing: string[] = [];
+  if (!cfg.hasApiKey) missing.push('`LUNA_NEGRA_API_KEY`');
+  if (!cfg.hasBaseUrl) missing.push('`LUNA_NEGRA_BASE_URL`');
+  if (!cfg.hasGameId) missing.push('`LUNA_NEGRA_GAME_ID`');
+  if (missing.length) {
+    lines.push(`⚠ Faltan env vars de escrow en este entorno: ${missing.join(', ')}.`);
+  }
+  return lines;
+}
+
 // Extrae código de error del proveedor (LunaApiError) + status HTTP real cuando existen,
 // sin acoplar a esas clases (acceso defensivo por si el error viene de otra capa).
 function describeError(error: unknown): ErrorInfo {
@@ -69,6 +146,7 @@ export async function alertMoneyPathError(
       `🚨 **Falló un flujo de plata** · \`${flow}\` (${env})`,
       `❌ ${info.code ? `\`${info.code}\` · ` : ''}${info.message.slice(0, 400)}${info.status ? ` (HTTP ${info.status})` : ''}`,
       ctxLine ? `📍 ${ctxLine}` : null,
+      ...diagnosticLines(info, readMoneyPathConfig()),
       `🕒 ${new Date(nowMs).toISOString()}`,
     ].filter((line): line is string => line !== null);
 
