@@ -29,8 +29,11 @@ export const PRESENCE_TTL_SEC = 240;
 
 export type PresenceStatus = 'in-game' | 'online';
 
+// Sin emoji: la UI de Luna Negra (y su riel de amigos) antepone 🎮 al mostrar el
+// estado, así que meter otro acá lo duplicaría. Los clientes Nostr genéricos igual
+// leen el texto tal cual ("Jugando TETRA").
 function statusMessage(status: PresenceStatus): string {
-  return status === 'in-game' ? 'Jugando TETRA 🎮' : 'En TETRA 🕹️';
+  return status === 'in-game' ? 'Jugando TETRA' : 'En TETRA';
 }
 
 /**
