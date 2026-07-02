@@ -3,6 +3,7 @@ import { generateSecretKey, getPublicKey, nip44, finalizeEvent } from 'nostr-too
 import { createLocalSigner } from '../src/online/nostrSigner';
 import {
   buildChallengeGiftWrap,
+  buildChallengeGiftWraps,
   parseChallengeGiftWrap,
 } from '../src/online/nostrChallenge';
 
@@ -45,6 +46,33 @@ describe('reto NIP-17 · round-trip', () => {
     // El remitente que ve B es A (recuperado del seal), no la clave efímera.
     const pubAHex = await signerA.getPublicKey();
     expect(parsed!.fromPubkey).toBe(pubAHex);
+  });
+
+  it('la auto-copia deja que A vea en su propia bandeja el reto que mandó a B', async () => {
+    const { signerA, signerB, pubA, pubB } = makePair();
+    const joinUrl = `${ORIGIN}/?join=SELF1`;
+
+    const { recipient, selfCopy } = await buildChallengeGiftWraps(signerA, {
+      toPubkey: pubB,
+      roomId: 'SELF1',
+      joinUrl,
+      message: 'Te reto a una partida de TETRA.',
+    });
+
+    // La copia del destinatario la desarma B (como siempre).
+    const forB = await parseChallengeGiftWrap(signerB, recipient, { origin: ORIGIN });
+    expect(forB?.roomId).toBe('SELF1');
+
+    // La auto-copia la desarma A (el emisor), con los MISMOS datos; el remitente
+    // sigue siendo A, así el chat la muestra como enviada por mí.
+    const forA = await parseChallengeGiftWrap(signerA, selfCopy, { origin: ORIGIN });
+    expect(forA).not.toBeNull();
+    expect(forA!.roomId).toBe('SELF1');
+    expect(forA!.joinUrl).toBe(joinUrl);
+    expect(forA!.fromPubkey).toBe(pubA);
+
+    // La auto-copia va dirigida (tag `p`) a A, no a B.
+    expect(selfCopy.tags).toContainEqual(['p', pubA.toLowerCase()]);
   });
 
   it('un tercero (C) no puede desarmar un reto dirigido a B', async () => {

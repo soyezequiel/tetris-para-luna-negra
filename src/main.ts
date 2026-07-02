@@ -120,7 +120,7 @@ import {
   type UnsignedEvent,
 } from './online/nostrSigner';
 import { loginWithSigner } from './online/nostrLogin';
-import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
+import { buildChallengeGiftWraps, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
 import { clearPresenceEvent, publishPresence, type PresenceStatus } from './online/nostrPresence';
 import { NOSTR_BOARD_SURVIVAL, NOSTR_BOARD_WINS, publishScore } from './online/nostrLeaderboard';
@@ -2948,14 +2948,18 @@ async function sendNostrChallenge(pubkey: string): Promise<void> {
     }
     const roomId = roomState.current.id;
     const friend = lunaState.challenge.friends.find((candidate) => candidate.pubkey === toPubkey);
-    const giftWrap = await buildChallengeGiftWrap(signer, {
+    const { recipient, selfCopy } = await buildChallengeGiftWraps(signer, {
       toPubkey,
       roomId,
       joinUrl: buildRoomInviteLink(roomId),
       message: 'Te reto a una partida de TETRA.',
     });
-    const published = await publishChallenge(giftWrap, toPubkey);
+    const published = await publishChallenge(recipient, toPubkey);
     if (!published) throw new Error('No se pudo publicar el reto en los relays Nostr.');
+    // Auto-copia NIP-17 hacia mi propia bandeja: así el reto que mandé aparece en MI
+    // historial (Luna Negra / otros clientes). Best-effort: si falla, el reto ya salió.
+    const myPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    void publishChallenge(selfCopy, myPubkey);
     lunaState.challenge.pickerOpen = false;
     lunaState.challenge.query = '';
     lunaState.inviteNotice = `Reto enviado a ${friend?.name ?? shortNpub(nip19.npubEncode(toPubkey))}.`;

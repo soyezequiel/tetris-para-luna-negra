@@ -69,6 +69,9 @@ export function startChallengeInbox(
     void (async () => {
       const challenge = await parseChallengeGiftWrap(signer, event, { origin });
       if (closed || !challenge) return;
+      // Ignoramos la auto-copia (el reto que YO mandé se publica también a mi propia
+      // bandeja para el historial en otros clientes): no debo retarme a mí mismo.
+      if (challenge.fromPubkey.trim().toLowerCase() === me) return;
       // Dedup por gift-wrap y por rumor (mismo reto, distinto sobre/relay).
       if (seen.has(challenge.giftWrapId)) return;
       seen.add(challenge.giftWrapId);

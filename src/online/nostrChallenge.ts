@@ -67,13 +67,52 @@ export interface ParsedChallenge {
 }
 
 /**
- * Arma el gift-wrap NIP-17 (kind:1059) listo para publicar. Lanza si el firmante
- * no soporta NIP-44 (necesario para cifrar el reto).
+ * Sella un rumor hacia `sealTo` (cifrado NIP-44, firmado por MI clave) y lo envuelve
+ * en un gift-wrap kind:1059 con clave EFÍMERA hacia `wrapTo`. Para el destinatario,
+ * `sealTo` = `wrapTo` = él; para la auto-copia del emisor, ambos = yo.
  */
-export async function buildChallengeGiftWrap(
+async function sealAndWrap(
+  signer: LunaSigner,
+  rumor: unknown,
+  sealTo: string,
+  wrapTo: string,
+): Promise<Event> {
+  // seal kind:13: cifra el rumor hacia `sealTo` y lo firma MI clave.
+  const sealContent = await signer.nip44Encrypt!(sealTo, JSON.stringify(rumor));
+  const seal = await signer.signEvent({
+    kind: SEAL_KIND,
+    created_at: randomizedTimestamp(),
+    tags: [],
+    content: sealContent,
+  });
+
+  // gift-wrap kind:1059: cifra el seal con una clave efímera hacia `wrapTo`.
+  const ephemeralSk = generateSecretKey();
+  const wrapContent = nip44.encrypt(
+    JSON.stringify(seal),
+    nip44.getConversationKey(ephemeralSk, wrapTo),
+  );
+  return finalizeEvent(
+    {
+      kind: GIFT_WRAP_KIND,
+      created_at: randomizedTimestamp(),
+      tags: [['p', wrapTo]],
+      content: wrapContent,
+    },
+    ephemeralSk,
+  );
+}
+
+/**
+ * Arma los DOS gift-wrap NIP-17 de un reto: el del `recipient` (destinatario) y la
+ * `selfCopy` (auto-copia para MI propio historial, para poder ver en Luna / otros
+ * clientes el reto que mandé). Ambos envuelven el MISMO rumor kind:14. Lanza si el
+ * firmante no soporta NIP-44.
+ */
+export async function buildChallengeGiftWraps(
   signer: LunaSigner,
   input: ChallengeInput,
-): Promise<Event> {
+): Promise<{ recipient: Event; selfCopy: Event }> {
   if (!signer.nip44Encrypt) {
     throw new Error('Tu firmante no soporta NIP-44 (necesario para retos cifrados).');
   }
@@ -82,7 +121,8 @@ export async function buildChallengeGiftWrap(
   const nowSec = Math.floor(Date.now() / 1000);
   const expiresAt = nowSec + (input.ttlSec ?? DEFAULT_TTL_SEC);
 
-  // 1) rumor kind:14 (sin firmar; lleva id pero no sig, por NIP-59).
+  // rumor kind:14 (sin firmar; lleva id pero no sig, por NIP-59). Uno solo para
+  // ambas copias, así el reto que ve el destinatario y el que veo yo son el mismo.
   const rumorBase = {
     kind: RUMOR_KIND,
     pubkey: myPubkey,
@@ -98,30 +138,21 @@ export async function buildChallengeGiftWrap(
   };
   const rumor = { ...rumorBase, id: getEventHash(rumorBase) };
 
-  // 2) seal kind:13: cifra el rumor hacia el destinatario y lo firma MI clave.
-  const sealContent = await signer.nip44Encrypt(toPubkey, JSON.stringify(rumor));
-  const seal = await signer.signEvent({
-    kind: SEAL_KIND,
-    created_at: randomizedTimestamp(),
-    tags: [],
-    content: sealContent,
-  });
+  const recipient = await sealAndWrap(signer, rumor, toPubkey, toPubkey);
+  const selfCopy = await sealAndWrap(signer, rumor, myPubkey, myPubkey);
+  return { recipient, selfCopy };
+}
 
-  // 3) gift-wrap kind:1059: cifra el seal con una clave efímera hacia el destino.
-  const ephemeralSk = generateSecretKey();
-  const wrapContent = nip44.encrypt(
-    JSON.stringify(seal),
-    nip44.getConversationKey(ephemeralSk, toPubkey),
-  );
-  return finalizeEvent(
-    {
-      kind: GIFT_WRAP_KIND,
-      created_at: randomizedTimestamp(),
-      tags: [['p', toPubkey]],
-      content: wrapContent,
-    },
-    ephemeralSk,
-  );
+/**
+ * Arma el gift-wrap NIP-17 (kind:1059) del destinatario, listo para publicar. Lanza
+ * si el firmante no soporta NIP-44. (Para incluir la auto-copia del emisor, usá
+ * `buildChallengeGiftWraps`.)
+ */
+export async function buildChallengeGiftWrap(
+  signer: LunaSigner,
+  input: ChallengeInput,
+): Promise<Event> {
+  return (await buildChallengeGiftWraps(signer, input)).recipient;
 }
 
 interface ParseOptions {
