@@ -139,6 +139,27 @@ export function clearActiveSigner(): void {
 }
 
 /**
+ * Espera a que la extensión Nostr inyecte `window.nostr`. nos2x/Alby lo inyectan de
+ * forma ASÍNCRONA tras cargar la página, así que al restaurar la sesión en un reload
+ * de pestaña puede no estar todavía listo. Sondea hasta `timeoutMs`. Sin esto,
+ * restoreSigner se rendía al instante y features gateadas por el firmante (buzón de
+ * retos, presencia) no arrancaban hasta un re-login manual.
+ */
+function waitForNostrExtension(timeoutMs = 3000): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  if (window.nostr) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tick = () => {
+      if (window.nostr) return resolve(true);
+      if (Date.now() - start >= timeoutMs) return resolve(false);
+      setTimeout(tick, 100);
+    };
+    setTimeout(tick, 100);
+  });
+}
+
+/**
  * Restaura el signer guardado al montar la app. Para NIP-46 difiere la conexión
  * real con import dinámico (no carga el cliente de bunker si no hace falta).
  */
@@ -148,7 +169,7 @@ export async function restoreSigner(): Promise<LunaSigner | null> {
   if (!stored) return null;
   try {
     if (stored.method === 'nip07') {
-      if (typeof window === 'undefined' || !window.nostr) return null;
+      if (!(await waitForNostrExtension())) return null;
       setActive(createNip07Signer());
     } else if (stored.method === 'local') {
       setActive(importNsec(stored.nsec));
