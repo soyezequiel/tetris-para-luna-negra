@@ -206,11 +206,19 @@ export async function heartbeatLunaPresence(
   request: LunaPresenceRequest,
 ): Promise<{ source: 'luna-negra' }> {
   const config = readConfig();
-  // Reporta presencia al grafo real de Luna Negra.
+  // Reporta presencia al grafo real de Luna Negra. `game` (id o slug del juego en
+  // la tienda) atribuye el latido a ESTE deployment: sin él, Luna Negra cuenta la
+  // presencia a nivel proveedor y la curva de jugadores concurrentes se comparte
+  // entre todos los juegos del proveedor (Tetra y Pre-alfa se mezclaban).
+  const game =
+    (process.env.LUNA_NEGRA_GAME_ID ?? '').trim() ||
+    (process.env.LUNA_NEGRA_GAME_SLUG ?? '').trim() ||
+    null;
   await lunaPost(config, '/api/v1/presence', {
     npub: request.npub,
     status: request.status,
     roomId: request.roomId ?? null,
+    game,
   });
   return { source: 'luna-negra' };
 }
