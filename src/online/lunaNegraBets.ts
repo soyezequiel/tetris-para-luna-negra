@@ -16,6 +16,7 @@ import type {
   UnsignedZapRequestTemplate,
 } from './protocol';
 import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
+import { alertBetDepositHandlesIncomplete } from './moneyPathAlert.js';
 
 interface LunaConfig {
   baseUrl: string;
@@ -400,7 +401,13 @@ export async function createBetForRoom(
 
   const detail = await getBetDetail(config, create.betId);
   const bet = buildRoomBet(room, npubs, create, detail, null, input.playerId, nowMs, playerIdByNpub);
-  return setRoomBet(store, room.id, bet, nowMs);
+  const updatedRoom = await setRoomBet(store, room.id, bet, nowMs);
+  // Reporte de diagnóstico a Discord: si algún participante quedó sin forma de depositar
+  // en el juego (ni bolt11 ni 9734+callback), avisamos con el detalle de qué vino y qué
+  // falta. `await` a propósito: en serverless, sin esperar, el fetch se corta al terminar
+  // la función. Nunca lanza (best-effort), así que no afecta la creación de la apuesta.
+  await alertBetDepositHandlesIncomplete(bet, { roomId: room.id, gameId });
+  return updatedRoom;
 }
 
 /**

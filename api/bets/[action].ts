@@ -34,7 +34,7 @@ export { config } from '../../src/online/vercelApi.js';
 // participante) NO rebuildean la función salvo que cambie este archivo. Si tocás la
 // lógica de apuestas y no se refleja en el deploy, bumpeá `deploy-rev` de abajo (o
 // seteá VERCEL_FORCE_NO_BUILD_CACHE=1 en el proyecto para desactivar el cache).
-// deploy-rev: 2
+// deploy-rev: 3
 export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   return handleNodeApi(request, response, { GET, POST });
 }
