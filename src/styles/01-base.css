@@ -1097,6 +1097,14 @@ canvas {
   align-items: center;
 }
 
+.online-bet-recreate {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dash-border);
+}
+
 .online-bet-input {
   width: 100%;
 }
