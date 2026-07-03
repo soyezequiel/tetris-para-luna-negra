@@ -663,10 +663,13 @@ class LocalVersusMatch {
     let body: string;
     if (paid) {
       body = '<div class="lv-deposit-ok">✅ Depósito recibido</div>';
-    } else if (p?.lnurl || p?.bolt11) {
-      // v2 (zaps): el handle es un LNURL-pay; v1 era un bolt11. renderQr codifica
-      // `lightning:<VALUE>`, válido para ambos. Preferimos la LNURL.
-      body = `${this.renderQr(p.lnurl ?? p.bolt11!)}<span class="lv-qr-hint">Escaneá con tu billetera · tocá para agrandar</span>`;
+    } else if (p?.bolt11 || p?.lnurl) {
+      // v2 (zaps): el depósito es un zap NIP-57 que hay que firmar. Los asientos del
+      // duelo local son invitados custodiales: Luna firma el 9734 en su nombre y
+      // emite el `bolt11` (invoice que compromete el zap vía description hash), así el
+      // QR lo paga CUALQUIER billetera y sigue siendo zap. Preferimos ese bolt11; la
+      // LNURL cruda solo sirve para wallets NIP-57 y la dejamos de último recurso.
+      body = `${this.renderQr(p.bolt11 ?? p.lnurl!)}<span class="lv-qr-hint">Escaneá con tu billetera · tocá para agrandar</span>`;
     } else if (p?.depositError) {
       body = `<p class="lv-bet-note lv-bet-warn">⚠️ ${escapeText(p.depositError)} · reintentando…</p>`;
     } else {
