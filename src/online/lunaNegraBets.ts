@@ -13,6 +13,7 @@ import type {
   RoomBetParticipant,
   RoomBetPayoutStatus,
   RoomBetStatus,
+  UnsignedZapRequestTemplate,
 } from './protocol';
 import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
 
@@ -49,6 +50,10 @@ interface LunaBetDetail extends LunaEconomics {
     bolt11?: string | null;
     lnurl?: string | null;
     payUrl?: string | null;
+    // v2 (zaps): 9734 sin firmar + callback para que el cliente firme el depósito y
+    // obtenga el invoice (así extensión y QR son zaps reales, no LNURL-pay plano).
+    depositZapRequest?: UnsignedZapRequestTemplate | null;
+    depositCallback?: string | null;
     withdrawLnurl?: string | null;
     withdrawUrl?: string | null;
     depositError?: string | null;
@@ -206,6 +211,29 @@ function asPayoutStatus(value: unknown): RoomBetPayoutStatus {
     : 'none';
 }
 
+// Estrecha el 9734 sin firmar que manda Luna (v2): validamos la forma mínima que el
+// signer necesita (kind/created_at/tags/content). Si no cuadra, va null y el panel
+// cae al fallback `payUrl` (firmar en la web de Luna).
+function asUnsignedZapRequest(value: unknown): UnsignedZapRequestTemplate | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.kind !== 'number' ||
+    typeof v.created_at !== 'number' ||
+    typeof v.content !== 'string' ||
+    !Array.isArray(v.tags) ||
+    !v.tags.every((t) => Array.isArray(t) && t.every((s) => typeof s === 'string'))
+  ) {
+    return null;
+  }
+  return {
+    kind: v.kind,
+    created_at: v.created_at,
+    tags: v.tags as string[][],
+    content: v.content,
+  };
+}
+
 function isTerminalBetStatus(status: RoomBetStatus | undefined | null): boolean {
   return status === 'settled' || status === 'cancelled' || status === 'expired' || status === 'refunded';
 }
@@ -247,6 +275,8 @@ function buildRoomBet(
       bolt11: typeof d?.bolt11 === 'string' ? d.bolt11 : null,
       lnurl: typeof d?.lnurl === 'string' ? d.lnurl : null,
       payUrl: typeof d?.payUrl === 'string' ? d.payUrl : null,
+      depositZapRequest: asUnsignedZapRequest(d?.depositZapRequest),
+      depositCallback: typeof d?.depositCallback === 'string' ? d.depositCallback : null,
       depositError: typeof d?.depositError === 'string' ? d.depositError : null,
       payoutSats: typeof d?.payoutSats === 'number' ? d.payoutSats : null,
       payoutStatus,
@@ -470,6 +500,96 @@ export async function refreshRoomBet(
   const updated = await setRoomBet(store, room.id, bet, nowMs);
   if (options.reportResult === false) return updated;
   return (await maybeReportRoomBetResult(store, updated, nowMs)) ?? updated;
+}
+
+/**
+ * Emite el invoice de depósito v2 a partir del zap request 9734 ya firmado por el
+ * jugador. Reenvía el 9734 al callback LNURL-pay del participante (`?amount&nostr=`)
+ * y devuelve el bolt11. Ese invoice compromete el zap vía description hash, así que
+ * pagarlo con extensión o escaneando el QR queda como un zap NIP-57 real: Luna Negra
+ * publica el recibo 9735 al detectar el pago. Idempotente: si ya hay invoice emitido
+ * lo devuelve sin re-firmar.
+ */
+export async function generateBetDepositInvoice(
+  store: RoomStore,
+  roomId: string,
+  playerId: string,
+  signedZapRequest: unknown,
+  nowMs = Date.now(),
+): Promise<{ room: OnlineRoom; invoice: string }> {
+  const room = await loadRoom(store, roomId);
+  const bet = room.bet;
+  if (!bet) throw new OnlineRoomError('No hay apuesta activa para depositar.', 404);
+  const participant = bet.participants.find((p) => p.playerId === playerId);
+  if (!participant) throw new OnlineRoomError('No sos participante de esta apuesta.', 403);
+  if (participant.depositStatus === 'paid') {
+    throw new OnlineRoomError('Ya depositaste.', 409);
+  }
+  // Idempotencia: si ya se emitió el invoice (este intento u otro previo), reusamos
+  // el mismo en vez de pedir otro. El QR y "pagar con extensión" pagan ese bolt11.
+  if (participant.bolt11) return { room, invoice: participant.bolt11 };
+
+  const callback = participant.depositCallback;
+  if (!callback) {
+    throw new OnlineRoomError(
+      'El depósito por zap no está disponible ahora; usá «Pagar en Luna Negra».',
+      409,
+    );
+  }
+  if (!signedZapRequest || typeof signedZapRequest !== 'object') {
+    throw new OnlineRoomError('Falta el zap request firmado.', 400);
+  }
+
+  const amountMsat = bet.stakeSats * 1000;
+  const invoice = await fetchDepositInvoiceFromCallback(callback, amountMsat, signedZapRequest);
+
+  // Persistimos el invoice en la apuesta local para que el QR sobreviva a los polls
+  // (el próximo GET a Luna ya lo devuelve en `bolt11` y reconcilia). Sin esto, el
+  // panel volvería a pedir la firma en el siguiente refresh.
+  const participants = bet.participants.map((p) =>
+    p.playerId === playerId ? { ...p, bolt11: invoice } : p,
+  );
+  const updated: RoomBet = { ...bet, participants, updatedAtServerMs: nowMs };
+  const updatedRoom = await setRoomBet(store, room.id, updated, nowMs);
+  return { room: updatedRoom, invoice };
+}
+
+// GET al callback LNURL-pay del participante con el 9734 firmado. Devuelve el bolt11
+// (`pr`) o lanza con el motivo del proveedor. El callback responde 200 incluso en
+// error (formato LNURL `{ status:"ERROR", reason }`), así que el éxito lo determina
+// la presencia de `pr`, no el status HTTP.
+async function fetchDepositInvoiceFromCallback(
+  callback: string,
+  amountMsat: number,
+  signedZapRequest: unknown,
+): Promise<string> {
+  if (isLunaMockEnabled()) {
+    // El mock auto-fondea los depósitos, así que este camino no debería ejecutarse.
+    throw new OnlineRoomError('Depósito por zap no soportado en modo mock.', 409);
+  }
+  let url: URL;
+  try {
+    url = new URL(callback);
+  } catch {
+    throw new OnlineRoomError('El callback de depósito de Luna Negra es inválido.', 502);
+  }
+  url.searchParams.set('amount', String(amountMsat));
+  url.searchParams.set('nostr', JSON.stringify(signedZapRequest));
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString());
+  } catch {
+    throw new OnlineRoomError('No se pudo contactar a Luna Negra para emitir el invoice.', 502);
+  }
+  const payload = (await response.json().catch(() => null)) as
+    | { pr?: string; reason?: string }
+    | null;
+  if (!payload || typeof payload.pr !== 'string' || !payload.pr) {
+    const reason = payload?.reason ?? `Luna Negra respondió ${response.status}.`;
+    throw new OnlineRoomError(reason, 502);
+  }
+  return payload.pr;
 }
 
 export async function cancelRoomBet(

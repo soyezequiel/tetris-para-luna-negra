@@ -1,8 +1,13 @@
-import type { CreateBetRequest, RoomBetActionRequest } from '../../src/online/protocol.js';
+import type {
+  CreateBetRequest,
+  RoomBetActionRequest,
+  RoomBetDepositInvoiceRequest,
+} from '../../src/online/protocol.js';
 import {
   cancelRoomBet,
   createBetForRoom,
   ensureWebhookRegistered,
+  generateBetDepositInvoice,
   refreshRoomBet,
   retryRoomBetInvoiceGeneration,
   settleRoomBet,
@@ -64,6 +69,16 @@ export async function POST(request: Request): Promise<Response> {
       const body = await readJsonBody<RoomBetActionRequest>(request);
       const room = await refreshBetWithParticipantSync(body.roomId);
       return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'deposit-invoice') {
+      const body = await readJsonBody<RoomBetDepositInvoiceRequest>(request);
+      const { room, invoice } = await generateBetDepositInvoice(
+        getBetRoomStore(),
+        body.roomId,
+        body.playerId,
+        body.signedZapRequest,
+      );
+      return sendJson(200, { room, invoice, serverNowMs: Date.now() });
     }
     if (action === 'cancel') {
       const body = await readJsonBody<RoomBetActionRequest>(request);

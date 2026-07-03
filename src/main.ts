@@ -1802,8 +1802,8 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-webln') {
     void payOnlineBetWithExtension(control.dataset.invoice ?? '');
   }
-  if (action === 'online-bet-webln-lnurl') {
-    void payOnlineBetDepositWithLnurl(control.dataset.lnurl ?? '');
+  if (action === 'online-bet-sign-zap') {
+    void signAndGenerateBetDeposit();
   }
   if (action === 'online-bet-claim-webln') {
     void claimOnlineBetWithExtension(control.dataset.lnurl ?? '');
@@ -4246,27 +4246,57 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
   }
 }
 
-// Paga el depósito de la apuesta v2 con la extensión WebLN por LNURL-pay
-// (LUD-06 + NIP-57). A diferencia de v1 (invoice bolt11 → sendPayment), en v2 el
-// handle de depósito es un LNURL: la extensión (Alby) lo resuelve con webln.lnurl(),
-// que arma el zap. El éxito se confirma por el polling (depositStatus → paid).
-async function payOnlineBetDepositWithLnurl(lnurl: string): Promise<void> {
-  if (!lnurl || betState.paying) return;
-  const provider = getWebLNProvider();
-  if (!provider || typeof provider.lnurl !== 'function') {
-    onlineNetState.error = 'No se detectó una extensión Lightning (instalá Alby) o no soporta LNURL.';
+// Firma el depósito v2 (zap NIP-57) y genera el invoice. El depósito SIEMPRE es un
+// zap anclado al contrato: Luna nos manda el 9734 SIN firmar (`depositZapRequest`),
+// el jugador lo firma con su identidad Nostr y el backend lo reenvía al callback
+// LNURL-pay para obtener el bolt11. Ese invoice compromete el zap (description hash),
+// así que después se puede pagar por QR o con la extensión y sigue siendo un zap
+// real; Luna publica el recibo 9735 al detectar el pago. Tras firmar, adoptamos la
+// sala (que ya trae el `bolt11`) y el render muestra el QR + pago con extensión.
+async function signAndGenerateBetDeposit(): Promise<void> {
+  const bet = roomState.current?.bet;
+  if (!bet || betState.paying) return;
+  const myEntry = myBetEntry(bet);
+  if (!myEntry || myEntry.depositStatus === 'paid') return;
+  if (myEntry.bolt11) return; // ya hay invoice emitido: no re-firmamos
+  const template = myEntry.depositZapRequest;
+  const callback = myEntry.depositCallback;
+  if (!template || !callback) {
+    onlineNetState.error = 'El depósito por zap no está disponible; usá «Pagar en Luna Negra».';
     return;
   }
+
+  let signer = getActiveSigner();
+  if (!signer) signer = await restoreSigner();
+  if (!signer) {
+    onlineNetState.error = 'No hay un firmante Nostr activo para firmar el depósito.';
+    reopenLoginGate();
+    return;
+  }
+
   betState.paying = true;
   try {
-    await provider.enable();
-    await provider.lnurl(lnurl);
+    // El zap tiene que firmarlo la MISMA identidad del participante (Luna lo valida:
+    // signed.pubkey === part.pubkey). Chequeamos contra la sesión Nostr para dar un
+    // error claro antes de molestar al firmante.
+    const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    const identityPubkey = lunaState.identity?.pubkey?.trim().toLowerCase();
+    if (identityPubkey && signerPubkey !== identityPubkey) {
+      onlineNetState.error = 'El firmante activo no coincide con tu sesión Nostr.';
+      return;
+    }
+    const signed = await signer.signEvent(template);
+    const response = await onlineClient.depositInvoice({
+      roomId: roomState.current!.id,
+      playerId: identityState.player.id,
+      signedZapRequest: signed,
+    });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
     onlineNetState.error = null;
-    wakeUpBetDetection();
+    armOnlineBetFastPolling();
   } catch (error) {
-    onlineNetState.error = error instanceof Error && error.message
-      ? `No se pudo pagar con la extensión: ${error.message}`
-      : 'No se pudo pagar con la extensión.';
+    onlineNetState.error = onlineErrorText(error);
   } finally {
     betState.paying = false;
   }
@@ -7694,51 +7724,80 @@ function renderOnlineBetPanel(host: boolean): string {
   `).join('');
 
   const myDepositPending = !!myEntry && myEntry.depositStatus === 'pending';
-  const myHasPayHandles = !!(myEntry && (myEntry.bolt11 || myEntry.lnurl || myEntry.payUrl));
-  // v2 (zaps): el handle de depósito es un LNURL-pay (no un bolt11). Preferimos
-  // `lnurl` para el QR, "Abrir wallet" y el pago con extensión; caemos a `bolt11`
-  // por compat con v1. Luna arma el zap al cobrar la LNURL.
-  const myDepositLnurl = myEntry?.lnurl || '';
+  // v2 (zaps): el depósito SIEMPRE es un zap NIP-57 anclado al contrato, así que hay
+  // que FIRMARLO. Dos estados:
+  //   - Con `bolt11` ya emitido (el jugador ya firmó, acá o en un intento previo):
+  //     mostramos el QR + pago con extensión + copiar invoice. Ese invoice compromete
+  //     el zap vía description hash, así que cualquier método lo paga como zap real.
+  //   - Sin invoice todavía pero con el 9734 sin firmar (`depositZapRequest`) + su
+  //     callback: el jugador firma en el juego con un click y ahí generamos el invoice.
+  // `payUrl` (firmar y pagar en la web de Luna) queda de fallback siempre.
   const myDepositBolt11 = myEntry?.bolt11 || '';
-  const myLightningDepositPayload = myDepositLnurl || myDepositBolt11 || '';
-  const myDeposit = myDepositPending && myHasPayHandles
-    ? `
+  const myDepositZapRequest = myEntry?.depositZapRequest ?? null;
+  const myDepositCallback = myEntry?.depositCallback || '';
+  const myPayUrl = myEntry?.payUrl || '';
+  const canZapInGame = !!myDepositZapRequest && !!myDepositCallback;
+  const payLunaBtn = myPayUrl
+    ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myPayUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>`
+    : '';
+
+  let myDeposit = '';
+  if (myDepositPending && myDepositBolt11) {
+    // Invoice de zap ya emitido: cualquier método (QR, extensión, copiar) lo paga y
+    // Luna publica el recibo 9735 del depósito al detectar el pago.
+    myDeposit = `
       <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
-        ${myLightningDepositPayload
-          ? `<button class="dash-action-btn success online-bet-wallet-link" type="button" data-ui-action="online-bet-open-wallet" data-lightning="${escapeHtml(myLightningDepositPayload)}">📱 Abrir wallet Lightning</button>`
-          : ''}
-        ${myDepositLnurl
-          ? renderBetLnurlPayQr(myDepositLnurl)
-          : (myDepositBolt11 ? renderBetInvoiceQr(myDepositBolt11) : '')}
+        <button class="dash-action-btn success online-bet-wallet-link" type="button" data-ui-action="online-bet-open-wallet" data-lightning="${escapeHtml(myDepositBolt11)}">📱 Abrir wallet Lightning</button>
+        ${renderBetInvoiceQr(myDepositBolt11)}
         <div class="online-bet-deposit-actions">
-          ${myDepositLnurl
-            ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln-lnurl" data-lnurl="${escapeHtml(myDepositLnurl)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>`
-            : (myDepositBolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myDepositBolt11)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : '')}
-          ${myEntry!.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry!.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
-          ${myDepositBolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myDepositBolt11)}">Copiar invoice</button>` : ''}
-          ${myDepositLnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myDepositLnurl)}">Copiar LNURL</button>` : ''}
+          <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myDepositBolt11)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>
+          ${payLunaBtn}
+          <button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myDepositBolt11)}">Copiar invoice</button>
         </div>
       </div>
-    `
-    : myDepositPending
-      // Depósito pendiente pero Luna Negra todavía no devolvió los handles de pago
-      // (bolt11/payUrl). Si vino `depositError`, mostramos el motivo real (NWC sin
-      // permiso make-invoice, budget agotado, relay caído); si no, asumimos que se
-      // está generando. En ambos casos el polling reintenta solo y ofrecemos un
-      // reintento manual, en vez de un panel mudo sin forma de pagar.
-      ? `
+    `;
+  } else if (myDepositPending && canZapInGame) {
+    // Falta firmar: con un click el jugador firma el 9734 con su identidad Nostr y
+    // generamos el invoice (después aparecen el QR + pago con extensión).
+    myDeposit = `
+      <div class="online-bet-deposit" data-bet-deposit>
+        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        <p class="online-bet-note">Tu depósito es un zap ⚡ anclado al contrato. Firmalo con tu identidad Nostr para generar el pago (QR o extensión).</p>
+        <div class="online-bet-deposit-actions">
+          <button class="dash-action-btn accent online-bet-sign-zap" type="button" data-ui-action="online-bet-sign-zap"${betState.paying ? ' disabled' : ''}>${betState.paying ? 'Firmando…' : '⚡ Firmar depósito (zap)'}</button>
+          ${payLunaBtn}
+        </div>
+      </div>
+    `;
+  } else if (myDepositPending && myPayUrl) {
+    // Sin firmante Nostr en el juego (o Luna no mandó el 9734): que firme y pague su
+    // zap en la web de Luna Negra.
+    myDeposit = `
+      <div class="online-bet-deposit" data-bet-deposit>
+        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        <p class="online-bet-note">Firmá y pagá tu depósito (zap ⚡) en Luna Negra.</p>
+        <div class="online-bet-deposit-actions">
+          ${payLunaBtn}
+        </div>
+      </div>
+    `;
+  } else if (myDepositPending) {
+    // Depósito pendiente pero Luna todavía no devolvió handles (bolt11/zap/payUrl): o
+    // se está preparando, o falló con un motivo real (NWC sin permiso, relay caído).
+    // El polling reintenta solo; ofrecemos además un refresh manual.
+    myDeposit = `
       <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
         ${myEntry!.depositError
-          ? `<p class="online-bet-note online-bet-warning">⚠️ No se pudo generar el invoice de pago: ${escapeHtml(myEntry!.depositError)}. Reintentando…</p>`
-          : `<p class="online-bet-note">⏳ Generando el invoice de pago… Si tarda, tocá «Actualizar».</p>`}
+          ? `<p class="online-bet-note online-bet-warning">⚠️ No se pudo preparar el depósito: ${escapeHtml(myEntry!.depositError)}. Reintentando…</p>`
+          : `<p class="online-bet-note">⏳ Preparando el depósito… Si tarda, tocá «Actualizar».</p>`}
         <div class="online-bet-deposit-actions">
           <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
         </div>
       </div>
-    `
-      : '';
+    `;
+  }
 
   const terminal = ['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status);
   const retryInvoice = canRetryBetInvoiceGeneration(bet, host)
@@ -7843,20 +7902,6 @@ function renderBetInvoiceQr(bolt11: string): string {
 
 function ensureBetInvoiceQr(bolt11: string): string | null {
   return ensureBetQr(bolt11, `lightning:${bolt11.toUpperCase()}`);
-}
-
-// QR del LNURL-pay de depósito en v2 (zaps): el apostador lo escanea con su wallet
-// para pagar su stake; Luna arma el zap anclado al contrato. El payload es la LNURL
-// bech32 en mayúsculas (igual que el withdraw), no un bolt11.
-function renderBetLnurlPayQr(lnurl: string): string {
-  const dataUrl = ensureBetQr(lnurl, lnurl.toUpperCase());
-  if (!dataUrl) return '<div class="online-bet-qr online-bet-qr-loading">Generando QR…</div>';
-  return `
-    <div class="online-bet-qr-wrap">
-      <img class="online-bet-qr" src="${dataUrl}" alt="QR de pago Lightning" decoding="async" />
-      <span class="online-bet-qr-hint">Escaneá con tu billetera Lightning</span>
-    </div>
-  `;
 }
 
 // QR del LNURL-withdraw del ganador invitado: lo escanea con su billetera para

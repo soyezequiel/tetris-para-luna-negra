@@ -117,6 +117,18 @@ export type RoomBetPayoutStatus =
   | 'claimed'
   | 'forfeited';
 
+/**
+ * Zap request NIP-57 (kind 9734) SIN firmar, tal como lo arma Luna Negra para el
+ * depósito v2. El cliente lo firma con la identidad Nostr del jugador y lo manda al
+ * callback LNURL-pay para obtener el invoice (así el depósito es un zap real).
+ */
+export interface UnsignedZapRequestTemplate {
+  kind: number;
+  created_at: number;
+  tags: string[][];
+  content: string;
+}
+
 export interface RoomBetParticipant {
   npub: string;
   /** pubkey del jugador en la sala, si pudo mapearse. */
@@ -126,6 +138,15 @@ export interface RoomBetParticipant {
   bolt11: string | null;
   lnurl: string | null;
   payUrl: string | null;
+  /**
+   * v2 (zaps): zap request 9734 SIN firmar del depósito, anclado al contrato. El
+   * cliente lo firma con la identidad del jugador y lo manda a `depositCallback`
+   * (`?amount&nostr=`) para emitir el invoice, de modo que "pagar con extensión" y
+   * el QR sean zaps reales. Ausente/`null` cuando ya hay `bolt11` o el depósito cerró.
+   */
+  depositZapRequest?: UnsignedZapRequestTemplate | null;
+  /** v2: URL LNURL-pay a donde mandar el 9734 firmado (`?amount&nostr`) → `{ pr }`. */
+  depositCallback?: string | null;
   /**
    * Motivo por el que Luna Negra no pudo generar el invoice de depósito (p. ej.
    * NWC sin permiso make-invoice, budget agotado o relay caído). `null` cuando no
@@ -343,6 +364,11 @@ export interface OnlineRoomResponse {
   serverNowMs: number;
 }
 
+/** Respuesta de `deposit-invoice`: la sala actualizada + el bolt11 del depósito zap. */
+export interface OnlineBetDepositInvoiceResponse extends OnlineRoomResponse {
+  invoice: string;
+}
+
 export interface LunaNegraEnterRequest {
   inviteToken: string;
   roomId: string;
@@ -497,6 +523,28 @@ export interface CreateBetRequest {
 export interface RoomBetActionRequest {
   roomId: string;
   playerId: string;
+}
+
+/** Evento Nostr FIRMADO (lo que devuelve un signer NIP-07/46/local). */
+export interface SignedNostrEvent {
+  kind: number;
+  pubkey: string;
+  created_at: number;
+  content: string;
+  tags: string[][];
+  id: string;
+  sig: string;
+}
+
+/**
+ * Pide el invoice de depósito v2 mandando el zap request 9734 ya FIRMADO por el
+ * jugador. El backend lo reenvía al callback LNURL-pay de Luna Negra y devuelve el
+ * bolt11 (que compromete el zap vía description hash): así extensión y QR son zaps.
+ */
+export interface RoomBetDepositInvoiceRequest {
+  roomId: string;
+  playerId: string;
+  signedZapRequest: SignedNostrEvent;
 }
 
 export interface PublicRoomsResponse {
