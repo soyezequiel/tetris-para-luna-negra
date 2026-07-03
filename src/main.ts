@@ -4590,6 +4590,53 @@ function preserveVisiblePendingWithdrawal(previousRoom: OnlineRoom | null, incom
   };
 }
 
+// Los handles de depósito (`bolt11`, `depositZapRequest`, `depositCallback`) los arma
+// buildRoomBet FRESCO desde la respuesta de Luna, y solo en el refresh de la apuesta.
+// Un update que llega por otra vía —poll del transporte que lee el store, o un refresh
+// que falló con 409 (conflicto de versión bajo el churn del lobby)— puede traer la MISMA
+// apuesta pendiente pero SIN esos handles → el panel parpadea entre "Firmar depósito
+// (zap)"/QR y el fallback "Pagar en Luna Negra". Los conservamos del estado previo
+// mientras el depósito del participante siga pendiente y sea la misma apuesta. Mismo
+// criterio que preserveVisiblePendingWithdrawal para el cobro del ganador.
+function preserveVisibleDepositHandles(previousRoom: OnlineRoom | null, incomingRoom: OnlineRoom): OnlineRoom {
+  const previousBet = previousRoom?.bet;
+  const incomingBet = incomingRoom.bet;
+  if (
+    !previousRoom
+    || previousRoom.id !== incomingRoom.id
+    || !previousBet
+    || !incomingBet
+    || previousBet.betId !== incomingBet.betId
+    || incomingBet.status !== 'pending_deposits'
+  ) return incomingRoom;
+
+  const hasHandles = (entry: RoomBetParticipant): boolean =>
+    !!entry.bolt11 || (!!entry.depositZapRequest && !!entry.depositCallback);
+  const prevByKey = new Map<string, RoomBetParticipant>();
+  for (const prev of previousBet.participants) {
+    if (prev.playerId) prevByKey.set(`id:${prev.playerId}`, prev);
+    prevByKey.set(`npub:${prev.npub}`, prev);
+  }
+
+  let changed = false;
+  const participants = incomingBet.participants.map((entry) => {
+    // Solo rescatamos depósitos todavía pendientes que perdieron los handles.
+    if (entry.depositStatus !== 'pending' || hasHandles(entry)) return entry;
+    const prev = (entry.playerId ? prevByKey.get(`id:${entry.playerId}`) : undefined)
+      ?? prevByKey.get(`npub:${entry.npub}`);
+    if (!prev || prev.depositStatus !== 'pending' || !hasHandles(prev)) return entry;
+    changed = true;
+    return {
+      ...entry,
+      bolt11: entry.bolt11 ?? prev.bolt11,
+      depositZapRequest: entry.depositZapRequest ?? prev.depositZapRequest,
+      depositCallback: entry.depositCallback ?? prev.depositCallback,
+    };
+  });
+  if (!changed) return incomingRoom;
+  return { ...incomingRoom, bet: { ...incomingBet, participants } };
+}
+
 function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' | 'bet-refresh' = 'room-action'): void {
   const previousRoom = roomState.current;
   const previousRoundId = roundState.activeRoundId;
@@ -4607,7 +4654,10 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
     recordBetWithdrawalTrace(source, room, 'ignored-older-room');
     return;
   }
-  const protectedRoom = preserveVisiblePendingWithdrawal(previousRoom, room);
+  const protectedRoom = preserveVisibleDepositHandles(
+    previousRoom,
+    preserveVisiblePendingWithdrawal(previousRoom, room),
+  );
   recordBetWithdrawalTrace(source, protectedRoom);
   const nextRoundId = onlineRoundKey(protectedRoom);
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
