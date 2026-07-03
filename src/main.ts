@@ -4498,6 +4498,7 @@ function resetOnlineRoomState(): void {
   betState.fastPollUntil = 0;
   betState.refreshQueued = false;
   betState.celebratedBetId = null;
+  betState.autoSignedBetId = null;
   roundState.resultSubmitted = false;
   roundState.runStarted = false;
   roundState.spectatorRound = false;
@@ -4669,6 +4670,43 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
   maybeSubmitOnlineWin(protectedRoom);
   maybeCelebratePayout();
+  void maybeAutoSignBetDeposit();
+}
+
+// Evita solapar intentos de auto-firma: adoptOnlineRoom corre en cada poll y
+// maybeAutoSignBetDeposit es async (puede esperar a restoreSigner ~3s por la extensión),
+// así que sin este flag se dispararían varias restauraciones/firmas concurrentes.
+let autoSignBetInFlight = false;
+
+// Auto-firma del depósito: en cuanto Luna manda el 9734 sin firmar + su callback y el
+// jugador todavía no firmó, disparamos signAndGenerateBetDeposit() solo, sin esperar el
+// click en "Firmar depósito (zap)".
+//
+// El firmante puede NO estar activo en memoria cuando llegan los handles (al entrar
+// fresco a la sala, restoreSigner del arranque corre en paralelo y quizá no resolvió
+// todavía): por eso intentamos restaurarlo acá. Si aún no hay ninguno, NO marcamos el
+// guard y reintentamos en el próximo poll (cuando el firmante ya esté disponible); sin
+// abrir el gate de login solos. Una vez que hay firmante, marcamos autoSignedBetId para
+// firmar UNA sola vez por apuesta: si la firma falla o el usuario la rechaza, el botón
+// manual queda de fallback.
+async function maybeAutoSignBetDeposit(): Promise<void> {
+  const bet = roomState.current?.bet;
+  if (!bet || bet.status !== 'pending_deposits') return;
+  if (betState.paying || autoSignBetInFlight) return;
+  if (betState.autoSignedBetId === bet.betId) return;
+  const myEntry = myBetEntry(bet);
+  if (!myEntry || myEntry.depositStatus !== 'pending') return;
+  if (myEntry.bolt11) return; // ya hay invoice emitido: no re-firmamos
+  if (!myEntry.depositZapRequest || !myEntry.depositCallback) return; // sin handles de zap todavía
+  autoSignBetInFlight = true;
+  try {
+    const signer = getActiveSigner() ?? (await restoreSigner());
+    if (!signer) return; // sin firmante todavía: reintentamos en el próximo poll
+    betState.autoSignedBetId = bet.betId;
+    await signAndGenerateBetDeposit();
+  } finally {
+    autoSignBetInFlight = false;
+  }
 }
 
 // Festejo de "cobraste el pozo": solo cuando el pago realmente terminó. Un
@@ -7752,8 +7790,32 @@ function renderOnlineBetPanel(host: boolean): string {
   // renderOnlineBetResult, que ya maneja ganador/perdedor/reembolso y el retiro
   // LNURL del invitado. Ver [[bet-payout-survives-abandon-gc]] (fix #3).
   if (['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status)) {
+    // Recrear tras una apuesta terminal SIN salir de la sala: si sigo en el lobby
+    // (típico de una apuesta vencida/cancelada, donde la ronda nunca arrancó) y no
+    // queda ningún cobro/reembolso sin resolver, el host puede lanzar otra con los
+    // jugadores actuales. El servidor acepta createBet sobre una apuesta terminal.
+    // (Para una apuesta `settled` la sala está `finished` y la reapertura la maneja
+    // reopenOnlineRoom desde la pantalla de resultados.)
+    const canRecreate = host
+      && roomState.current.status === 'lobby'
+      && !hasUnresolvedRoomBetPayout(bet);
+    let recreate = '';
+    if (canRecreate) {
+      const blocked = lunaNegraBettingBlockedReason();
+      const canCreate = !blocked && !betState.busy && !betState.creating;
+      recreate = `
+        <div class="online-bet-recreate">
+          <p class="online-bet-note">¿Otra vuelta? Creá una nueva apuesta con los jugadores de la sala.</p>
+          <div class="online-bet-create-row">
+            <input type="text" inputmode="numeric" class="dash-input online-bet-input" maxlength="7" value="${escapeHtml(betState.stakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50"${betState.creating ? ' disabled' : ''} />
+            <button class="dash-action-btn accent online-bet-create-button" type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>${betState.creating ? `${BET_SPINNER}<span>Creando…</span>` : 'Crear otra apuesta'}</button>
+          </div>
+          ${blocked ? `<p class="online-bet-note online-bet-warning">${escapeHtml(blocked)}</p>` : ''}
+        </div>
+      `;
+    }
     return `
-      <section class="online-bet-panel">
+      <section class="online-bet-panel${betState.creating ? ' online-bet-panel--creating' : ''}">
         <div class="online-bet-head">
           <span>Apuesta · ${escapeHtml(betStatusLabel(bet.status))}</span>
           <small>${bet.feePct ? `comisión ${bet.feePct}%` : `comisión ${bet.feeSats} sats`}</small>
@@ -7762,6 +7824,7 @@ function renderOnlineBetPanel(host: boolean): string {
         <div class="online-bet-actions">
           <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
         </div>
+        ${recreate}
       </section>
     `;
   }
