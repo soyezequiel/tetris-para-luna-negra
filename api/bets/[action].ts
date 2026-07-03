@@ -27,6 +27,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../../src/online/vercelApi.js';
 
+// NOTA DEPLOY (cache de funciones Vercel): este handler importa la lógica de
+// ../../src/online/* (lunaNegraBets, etc.). El build cache de Vercel cachea la
+// función por el hash de ESTE archivo entry y NO re-traza los imports locales
+// transitivos: cambios en lunaNegraBets.ts (p. ej. agregar depositZapRequest al
+// participante) NO rebuildean la función salvo que cambie este archivo. Si tocás la
+// lógica de apuestas y no se refleja en el deploy, bumpeá `deploy-rev` de abajo (o
+// seteá VERCEL_FORCE_NO_BUILD_CACHE=1 en el proyecto para desactivar el cache).
+// deploy-rev: 2
 export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   return handleNodeApi(request, response, { GET, POST });
 }
