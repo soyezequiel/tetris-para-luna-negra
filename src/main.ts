@@ -3797,6 +3797,12 @@ async function joinOnlineRoom(roomId: string): Promise<void> {
     void syncLunaPresence();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
+    // La sala ya no existe (murió entre que se listó y el clic): la sacamos del
+    // listado local al toque, así desaparece sin recargar, y refrescamos la lista.
+    if (error instanceof OnlineApiError && error.status === 404) {
+      roomState.publicRooms = roomState.publicRooms.filter((room) => room.id !== normalizedRoomId);
+      void refreshPublicRooms({ silent: true });
+    }
   } finally {
     onlineNetState.busy = false;
   }

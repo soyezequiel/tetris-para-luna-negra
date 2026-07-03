@@ -854,6 +854,14 @@ export async function listPublicRooms(
     })
     .map((room) => applyStalePlayers(room, nowMs))
     .filter((room) => room.status === 'lobby' || room.status === 'countdown')
+    // Liveness del listado: una sala solo se ofrece para unirse si tiene al menos
+    // un jugador con presencia reciente (PLAYER_STALE_MS). Es más estricto que el
+    // GC de abandono (ROOM_ABANDONED_MS, 30s): una sala cuyo host cerró la pestaña
+    // se cae del navegador en ~10s —bastante antes de que se borre—, así el usuario
+    // deja de ver salas muertas sin recargar (el cliente auto-refresca cada pocos s).
+    // No se elimina: si el host vuelve (blip de red) y refresca su presencia, la
+    // sala reaparece; solo la ocultamos mientras nadie da señal de vida.
+    .filter((room) => roomHasLivePlayerForListing(room, nowMs))
     .filter((room) => roomMatchesPublicFilters(room, filters));
   for (const id of abandoned) await removeRoomEverywhere(store, id);
   return visible
@@ -865,6 +873,17 @@ export async function listPublicRooms(
 function isRoomAbandoned(room: OnlineRoom, nowMs: number): boolean {
   if (room.players.length === 0) return true;
   return room.players.every((player) => nowMs - player.updatedAtServerMs > ROOM_ABANDONED_MS);
+}
+
+/**
+ * ¿La sala está viva para ofrecerse en el listado público? Requiere al menos un
+ * jugador con presencia dentro de PLAYER_STALE_MS (el mismo umbral con que
+ * applyStalePlayers ya marca a un jugador como "desconectado"). Una sala donde
+ * todos están stale no es realmente unible, así que la ocultamos del navegador
+ * aunque todavía no llegue al GC de abandono.
+ */
+function roomHasLivePlayerForListing(room: OnlineRoom, nowMs: number): boolean {
+  return room.players.some((player) => nowMs - player.updatedAtServerMs <= PLAYER_STALE_MS);
 }
 
 async function getRoomStateOnce(
