@@ -35,6 +35,14 @@ export { config } from '../../src/online/vercelApi.js';
 // lógica de apuestas y no se refleja en el deploy, bumpeá `deploy-rev` de abajo (o
 // seteá VERCEL_FORCE_NO_BUILD_CACHE=1 en el proyecto para desactivar el cache).
 // deploy-rev: 3
+//
+// BET_API_REV: marcador de versión HORNEADO en el código de ESTA función. Como el build
+// cache de Vercel puede servir una copia vieja de la función (sin re-trazar los imports),
+// exponemos esta constante por `GET /api/bets/version` para saber, desde afuera y sin
+// una sala viva, qué código está realmente corriendo. Si `version` no existe (405) o la
+// `rev` es vieja → la función está cacheada vieja. Subilo cada vez que toques la lógica.
+const BET_API_REV = 3;
+
 export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   return handleNodeApi(request, response, { GET, POST });
 }
@@ -42,6 +50,21 @@ export default function handler(request: IncomingMessage, response: ServerRespon
 export async function GET(request: Request): Promise<Response> {
   try {
     const action = actionFromRequest(request);
+    if (action === 'version') {
+      // Diagnóstico de deploy: rev horneada + commit del deploy (Vercel) + si el reporte
+      // de Discord tiene webhook configurado en ESTE entorno. No requiere sala.
+      return sendJson(200, {
+        rev: BET_API_REV,
+        commit: (process.env.VERCEL_GIT_COMMIT_SHA ?? 'local').slice(0, 7),
+        hasBetReportWebhook: Boolean(
+          (process.env.DISCORD_BET_REPORT_WEBHOOK_URL
+            ?? process.env.DISCORD_ALERT_WEBHOOK_URL
+            ?? process.env.DISCORD_WEBHOOK_URL
+            ?? '').trim(),
+        ),
+        serverNowMs: Date.now(),
+      });
+    }
     if (action === 'state') {
       const room = await refreshBetWithParticipantSync(queryParam(request, 'roomId'));
       return sendJson(200, { room, serverNowMs: Date.now() });
