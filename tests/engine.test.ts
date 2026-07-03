@@ -1698,7 +1698,7 @@ describe('core stacker engine', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? 'GET').toUpperCase();
-      if (url.endsWith('/api/v1/bets') && method === 'POST') {
+      if (url.endsWith('/api/v2/bets') && method === 'POST') {
         // Luna devuelve el mapeo seat→npub (en el orden enviado): el invitado
         // recibió una identidad efímera distinta a cualquier npub de la sala.
         return Response.json({
@@ -1753,7 +1753,7 @@ describe('core stacker engine', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? 'GET').toUpperCase();
-      if (url.endsWith('/api/v1/bets') && method === 'POST') {
+      if (url.endsWith('/api/v2/bets') && method === 'POST') {
         const body = JSON.parse(String(init?.body)) as {
           participants: Array<{ guest?: boolean }>;
         };

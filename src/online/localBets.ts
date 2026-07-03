@@ -58,7 +58,13 @@ async function lunaFetch<T>(
     | null;
   if (!response.ok) {
     const err = payload as { error?: { code?: string; message?: string } } | null;
-    const message = err?.error?.message ?? `Luna Negra respondió ${response.status}.`;
+    const code = err?.error?.code ?? null;
+    // v2 (zaps): mensajes claros para el reemplazo duro (sin fallback a v1).
+    const message = code === 'BETS_V2_DISABLED'
+      ? 'Las apuestas por zaps no están habilitadas en este servidor de Luna Negra.'
+      : code === 'ANCHOR_PUBLISH_FAILED'
+        ? 'No se pudo anclar el contrato de la apuesta en Nostr; reintentá en un momento.'
+        : err?.error?.message ?? `Luna Negra respondió ${response.status}.`;
     const status = response.status === 400 || response.status === 409 ? response.status : 502;
     throw new OnlineRoomError(message, status);
   }
@@ -102,6 +108,10 @@ interface LunaBetDetail {
     withdrawLnurl?: string | null;
     withdrawUrl?: string | null;
     depositError?: string | null;
+    // v2 (zaps): 'zap' | 'lnurl' | 'withdraw'. 'withdraw' (invitado sin destino) se
+    // reclama en la página hosteada <base>/apuestas/{betId} (no viene LNURL por API key).
+    payoutKind?: string | null;
+    participantId?: string | null;
   }>;
 }
 
@@ -148,25 +158,41 @@ function num(value: unknown, fallback = 0): number {
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fallback;
 }
 
+// Base URL pública de Luna Negra para el claim del ganador invitado en v2 (página
+// hosteada <base>/apuestas/{betId}). El detalle por API key no trae withdraw handle.
+function publicLunaBaseUrl(): string {
+  return (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
+}
+
 function buildView(
   detail: LunaBetDetail,
   seats: Array<{ seat: number; npub: string }>,
 ): LocalBetView {
   const seatByNpub = new Map(seats.map((s) => [s.npub, s.seat]));
-  const participants: LocalBetParticipant[] = (detail.participants ?? []).map((p, index) => ({
-    seat: seatByNpub.get(p.npub) ?? index + 1,
-    npub: p.npub,
-    depositStatus: typeof p.depositStatus === 'string' ? p.depositStatus : 'pending',
-    result: typeof p.result === 'string' ? p.result : 'pending',
-    payoutStatus: typeof p.payoutStatus === 'string' ? p.payoutStatus : 'none',
-    payoutSats: typeof p.payoutSats === 'number' ? p.payoutSats : null,
-    bolt11: typeof p.bolt11 === 'string' ? p.bolt11 : null,
-    lnurl: typeof p.lnurl === 'string' ? p.lnurl : null,
-    payUrl: typeof p.payUrl === 'string' ? p.payUrl : null,
-    withdrawLnurl: typeof p.withdrawLnurl === 'string' ? p.withdrawLnurl : null,
-    withdrawUrl: typeof p.withdrawUrl === 'string' ? p.withdrawUrl : null,
-    depositError: typeof p.depositError === 'string' ? p.depositError : null,
-  }));
+  const base = publicLunaBaseUrl();
+  const participants: LocalBetParticipant[] = (detail.participants ?? []).map((p, index) => {
+    const payoutStatus = typeof p.payoutStatus === 'string' ? p.payoutStatus : 'none';
+    const detailWithdrawUrl = typeof p.withdrawUrl === 'string' ? p.withdrawUrl : null;
+    // v2: el invitado sin destino (withdraw_pending / payoutKind 'withdraw') reclama
+    // en la página hosteada; la construimos porque el detalle no la devuelve.
+    const isWithdraw = payoutStatus === 'withdraw_pending' || p.payoutKind === 'withdraw';
+    const withdrawUrl = detailWithdrawUrl
+      ?? (isWithdraw && base ? `${base}/apuestas/${encodeURIComponent(detail.betId)}` : null);
+    return {
+      seat: seatByNpub.get(p.npub) ?? index + 1,
+      npub: p.npub,
+      depositStatus: typeof p.depositStatus === 'string' ? p.depositStatus : 'pending',
+      result: typeof p.result === 'string' ? p.result : 'pending',
+      payoutStatus,
+      payoutSats: typeof p.payoutSats === 'number' ? p.payoutSats : null,
+      bolt11: typeof p.bolt11 === 'string' ? p.bolt11 : null,
+      lnurl: typeof p.lnurl === 'string' ? p.lnurl : null,
+      payUrl: typeof p.payUrl === 'string' ? p.payUrl : null,
+      withdrawLnurl: typeof p.withdrawLnurl === 'string' ? p.withdrawLnurl : null,
+      withdrawUrl,
+      depositError: typeof p.depositError === 'string' ? p.depositError : null,
+    };
+  });
   return {
     betId: detail.betId,
     status: typeof detail.status === 'string' ? detail.status : 'pending_deposits',
@@ -200,7 +226,7 @@ export async function createLocalBet(input: {
     throw new OnlineRoomError('Monto de apuesta inválido.', 400);
   }
   const seatCount = Math.min(8, Math.max(2, Math.floor(input.seats ?? 2)));
-  const create = await lunaFetch<LunaCreateAnon>(config, '/api/v1/bets', {
+  const create = await lunaFetch<LunaCreateAnon>(config, '/api/v2/bets', {
     method: 'POST',
     body: {
       gameId: gameId(),
@@ -217,7 +243,7 @@ export async function createLocalBet(input: {
 }
 
 async function getBetDetail(config: LunaConfig, betId: string): Promise<LunaBetDetail | null> {
-  return lunaFetch<LunaBetDetail>(config, `/api/v1/bets/${encodeURIComponent(betId)}`).catch(() => null);
+  return lunaFetch<LunaBetDetail>(config, `/api/v2/bets/${encodeURIComponent(betId)}`).catch(() => null);
 }
 
 export async function getLocalBet(
@@ -241,7 +267,7 @@ export async function reportLocalBetResult(
   seatsHint?: Array<{ seat: number; npub: string }>,
 ): Promise<LocalBetView> {
   const config = readApiConfig();
-  await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(betId)}/result`, {
+  await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(betId)}/result`, {
     method: 'POST',
     body: { winners: winnerNpubs },
   });
@@ -253,7 +279,7 @@ export async function cancelLocalBet(
   seatsHint?: Array<{ seat: number; npub: string }>,
 ): Promise<LocalBetView> {
   const config = readApiConfig();
-  await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(betId)}/cancel`, { method: 'POST' })
+  await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(betId)}/cancel`, { method: 'POST' })
     .catch(() => undefined);
   return getLocalBet(betId, seatsHint);
 }

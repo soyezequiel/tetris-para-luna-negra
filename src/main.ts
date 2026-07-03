@@ -1802,6 +1802,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-webln') {
     void payOnlineBetWithExtension(control.dataset.invoice ?? '');
   }
+  if (action === 'online-bet-webln-lnurl') {
+    void payOnlineBetDepositWithLnurl(control.dataset.lnurl ?? '');
+  }
   if (action === 'online-bet-claim-webln') {
     void claimOnlineBetWithExtension(control.dataset.lnurl ?? '');
   }
@@ -4235,6 +4238,32 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
     wakeUpBetDetection();
   } catch (error) {
     // El usuario pudo cancelar el popup de la extensión, o el pago falló.
+    onlineNetState.error = error instanceof Error && error.message
+      ? `No se pudo pagar con la extensión: ${error.message}`
+      : 'No se pudo pagar con la extensión.';
+  } finally {
+    betState.paying = false;
+  }
+}
+
+// Paga el depósito de la apuesta v2 con la extensión WebLN por LNURL-pay
+// (LUD-06 + NIP-57). A diferencia de v1 (invoice bolt11 → sendPayment), en v2 el
+// handle de depósito es un LNURL: la extensión (Alby) lo resuelve con webln.lnurl(),
+// que arma el zap. El éxito se confirma por el polling (depositStatus → paid).
+async function payOnlineBetDepositWithLnurl(lnurl: string): Promise<void> {
+  if (!lnurl || betState.paying) return;
+  const provider = getWebLNProvider();
+  if (!provider || typeof provider.lnurl !== 'function') {
+    onlineNetState.error = 'No se detectó una extensión Lightning (instalá Alby) o no soporta LNURL.';
+    return;
+  }
+  betState.paying = true;
+  try {
+    await provider.enable();
+    await provider.lnurl(lnurl);
+    onlineNetState.error = null;
+    wakeUpBetDetection();
+  } catch (error) {
     onlineNetState.error = error instanceof Error && error.message
       ? `No se pudo pagar con la extensión: ${error.message}`
       : 'No se pudo pagar con la extensión.';
@@ -7666,7 +7695,12 @@ function renderOnlineBetPanel(host: boolean): string {
 
   const myDepositPending = !!myEntry && myEntry.depositStatus === 'pending';
   const myHasPayHandles = !!(myEntry && (myEntry.bolt11 || myEntry.lnurl || myEntry.payUrl));
-  const myLightningDepositPayload = myEntry?.bolt11 || myEntry?.lnurl || '';
+  // v2 (zaps): el handle de depósito es un LNURL-pay (no un bolt11). Preferimos
+  // `lnurl` para el QR, "Abrir wallet" y el pago con extensión; caemos a `bolt11`
+  // por compat con v1. Luna arma el zap al cobrar la LNURL.
+  const myDepositLnurl = myEntry?.lnurl || '';
+  const myDepositBolt11 = myEntry?.bolt11 || '';
+  const myLightningDepositPayload = myDepositLnurl || myDepositBolt11 || '';
   const myDeposit = myDepositPending && myHasPayHandles
     ? `
       <div class="online-bet-deposit" data-bet-deposit>
@@ -7674,12 +7708,16 @@ function renderOnlineBetPanel(host: boolean): string {
         ${myLightningDepositPayload
           ? `<button class="dash-action-btn success online-bet-wallet-link" type="button" data-ui-action="online-bet-open-wallet" data-lightning="${escapeHtml(myLightningDepositPayload)}">📱 Abrir wallet Lightning</button>`
           : ''}
-        ${myEntry!.bolt11 ? renderBetInvoiceQr(myEntry!.bolt11) : ''}
+        ${myDepositLnurl
+          ? renderBetLnurlPayQr(myDepositLnurl)
+          : (myDepositBolt11 ? renderBetInvoiceQr(myDepositBolt11) : '')}
         <div class="online-bet-deposit-actions">
-          ${myEntry!.bolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myEntry!.bolt11)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : ''}
+          ${myDepositLnurl
+            ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln-lnurl" data-lnurl="${escapeHtml(myDepositLnurl)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>`
+            : (myDepositBolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myDepositBolt11)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : '')}
           ${myEntry!.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry!.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
-          ${myEntry!.bolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry!.bolt11)}">Copiar invoice</button>` : ''}
-          ${myEntry!.lnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry!.lnurl)}">Copiar LNURL</button>` : ''}
+          ${myDepositBolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myDepositBolt11)}">Copiar invoice</button>` : ''}
+          ${myDepositLnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myDepositLnurl)}">Copiar LNURL</button>` : ''}
         </div>
       </div>
     `
@@ -7807,6 +7845,20 @@ function ensureBetInvoiceQr(bolt11: string): string | null {
   return ensureBetQr(bolt11, `lightning:${bolt11.toUpperCase()}`);
 }
 
+// QR del LNURL-pay de depósito en v2 (zaps): el apostador lo escanea con su wallet
+// para pagar su stake; Luna arma el zap anclado al contrato. El payload es la LNURL
+// bech32 en mayúsculas (igual que el withdraw), no un bolt11.
+function renderBetLnurlPayQr(lnurl: string): string {
+  const dataUrl = ensureBetQr(lnurl, lnurl.toUpperCase());
+  if (!dataUrl) return '<div class="online-bet-qr online-bet-qr-loading">Generando QR…</div>';
+  return `
+    <div class="online-bet-qr-wrap">
+      <img class="online-bet-qr" src="${dataUrl}" alt="QR de pago Lightning" decoding="async" />
+      <span class="online-bet-qr-hint">Escaneá con tu billetera Lightning</span>
+    </div>
+  `;
+}
+
 // QR del LNURL-withdraw del ganador invitado: lo escanea con su billetera para
 // llevarse el pozo (no tiene wallet asociada a la que pagarle automático).
 function renderBetWithdrawQr(lnurl: string): string {
@@ -7888,6 +7940,25 @@ function renderOnlineBetWithdraw(entry: RoomBetParticipant, bet: RoomBet): strin
   `;
 }
 
+// Cobro del ganador invitado en v2 (zaps): la API por clave no expone una LNURL de
+// retiro, así que enlazamos a la página hosteada de Luna Negra donde reclama su
+// parte con su sesión. El que tiene dirección Lightning cobra por zap automático.
+function renderOnlineBetWithdrawLink(entry: RoomBetParticipant, bet: RoomBet): string {
+  const amount = entry.payoutSats ?? bet.netPayoutSats;
+  const url = entry.withdrawUrl!;
+  return `
+    <div class="bet-settle bet-settle--paid">
+      <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Ganaste el pozo!</span></div>
+      <div class="bet-settle-amount">+${amount.toLocaleString('es-AR')} <small>sats</small></div>
+      <p class="bet-settle-hint">Reclamá tu premio en Luna Negra para cobrarlo en tu billetera.</p>
+      <div class="online-bet-deposit-actions">
+        <a class="dash-action-btn success" href="${escapeHtml(url)}" target="_blank" rel="noopener">💰 Cobrar en Luna Negra</a>
+        <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
+      </div>
+    </div>
+  `;
+}
+
 // Card de liquidación: dos pasos (reportar → liquidar) con el activo animado y el
 // hecho tildado, más una expectativa de tiempo. El pago Lightning puede tardar y
 // el card lo comunica para que "esto sigue andando", no "se colgó".
@@ -7924,9 +7995,11 @@ function renderOnlineBetResult(): string {
   if (bet.status === 'settled' && amIWinner) {
     switch (myEntry?.payoutStatus) {
       case 'withdraw_pending':
-        // Invitado sin billetera: cobra por LNURL-withdraw. Con handle → QR +
-        // extensión; sin handle todavía (deploy/relay) → aviso para reintentar.
+        // Invitado sin billetera. v1: cobra por LNURL-withdraw in-app (QR + extensión).
+        // v2 (zaps): la API por clave no expone la LNURL; se reclama en la página
+        // hosteada de Luna Negra (withdrawUrl). Sin ningún handle todavía → reintentar.
         if (myEntry.withdrawLnurl) return renderOnlineBetWithdraw(myEntry, bet);
+        if (myEntry.withdrawUrl) return renderOnlineBetWithdrawLink(myEntry, bet);
         return `
           <div class="bet-settle">
             <div class="bet-settle-title">${BET_SPINNER}<span>¡Ganaste el pozo!</span></div>

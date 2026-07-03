@@ -663,8 +663,10 @@ class LocalVersusMatch {
     let body: string;
     if (paid) {
       body = '<div class="lv-deposit-ok">✅ Depósito recibido</div>';
-    } else if (p?.bolt11) {
-      body = `${this.renderQr(p.bolt11)}<span class="lv-qr-hint">Escaneá con tu billetera · tocá para agrandar</span>`;
+    } else if (p?.lnurl || p?.bolt11) {
+      // v2 (zaps): el handle es un LNURL-pay; v1 era un bolt11. renderQr codifica
+      // `lightning:<VALUE>`, válido para ambos. Preferimos la LNURL.
+      body = `${this.renderQr(p.lnurl ?? p.bolt11!)}<span class="lv-qr-hint">Escaneá con tu billetera · tocá para agrandar</span>`;
     } else if (p?.depositError) {
       body = `<p class="lv-bet-note lv-bet-warn">⚠️ ${escapeText(p.depositError)} · reintentando…</p>`;
     } else {
@@ -991,6 +993,15 @@ class LocalVersusMatch {
           <span class="lv-qr-hint">QR de retiro · tocá para agrandar</span>
         </div>`;
     }
+    // v2 (zaps): el invitado sin destino reclama en la página hosteada de Luna Negra
+    // (la API por clave no expone una LNURL de retiro).
+    if (winner?.payoutStatus === 'withdraw_pending' && winner.withdrawUrl) {
+      return `
+        <div class="lv-bet-payout">
+          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${winner.payoutSats ?? bet.netPayoutSats} sats</strong>.</p>
+          <a class="lv-btn lv-btn--primary" href="${escapeAttr(winner.withdrawUrl)}" target="_blank" rel="noopener">💰 Cobrar en Luna Negra</a>
+        </div>`;
+    }
     if (winner?.payoutStatus === 'paid' || winner?.payoutStatus === 'claimed') {
       return `<p class="lv-bet-win">✅ Pagado: el Jugador ${winnerSeat} cobró <strong>${winner.payoutSats ?? bet.netPayoutSats} sats</strong>.</p>`;
     }
@@ -1012,8 +1023,9 @@ function isPayoutResolved(bet: LocalBetView): boolean {
   const winner = bet.participants.find((p) => p.result === 'won');
   if (!winner) return false;
   if (winner.payoutStatus === 'paid' || winner.payoutStatus === 'claimed') return true;
-  // withdraw_pending con QR ya disponible: dejamos de polear (el QR está en pantalla).
-  return winner.payoutStatus === 'withdraw_pending' && !!winner.withdrawLnurl;
+  // withdraw_pending con handle ya disponible (v1 LNURL-QR o v2 link de reclamo):
+  // dejamos de polear porque ya hay forma de cobrar en pantalla.
+  return winner.payoutStatus === 'withdraw_pending' && !!(winner.withdrawLnurl || winner.withdrawUrl);
 }
 
 function escapeText(value: string): string {
