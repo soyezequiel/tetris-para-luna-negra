@@ -345,6 +345,27 @@ async function getBetDetail(config: LunaConfig, betId: string): Promise<LunaBetD
   ).catch(() => null);
 }
 
+/**
+ * Radiografía temporal del pago de una apuesta (GET /api/v2/bets/{id}/timeline):
+ * timestamps crudos (creación, fondeo, liquidación; depósito y payout por
+ * participante; asientos del ledger) + duraciones por fase ya calculadas por Luna.
+ * La usa el reporte del botón "Reportar problema" para adjuntar el desglose y poder
+ * ver EN QUÉ FASE se fue el tiempo. Best-effort: devuelve null ante cualquier fallo
+ * (Luna no configurada, red, apuesta no encontrada) — el reporte se manda igual.
+ */
+export async function fetchBetPaymentTimeline(betId: string): Promise<unknown | null> {
+  if (!betId || !isLunaNegraApiConfigured()) return null;
+  try {
+    const config = readApiConfig();
+    return await lunaFetch<unknown>(
+      config,
+      `/api/v2/bets/${encodeURIComponent(betId)}/timeline`,
+    );
+  } catch {
+    return null;
+  }
+}
+
 export async function createBetForRoom(
   store: RoomStore,
   input: { roomId: string; playerId: string; stakeSats: number; victoryCondition?: string },

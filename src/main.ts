@@ -693,6 +693,53 @@ const lastWithdrawalTraceSignatureBySource = new Map<BetWithdrawalTraceSource, s
 let lastObservedWithdrawHandle: string | null = null;
 let withdrawHandleVersion = 0;
 
+// Hitos del ciclo de vida de la apuesta en RELOJ DE PARED (epoch ms), tal como los
+// VIO ESTE cliente por polling. Complementa el timeline server-authoritative de Luna
+// (que trae los timestamps exactos): la diferencia entre ambos = latencia de red +
+// cadencia de poll. Ej.: si Luna liquidó a las 22:08:50 pero acá recién vimos
+// 'settled' a las 22:08:54, esos 4s son cola del cliente, no del pago. Se registra
+// el PRIMER instante en que observamos cada hito; se reinicia al cambiar de betId.
+interface BetLifecycleMilestones {
+  betId: string;
+  createdSeenAt: number | null;   // primera vez que vimos esta apuesta
+  fundedSeenAt: number | null;    // primera vez status === 'funded'
+  settledSeenAt: number | null;   // primera vez status === 'settled'
+  myDepositPaidSeenAt: number | null; // mi depósito visto 'paid'
+  myPayoutPaidSeenAt: number | null;  // mi premio visto 'paid'/'claimed'
+}
+let betLifecycle: BetLifecycleMilestones | null = null;
+
+function recordBetLifecycle(room: OnlineRoom | null): void {
+  const bet = room?.bet;
+  if (!bet?.betId) return;
+  if (!betLifecycle || betLifecycle.betId !== bet.betId) {
+    betLifecycle = {
+      betId: bet.betId,
+      createdSeenAt: Date.now(),
+      fundedSeenAt: null,
+      settledSeenAt: null,
+      myDepositPaidSeenAt: null,
+      myPayoutPaidSeenAt: null,
+    };
+  }
+  const m = betLifecycle;
+  const now = Date.now();
+  if (m.fundedSeenAt === null && (bet.status === 'funded' || bet.status === 'settled')) {
+    m.fundedSeenAt = now;
+  }
+  if (m.settledSeenAt === null && bet.status === 'settled') m.settledSeenAt = now;
+  const entry = roomBetEntryForLocalPlayer(room);
+  if (m.myDepositPaidSeenAt === null && entry?.depositStatus === 'paid') {
+    m.myDepositPaidSeenAt = now;
+  }
+  if (
+    m.myPayoutPaidSeenAt === null &&
+    (entry?.payoutStatus === 'paid' || entry?.payoutStatus === 'claimed')
+  ) {
+    m.myPayoutPaidSeenAt = now;
+  }
+}
+
 function roomBetEntryForLocalPlayer(room: OnlineRoom | null): RoomBetParticipant | undefined {
   const bet = room?.bet;
   if (!bet) return undefined;
@@ -901,6 +948,12 @@ function buildPerfReport(): Record<string, unknown> {
       roomReopenInFlight: roundState.roomReopenInFlight,
       lastBetPollAt: Math.round(betState.lastPollAt),
       trace: betWithdrawalTrace.slice(),
+      // Hitos en reloj de pared (epoch ms) tal como los vio ESTE cliente: se cruzan
+      // con el timeline server-authoritative que adjunta el backend (paymentTimeline)
+      // para separar latencia de pago real vs cola de red/polling del cliente.
+      lifecycleSeen: betLifecycle && betLifecycle.betId === (roomState.current?.bet?.betId ?? null)
+        ? { ...betLifecycle }
+        : null,
     },
     // Diagnóstico de audio: para entender el "se escucha mal en el celular" (perfil
     // móvil activo o no, recorte real medido, volúmenes/mutes, PWA). Ver SoundEngine.
@@ -4902,6 +4955,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
     preserveVisiblePendingWithdrawal(previousRoom, room),
   );
   recordBetWithdrawalTrace(source, protectedRoom);
+  recordBetLifecycle(protectedRoom);
   const nextRoundId = onlineRoundKey(protectedRoom);
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && protectedRoom.status === 'countdown';
