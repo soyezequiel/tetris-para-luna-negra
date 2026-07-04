@@ -25,6 +25,10 @@ function parseProfile(content: string): NostrProfile | null {
   }
 }
 
+// Cota de espera por consulta: sin `maxWait`, querySync espera el EOSE de TODOS
+// los relays (o 4.4s de timeout por relay), y un solo relay lento demora todo.
+const PROFILE_MAX_WAIT_MS = 3500;
+
 /**
  * Lee el metadata (kind:0) de un usuario desde relays públicos.
  *
@@ -38,7 +42,7 @@ export async function fetchProfile(pubkey: string): Promise<NostrProfile | null>
     const evs = await getPool().querySync(PROFILE_RELAYS, {
       kinds: [0],
       authors: [pubkey],
-    });
+    }, { maxWait: PROFILE_MAX_WAIT_MS });
     if (evs.length === 0) return null;
     const newest = evs.reduce((a, b) => (b.created_at > a.created_at ? b : a));
     return parseProfile(newest.content);
@@ -56,10 +60,13 @@ const PROFILE_BATCH_SIZE = 100;
  * Trae los perfiles de varias pubkeys (para la lista de amigos), en lotes para no
  * chocar con el límite de eventos por suscripción de los relays. Se queda con el
  * kind:0 más reciente por autor. Best-effort: devuelve un mapa (posiblemente
- * parcial) y nunca lanza.
+ * parcial) y nunca lanza. `onBatch` (opcional) se dispara al completar cada lote
+ * con el mapa acumulado hasta ese momento, para que la UI pueda vestir la lista
+ * progresivamente en vez de esperar al lote más lento.
  */
 export async function fetchProfiles(
   pubkeys: string[],
+  onBatch?: (partial: Map<string, NostrProfile>) => void,
 ): Promise<Map<string, NostrProfile>> {
   const result = new Map<string, NostrProfile>();
   const unique = [...new Set(pubkeys)].filter((p) => /^[0-9a-f]{64}$/.test(p));
@@ -77,7 +84,7 @@ export async function fetchProfiles(
         const evs = await getPool().querySync(PROFILE_RELAYS, {
           kinds: [0],
           authors,
-        });
+        }, { maxWait: PROFILE_MAX_WAIT_MS });
         for (const ev of evs) {
           const prev = newestAt.get(ev.pubkey);
           if (prev !== undefined && ev.created_at <= prev) continue;
@@ -86,6 +93,7 @@ export async function fetchProfiles(
           newestAt.set(ev.pubkey, ev.created_at);
           result.set(ev.pubkey, profile);
         }
+        if (evs.length > 0) onBatch?.(result);
       } catch {
         /* relays caídos para este lote: seguimos con los demás */
       }

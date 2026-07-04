@@ -13,7 +13,7 @@ import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './u
 import { leaderboardState } from './state/leaderboardState';
 import type { SurvivalRunRank } from './state/leaderboardState';
 import { betState, DEFAULT_ONLINE_BET_STAKE_SATS } from './state/betState';
-import { lunaState, type NostrLoginTab, type PendingLunaLaunchRequest } from './state/lunaState';
+import { lunaState, type NostrChallengeFriend, type NostrLoginTab, type PendingLunaLaunchRequest } from './state/lunaState';
 import { spectatorState } from './state/spectatorState';
 import { replayState, multiReplayState, type MultiReplayCard } from './state/replayState';
 import { onlineNetState, onlineClockState, onlineFailoverState } from './state/onlineNetState';
@@ -472,6 +472,14 @@ const CHALLENGE_CONTACT_LIMIT = 1000;
 const CHALLENGE_INCOMING_LIMIT = 5;
 let challengeInboxPubkey: string | null = null;
 let challengeInboxStarting = false;
+// Caché local de la lista de amigos por pubkey: el picker abre al instante con lo
+// último visto mientras la recarga desde relays corre detrás (tarda segundos).
+// OJO: al tope del módulo (no junto a loadChallengeFriends) porque la precarga
+// puede correr sincrónicamente durante bootstrapOnlineStartup (TDZ).
+const CHALLENGE_FRIENDS_CACHE_KEY = 'tetra.challengeFriends.v1';
+// Evita cargas duplicadas (precarga al login + apertura del picker) y descarta
+// una carga vieja si el usuario cambió de cuenta a mitad de camino.
+let challengeFriendsLoadingFor: string | null = null;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -2426,6 +2434,9 @@ function applyLunaIdentity(identity: LunaIdentity): void {
   identityState.name = identityState.player.name;
   void syncLunaLaunchRequest();
   void ensureNostrChallengeInbox();
+  // Amigos listos ANTES de abrir "Retar amigo": la carga desde relays tarda
+  // segundos, así que arranca acá y el picker la encuentra hecha (o en curso).
+  prefetchChallengeFriends();
   // Presencia 2.0 al toque tras el login (con signer ya activo); si el firmante
   // todavía no está (restore en paralelo), el hook de bootstrapOnlineStartup o el
   // próximo latido la cubren. El throttle interno evita firmar de más.
@@ -2577,6 +2588,9 @@ function clearLunaIdentity(): void {
   lunaState.challenge.error = null;
   lunaState.challenge.sendingPubkey = null;
   lunaState.challenge.incoming = [];
+  lunaState.challenge.friends = [];
+  lunaState.challenge.loadedForPubkey = null;
+  challengeFriendsLoadingFor = null;
   challengeInboxPubkey = null;
   challengeInboxStarting = false;
   stopChallengeInbox();
@@ -2896,29 +2910,98 @@ async function openNostrChallengePicker(): Promise<void> {
   lunaState.challenge.error = null;
   lunaState.challenge.query = '';
   input.releaseAll();
+  void loadChallengeFriends(myPubkey);
+}
 
+function loadCachedChallengeFriends(pubkey: string): NostrChallengeFriend[] | null {
+  try {
+    const raw = localStorage.getItem(CHALLENGE_FRIENDS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { pubkey?: string; friends?: NostrChallengeFriend[] };
+    if (parsed.pubkey !== pubkey || !Array.isArray(parsed.friends)) return null;
+    return parsed.friends;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedChallengeFriends(pubkey: string, friends: NostrChallengeFriend[]): void {
+  if (friends.length === 0) return;
+  try {
+    localStorage.setItem(CHALLENGE_FRIENDS_CACHE_KEY, JSON.stringify({ pubkey, friends }));
+  } catch {
+    // Storage lleno o bloqueado: la caché es solo una mejora de velocidad.
+  }
+}
+
+function sortChallengeFriends(friends: NostrChallengeFriend[]): NostrChallengeFriend[] {
+  return friends.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+
+// Precarga la lista de amigos apenas hay identidad: contactos (kind:3) y perfiles
+// (kind:0) son datos públicos que no necesitan firmante, así "Retar amigo" abre
+// con la lista ya resuelta en vez de esperar a los relays.
+function prefetchChallengeFriends(): void {
+  const pubkey = lunaState.identity?.pubkey?.trim().toLowerCase() ?? '';
+  if (!/^[0-9a-f]{64}$/.test(pubkey)) return;
+  void loadChallengeFriends(pubkey);
+}
+
+// Carga los amigos en tres pasos visibles: (1) caché local al instante, (2) la
+// lista real apenas llega el kind:3 (con npub corto de nombre provisorio), (3)
+// nombres y avatares que van llegando por lotes de perfiles. Antes esperaba a que
+// TODO terminara (outbox → contactos → perfiles en serie) para mostrar algo.
+async function loadChallengeFriends(myPubkey: string): Promise<void> {
   if (lunaState.challenge.loadedForPubkey === myPubkey) return;
+  if (challengeFriendsLoadingFor === myPubkey) return;
+  challengeFriendsLoadingFor = myPubkey;
 
-  lunaState.challenge.loading = true;
-  lunaState.challenge.friends = [];
+  const cached = loadCachedChallengeFriends(myPubkey);
+  if (cached && cached.length > 0) {
+    lunaState.challenge.friends = sortChallengeFriends(cached);
+  } else if (lunaState.challenge.loadedForPubkey !== null) {
+    // Cambio de cuenta sin caché: no mostrar los amigos del pubkey anterior.
+    lunaState.challenge.friends = [];
+  }
+  lunaState.challenge.loading = lunaState.challenge.friends.length === 0;
+
   try {
     const contacts = (await fetchContacts(myPubkey)).slice(0, CHALLENGE_CONTACT_LIMIT);
-    const profiles = await fetchProfiles(contacts);
-    lunaState.challenge.friends = contacts.map((pubkey) => {
-      const profile = profiles.get(pubkey) ?? null;
-      const npub = nip19.npubEncode(pubkey);
-      return {
-        pubkey,
-        npub,
-        name: (profileName(profile) ?? shortNpub(npub)).slice(0, 32),
-        avatarUrl: profile?.picture ?? null,
-      };
-    }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    if (challengeFriendsLoadingFor !== myPubkey) return;
+    if (contacts.length > 0) {
+      // Lista visible ya mismo; los perfiles la visten a medida que llegan.
+      const known = new Map(lunaState.challenge.friends.map((f) => [f.pubkey, f]));
+      lunaState.challenge.friends = sortChallengeFriends(contacts.map((pubkey) => {
+        const prev = known.get(pubkey);
+        if (prev) return prev;
+        const npub = nip19.npubEncode(pubkey);
+        return { pubkey, npub, name: shortNpub(npub).slice(0, 32), avatarUrl: null };
+      }));
+      lunaState.challenge.loading = false;
+      await fetchProfiles(contacts, (profiles) => {
+        if (challengeFriendsLoadingFor !== myPubkey) return;
+        lunaState.challenge.friends = sortChallengeFriends(
+          lunaState.challenge.friends.map((friend) => {
+            const profile = profiles.get(friend.pubkey);
+            if (!profile) return friend;
+            return {
+              ...friend,
+              name: (profileName(profile) ?? shortNpub(friend.npub)).slice(0, 32),
+              avatarUrl: profile.picture ?? friend.avatarUrl,
+            };
+          }),
+        );
+      });
+      saveCachedChallengeFriends(myPubkey, lunaState.challenge.friends);
+    }
     lunaState.challenge.loadedForPubkey = myPubkey;
   } catch (error) {
-    lunaState.challenge.error = onlineErrorText(error);
+    if (lunaState.challenge.friends.length === 0) {
+      lunaState.challenge.error = onlineErrorText(error);
+    }
   } finally {
     lunaState.challenge.loading = false;
+    if (challengeFriendsLoadingFor === myPubkey) challengeFriendsLoadingFor = null;
   }
 }
 
