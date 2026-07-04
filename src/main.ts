@@ -4514,10 +4514,24 @@ async function signAndGenerateBetDeposit(): Promise<void> {
       return;
     }
     const signed = await signer.signEvent(template);
+    // Comentario de participación (opcional): si Luna lo mandó, lo firmamos con la
+    // MISMA identidad y lo adjuntamos. Si el jugador gana, el premio se zapea a este
+    // comentario (queda como zap recibido en su perfil). Si la firma falla, seguimos
+    // sin él: el depósito no debe bloquearse (el premio caería al post del contrato).
+    let signedComment: typeof signed | undefined;
+    const commentTemplate = myEntry.participationComment;
+    if (commentTemplate) {
+      try {
+        signedComment = await signer.signEvent(commentTemplate);
+      } catch {
+        signedComment = undefined;
+      }
+    }
     const response = await onlineClient.depositInvoice({
       roomId: roomState.current!.id,
       playerId: identityState.player.id,
       signedZapRequest: signed,
+      signedComment,
     });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);

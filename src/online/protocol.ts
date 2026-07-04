@@ -148,6 +148,16 @@ export interface RoomBetParticipant {
   /** v2: URL LNURL-pay a donde mandar el 9734 firmado (`?amount&nostr`) → `{ pr }`. */
   depositCallback?: string | null;
   /**
+   * v2 (zaps): comentario de participación (kind:1 reply al contrato) SIN firmar. El
+   * cliente lo firma con la MISMA identidad del jugador y lo manda a `commentCallback`.
+   * Si el jugador gana, el premio se zapea a ESTE comentario en vez del post del
+   * contrato (queda como zap recibido en su perfil). Opcional: el depósito funciona
+   * igual sin él. Comparte forma con el 9734 (kind/created_at/tags/content).
+   */
+  participationComment?: UnsignedZapRequestTemplate | null;
+  /** v2: URL a donde mandar el comentario firmado (`POST { signedComment }`). */
+  commentCallback?: string | null;
+  /**
    * Motivo por el que Luna Negra no pudo generar el invoice de depósito (p. ej.
    * NWC sin permiso make-invoice, budget agotado o relay caído). `null` cuando no
    * hubo error (handles presentes o depósito cerrado). Sirve para mostrar la causa
@@ -558,6 +568,12 @@ export interface RoomBetDepositInvoiceRequest {
   roomId: string;
   playerId: string;
   signedZapRequest: SignedNostrEvent;
+  /**
+   * v2 (opcional): comentario de participación (kind:1) firmado por el jugador. El
+   * backend lo reenvía a `commentCallback` de Luna Negra (best-effort). Si el jugador
+   * gana, el premio se ancla a este comentario en vez del post del contrato.
+   */
+  signedComment?: SignedNostrEvent | null;
 }
 
 export interface PublicRoomsResponse {

@@ -55,6 +55,10 @@ interface LunaBetDetail extends LunaEconomics {
     // obtenga el invoice (así extensión y QR son zaps reales, no LNURL-pay plano).
     depositZapRequest?: UnsignedZapRequestTemplate | null;
     depositCallback?: string | null;
+    // v2 (zaps): comentario de participación sin firmar + callback donde postearlo
+    // firmado. Si el jugador gana, el premio se ancla a su comentario.
+    participationComment?: UnsignedZapRequestTemplate | null;
+    commentCallback?: string | null;
     withdrawLnurl?: string | null;
     withdrawUrl?: string | null;
     depositError?: string | null;
@@ -278,6 +282,8 @@ function buildRoomBet(
       payUrl: typeof d?.payUrl === 'string' ? d.payUrl : null,
       depositZapRequest: asUnsignedZapRequest(d?.depositZapRequest),
       depositCallback: typeof d?.depositCallback === 'string' ? d.depositCallback : null,
+      participationComment: asUnsignedZapRequest(d?.participationComment),
+      commentCallback: typeof d?.commentCallback === 'string' ? d.commentCallback : null,
       depositError: typeof d?.depositError === 'string' ? d.depositError : null,
       payoutSats: typeof d?.payoutSats === 'number' ? d.payoutSats : null,
       payoutStatus,
@@ -522,6 +528,7 @@ export async function generateBetDepositInvoice(
   roomId: string,
   playerId: string,
   signedZapRequest: unknown,
+  signedComment: unknown = null,
   nowMs = Date.now(),
 ): Promise<{ room: OnlineRoom; invoice: string }> {
   const room = await loadRoom(store, roomId);
@@ -549,6 +556,14 @@ export async function generateBetDepositInvoice(
 
   const amountMsat = bet.stakeSats * 1000;
   const invoice = await fetchDepositInvoiceFromCallback(callback, amountMsat, signedZapRequest);
+
+  // Comentario de participación (best-effort): si el jugador lo firmó, lo mandamos al
+  // callback de Luna. Si gana, el premio se ancla a él. NUNCA rompe el depósito: un
+  // fallo acá solo hace que el premio caiga al post del contrato (comportamiento previo).
+  // `await` a propósito (serverless: sin esperar, el fetch se corta al terminar la función).
+  if (signedComment && typeof signedComment === 'object' && participant.commentCallback) {
+    await postParticipationComment(participant.commentCallback, signedComment).catch(() => undefined);
+  }
 
   // Persistimos el invoice en la apuesta local para que el QR sobreviva a los polls
   // (el próximo GET a Luna ya lo devuelve en `bolt11` y reconcilia). Sin esto, el
@@ -597,6 +612,25 @@ async function fetchDepositInvoiceFromCallback(
     throw new OnlineRoomError(reason, 502);
   }
   return payload.pr;
+}
+
+// POST del comentario de participación firmado al endpoint de Luna Negra
+// (`/api/v2/bets/{id}/comment`). La FIRMA del evento es la autenticación (no hay API
+// key). Best-effort: cualquier fallo se ignora arriba — el depósito ya salió y sin
+// comentario el premio simplemente cae al post del contrato (fallback previo).
+async function postParticipationComment(callback: string, signedComment: unknown): Promise<void> {
+  if (isLunaMockEnabled()) return;
+  let url: URL;
+  try {
+    url = new URL(callback);
+  } catch {
+    return;
+  }
+  await fetch(url.toString(), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ signedComment }),
+  });
 }
 
 export async function cancelRoomBet(
