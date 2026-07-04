@@ -1803,6 +1803,12 @@ function normalizeBet(value: unknown): RoomBet | null {
         payUrl: normalizeNullableString(entry.payUrl),
         depositZapRequest: normalizeBetZapRequest(entry.depositZapRequest),
         depositCallback: normalizeNullableString(entry.depositCallback),
+        // El comentario de participación comparte forma con el 9734 (kind/created_at/
+        // tags/content). Sin estos dos campos acá, normalizeBet los dropeaba al cargar
+        // la sala del store → el cliente no firmaba el comentario y el premio caía al
+        // post del contrato en vez del comentario del ganador.
+        participationComment: normalizeBetZapRequest(entry.participationComment),
+        commentCallback: normalizeNullableString(entry.commentCallback),
         depositError: normalizeNullableString(entry.depositError),
         payoutSats: normalizeNullableSats(entry.payoutSats),
         payoutStatus: normalizeBetPayoutStatus(entry.payoutStatus),
