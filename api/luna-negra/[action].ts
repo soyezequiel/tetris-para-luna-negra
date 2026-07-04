@@ -8,6 +8,7 @@ import {
   consumeLunaLaunchRequest,
   sendLunaInvite,
 } from '../../src/online/lunaNegraSocial.js';
+import { verifyRoomInvite } from '../../src/online/lunaNegraRoomInvite.js';
 import { OnlineRoomError, loadRoom, normalizeRoomId } from '../../src/online/roomService.js';
 import {
   getBetRoomStore,
@@ -76,6 +77,16 @@ export async function POST(request: Request): Promise<Response> {
       const body = await readJsonBody<LunaPresenceRequest>(request);
       const { source } = await heartbeatLunaPresence(body);
       return sendJson(200, { ok: true, source, serverNowMs: Date.now() });
+    }
+    if (action === 'verify-room-invite') {
+      // Verifica offline (JWKS de Luna) el `lnInvite` de una invitación dirigida a
+      // una sala de ESTE juego ("Luna Room Link"). No requiere API key: el token
+      // es autocontenido y solo autoriza entrada a sala (no toca dinero).
+      const body = await readJsonBody<{ lnInvite?: string }>(request);
+      const token = typeof body.lnInvite === 'string' ? body.lnInvite.trim() : '';
+      if (!token) throw new OnlineRoomError('Falta el lnInvite.', 400);
+      const invite = await verifyRoomInvite(token);
+      return sendJson(200, { invite, serverNowMs: Date.now() });
     }
     if (action === 'invite') {
       const body = await readJsonBody<LunaInviteRequest>(request);

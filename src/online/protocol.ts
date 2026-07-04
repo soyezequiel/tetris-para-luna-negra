@@ -507,6 +507,19 @@ export interface LunaLaunchRequest {
   gameUrl: string;
 }
 
+/** Resultado de verificar un `lnInvite` de "Luna Room Link" (invitación dirigida a
+ * una sala hosteada por este juego). `invite` es `null` si el token es inválido. */
+export interface LunaRoomInviteResponse {
+  invite: {
+    gameId: string;
+    slug: string;
+    roomId: string;
+    toNpub: string;
+    expiresAt: string | null;
+  } | null;
+  serverNowMs: number;
+}
+
 export interface LunaLaunchRequestResponse {
   request: LunaLaunchRequest | null;
   serverNowMs: number;

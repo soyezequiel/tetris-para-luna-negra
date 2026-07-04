@@ -6,6 +6,7 @@ import type {
   LunaGameInfoResponse,
   LunaLaunchRequestResponse,
   LunaPresenceRequest,
+  LunaRoomInviteResponse,
 } from './protocol';
 
 // Cliente del frontend para la capa social de Luna Negra. Habla con los
@@ -36,6 +37,12 @@ export class LunaSocialClient {
 
   launchRequest(npub: string): Promise<LunaLaunchRequestResponse> {
     return this.get(`/launch-request?npub=${encodeURIComponent(npub)}`);
+  }
+
+  /** Verifica un `lnInvite` de "Luna Room Link" (invitación dirigida a una sala de
+   * este juego). Devuelve el payload o `null` si el token es inválido. */
+  verifyRoomInvite(lnInvite: string): Promise<LunaRoomInviteResponse> {
+    return this.post('/verify-room-invite', { lnInvite });
   }
 
   private async get<T>(path: string): Promise<T> {

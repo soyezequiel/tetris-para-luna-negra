@@ -67,6 +67,10 @@ export interface LunaState {
   launchPollInFlight: boolean;
   // Request de "entrar a sala" pendiente de confirmación del usuario.
   pendingLaunchRequest: PendingLunaLaunchRequest | null;
+  // "Luna Room Link" dirigido pendiente: llegó un `?lnRoom=&lnInvite=` para un npub
+  // concreto pero todavía no hay una identidad Nostr que coincida. Se resuelve al
+  // loguearse (maybeResumePendingRoomLink en applyLunaIdentity).
+  pendingRoomLink: { roomId: string; toNpub: string } | null;
   // Ids de launch requests que el usuario ya descartó (no volver a ofrecerlos).
   ignoredLaunchRequestIds: Set<string>;
   // Login Nostr 2.0 (firmante en el navegador).
@@ -84,6 +88,7 @@ export const lunaState: LunaState = {
   trustedOrigin: null,
   launchPollInFlight: false,
   pendingLaunchRequest: null,
+  pendingRoomLink: null,
   ignoredLaunchRequestIds: new Set<string>(),
   nostrLogin: {
     tab: 'extension',

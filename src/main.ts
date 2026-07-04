@@ -2398,6 +2398,10 @@ async function bootstrapOnlineStartup(): Promise<void> {
     await bootstrapLunaNegraEntry();
     return;
   }
+  if (nextParams.get('lnRoom')?.trim()) {
+    await bootstrapLunaRoomLink(nextParams.get('lnRoom')!.trim(), nextParams);
+    return;
+  }
   if (nextParams.get('join')?.trim()) {
     await bootstrapJoinLink(nextParams.get('join')!.trim());
     return;
@@ -2441,6 +2445,9 @@ function applyLunaIdentity(identity: LunaIdentity): void {
   // todavía no está (restore en paralelo), el hook de bootstrapOnlineStartup o el
   // próximo latido la cubren. El throttle interno evita firmar de más.
   void syncNostrPresence();
+  // Si había un "Luna Room Link" dirigido esperando a que se logueara la cuenta
+  // invitada, entrar a la sala ahora que la identidad coincide.
+  maybeResumePendingRoomLink();
 }
 
 async function bootstrapJoinLink(roomId: string): Promise<void> {
@@ -2449,6 +2456,87 @@ async function bootstrapJoinLink(roomId: string): Promise<void> {
   const url = new URL(window.location.href);
   url.searchParams.delete('join');
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+// ─────────────── "Luna Room Link": sala hosteada por ESTE juego ───────────────
+// Estándar de enlace de invitación de Luna Negra (docs/luna-room-link.md; §5·bis de
+// la guía de integración). Un enlace `<este-juego>/?lnRoom=<id>[&lnInvite=<jwt>]`
+// entra a una sala PartyKit propia (la que ya maneja `?join=`), creada lazy al primer
+// acceso. Es DISTINTO del par `?inviteToken=`+`?room=` (salas hosteadas por Luna).
+//   • Pública (sin lnInvite): cualquiera con el enlace entra, con la identidad actual.
+//   • Dirigida (con lnInvite): solo el npub autorizado; se valida el token offline y
+//     se exige login Nostr con esa cuenta si todavía no está.
+async function bootstrapLunaRoomLink(rawRoomId: string, params: URLSearchParams): Promise<void> {
+  const roomId = normalizeRoomId(rawRoomId);
+  const lnInvite = params.get('lnInvite')?.trim() ?? '';
+  // Descartar tokens de la URL antes de nada (no dejar el enlace en el historial).
+  cleanLunaRoomLinkFromUrl();
+  if (roomId.length < ROOM_ID_MIN_LENGTH) {
+    openOnlineMenu();
+    onlineNetState.error = 'El enlace de sala no es válido.';
+    return;
+  }
+
+  // Variante pública: entrar directo con la identidad actual (Nostr o local).
+  if (!lnInvite) {
+    await joinLunaRoomLink(roomId);
+    return;
+  }
+
+  // Variante dirigida: verificar el lnInvite (offline, vía JWKS de Luna) y exigir
+  // que el jugador sea el `toNpub` autorizado.
+  let toNpub = '';
+  try {
+    const { invite } = await lunaSocialClient.verifyRoomInvite(lnInvite);
+    if (invite && normalizeRoomId(invite.roomId) === roomId) toNpub = invite.toNpub;
+  } catch {
+    /* red/servicio caído → se trata como inválido abajo */
+  }
+  if (!toNpub) {
+    openOnlineMenu();
+    onlineNetState.error = 'La invitación no es válida o expiró.';
+    return;
+  }
+
+  if (lunaState.identity?.npub === toNpub) {
+    await joinLunaRoomLink(roomId);
+    return;
+  }
+
+  // Falta la identidad correcta: recordamos la sala y pedimos login Nostr. Al
+  // loguearse con la cuenta invitada, maybeResumePendingRoomLink entra solo.
+  lunaState.pendingRoomLink = { roomId, toNpub };
+  openOnlineMenu();
+  onlineNetState.error = lunaState.identity
+    ? 'Esta invitación es para otra cuenta de Nostr. Iniciá sesión con la cuenta invitada.'
+    : 'Iniciá sesión con Nostr para entrar a la sala.';
+  reopenLoginGate();
+}
+
+async function joinLunaRoomLink(roomId: string): Promise<void> {
+  openOnlineMenu();
+  await joinOnlineRoom(roomId);
+}
+
+// Quita los parámetros de "Luna Room Link" (y el handoff de identidad) de la URL.
+function cleanLunaRoomLinkFromUrl(): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('lnRoom');
+  url.searchParams.delete('lnInvite');
+  url.searchParams.delete('lnToken');
+  url.searchParams.delete('lnOrigin');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+// Tras un login Nostr, si había un "Luna Room Link" dirigido esperando la identidad
+// correcta y ahora coincide, entra a la sala. Lo llama applyLunaIdentity.
+function maybeResumePendingRoomLink(): void {
+  const pending = lunaState.pendingRoomLink;
+  if (!pending) return;
+  if (lunaState.identity?.npub !== pending.toNpub) return;
+  lunaState.pendingRoomLink = null;
+  onlineNetState.error = null;
+  void joinLunaRoomLink(pending.roomId);
 }
 
 async function restoreOnlineRoomSession(): Promise<boolean> {
@@ -2583,6 +2671,7 @@ function clearLunaIdentity(): void {
   lunaState.identity = null;
   lunaState.inviteNotice = null;
   lunaState.pendingLaunchRequest = null;
+  lunaState.pendingRoomLink = null;
   lunaState.challenge.pickerOpen = false;
   lunaState.challenge.loading = false;
   lunaState.challenge.error = null;
