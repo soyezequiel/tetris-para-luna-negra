@@ -25,6 +25,7 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/luna-negra/invite-window', lunaNegraAction],
   ['/api/luna-negra/launch-request', lunaNegraAction],
   ['/api/luna-negra/presence', lunaNegraAction],
+  ['/api/luna-negra/verify-room-invite', lunaNegraAction],
 
   ['/api/rooms/attack', roomsAction],
   ['/api/rooms/create', roomsAction],

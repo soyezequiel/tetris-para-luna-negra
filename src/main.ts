@@ -2513,9 +2513,59 @@ async function bootstrapLunaRoomLink(rawRoomId: string, params: URLSearchParams)
   reopenLoginGate();
 }
 
+// Entra a la sala `lnRoom`: se UNE si ya existe, o la CREA con ese id si no (host =
+// el primero en entrar), como pide el estándar (la sala no pre-existe). A diferencia
+// de `joinOnlineRoom` (que solo se une y falla con "Room not found"), acá creamos la
+// sala PartyKit al vuelo. Espeja `createOnlineRoom` pero con el id fijo del enlace.
 async function joinLunaRoomLink(roomId: string): Promise<void> {
   openOnlineMenu();
-  await joinOnlineRoom(roomId);
+  if (onlineNetState.busy) {
+    onlineNetState.error = 'Ya hay una acción online en curso.';
+    return;
+  }
+  onlineNetState.busy = true;
+  onlineNetState.error = null;
+  try {
+    // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
+    await leaveCurrentRoomBeforeNew(roomId);
+    identityState.player = saveOnlinePlayer({ ...identityState.player, name: identityState.name });
+    const who = {
+      roomId,
+      playerId: identityState.player.id,
+      npub: lunaState.identity?.npub ?? null,
+      name: identityState.player.name,
+      avatarUrl: identityState.player.avatarUrl,
+    };
+    const create = (): Promise<OnlineRoomResponse> =>
+      onlineClient.createRoom({
+        ...who,
+        lunaGameId: lunaState.identity?.gameId ?? null,
+        visibility: 'private',
+        mode: 'custom',
+        matchType: 'battle',
+        ruleset: onlineRulesetPatch(),
+        rules: battleRulesFromSettings(inputSettings),
+      });
+    // Unirse; si no existe (404) la creamos; si dos entran a la vez (409) unirse.
+    const response = await onlineClient.joinRoom(who).catch((error) => {
+      if (error instanceof OnlineApiError && error.status === 404) {
+        return create().catch((createError) => {
+          if (createError instanceof OnlineApiError && createError.status === 409) {
+            return onlineClient.joinRoom(who);
+          }
+          throw createError;
+        });
+      }
+      throw error;
+    });
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'roomLobby');
+    void syncLunaPresence();
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+  } finally {
+    onlineNetState.busy = false;
+  }
 }
 
 // Quita los parámetros de "Luna Room Link" (y el handoff de identidad) de la URL.
