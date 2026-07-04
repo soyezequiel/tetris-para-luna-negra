@@ -531,14 +531,27 @@ export async function generateBetDepositInvoice(
   signedComment: unknown = null,
   nowMs = Date.now(),
 ): Promise<{ room: OnlineRoom; invoice: string }> {
-  const room = await loadRoom(store, roomId);
-  const bet = room.bet;
+  let room = await loadRoom(store, roomId);
+  let bet = room.bet;
   if (!bet) throw new OnlineRoomError('No hay apuesta activa para depositar.', 404);
-  const participant = bet.participants.find((p) => p.playerId === playerId);
+  let participant = bet.participants.find((p) => p.playerId === playerId);
   if (!participant) throw new OnlineRoomError('No sos participante de esta apuesta.', 403);
   if (participant.depositStatus === 'paid') {
     throw new OnlineRoomError('Ya depositaste.', 409);
   }
+
+  // Auto-sanado contra un RoomStore desactualizado: si el snapshot local no tiene ni
+  // invoice ni callback (p.ej. la firma anterior YA emitió el invoice en Luna pero la
+  // respuesta no alcanzó a persistirse acá, o un poll viejo dejó al asiento sin
+  // handles), refetcheamos el detalle desde Luna —la fuente de verdad— antes de tirar
+  // "no disponible". Luna suele devolver ya el `bolt11` del depósito y el flujo sigue
+  // sin re-firmar. Si Luna está caída, `refreshRoomBet` devuelve la sala sin tocar.
+  if (!participant.bolt11 && !participant.depositCallback) {
+    room = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
+    participant = room.bet?.participants.find((p) => p.playerId === playerId) ?? participant;
+    bet = room.bet ?? bet;
+  }
+
   // Idempotencia: si ya se emitió el invoice (este intento u otro previo), reusamos
   // el mismo en vez de pedir otro. El QR y "pagar con extensión" pagan ese bolt11.
   if (participant.bolt11) return { room, invoice: participant.bolt11 };
