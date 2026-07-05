@@ -7465,7 +7465,16 @@ function renderOnlineResultsOverlay(state: GameState): string {
   const mustClaimBeforeLeaving = bet
     ? myBetEntry(bet)?.payoutStatus === 'withdraw_pending'
     : false;
-  const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded') ? bet.netPayoutSats : null;
+  // Sats del ganador: una vez liquidado, el pago REAL al ganador (payoutSats) es la
+  // fuente de verdad y puede diferir del pozo neto proyectado (netPayoutSats) por
+  // fees/redondeos del zap. Mostrar netPayoutSats hacía que la fila (+18) no cuadrara
+  // con el festejo de "pago recibido" (17). Antes de liquidar cae a la proyección.
+  const winnerEntrySats = bet
+    ? bet.participants.find((p) => p.playerId && p.playerId === ranked[0]?.id)?.payoutSats ?? null
+    : null;
+  const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded')
+    ? (winnerEntrySats ?? bet.netPayoutSats)
+    : null;
   // Frame en que terminó la partida = el del último rival eliminado. El ganador sigue
   // vivo, así que su elapsedFrames quedó congelado en su último snapshot y puede ser
   // MENOR al de quien eliminó; mostrarlo crudo hacía que el "último en pie" figurara
