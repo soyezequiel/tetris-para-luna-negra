@@ -359,6 +359,10 @@ class LocalVersusMatch {
   private readonly qrCache = new Map<string, string>();
   private readonly qrPending = new Set<string>();
   private qrZoomEl: HTMLElement | null = null;
+  // El ganador decide CUÁNDO revelar su QR de retiro: arranca oculto y solo se
+  // muestra cuando toca "Mostrar QR para cobrar" (así se prepara la billetera
+  // antes de que aparezca en pantalla, útil en un stand con gente mirando).
+  private payoutRevealed = false;
 
   constructor(options: LocalVersusOptions) {
     this.options = options;
@@ -764,6 +768,8 @@ class LocalVersusMatch {
     this.outcome = 'playing';
     this.frame = 0;
     this.phase = 'countdown';
+    // Cada duelo empieza con el cobro oculto: el ganador lo revela al final.
+    this.payoutRevealed = false;
     // Resetea los drivers de audio por asiento al estado inicial (sin disparar
     // sonidos) y desbloquea los AudioContext para la música y los efectos.
     this.options.audio?.matchStart?.(this.seats.seat1.state, this.seats.seat2.state);
@@ -973,6 +979,7 @@ class LocalVersusMatch {
         if (action === 'exit') this.exit();
         else if (action === 'setup') this.backToSeatSetup();
         else if (action === 'rematch') { this.bet = null; this.teardownSeats(); this.beginCountdown(); }
+        else if (action === 'payout-reveal') { this.payoutRevealed = true; this.renderFinished(); }
         else if (action === 'qr-zoom' && el.dataset.qr) this.openQrZoom(el.dataset.qr);
       });
     });
@@ -988,10 +995,16 @@ class LocalVersusMatch {
       return '<p class="lv-bet-note">Empate: se reembolsa el depósito de cada jugador a su billetera.</p>';
     }
     const winner = bet.participants.find((p) => p.seat === winnerSeat);
+    const amount = winner?.payoutSats ?? bet.netPayoutSats;
     if (winner?.withdrawLnurl) {
+      // El QR arranca oculto: el ganador lo revela cuando ya tiene la billetera
+      // lista, para que nadie más lo escanee de sorpresa.
+      if (!this.payoutRevealed) {
+        return this.renderPayoutReveal(winnerSeat, amount);
+      }
       return `
         <div class="lv-bet-payout">
-          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${winner.payoutSats ?? bet.netPayoutSats} sats</strong>. Escaneá para cobrar:</p>
+          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>. Escaneá para cobrar:</p>
           ${this.renderQr(winner.withdrawLnurl)}
           <span class="lv-qr-hint">QR de retiro · tocá para agrandar</span>
         </div>`;
@@ -999,9 +1012,12 @@ class LocalVersusMatch {
     // v2 (zaps): el invitado sin destino reclama en la página hosteada de Luna Negra
     // (la API por clave no expone una LNURL de retiro).
     if (winner?.payoutStatus === 'withdraw_pending' && winner.withdrawUrl) {
+      if (!this.payoutRevealed) {
+        return this.renderPayoutReveal(winnerSeat, amount);
+      }
       return `
         <div class="lv-bet-payout">
-          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${winner.payoutSats ?? bet.netPayoutSats} sats</strong>.</p>
+          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>.</p>
           <a class="lv-btn lv-btn--primary" href="${escapeAttr(winner.withdrawUrl)}" target="_blank" rel="noopener">💰 Cobrar en Luna Negra</a>
         </div>`;
     }
@@ -1010,6 +1026,18 @@ class LocalVersusMatch {
     }
     if (this.betError) return `<p class="lv-bet-note lv-bet-warn">⚠️ ${escapeText(this.betError)}</p>`;
     return '<p class="lv-bet-note">⏳ Preparando el cobro del ganador…</p>';
+  }
+
+  // Pantalla previa al cobro: el premio está listo, pero el QR/link queda oculto
+  // hasta que el ganador toca "Mostrar QR". Así puede abrir su billetera con calma
+  // antes de exponer el cobro en pantalla.
+  private renderPayoutReveal(winnerSeat: number, amount: number): string {
+    return `
+      <div class="lv-bet-payout">
+        <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>.</p>
+        <button class="lv-btn lv-btn--primary" type="button" data-lv="payout-reveal">💰 Mostrar QR para cobrar</button>
+        <span class="lv-qr-hint">Abrí tu billetera Lightning y tocá cuando estés listo.</span>
+      </div>`;
   }
 }
 
