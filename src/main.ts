@@ -2974,6 +2974,17 @@ async function acceptPendingLunaLaunchRequest(): Promise<void> {
   const request = lunaState.pendingLaunchRequest;
   if (!request) return;
   lunaState.pendingLaunchRequest = null;
+  if (request.kind === 'room-link') {
+    // En Luna Room Link `inviteToken` contiene el `lnInvite` dirigido. Se valida
+    // con el mismo camino que un enlace abierto desde el DM, pero sólo después de
+    // que el jugador acepta el popup.
+    const params = new URLSearchParams({
+      lnRoom: request.normalizedRoomId,
+      lnInvite: request.inviteToken,
+    });
+    await bootstrapLunaRoomLink(request.normalizedRoomId, params);
+    return;
+  }
   await enterLunaNegraRoomFromInvite(request.inviteToken, request.normalizedRoomId);
 }
 

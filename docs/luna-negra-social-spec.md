@@ -194,6 +194,11 @@ Enlace: `https://<deploy-tetris>/?lnRoom=<roomId>[&lnInvite=<jwt>]`.
   Nostr** y entra sola al completar el login (no usa el rebote a `/launch` de Luna,
   porque esta build es Nostr-nativa).
 
+Cuando Luna crea una variante dirigida desde **Invitar a sala**, también encola una
+orden `kind: "room-link"` en `GET /api/v1/invites`. TETRA la detecta con el polling
+existente y muestra el popup de invitación si ya estaba abierto; al aceptar reutiliza
+`lnInvite` y entra por este mismo flujo, sin crear una sala hosteada por Luna.
+
 Al cargar, TETRA descarta los params (`lnRoom`/`lnInvite`/`lnToken`/`lnOrigin`) de la
 URL. Para que Luna muestre el botón **"Invitar"** en la ficha, el proveedor declara la
 capacidad `roomLink` en el panel de integración de Luna.

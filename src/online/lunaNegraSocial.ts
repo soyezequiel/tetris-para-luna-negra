@@ -191,7 +191,7 @@ export async function consumeLunaLaunchRequest(
   return { request: normalizeLaunchRequest(payload?.request), source: 'luna-negra' };
 }
 
-function normalizeLaunchRequest(value: unknown): LunaLaunchRequest | null {
+export function normalizeLaunchRequest(value: unknown): LunaLaunchRequest | null {
   if (!value || typeof value !== 'object') return null;
   const entry = value as Partial<Record<keyof LunaLaunchRequest, unknown>>;
   if (
@@ -208,6 +208,8 @@ function normalizeLaunchRequest(value: unknown): LunaLaunchRequest | null {
     id: entry.id,
     roomId: entry.roomId,
     inviteToken: entry.inviteToken,
+    // Luna anterior a Room Link no enviaba `kind`; conservar compatibilidad.
+    kind: entry.kind === 'room-link' ? 'room-link' : 'luna-room',
     slug: entry.slug,
     title: entry.title,
     gameUrl: entry.gameUrl,

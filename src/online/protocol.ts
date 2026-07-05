@@ -512,6 +512,8 @@ export interface LunaLaunchRequest {
   id: string;
   roomId: string;
   inviteToken: string;
+  /** `room-link` usa `inviteToken` como `lnInvite` y la sala vive en TETRA. */
+  kind: 'luna-room' | 'room-link';
   slug: string;
   title: string;
   gameUrl: string;
