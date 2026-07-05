@@ -703,14 +703,20 @@ class LocalVersusMatch {
   // corrección de error 'L' (menos módulos = cada uno más grande) y bolt11 en
   // MAYÚSCULAS (modo alfanumérico del QR = menos módulos todavía). Clickeable: lo
   // agranda a pantalla completa.
-  private renderQr(value: string): string {
-    const cached = this.qrCache.get(value);
+  private renderQr(value: string, opts?: { lightning?: boolean }): string {
+    // Lightning (invoice/LNURL): prefijo `lightning:` + MAYÚSCULAS (modo
+    // alfanumérico = menos módulos). URLs (reclamo web v2): se codifican tal cual,
+    // sin tocar, para que el celular las abra como link. El payload real es la clave
+    // de caché y el `data-qr` (así el zoom encuentra el SVG correcto).
+    const lightning = opts?.lightning ?? true;
+    const payload = lightning ? `lightning:${value.toUpperCase()}` : value;
+    const cached = this.qrCache.get(payload);
     if (cached) {
-      return `<div class="lv-qr" data-lv="qr-zoom" data-qr="${escapeAttr(value)}" title="Tocá para agrandar">${cached}</div>`;
+      return `<div class="lv-qr" data-lv="qr-zoom" data-qr="${escapeAttr(payload)}" title="Tocá para agrandar">${cached}</div>`;
     }
-    if (!this.qrPending.has(value)) {
-      this.qrPending.add(value);
-      void QRCode.toString(`lightning:${value.toUpperCase()}`, {
+    if (!this.qrPending.has(payload)) {
+      this.qrPending.add(payload);
+      void QRCode.toString(payload, {
         type: 'svg', errorCorrectionLevel: 'L', margin: 2, color: { dark: '#000000', light: '#ffffff' },
       }).then((svg) => {
         // `crispEdges` mata el anti-aliasing entre módulos (bordes duros) y el
@@ -720,13 +726,13 @@ class LocalVersusMatch {
           .replace(/<svg /, '<svg shape-rendering="crispEdges" preserveAspectRatio="xMidYMid meet" ')
           // Solo el width/height del <svg> (espacio delante); NO toca stroke-width.
           .replace(/\s(width|height)="[^"]*"/g, ' ');
-        this.qrCache.set(value, processed);
-        this.qrPending.delete(value);
+        this.qrCache.set(payload, processed);
+        this.qrPending.delete(payload);
         if (this.destroyed) return;
         if (this.phase === 'betDeposit') this.renderBetDeposit();
         else if (this.phase === 'finished') this.renderFinished();
-        if (this.qrZoomEl?.dataset.qr === value) this.openQrZoom(value); // refresca el zoom abierto
-      }).catch(() => { this.qrPending.delete(value); });
+        if (this.qrZoomEl?.dataset.qr === payload) this.openQrZoom(payload); // refresca el zoom abierto
+      }).catch(() => { this.qrPending.delete(payload); });
     }
     return '<div class="lv-qr lv-qr-loading">Generando QR…</div>';
   }
@@ -1017,8 +1023,10 @@ class LocalVersusMatch {
       }
       return `
         <div class="lv-bet-payout">
-          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>.</p>
-          <a class="lv-btn lv-btn--primary" href="${escapeAttr(winner.withdrawUrl)}" target="_blank" rel="noopener">💰 Cobrar en Luna Negra</a>
+          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>. Escaneá para cobrar:</p>
+          ${this.renderQr(winner.withdrawUrl, { lightning: false })}
+          <span class="lv-qr-hint">QR de cobro · tocá para agrandar</span>
+          <div class="lv-payout-link"><a href="${escapeAttr(winner.withdrawUrl)}" target="_blank" rel="noopener">o abrir en Luna Negra ↗</a></div>
         </div>`;
     }
     if (winner?.payoutStatus === 'paid' || winner?.payoutStatus === 'claimed') {
@@ -1133,7 +1141,7 @@ function ensureStyles(): void {
     .lv-clock { font-variant-numeric: tabular-nums; font-size: 22px; opacity: .85; }
     .lv-lines { display: flex; flex-direction: column; gap: 4px; font-size: 13px; opacity: .7; text-align: center; }
     .lv-count { font-size: clamp(64px, 14vw, 160px); font-weight: 900; line-height: 1; text-shadow: 0 0 40px rgba(0,245,255,.6); }
-    .lv-win-title { font-size: clamp(32px, 6vw, 64px); margin: 0; }
+    .lv-win-title { font-size: clamp(32px, 6vw, 64px); margin: 0 0 18px; line-height: 1.1; }
     .lv-bet-setup { margin-top: 22px; padding: 16px 18px; border: 1px solid rgba(255,182,39,.35); border-radius: 12px; background: rgba(255,182,39,.06); text-align: left; }
     .lv-bet-toggle { display: flex; align-items: center; gap: 10px; font-weight: 700; cursor: pointer; font-size: 16px; }
     .lv-bet-toggle input { width: 18px; height: 18px; accent-color: #ffb627; }
@@ -1154,6 +1162,9 @@ function ensureStyles(): void {
     .lv-deposit-ok { font-size: 18px; font-weight: 700; color: #4dd07a; padding: 70px 0; }
     .lv-bet-payout { margin: 18px auto 8px; }
     .lv-bet-win { font-size: 17px; margin-bottom: 6px; }
+    .lv-payout-link { margin-top: 10px; font-size: 13px; }
+    .lv-payout-link a { color: var(--dash-neon-cyan); opacity: .8; }
+    .lv-payout-link a:hover { opacity: 1; }
     .lv-qr-zoom { position: fixed; inset: 0; z-index: 70; background: rgba(2,4,8,.94); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; cursor: zoom-out; }
     .lv-qr-zoom-box { width: min(92vw, 92vh); height: min(92vw, 92vh); background: #fff; padding: clamp(16px, 4vw, 40px); border-radius: 16px; box-sizing: border-box; }
     .lv-qr-zoom-box svg { display: block; width: 100%; height: 100%; }
