@@ -1576,7 +1576,7 @@ describe('core stacker engine', () => {
     room.winnerPlayerId = 'host-player-p';
     await store.saveRoom(room);
 
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: 'settled', payoutSats: 99 })));
 
@@ -1593,7 +1593,7 @@ describe('core stacker engine', () => {
     expect(roomAfterLeave?.bet?.winnerNpubs).toEqual(['npub-host']);
 
     vi.unstubAllGlobals();
-    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_BASE;
     delete process.env.LUNA_NEGRA_API_KEY;
   });
 
@@ -1653,7 +1653,7 @@ describe('core stacker engine', () => {
     room.winnerPlayerId = 'host-player-r';
     await store.saveRoom(room);
 
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -1682,7 +1682,7 @@ describe('core stacker engine', () => {
     expect(stored?.bet?.settlementError).toContain('NOT_READY');
 
     vi.unstubAllGlobals();
-    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_BASE;
     delete process.env.LUNA_NEGRA_API_KEY;
   });
 
@@ -1692,7 +1692,7 @@ describe('core stacker engine', () => {
     // Invitado: entra SIN npub (sin cuenta Nostr).
     room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-m', name: 'Guest' }, 1010);
 
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
     process.env.LUNA_NEGRA_GAME_ID = 'game-m';
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1737,7 +1737,7 @@ describe('core stacker engine', () => {
     expect(winnerBetNpubsFromRoom(withBet)).toEqual(['npub-guest-eph']);
 
     vi.unstubAllGlobals();
-    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_BASE;
     delete process.env.LUNA_NEGRA_API_KEY;
     delete process.env.LUNA_NEGRA_GAME_ID;
   });
@@ -1747,7 +1747,7 @@ describe('core stacker engine', () => {
     let room = await createRoom(store, { playerId: 'host-player-a', name: 'Anonymous Host', visibility: 'public' }, 1000);
     room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-a', name: 'Anonymous Guest' }, 1010);
 
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
     process.env.LUNA_NEGRA_GAME_ID = 'game-a';
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1794,7 +1794,7 @@ describe('core stacker engine', () => {
       ]));
     } finally {
       vi.unstubAllGlobals();
-      delete process.env.LUNA_NEGRA_BASE_URL;
+      delete process.env.LUNA_NEGRA_BASE;
       delete process.env.LUNA_NEGRA_API_KEY;
       delete process.env.LUNA_NEGRA_GAME_ID;
     }
@@ -1853,7 +1853,7 @@ describe('core stacker engine', () => {
     };
     await store.saveRoom(room);
 
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
       betId: 'bet-stable-qr',
@@ -1882,7 +1882,7 @@ describe('core stacker engine', () => {
       expect(winner?.withdrawUrl).toBe('https://luna.example/withdraw/stable');
     } finally {
       vi.unstubAllGlobals();
-      delete process.env.LUNA_NEGRA_BASE_URL;
+      delete process.env.LUNA_NEGRA_BASE;
       delete process.env.LUNA_NEGRA_API_KEY;
     }
   });
@@ -1943,7 +1943,7 @@ describe('core stacker engine', () => {
     room.winnerPlayerId = 'host-player-s';
     await store.saveRoom(room);
 
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -1969,7 +1969,7 @@ describe('core stacker engine', () => {
     expect(stored?.bet?.settlementError).toContain('NOT_READY');
 
     vi.unstubAllGlobals();
-    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_BASE;
     delete process.env.LUNA_NEGRA_API_KEY;
   });
 
@@ -2007,7 +2007,7 @@ describe('core stacker engine', () => {
     const left = await leaveRoom(store, { roomId: room.id, playerId: 'guest-player-l' }, 1020);
     expect(left.room?.players.map((player) => player.id)).toEqual(['host-player-l']);
 
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
     const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -2032,15 +2032,15 @@ describe('core stacker engine', () => {
       expect(synced.bet?.status).toBe('refunded');
     } finally {
       vi.unstubAllGlobals();
-      delete process.env.LUNA_NEGRA_BASE_URL;
+      delete process.env.LUNA_NEGRA_BASE;
       delete process.env.LUNA_NEGRA_API_KEY;
     }
   });
 
   it('parses the Luna Negra friends response and reports source luna-negra', async () => {
-    const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
+    const previousBaseUrl = process.env.LUNA_NEGRA_BASE;
     const previousApiKey = process.env.LUNA_NEGRA_API_KEY;
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
     // apiOk devuelve el objeto crudo (sin envelope { data }).
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
@@ -2059,24 +2059,24 @@ describe('core stacker engine', () => {
     ]);
 
     vi.unstubAllGlobals();
-    if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
-    else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
+    if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE;
+    else process.env.LUNA_NEGRA_BASE = previousBaseUrl;
     if (previousApiKey === undefined) delete process.env.LUNA_NEGRA_API_KEY;
     else process.env.LUNA_NEGRA_API_KEY = previousApiKey;
   });
 
   it('returns clear Luna Negra API errors for missing config and invalid tokens', async () => {
-    const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
-    delete process.env.LUNA_NEGRA_BASE_URL;
+    const previousBaseUrl = process.env.LUNA_NEGRA_BASE;
+    delete process.env.LUNA_NEGRA_BASE;
 
     const missingConfig = await enterLunaNegraRoomApi(new Request('http://local/api/rooms/luna-negra/enter', {
       method: 'POST',
       body: JSON.stringify({ inviteToken: 'token', roomId: 'lnroom126' }),
     }));
     expect(missingConfig.status).toBe(500);
-    expect(await missingConfig.json()).toEqual({ error: 'LUNA_NEGRA_BASE_URL is not configured.' });
+    expect(await missingConfig.json()).toEqual({ error: 'LUNA_NEGRA_BASE is not configured.' });
 
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_BASE = 'https://luna.example';
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ valid: false })));
     const invalidToken = await enterLunaNegraRoomApi(new Request('http://local/api/rooms/luna-negra/enter', {
       method: 'POST',
@@ -2086,15 +2086,15 @@ describe('core stacker engine', () => {
     expect(await invalidToken.json()).toEqual({ error: 'Luna Negra invite token is invalid or expired.' });
     vi.unstubAllGlobals();
 
-    if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
-    else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
+    if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE;
+    else process.env.LUNA_NEGRA_BASE = previousBaseUrl;
   });
 
   it('builds the Luna Negra game login URL from backend config', async () => {
-    const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
+    const previousBaseUrl = process.env.LUNA_NEGRA_BASE;
     const previousSlug = process.env.LUNA_NEGRA_GAME_SLUG;
     try {
-      process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example/';
+      process.env.LUNA_NEGRA_BASE = 'https://luna.example/';
       delete process.env.LUNA_NEGRA_GAME_SLUG;
 
       const defaultUrl = await lunaNegraApiGet(new Request('http://local/api/luna-negra/login-url'));
@@ -2106,8 +2106,8 @@ describe('core stacker engine', () => {
       expect(customUrl.status).toBe(200);
       expect(await customUrl.json()).toMatchObject({ url: 'https://luna.example/game/tetra-test' });
     } finally {
-      if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
-      else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
+      if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE;
+      else process.env.LUNA_NEGRA_BASE = previousBaseUrl;
       if (previousSlug === undefined) delete process.env.LUNA_NEGRA_GAME_SLUG;
       else process.env.LUNA_NEGRA_GAME_SLUG = previousSlug;
     }

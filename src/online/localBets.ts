@@ -19,16 +19,16 @@ interface LunaConfig {
 }
 
 function readApiConfig(): LunaConfig {
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
+  const baseUrl = (process.env.LUNA_NEGRA_BASE ?? '').replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
+  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE no está configurada.', 500);
   if (!apiKey) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
   return { baseUrl, apiKey };
 }
 
 export function isLocalBetConfigured(): boolean {
   return Boolean(
-    (process.env.LUNA_NEGRA_BASE_URL ?? '').trim()
+    (process.env.LUNA_NEGRA_BASE ?? '').trim()
     && (process.env.LUNA_NEGRA_API_KEY ?? '').trim()
     && (process.env.LUNA_NEGRA_GAME_ID ?? '').trim(),
   );

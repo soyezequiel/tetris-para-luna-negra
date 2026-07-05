@@ -119,8 +119,8 @@ function buildInviteUrl(request: Request, roomId: string): string {
 }
 
 function buildInviteWindowUrl(gameId: string, roomId: string): string {
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL is not configured.', 500);
+  const baseUrl = (process.env.LUNA_NEGRA_BASE ?? '').replace(/\/+$/, '');
+  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE is not configured.', 500);
   const url = new URL('/invite-friend', baseUrl);
   url.searchParams.set('gameId', gameId);
   url.searchParams.set('roomId', roomId);
@@ -128,8 +128,8 @@ function buildInviteWindowUrl(gameId: string, roomId: string): string {
 }
 
 function buildLunaLoginUrl(): string {
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL is not configured.', 500);
+  const baseUrl = (process.env.LUNA_NEGRA_BASE ?? '').replace(/\/+$/, '');
+  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE is not configured.', 500);
   const slug = normalizeLunaGameSlug(process.env.LUNA_NEGRA_GAME_SLUG ?? 'tetris-beta');
   return new URL(`/game/${slug}`, baseUrl).toString();
 }

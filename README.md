@@ -119,7 +119,7 @@ Variables de entorno (en Vercel) para habilitar las apuestas:
 
 | Variable | Para qué |
 | --- | --- |
-| `LUNA_NEGRA_BASE_URL` | URL del deploy de Luna Negra (también valida invites). |
+| `LUNA_NEGRA_BASE` | URL del deploy de Luna Negra (también valida invites). |
 | `LUNA_NEGRA_API_KEY` | API key del proveedor (`ln_sk_…`). Única credencial requerida: crea/lee/cancela apuestas, reporta al ganador y registra el webhook. |
 | `LUNA_NEGRA_GAME_SLUG` | (Opcional) Slug de TETRA en Luna Negra para el botón de login. Por defecto `tetris-beta`. |
 | `LUNA_NEGRA_GAME_ID` | (Opcional) Fallback del `gameId`; normalmente no hace falta (se toma del `inviteToken`). |

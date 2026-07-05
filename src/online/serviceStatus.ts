@@ -236,11 +236,11 @@ function checkVercel(): ServiceCheck {
 async function checkLunaNegra(): Promise<ServiceCheck> {
   const id = 'luna-negra';
   const name = 'Luna Negra (backend SSO/apuestas)';
-  const base = (process.env.LUNA_NEGRA_BASE_URL ?? '').trim().replace(/\/+$/, '');
+  const base = (process.env.LUNA_NEGRA_BASE ?? '').trim().replace(/\/+$/, '');
   if (!base) {
     return {
       id, name, configured: false, status: 'unknown', metrics: [],
-      note: 'Falta LUNA_NEGRA_BASE_URL.',
+      note: 'Falta LUNA_NEGRA_BASE.',
     };
   }
   const started = Date.now();

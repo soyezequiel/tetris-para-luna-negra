@@ -45,8 +45,8 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 async function verifyLunaNegraInvite(inviteToken: string): Promise<VerifiedLunaNegraInvite> {
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL is not configured.', 500);
+  const baseUrl = (process.env.LUNA_NEGRA_BASE ?? '').replace(/\/+$/, '');
+  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE is not configured.', 500);
 
   const response = await fetch(`${baseUrl}/api/v1/rooms/verify`, {
     method: 'GET',

@@ -167,7 +167,7 @@ function buildDiscordSummary(report: ReportPayload): string {
 
 // Resumen de un fallo de validación de sesión de Luna Negra (401). La línea clave es
 // `causa probable`: la deriva el cliente de si el token ya estaba vencido (expiración,
-// benigno) o seguía vigente (firma/baseURL mismatch → revisar LUNA_NEGRA_BASE_URL).
+// benigno) o seguía vigente (firma/baseURL mismatch → revisar LUNA_NEGRA_BASE).
 function buildLunaSessionSummary(report: ReportPayload): string {
   const ls = report.lunaSession ?? {};
   const bool = (v: unknown): string => (v === true ? 'sí' : v === false ? 'no' : '—');

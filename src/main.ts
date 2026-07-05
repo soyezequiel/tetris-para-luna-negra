@@ -2339,7 +2339,7 @@ function peekJwtClaims(token: string): Record<string, unknown> | null {
 // al jugador a invitado). Decodifica los claims del token SIN verificar para distinguir la
 // causa sin entrar por SSH a la laptop: si el token ya estaba vencido cuando Luna lo rechazó
 // → expiración (benigno, reentrar desde Luna); si seguía vigente → la firma no matcheó
-// (LUNA_NEGRA_BASE_URL apunta a otra Luna) o iss/aud no coinciden. Fire-and-forget: nunca
+// (LUNA_NEGRA_BASE apunta a otra Luna) o iss/aud no coinciden. Fire-and-forget: nunca
 // bloquea ni rompe la puerta de login. Va al mismo canal de Discord que el botón "Reportar".
 function reportLunaSessionFailure(reason: string, token: string): void {
   const claims = peekJwtClaims(token);
@@ -2441,7 +2441,7 @@ async function bootstrapLunaSession(): Promise<void> {
       // Abriste el juego DESDE Luna (venías con token) pero la validación falló:
       // dejá visible la razón en la puerta de login en vez de caer mudo a invitado.
       // Usamos lunaState.sessionError (no onlineNetState.error) porque el refresco de
-      // salas públicas del arranque pisa este último. Causas típicas: LUNA_NEGRA_BASE_URL
+      // salas públicas del arranque pisa este último. Causas típicas: LUNA_NEGRA_BASE
       // del deploy apunta a un store que no minteó este token, o el token expiró (~5 min).
       const reason = error instanceof Error ? error.message : 'error desconocido';
       lunaState.sessionError = describeLunaSessionFailure(reason, freshToken);

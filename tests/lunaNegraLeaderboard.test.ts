@@ -6,13 +6,13 @@ import {
 } from '../src/online/lunaNegraLeaderboard';
 
 function setEnv(): void {
-  process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+  process.env.LUNA_NEGRA_BASE = 'https://luna.example';
   process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
   process.env.LUNA_NEGRA_GAME_ID = 'game-x';
 }
 
 function clearEnv(): void {
-  delete process.env.LUNA_NEGRA_BASE_URL;
+  delete process.env.LUNA_NEGRA_BASE;
   delete process.env.LUNA_NEGRA_API_KEY;
   delete process.env.LUNA_NEGRA_GAME_ID;
 }

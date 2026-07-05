@@ -26,18 +26,18 @@ function readConfig(): LunaConfig {
   // pegarla en Vercel) producía fetch('https://host\n/api/v1/session') → throw →
   // null → 401, MIENTRAS que buildLunaLoginUrl (new URL) lo toleraba: login andaba
   // pero la sesión SSO no. Por eso trimeamos antes de sacar los slashes finales.
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').trim().replace(/\/+$/, '');
+  const baseUrl = (process.env.LUNA_NEGRA_BASE ?? '').trim().replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
+  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE no está configurada.', 500);
   if (!apiKey) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
   return { baseUrl, apiKey };
 }
 
 // fetch() descarta el header Authorization al seguir un redirect cross-origin
-// (Fetch spec). Si LUNA_NEGRA_BASE_URL es un alias que hace 3xx hacia el dominio
+// (Fetch spec). Si LUNA_NEGRA_BASE es un alias que hace 3xx hacia el dominio
 // real, el bearer se pierde y la sesión SIEMPRE falla (login → invitado). Cuando
 // detectamos que hubo redirect, reintentamos directo contra la URL final
-// re-adjuntando el header. Lo ideal igual es apuntar LUNA_NEGRA_BASE_URL al
+// re-adjuntando el header. Lo ideal igual es apuntar LUNA_NEGRA_BASE al
 // dominio final para evitar el doble request.
 async function lunaFetch(url: string, init: RequestInit, bearer: string): Promise<Response> {
   const headers = { ...(init.headers as Record<string, string> | undefined), authorization: `Bearer ${bearer}` };
@@ -45,7 +45,7 @@ async function lunaFetch(url: string, init: RequestInit, bearer: string): Promis
   if (response.redirected && response.url && response.url !== url) {
     console.warn(
       `[luna-negra] ${url} redirigió a ${response.url}; fetch descarta el header Authorization `
-        + 'en redirects cross-origin. Reintentando directo — apuntá LUNA_NEGRA_BASE_URL al dominio final.',
+        + 'en redirects cross-origin. Reintentando directo — apuntá LUNA_NEGRA_BASE al dominio final.',
     );
     return fetch(response.url, { ...init, headers });
   }

@@ -6,7 +6,7 @@
 > `src/online/lunaNegraSocial.ts` y canjea el `lnToken` una sola vez al cargar
 > (persistiendo la **identidad**, no el token, porque el entitlement expira a ~5 min).
 > No hay modo "mock": Tetris y Luna Negra se despliegan juntos, así que la API
-> siempre está configurada; sin `LUNA_NEGRA_BASE_URL`/`API_KEY` las funciones
+> siempre está configurada; sin `LUNA_NEGRA_BASE`/`API_KEY` las funciones
 > sociales fallan con un error claro (`source` es siempre `"luna-negra"`).
 
 
@@ -21,7 +21,7 @@ usa además la **capa social** de Luna Negra:
 3. **Presencia**: saber qué amigos tienen el juego abierto / están jugando.
 4. **Invitaciones**: notificar a un amigo para que se una a una sala.
 
-> El game server tiene `LUNA_NEGRA_BASE_URL` + `LUNA_NEGRA_API_KEY`. La capa
+> El game server tiene `LUNA_NEGRA_BASE` + `LUNA_NEGRA_API_KEY`. La capa
 > social usa esas mismas credenciales del lado servidor (`src/online/lunaNegraSocial.ts`),
 > nunca expone la API key al browser.
 
@@ -29,7 +29,7 @@ usa además la **capa social** de Luna Negra:
 
 ## Contrato propuesto
 
-Todas las rutas cuelgan de `LUNA_NEGRA_BASE_URL`. Autenticación con
+Todas las rutas cuelgan de `LUNA_NEGRA_BASE`. Autenticación con
 `Authorization: Bearer <…>` (API key del proveedor salvo donde se indique el
 token de sesión del usuario).
 
@@ -182,6 +182,6 @@ popup no reaparezca en loop. `inviteToken` se usa contra
 - Cliente del browser: `src/online/lunaNegraFriendsClient.ts`.
 - UI (panel de amigos + lobby CS2): `src/main.ts` (`renderFriendsSidebar`, `renderOnlineLobbyOverlay`).
 
-Las funciones sociales requieren `LUNA_NEGRA_BASE_URL` + `LUNA_NEGRA_API_KEY`; sin
+Las funciones sociales requieren `LUNA_NEGRA_BASE` + `LUNA_NEGRA_API_KEY`; sin
 ellas fallan con un error claro (no hay modo demo). El campo `source` de las
 respuestas es siempre `"luna-negra"`.

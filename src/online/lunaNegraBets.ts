@@ -66,9 +66,9 @@ export const LUNA_NEGRA_MAX_STAKE_SATS = 1_000_000;
 function readApiConfig(): LunaConfig {
   // Mock dev (hard test): sentinels válidos para no exigir env de Luna real.
   if (isLunaMockEnabled()) return { baseUrl: 'mock://luna-negra', apiKey: 'mock' };
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
+  const baseUrl = (process.env.LUNA_NEGRA_BASE ?? '').replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
+  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE no está configurada.', 500);
   if (!apiKey) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
   return { baseUrl, apiKey };
 }
@@ -76,7 +76,7 @@ function readApiConfig(): LunaConfig {
 export function isLunaNegraApiConfigured(): boolean {
   if (isLunaMockEnabled()) return true;
   return Boolean(
-    (process.env.LUNA_NEGRA_BASE_URL ?? '').trim()
+    (process.env.LUNA_NEGRA_BASE ?? '').trim()
     && (process.env.LUNA_NEGRA_API_KEY ?? '').trim(),
   );
 }

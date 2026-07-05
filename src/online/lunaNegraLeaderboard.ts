@@ -27,7 +27,7 @@ interface LunaLeaderboardConfig {
 }
 
 function readConfig(): LunaLeaderboardConfig | null {
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
+  const baseUrl = (process.env.LUNA_NEGRA_BASE ?? '').replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
   const gameId = (process.env.LUNA_NEGRA_GAME_ID ?? '').trim();
   if (!baseUrl || !apiKey || !gameId) return null;
