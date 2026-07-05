@@ -60,6 +60,10 @@ export interface LocalVersusOptions {
   colorBlind?: boolean;
   onExit: () => void;
   audio?: LocalVersusAudioHooks;
+  // Arranca directo en la pantalla de cobro recuperando el QR de retiro guardado
+  // (tras un refresh de la página). Si no hay cobro pendiente o ya se cobró, cae
+  // a la configuración de asientos normal.
+  resumePayout?: boolean;
 }
 
 type Phase = 'seatSetup' | 'betDeposit' | 'countdown' | 'playing' | 'finished';
@@ -199,7 +203,48 @@ function controlChipsHtml(device: SeatDevice, seat: 1 | 2, variant: 'setup' | 'p
 
 const SEAT_STORAGE_KEY = 'tetra:localVersus:seats:v1';
 const STAKE_STORAGE_KEY = 'tetra:localVersus:stake:v1';
+const PAYOUT_STORAGE_KEY = 'tetra:localVersus:pendingPayout:v1';
 const DEFAULT_STAKE_SATS = 100;
+
+// Registro mínimo para recuperar el QR de retiro tras un refresh: la apuesta vive
+// en Luna Negra (por `betId`), así que solo guardamos la referencia + el mapa
+// asiento→npub (lo pide el GET de estado) + quién ganó + si ya se reveló el QR.
+interface PendingPayoutRecord {
+  betId: string;
+  seats: Array<{ seat: number; npub: string }>;
+  winnerSeat: 1 | 2 | null;
+  revealed: boolean;
+}
+
+function loadPendingPayout(): PendingPayoutRecord | null {
+  try {
+    const raw = localStorage.getItem(PAYOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingPayoutRecord;
+    if (!parsed?.betId || !Array.isArray(parsed.seats)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingPayout(record: PendingPayoutRecord): void {
+  try {
+    localStorage.setItem(PAYOUT_STORAGE_KEY, JSON.stringify(record));
+  } catch { /* best-effort: el stand puede correr sin localStorage */ }
+}
+
+function clearPendingPayout(): void {
+  try {
+    localStorage.removeItem(PAYOUT_STORAGE_KEY);
+  } catch { /* best-effort */ }
+}
+
+// ¿Hay un cobro de duelo local pendiente de recuperar al recargar la página?
+// (main.ts lo consulta en el arranque para reabrir la pantalla con el mismo QR.)
+export function hasPendingLocalPayout(): boolean {
+  return loadPendingPayout() !== null;
+}
 
 function loadStake(): number {
   try {
@@ -372,9 +417,13 @@ class LocalVersusMatch {
     document.body.appendChild(this.overlay);
     this.overlay.addEventListener('keydown', this.onKeyDown);
     this.overlay.tabIndex = -1;
-    this.renderSeatSetup();
-    this.overlay.focus();
-    void this.checkBetAvailable();
+    if (options.resumePayout && loadPendingPayout()) {
+      void this.resumePendingPayout();
+    } else {
+      this.renderSeatSetup();
+      this.overlay.focus();
+      void this.checkBetAvailable();
+    }
   }
 
   destroy(): void {
@@ -412,6 +461,9 @@ class LocalVersusMatch {
   };
 
   private exit(): void {
+    // Salir de la pantalla es un descarte deliberado del cobro: ya no hace falta
+    // recuperarlo en el próximo refresh.
+    clearPendingPayout();
     this.options.onExit();
     this.destroy();
   }
@@ -419,6 +471,7 @@ class LocalVersusMatch {
   private backToSeatSetup(): void {
     cancelAnimationFrame(this.rafId);
     window.clearTimeout(this.betPollTimer);
+    clearPendingPayout();
     this.teardownSeats();
     this.bet = null;
     this.betError = null;
@@ -887,6 +940,39 @@ class LocalVersusMatch {
     if (this.bet && !isPayoutResolved(this.bet)) this.scheduleBetPoll();
   }
 
+  // Recuperación tras un refresh: relee la apuesta guardada desde Luna Negra y, si
+  // el ganador todavía tiene un cobro sin reclamar, reabre la MISMA pantalla con el
+  // MISMO QR de retiro. Si ya cobró (o la apuesta se resolvió sin premio), limpia
+  // el registro y cae a la configuración de asientos.
+  private async resumePendingPayout(): Promise<void> {
+    const saved = loadPendingPayout();
+    if (!saved) { this.exit(); return; }
+    this.phase = 'finished';
+    this.outcome = saved.winnerSeat === 1 ? 'seat1' : saved.winnerSeat === 2 ? 'seat2' : 'draw';
+    this.payoutRevealed = !!saved.revealed;
+    this.overlay.innerHTML = `
+      <div class="lv-finished">
+        <h1 class="lv-win-title">Recuperando tu cobro…</h1>
+        <p class="lv-bet-note">⏳ Cargando el QR de retiro…</p>
+      </div>`;
+    this.overlay.focus();
+    try {
+      this.bet = await this.betApi<LocalBetView>('state', { betId: saved.betId, seats: saved.seats });
+    } catch {
+      this.betError = 'No se pudo recuperar la apuesta.';
+    }
+    if (this.destroyed) return;
+    // Sin cobro pendiente que mostrar (ya pagado o la apuesta murió) → nada que
+    // recuperar: limpiamos el registro y cerramos el overlay para volver a la app.
+    if (!this.bet || !winnerHasUnclaimedWithdraw(this.bet)) {
+      clearPendingPayout();
+      this.exit();
+      return;
+    }
+    this.renderFinished();
+    if (!isPayoutResolved(this.bet)) this.scheduleBetPoll();
+  }
+
   // ── Render del escenario (canvases persistentes + HUD reescribible) ─────────
 
   private renderStage(): void {
@@ -966,6 +1052,13 @@ class LocalVersusMatch {
   private renderFinished(): void {
     cancelAnimationFrame(this.rafId);
     const winnerSeat = this.outcome === 'seat1' ? 1 : this.outcome === 'seat2' ? 2 : null;
+    // Persistimos el cobro para sobrevivir un refresh mientras siga sin reclamar;
+    // en cuanto se paga (o la apuesta se resuelve sin premio) borramos el registro.
+    if (this.bet && winnerHasUnclaimedWithdraw(this.bet)) {
+      savePendingPayout({ betId: this.bet.betId, seats: this.bet.seats, winnerSeat, revealed: this.payoutRevealed });
+    } else if (this.bet) {
+      clearPendingPayout();
+    }
     const winner = winnerSeat ? `Jugador ${winnerSeat}` : null;
     const heading = winner ? `🏆 ${winner} gana` : '🤝 Empate';
     this.overlay.innerHTML = `
@@ -984,7 +1077,7 @@ class LocalVersusMatch {
         const action = el.dataset.lv;
         if (action === 'exit') this.exit();
         else if (action === 'setup') this.backToSeatSetup();
-        else if (action === 'rematch') { this.bet = null; this.teardownSeats(); this.beginCountdown(); }
+        else if (action === 'rematch') { clearPendingPayout(); this.bet = null; this.teardownSeats(); this.beginCountdown(); }
         else if (action === 'payout-reveal') { this.payoutRevealed = true; this.renderFinished(); }
         else if (action === 'qr-zoom' && el.dataset.qr) this.openQrZoom(el.dataset.qr);
       });
@@ -1065,6 +1158,15 @@ function isPayoutResolved(bet: LocalBetView): boolean {
   // withdraw_pending con handle ya disponible (v1 LNURL-QR o v2 link de reclamo):
   // dejamos de polear porque ya hay forma de cobrar en pantalla.
   return winner.payoutStatus === 'withdraw_pending' && !!(winner.withdrawLnurl || winner.withdrawUrl);
+}
+
+// El ganador tiene un cobro por retirar (QR/link) que TODAVÍA no reclamó. Es la
+// condición para persistir el cobro y recuperarlo tras un refresh.
+function winnerHasUnclaimedWithdraw(bet: LocalBetView): boolean {
+  const winner = bet.participants.find((p) => p.result === 'won');
+  if (!winner) return false;
+  if (winner.payoutStatus === 'paid' || winner.payoutStatus === 'claimed') return false;
+  return !!(winner.withdrawLnurl || winner.withdrawUrl);
 }
 
 function escapeText(value: string): string {

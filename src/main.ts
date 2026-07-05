@@ -79,7 +79,7 @@ import { displayedElapsedFrames } from './game/timing';
 import type { ActivePiece, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
 import { GamepadController } from './gamepad';
-import { startLocalVersus, type LocalVersusSession } from './app/localVersus';
+import { startLocalVersus, hasPendingLocalPayout, type LocalVersusSession } from './app/localVersus';
 import { BoardAudio } from './audio/BoardAudio';
 import {
   applyHandlingPreset,
@@ -980,12 +980,13 @@ function buildPerfReport(): Record<string, unknown> {
 // según la posición del tablero (izquierda/derecha) y el ajuste de audio posicional.
 let localVersusAudio: { seat1: BoardAudio; seat2: BoardAudio } | null = null;
 
-function startLocalVersusMode(): void {
+function startLocalVersusMode(opts?: { resumePayout?: boolean }): void {
   if (localVersusSession) return;
   input.releaseAll();
   gamepad.releaseAll();
   localVersusSession = startLocalVersus({
     colorBlind: customSettings.colorBlindMode,
+    resumePayout: opts?.resumePayout,
     onExit: () => {
       // Al cerrar, el loop principal retoma el render del menú en el próximo frame.
       localVersusSession = null;
@@ -1430,6 +1431,11 @@ Object.assign(window, {
   (window as unknown as { stack40: unknown }).stack40;
 
 void bootstrapOnlineStartup();
+
+// Recuperación de cobro del Duelo Local: si un refresh dejó un QR de retiro sin
+// reclamar, reabrimos la misma pantalla con el mismo QR (el módulo relee la
+// apuesta desde Luna Negra y limpia el registro si ya se cobró).
+if (hasPendingLocalPayout()) startLocalVersusMode({ resumePayout: true });
 
 function targetGameplayFrame(now = performance.now()): number {
   // DESACOPLE TOTAL (online + solo): el frame de juego se ancla al reloj LOCAL monotónico
