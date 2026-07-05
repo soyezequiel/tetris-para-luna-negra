@@ -1,4 +1,5 @@
 import { handleApiError, handleNodeApi, sendJson } from '../src/online/vercelApi.js';
+import { fetchBetPaymentTimeline } from '../src/online/lunaNegraBets.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../src/online/vercelApi.js';
@@ -34,8 +35,23 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (!report || typeof report !== 'object') return sendJson(400, { error: 'Reporte inválido.' });
 
+    // Radiografía del pago (server-authoritative): si el reporte trae un betId,
+    // le pedimos a Luna Negra —con la API key que vive SOLO en este server— el
+    // desglose temporal (fases, depósitos, payout, ledger) y lo adjuntamos. Así el
+    // reporte del jugador incluye el "por qué tardó" con timestamps exactos, no solo
+    // lo que el cliente alcanzó a ver por polling. Best-effort: nunca bloquea.
+    const betId = typeof report.betWithdrawal?.betId === 'string' ? report.betWithdrawal.betId : null;
+    if (betId) {
+      const paymentTimeline = await fetchBetPaymentTimeline(betId).catch(() => null);
+      if (paymentTimeline) report.paymentTimeline = paymentTimeline as PaymentTimeline;
+    }
+
     const content = buildDiscordSummary(report);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    // Reserializamos DESPUÉS de adjuntar el timeline: el JSON que va a Discord (embed
+    // y archivo) es el enriquecido, no el crudo del request. El chequeo de tamaño de
+    // arriba sigue sobre el body original (anti-abuso de lo que mandó el cliente).
+    const outText = JSON.stringify(report);
 
     // El JSON completo va en un bloque de código DENTRO de un embed: en Discord (desktop) un
     // bloque ``` muestra botón "Copiar" de un clic, así se pega directo en Claude Code sin
@@ -45,14 +61,14 @@ export async function POST(request: Request): Promise<Response> {
     const FENCE = '```';
     const wrap = (body: string): string => `${FENCE}json\n${body}\n${FENCE}`;
     const overhead = wrap('').length + 1; // backticks + saltos de línea
-    const truncated = text.length > EMBED_DESC_MAX - overhead;
+    const truncated = outText.length > EMBED_DESC_MAX - overhead;
     // Neutralizamos cualquier backtick del payload (p. ej. en el comentario del jugador) con un
     // zero-width space para que no cierre el bloque de código del embed. En un reporte normal el
     // JSON no tiene backticks, así que es un no-op; el ZWSP es invisible al pegar.
     const safe = (s: string): string => s.replace(/`/g, '`​');
     const jsonForEmbed = truncated
-      ? `${safe(text.slice(0, EMBED_DESC_MAX - overhead - 24))}…\n(truncado, ver adjunto)`
-      : safe(text);
+      ? `${safe(outText.slice(0, EMBED_DESC_MAX - overhead - 24))}…\n(truncado, ver adjunto)`
+      : safe(outText);
     const embed = {
       title: '📋 Reporte (copialo y pegalo en Claude Code)',
       description: wrap(jsonForEmbed),
@@ -64,7 +80,7 @@ export async function POST(request: Request): Promise<Response> {
     // Solo adjuntamos el archivo cuando el JSON NO entró entero en el bloque copiable del embed
     // (truncado). Si entró completo, el adjunto sería una copia exacta y redundante del embed.
     if (truncated) {
-      form.append('files[0]', new Blob([text], { type: 'application/json' }), `report-${stamp}.json`);
+      form.append('files[0]', new Blob([outText], { type: 'application/json' }), `report-${stamp}.json`);
     }
 
     const discord = await fetch(webhookUrl, { method: 'POST', body: form });
@@ -78,10 +94,26 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
+interface PaymentTimeline {
+  status?: unknown;
+  phases?: { fundingMs?: unknown; settlementMs?: unknown; totalMs?: unknown };
+  bet?: { hasResultEvent?: unknown; hasSettleNote?: unknown };
+  participants?: {
+    seat?: unknown;
+    result?: unknown;
+    deposit?: { status?: unknown; sinceCreateMs?: unknown };
+    payout?: { status?: unknown; kind?: unknown; sats?: unknown; sinceReadyMs?: unknown };
+  }[];
+  ledger?: { kind?: unknown; status?: unknown; sinceReadyMs?: unknown }[];
+}
+
 interface ReportPayload {
   kind?: unknown;
   url?: unknown;
   comment?: unknown;
+  // Radiografía temporal del pago, adjuntada por ESTE server (no la manda el
+  // cliente): fases + depósitos + payout + ledger, con timestamps de Luna Negra.
+  paymentTimeline?: PaymentTimeline;
   // Fallo de validación de sesión de Luna Negra (401). Lo manda automáticamente el cliente
   // cuando el entitlement no valida; los claims van decodificados SIN verificar (diagnóstico).
   lunaSession?: {
@@ -159,10 +191,42 @@ function buildDiscordSummary(report: ReportPayload): string {
     `⏱️ peor frame=${worstStr} · maxLongtask=${num(s.maxLongtaskMs)}ms · frames=${num(s.frames)} en ${num(s.durationMs)}ms · errores=**${errors}**`,
     `🖥️ ${str(dev.viewport)} dpr=${num(dev.dpr)} cores=${num(dev.cores)} transport=${str(dev.transport)}`,
     buildBetWithdrawalLine(report.betWithdrawal),
+    buildPaymentTimelineLine(report.paymentTimeline),
     buildAudioLine(report.audio),
     buildMarksLine(report.marks),
   ].filter((line): line is string => line !== null);
   return lines.join('\n').slice(0, 1990);
+}
+
+// Resumen del pago con las duraciones por fase (la respuesta a "¿por qué tardó?"):
+// fondeo (crear→listo), liquidación (listo→pagado) y total. Más el detalle del
+// premio del/los ganador(es) y el mayor desfase de un asiento del ledger respecto a
+// "listo" (revela serialización lenta en la liquidación). null si no hay timeline.
+function buildPaymentTimelineLine(tl: ReportPayload['paymentTimeline']): string | null {
+  if (!tl || typeof tl !== 'object') return null;
+  const secs = (v: unknown): string => (typeof v === 'number' ? `${(v / 1000).toFixed(1)}s` : '—');
+  const ph = tl.phases ?? {};
+  const winners = (Array.isArray(tl.participants) ? tl.participants : []).filter(
+    (p) => p?.result === 'won' || p?.result === 'tie',
+  );
+  const winStr = winners.length
+    ? winners
+        .map((w) => {
+          const kind = str(w.payout?.kind);
+          const sats = typeof w.payout?.sats === 'number' ? w.payout.sats : '—';
+          return `${sats} sats vía ${kind} en ${secs(w.payout?.sinceReadyMs)}`;
+        })
+        .join(', ')
+    : '—';
+  const ledger = Array.isArray(tl.ledger) ? tl.ledger : [];
+  const maxLedger = ledger.reduce(
+    (max, e) => (typeof e?.sinceReadyMs === 'number' && e.sinceReadyMs > max ? e.sinceReadyMs : max),
+    0,
+  );
+  return (
+    `⏳ pago \`${str(tl.status)}\`: fondeo=${secs(ph.fundingMs)} liquidación=${secs(ph.settlementMs)} total=${secs(ph.totalMs)}` +
+    ` · ganador: ${winStr} · últ.asiento=+${secs(maxLedger)}`
+  );
 }
 
 // Resumen de un fallo de validación de sesión de Luna Negra (401). La línea clave es

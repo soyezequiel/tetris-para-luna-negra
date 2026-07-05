@@ -34,6 +34,8 @@ import type {
   RestartRoomRequest,
   ResultRequest,
   RoomBetActionRequest,
+  RoomBetDepositInvoiceRequest,
+  OnlineBetDepositInvoiceResponse,
   SetTargetingRequest,
   StartRoomRequest,
   SubmitScoreRequest,
@@ -103,6 +105,9 @@ export class PartyOnlineClient implements OnlineClientApi {
   }
   settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
     return this.http.settleBet(request);
+  }
+  depositInvoice(request: RoomBetDepositInvoiceRequest): Promise<OnlineBetDepositInvoiceResponse> {
+    return this.http.depositInvoice(request);
   }
   getLeaderboard(limit?: number): Promise<LeaderboardResponse> {
     return this.http.getLeaderboard(limit);

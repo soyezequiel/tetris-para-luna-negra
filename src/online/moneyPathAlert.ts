@@ -1,4 +1,5 @@
 import { OnlineRoomError } from './roomService.js';
+import type { RoomBet, RoomBetParticipant } from './protocol';
 
 // Alerta a Discord cuando un flujo de plata (apuestas) falla en el server. El URL del
 // webhook vive SOLO en el server (env `DISCORD_ALERT_WEBHOOK_URL`, con fallback al
@@ -25,6 +26,83 @@ interface ErrorInfo {
   status: number | null;
   code: string | null;
   message: string;
+}
+
+// Snapshot de la configuración del server relevante para el flujo de plata. Solo
+// booleanos y el nombre del backend activo: NUNCA valores de secretos. Sirve para
+// que la alerta diga *qué falta* en este entorno (típico: env vars que están en
+// producción pero no en el deploy preview).
+interface MoneyPathConfig {
+  betStore: 'partyserver' | 'upstash' | 'memory';
+  hasApiKey: boolean;
+  hasBaseUrl: boolean;
+  hasGameId: boolean;
+  hasPartyBridgeToken: boolean;
+  hasUpstash: boolean;
+}
+
+function readMoneyPathConfig(): MoneyPathConfig {
+  const hasPartyBridgeToken = Boolean((process.env.PARTY_BRIDGE_TOKEN ?? '').trim());
+  const hasUpstash = Boolean(
+    (process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL ?? '').trim()
+    && (process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN ?? '').trim(),
+  );
+  return {
+    // Mismo orden de resolución que getBetRoomStore(): partyserver > upstash > memoria.
+    betStore: hasPartyBridgeToken ? 'partyserver' : (hasUpstash ? 'upstash' : 'memory'),
+    hasApiKey: Boolean((process.env.LUNA_NEGRA_API_KEY ?? '').trim()),
+    hasBaseUrl: Boolean((process.env.LUNA_NEGRA_BASE_URL ?? '').trim()),
+    hasGameId: Boolean((process.env.LUNA_NEGRA_GAME_ID ?? '').trim()),
+    hasPartyBridgeToken,
+    hasUpstash,
+  };
+}
+
+function tick(ok: boolean): string {
+  return ok ? '✅' : '❌';
+}
+
+/**
+ * Líneas de diagnóstico para la alerta: un snapshot de config (qué store se está
+ * usando y qué env vars faltan) y, cuando el fallo es un 404 de "sala no encontrada",
+ * una pista de la causa raíz más probable (mismatch de transporte / env vars ausentes
+ * en este entorno). El objetivo es que la alerta baste para saber *qué configurar*
+ * sin ir a leer el código.
+ */
+function diagnosticLines(info: ErrorInfo, cfg: MoneyPathConfig): string[] {
+  const lines: string[] = [
+    `🔧 store apuestas=\`${cfg.betStore}\` · API_KEY ${tick(cfg.hasApiKey)}`
+    + ` · BASE_URL ${tick(cfg.hasBaseUrl)} · GAME_ID ${tick(cfg.hasGameId)}`,
+  ];
+
+  const roomNotFound = info.status === 404
+    || /room not found|sala no encontrada/i.test(info.message);
+  if (roomNotFound) {
+    if (cfg.betStore === 'memory') {
+      lines.push(
+        '💡 El store de apuestas es en-memoria (falta `PARTY_BRIDGE_TOKEN` y Upstash en'
+        + ' este entorno): es efímero por instancia y NUNCA ve las salas del transporte'
+        + ' WebSocket. Configurá `PARTY_BRIDGE_TOKEN` + `PARTY_BRIDGE_URL` en ESTE deploy'
+        + ' (preview) apuntando al mismo partyserver que usa el cliente.',
+      );
+    } else {
+      lines.push(
+        `💡 La sala no está en el store \`${cfg.betStore}\`. Probable mismatch de transporte:`
+        + ' el cliente creó la sala en otro backend (p. ej. WebSocket/Cloudflare) mientras'
+        + ' esta API lee otro. Verificá que cliente y bet API apunten al MISMO transporte y,'
+        + ' si usás partyserver, que `PARTY_BRIDGE_URL` sea el mismo host en ambos.',
+      );
+    }
+  }
+
+  const missing: string[] = [];
+  if (!cfg.hasApiKey) missing.push('`LUNA_NEGRA_API_KEY`');
+  if (!cfg.hasBaseUrl) missing.push('`LUNA_NEGRA_BASE_URL`');
+  if (!cfg.hasGameId) missing.push('`LUNA_NEGRA_GAME_ID`');
+  if (missing.length) {
+    lines.push(`⚠ Faltan env vars de escrow en este entorno: ${missing.join(', ')}.`);
+  }
+  return lines;
 }
 
 // Extrae código de error del proveedor (LunaApiError) + status HTTP real cuando existen,
@@ -69,6 +147,7 @@ export async function alertMoneyPathError(
       `🚨 **Falló un flujo de plata** · \`${flow}\` (${env})`,
       `❌ ${info.code ? `\`${info.code}\` · ` : ''}${info.message.slice(0, 400)}${info.status ? ` (HTTP ${info.status})` : ''}`,
       ctxLine ? `📍 ${ctxLine}` : null,
+      ...diagnosticLines(info, readMoneyPathConfig()),
       `🕒 ${new Date(nowMs).toISOString()}`,
     ].filter((line): line is string => line !== null);
 
@@ -79,5 +158,96 @@ export async function alertMoneyPathError(
     });
   } catch {
     // Best-effort: un fallo al alertar nunca debe tapar/alterar el error original.
+  }
+}
+
+// Webhook del reporte de depósito de apuesta. Prioriza uno dedicado y cae a los del
+// resto de alertas. Vive SOLO en el server (nunca se expone al cliente).
+function betReportWebhookUrl(): string {
+  return (
+    process.env.DISCORD_BET_REPORT_WEBHOOK_URL
+    ?? process.env.DISCORD_ALERT_WEBHOOK_URL
+    ?? process.env.DISCORD_WEBHOOK_URL
+    ?? ''
+  ).trim();
+}
+
+// ¿Este participante quedó SIN forma de depositar dentro del juego? Necesita, mientras
+// su depósito está pendiente, o un `bolt11` ya emitido (QR + copiar + extensión) o el
+// par `depositZapRequest` + `depositCallback` (el 9734 sin firmar para firmarlo en el
+// juego). Sin ninguno, el panel cae al fallback "Pagar en Luna Negra" (payUrl) y no hay
+// QR/zap en el Tetris.
+function depositHandlesIncomplete(p: RoomBetParticipant): boolean {
+  return (
+    p.depositStatus === 'pending'
+    && !p.bolt11
+    && !(p.depositZapRequest && p.depositCallback)
+  );
+}
+
+/**
+ * Reporte a Discord cuando una apuesta recién CREADA no trae, para algún participante
+ * pendiente, los handles de depósito completos (ni `bolt11` ni `depositZapRequest`+
+ * `depositCallback`). Detalla por participante qué vino y qué falta, más un snapshot de
+ * config, para cazar regresiones (Luna sin identidad Nostr y sin devolver el 9734,
+ * función corriendo código viejo por build cache de Vercel, env vars ausentes, etc.).
+ * No fira si vino todo completo. Best-effort: nunca lanza.
+ */
+export async function alertBetDepositHandlesIncomplete(
+  bet: RoomBet,
+  context: Record<string, unknown> = {},
+): Promise<void> {
+  const webhookUrl = betReportWebhookUrl();
+  if (!webhookUrl) return;
+  // Solo mientras se esperan depósitos: en terminales/fondeadas no hay handles que emitir.
+  if (bet.status !== 'pending_deposits') return;
+
+  const incomplete = bet.participants.filter(depositHandlesIncomplete);
+  if (incomplete.length === 0) return; // vino todo lo que tenía que venir → no molestamos
+
+  try {
+    const nowMs = Date.now();
+    // Una alerta por apuesta (no por cada poll/refresh que la recree).
+    if (shouldThrottle(`bet-handles:${bet.betId}`, nowMs)) return;
+
+    const env = (process.env.VERCEL_ENV ?? 'dev').trim() || 'dev';
+    const short = (npub: string): string =>
+      npub.length > 18 ? `${npub.slice(0, 12)}…${npub.slice(-4)}` : npub;
+    const partLines = bet.participants.map((p) => {
+      const flags = [
+        `bolt11 ${tick(!!p.bolt11)}`,
+        `zapReq ${tick(!!p.depositZapRequest)}`,
+        `callback ${tick(!!p.depositCallback)}`,
+        `lnurl ${tick(!!p.lnurl)}`,
+        `payUrl ${tick(!!p.payUrl)}`,
+      ].join(' · ');
+      const err = p.depositError ? ` · ⚠ ${p.depositError.slice(0, 120)}` : '';
+      const flag = depositHandlesIncomplete(p) ? '🔴' : '🟢';
+      return `${flag} \`${short(p.npub)}\` [${p.depositStatus}] ${flags}${err}`;
+    });
+
+    const cfg = readMoneyPathConfig();
+    const ctxLine = Object.entries(context)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([k, value]) => `${k}=\`${String(value).slice(0, 60)}\``)
+      .join(' · ');
+    const lines = [
+      `🧾 **Apuesta creada SIN handles de depósito completos** (${env})`,
+      `📍 betId=\`${bet.betId}\` · stake=\`${bet.stakeSats}\` sats · estado=\`${bet.status}\` · ${incomplete.length}/${bet.participants.length} incompletos`,
+      ctxLine ? `📎 ${ctxLine}` : null,
+      '👥 Participantes:',
+      ...partLines,
+      `🔧 store=\`${cfg.betStore}\` · API_KEY ${tick(cfg.hasApiKey)} · BASE_URL ${tick(cfg.hasBaseUrl)} · GAME_ID ${tick(cfg.hasGameId)}`,
+      '💡 Sin `bolt11` ni (`zapReq`+`callback`) el panel cae a "Pagar en Luna Negra" (payUrl): no hay QR/zap en el juego. Causas típicas: Luna no devolvió el 9734 (tienda sin identidad Nostr o `depositZapRequest` ausente en su respuesta) o la función corre código viejo (build cache de Vercel).',
+      `🕒 ${new Date(nowMs).toISOString()}`,
+    ].filter((line): line is string => line !== null);
+
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: lines.join('\n').slice(0, 1990) }),
+    });
+  } catch {
+    // Best-effort: el reporte nunca debe afectar la creación de la apuesta.
   }
 }

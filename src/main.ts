@@ -1,5 +1,6 @@
 import './styles.css';
 import QRCode from 'qrcode';
+import { nip19 } from 'nostr-tools';
 import { gearOutlineIcon, historyClockIcon, homeIcon, logoutIcon, playIcon, settingsGearIcon, speakerIcon } from './ui/icons';
 import { formatFrames, escapeHtml } from './ui/format';
 import { renderWelcome } from './ui/dashboard/welcome';
@@ -12,7 +13,7 @@ import { modeAccent, modeTetrominoIcon, playModeMeta, renderModeCard } from './u
 import { leaderboardState } from './state/leaderboardState';
 import type { SurvivalRunRank } from './state/leaderboardState';
 import { betState, DEFAULT_ONLINE_BET_STAKE_SATS } from './state/betState';
-import { lunaState, type PendingLunaLaunchRequest } from './state/lunaState';
+import { lunaState, type NostrChallengeFriend, type NostrLoginTab, type PendingLunaLaunchRequest } from './state/lunaState';
 import { spectatorState } from './state/spectatorState';
 import { replayState, multiReplayState, type MultiReplayCard } from './state/replayState';
 import { onlineNetState, onlineClockState, onlineFailoverState } from './state/onlineNetState';
@@ -78,7 +79,7 @@ import { displayedElapsedFrames } from './game/timing';
 import type { ActivePiece, GameEngineSnapshot, GameEvent, GameInput, GameRules, GameState, InputAction, LineClearEvent } from './game/types';
 import { InputController, isBrowserShortcutKeyDown, isEditableKeyboardTarget, type ControlInput } from './input';
 import { GamepadController } from './gamepad';
-import { startLocalVersus, type LocalVersusSession } from './app/localVersus';
+import { startLocalVersus, hasPendingLocalPayout, type LocalVersusSession } from './app/localVersus';
 import { BoardAudio } from './audio/BoardAudio';
 import {
   applyHandlingPreset,
@@ -106,6 +107,25 @@ import { createOnlineClient } from './online/partyClient';
 import { LunaSocialClient } from './online/lunaNegraFriendsClient';
 import type { HostSimulatedPlayer } from './online/hostAuthority';
 import { saveOnlinePlayer } from './online/playerIdentity';
+import {
+  clearActiveSigner,
+  createNip07Signer,
+  generateLocalSigner,
+  getActiveSigner,
+  importNsec,
+  restoreSigner,
+  setSignEventNotifier,
+  type LunaSigner,
+  type StoredSigner,
+  type UnsignedEvent,
+} from './online/nostrSigner';
+import { loginWithSigner } from './online/nostrLogin';
+import { buildChallengeGiftWraps, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
+import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
+import { clearPresenceEvent, publishPresence, type PresenceStatus } from './online/nostrPresence';
+import { NOSTR_BOARD_SURVIVAL, NOSTR_BOARD_WINS, publishScore } from './online/nostrLeaderboard';
+import { fetchContacts } from './online/nostrContacts';
+import { fetchProfiles, profileName } from './online/nostrProfile';
 import { decidePeerKoAction } from './online/peerKoAuthority';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayMessage } from './online/peerBroadcast';
 import { OnlineReplayCollector } from './app/multiplayerReplay';
@@ -147,6 +167,8 @@ hudOverlayElement.addEventListener('click', handleOverlayClick);
 const inviteOverlayElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(inviteOverlayElement);
 inviteOverlayElement.addEventListener('click', handleOverlayClick);
+inviteOverlayElement.addEventListener('input', handleOverlayInput);
+inviteOverlayElement.addEventListener('change', handleOverlayInput);
 // BOT DEV: capa propia para el panel de control del bot, fuera del overlay
 // general (que se reescribe cada frame durante la partida online) para que sus
 // botones no se recreen a 60fps y los clicks/hover funcionen.
@@ -166,6 +188,12 @@ multiReplayOverlayElement.addEventListener('click', handleOverlayClick);
 // overlay general (que se reescribe por frame) para que su animación no se reinicie.
 const gamepadToastElement = document.createElement('div');
 (overlay.parentElement ?? document.body).appendChild(gamepadToastElement);
+// Pila de avisos de firma Nostr (esquina inferior derecha). Le informa al usuario qué
+// evento firma su extensión cada vez. Se cablea al signer vía setSignEventNotifier.
+const signToastElement = document.createElement('div');
+signToastElement.className = 'sign-toast-stack';
+(overlay.parentElement ?? document.body).appendChild(signToastElement);
+setSignEventNotifier(notifySignEvent);
 const VOLUME_WHEEL_STEP = 0.05;
 // Tope de cambio de volumen por evento de rueda: una muesca de mouse puede
 // reportar deltaY enorme; sin tope, un solo notch saltaría medio volumen.
@@ -424,6 +452,34 @@ lunaState.trustedOrigin = loadTrustedLunaOrigin();
 const LUNA_PRESENCE_TTL_MS = 20000;
 const LUNA_PRESENCE_HEARTBEAT_MS = LUNA_PRESENCE_TTL_MS / 2;
 const LUNA_LAUNCH_POLL_MS = 2_000;
+// Presencia 1.0 (REST → Luna Negra firma el kind:30315). Apagada para probar la
+// 2.0 (Nostr firmado por el jugador) en aislamiento: con las dos prendidas Luna
+// Negra recibe ambas y no se ve cuál manda. Poné en `true` para reactivar la REST.
+const LUNA_REST_PRESENCE_ENABLED = false;
+// Presencia Nostr 2.0 (NIP-38): cada latido es una FIRMA (con un bunker NIP-46
+// puede ser un prompt), así que la re-publicamos mucho más espaciada que la REST.
+// Igual se dispara al toque cuando cambia el estado (online↔in-game). El evento
+// caduca a los PRESENCE_TTL_SEC (240s) si dejamos de latir.
+const NOSTR_PRESENCE_REPUBLISH_MS = 120_000;
+let nostrPresenceLastStatus: PresenceStatus | null = null;
+let nostrPresenceLastPublishAt = 0;
+let nostrPresenceInFlight = false;
+// Tope de contactos que listamos en el selector de reto. Alto a propósito: mucha
+// gente sigue a cientos de cuentas y con 120 quedaban afuera (y el buscador no los
+// encontraba). fetchProfiles resuelve nombres/avatares en lotes, así que subirlo
+// no ahoga los relays.
+const CHALLENGE_CONTACT_LIMIT = 1000;
+const CHALLENGE_INCOMING_LIMIT = 5;
+let challengeInboxPubkey: string | null = null;
+let challengeInboxStarting = false;
+// Caché local de la lista de amigos por pubkey: el picker abre al instante con lo
+// último visto mientras la recarga desde relays corre detrás (tarda segundos).
+// OJO: al tope del módulo (no junto a loadChallengeFriends) porque la precarga
+// puede correr sincrónicamente durante bootstrapOnlineStartup (TDZ).
+const CHALLENGE_FRIENDS_CACHE_KEY = 'tetra.challengeFriends.v1';
+// Evita cargas duplicadas (precarga al login + apertura del picker) y descarta
+// una carga vieja si el usuario cambió de cuenta a mitad de camino.
+let challengeFriendsLoadingFor: string | null = null;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -449,12 +505,6 @@ window.setInterval(() => {
 }, LUNA_LAUNCH_POLL_MS);
 document.addEventListener('visibilitychange', syncOnlineVisibilityChange);
 window.addEventListener('focus', eagerRefreshBetIfPending);
-// Reabrir el juego que ya estaba abierto: re-iniciar la sesión de Luna si volvió con un
-// token fresco en la URL (bfcache no re-ejecuta el módulo; el foco cubre el resto).
-window.addEventListener('pageshow', (event) => {
-  if (event.persisted) void maybeReinitLunaSessionFromUrl();
-});
-window.addEventListener('focus', () => void maybeReinitLunaSessionFromUrl());
 replayFileInput.addEventListener('change', handleReplayFileChange);
 overlayElement.addEventListener('click', handleOverlayClick);
 // Tocar cualquier QR de apuesta (pago o cobro) lo amplía a pantalla completa para
@@ -642,6 +692,53 @@ const betWithdrawalTrace: BetWithdrawalTraceEvent[] = [];
 const lastWithdrawalTraceSignatureBySource = new Map<BetWithdrawalTraceSource, string>();
 let lastObservedWithdrawHandle: string | null = null;
 let withdrawHandleVersion = 0;
+
+// Hitos del ciclo de vida de la apuesta en RELOJ DE PARED (epoch ms), tal como los
+// VIO ESTE cliente por polling. Complementa el timeline server-authoritative de Luna
+// (que trae los timestamps exactos): la diferencia entre ambos = latencia de red +
+// cadencia de poll. Ej.: si Luna liquidó a las 22:08:50 pero acá recién vimos
+// 'settled' a las 22:08:54, esos 4s son cola del cliente, no del pago. Se registra
+// el PRIMER instante en que observamos cada hito; se reinicia al cambiar de betId.
+interface BetLifecycleMilestones {
+  betId: string;
+  createdSeenAt: number | null;   // primera vez que vimos esta apuesta
+  fundedSeenAt: number | null;    // primera vez status === 'funded'
+  settledSeenAt: number | null;   // primera vez status === 'settled'
+  myDepositPaidSeenAt: number | null; // mi depósito visto 'paid'
+  myPayoutPaidSeenAt: number | null;  // mi premio visto 'paid'/'claimed'
+}
+let betLifecycle: BetLifecycleMilestones | null = null;
+
+function recordBetLifecycle(room: OnlineRoom | null): void {
+  const bet = room?.bet;
+  if (!bet?.betId) return;
+  if (!betLifecycle || betLifecycle.betId !== bet.betId) {
+    betLifecycle = {
+      betId: bet.betId,
+      createdSeenAt: Date.now(),
+      fundedSeenAt: null,
+      settledSeenAt: null,
+      myDepositPaidSeenAt: null,
+      myPayoutPaidSeenAt: null,
+    };
+  }
+  const m = betLifecycle;
+  const now = Date.now();
+  if (m.fundedSeenAt === null && (bet.status === 'funded' || bet.status === 'settled')) {
+    m.fundedSeenAt = now;
+  }
+  if (m.settledSeenAt === null && bet.status === 'settled') m.settledSeenAt = now;
+  const entry = roomBetEntryForLocalPlayer(room);
+  if (m.myDepositPaidSeenAt === null && entry?.depositStatus === 'paid') {
+    m.myDepositPaidSeenAt = now;
+  }
+  if (
+    m.myPayoutPaidSeenAt === null &&
+    (entry?.payoutStatus === 'paid' || entry?.payoutStatus === 'claimed')
+  ) {
+    m.myPayoutPaidSeenAt = now;
+  }
+}
 
 function roomBetEntryForLocalPlayer(room: OnlineRoom | null): RoomBetParticipant | undefined {
   const bet = room?.bet;
@@ -851,6 +948,12 @@ function buildPerfReport(): Record<string, unknown> {
       roomReopenInFlight: roundState.roomReopenInFlight,
       lastBetPollAt: Math.round(betState.lastPollAt),
       trace: betWithdrawalTrace.slice(),
+      // Hitos en reloj de pared (epoch ms) tal como los vio ESTE cliente: se cruzan
+      // con el timeline server-authoritative que adjunta el backend (paymentTimeline)
+      // para separar latencia de pago real vs cola de red/polling del cliente.
+      lifecycleSeen: betLifecycle && betLifecycle.betId === (roomState.current?.bet?.betId ?? null)
+        ? { ...betLifecycle }
+        : null,
     },
     // Diagnóstico de audio: para entender el "se escucha mal en el celular" (perfil
     // móvil activo o no, recorte real medido, volúmenes/mutes, PWA). Ver SoundEngine.
@@ -877,12 +980,13 @@ function buildPerfReport(): Record<string, unknown> {
 // según la posición del tablero (izquierda/derecha) y el ajuste de audio posicional.
 let localVersusAudio: { seat1: BoardAudio; seat2: BoardAudio } | null = null;
 
-function startLocalVersusMode(): void {
+function startLocalVersusMode(opts?: { resumePayout?: boolean }): void {
   if (localVersusSession) return;
   input.releaseAll();
   gamepad.releaseAll();
   localVersusSession = startLocalVersus({
     colorBlind: customSettings.colorBlindMode,
+    resumePayout: opts?.resumePayout,
     onExit: () => {
       // Al cerrar, el loop principal retoma el render del menú en el próximo frame.
       localVersusSession = null;
@@ -1328,6 +1432,11 @@ Object.assign(window, {
 
 void bootstrapOnlineStartup();
 
+// Recuperación de cobro del Duelo Local: si un refresh dejó un QR de retiro sin
+// reclamar, reabrimos la misma pantalla con el mismo QR (el módulo relee la
+// apuesta desde Luna Negra y limpia el registro si ya se cobró).
+if (hasPendingLocalPayout()) startLocalVersusMode({ resumePayout: true });
+
 function targetGameplayFrame(now = performance.now()): number {
   // DESACOPLE TOTAL (online + solo): el frame de juego se ancla al reloj LOCAL monotónico
   // (runState.gameClockOriginMs), NO al del servidor. Antes online se anclaba a startsAtServerMs para que
@@ -1488,6 +1597,9 @@ function handleOverlayInput(event: Event): void {
       const anonButton = document.querySelector<HTMLButtonElement>('[data-ui-action="anon-continue"]');
       if (anonButton) anonButton.disabled = identityState.name.trim().length === 0;
     }
+    if (field === 'nostr-bunker') lunaState.nostrLogin.bunkerInput = target.value.trim();
+    if (field === 'nostr-nsec') lunaState.nostrLogin.nsecInput = target.value.trim();
+    if (field === 'challenge-search') lunaState.challenge.query = target.value.slice(0, 80);
     if (field === 'join-code') identityState.joinCode = normalizeRoomId(target.value);
     if (field === 'bet-stake') betState.stakeInput = target.value.replace(/[^0-9]/g, '').slice(0, 7);
     if (field === 'report-comment') reportState.comment = target.value.slice(0, 400);
@@ -1588,6 +1700,26 @@ function handleOverlayClick(event: MouseEvent): void {
   }
   if (action === 'report-perf') {
     void sendPerfReport();
+    return;
+  }
+  if (action === 'online-challenge-open') {
+    void openNostrChallengePicker();
+    return;
+  }
+  if (action === 'online-challenge-close') {
+    closeNostrChallengePicker();
+    return;
+  }
+  if (action === 'online-challenge-send') {
+    void sendNostrChallenge(control.dataset.pubkey ?? '');
+    return;
+  }
+  if (action === 'online-challenge-accept') {
+    void acceptIncomingNostrChallenge(control.dataset.challengeId ?? '');
+    return;
+  }
+  if (action === 'online-challenge-dismiss') {
+    dismissIncomingNostrChallenge(control.dataset.challengeId ?? '');
     return;
   }
   if (hasBlockingModal()) return;
@@ -1737,6 +1869,9 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-bet-webln') {
     void payOnlineBetWithExtension(control.dataset.invoice ?? '');
   }
+  if (action === 'online-bet-sign-zap') {
+    void signAndGenerateBetDeposit();
+  }
   if (action === 'online-bet-claim-webln') {
     void claimOnlineBetWithExtension(control.dataset.lnurl ?? '');
   }
@@ -1752,9 +1887,17 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-leave') leaveOnlineRoom();
   if (action === 'online-kick') kickOnlinePlayer(control.dataset.targetPlayerId ?? '');
   if (action === 'online-open-invite') openLunaInviteWindow();
-  if (action === 'luna-login') openLunaLogin();
+  if (action === 'luna-login') reopenLoginGate();
   if (action === 'luna-logout') logOut();
   if (action === 'anon-continue') continueAsAnonymous();
+  if (action === 'nostr-tab') selectNostrLoginTab((control.dataset.tab as NostrLoginTab | undefined) ?? 'extension');
+  if (action === 'nostr-login-extension') void loginWithNostrExtension();
+  if (action === 'nostr-login-bunker') void loginWithNostrBunker();
+  if (action === 'nostr-generate-key') generateNostrLocalKey();
+  if (action === 'nostr-login-generated') void loginWithGeneratedNostrKey();
+  if (action === 'nostr-login-import') void loginWithImportedNostrKey();
+  if (action === 'nostr-copy-qr') copyToClipboard(lunaState.nostrLogin.qrUri ?? '');
+  if (action === 'nostr-copy-nsec') copyToClipboard(lunaState.nostrLogin.generatedNsec ?? '');
   if (action === 'online-copy-code') {
     copyToClipboard(control.dataset.code ?? '');
   }
@@ -2294,13 +2437,28 @@ function removeLunaNegraTokenFromUrl(): void {
 async function bootstrapOnlineStartup(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   rememberTrustedLunaOriginFromStartup(params);
-  await bootstrapLunaSession();
-  // El arranque SSO terminó: a partir de acá la puerta de login ya puede decidir
-  // si mostrarse (sin flash) según haya o no identidad resuelta.
+  // Rehidrata el firmante Nostr 2.0 persistido (sesión por extensión/bunker/clave
+  // local). Best-effort y en paralelo: deja el signer en memoria para firmar
+  // features Nostr; no bloquea el arranque.
+  const signerRestore = restoreSigner();
+  await restoreLunaIdentity();
+  void signerRestore.then(() => {
+    void ensureNostrChallengeInbox();
+    // El syncNostrPresence del restore de identidad corrió ANTES de que el
+    // firmante estuviera listo (van en paralelo) y se salteó: republicamos ya,
+    // sin esperar el próximo latido de 10s, para figurar "jugando" al abrir.
+    void syncNostrPresence();
+  });
+  // El arranque terminó: a partir de acá la puerta de login ya puede decidir si
+  // mostrarse (sin flash) según haya o no identidad Nostr persistida.
   lunaBootstrapDone = true;
   const nextParams = new URLSearchParams(window.location.search);
   if (nextParams.get('inviteToken')?.trim()) {
     await bootstrapLunaNegraEntry();
+    return;
+  }
+  if (nextParams.get('lnRoom')?.trim()) {
+    await bootstrapLunaRoomLink(nextParams.get('lnRoom')!.trim(), nextParams);
     return;
   }
   if (nextParams.get('join')?.trim()) {
@@ -2314,175 +2472,18 @@ async function bootstrapOnlineStartup(): Promise<void> {
   void refreshPublicRooms();
 }
 
-// Login automático. El juego se abre desde Luna Negra con el entitlement JWT en
-// ?lnToken= (en desarrollo, ?lnDemo=Nombre). Ese token EXPIRA a los ~5 min y solo
-// sirve para canjearlo UNA vez al cargar: lo cambiamos por la identidad (npub,
-// nombre, avatar) contra /api/luna-negra/session y PERSISTIMOS LA IDENTIDAD, no el
-// token. En recargas posteriores sin token, restauramos la identidad guardada
-// (presencia y amigos usan la API key del servidor, no el token del usuario).
-// Decodifica los claims de un JWT SIN verificar la firma. Solo diagnóstico: queremos
-// saber si el entitlement ya estaba vencido cuando Luna lo rechazó (exp es 5 min). No
-// confiamos en estos datos para nada de seguridad. null si el token no es decodificable.
-function peekJwtClaims(token: string): Record<string, unknown> | null {
-  try {
-    const part = token.split('.')[1];
-    if (!part) return null;
-    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
-    const pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
-    return JSON.parse(atob(b64 + pad)) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-// Reporte automático cuando Luna Negra rechaza la validación de sesión (el 401 que tira
-// al jugador a invitado). Decodifica los claims del token SIN verificar para distinguir la
-// causa sin entrar por SSH a la laptop: si el token ya estaba vencido cuando Luna lo rechazó
-// → expiración (benigno, reentrar desde Luna); si seguía vigente → la firma no matcheó
-// (LUNA_NEGRA_BASE_URL apunta a otra Luna) o iss/aud no coinciden. Fire-and-forget: nunca
-// bloquea ni rompe la puerta de login. Va al mismo canal de Discord que el botón "Reportar".
-function reportLunaSessionFailure(reason: string, token: string): void {
-  const claims = peekJwtClaims(token);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const exp = typeof claims?.exp === 'number' ? claims.exp : null;
-  const iat = typeof claims?.iat === 'number' ? claims.iat : null;
-  const expired = exp !== null ? exp < nowSec : null;
-  const audClaim = claims?.aud;
-  const report = {
-    generatedAt: new Date().toISOString(),
-    kind: 'luna-session-failure',
-    comment: `Sesión de Luna Negra rechazada: ${reason}`,
-    // El token va en la URL; lo redactamos para no filtrar el entitlement crudo al reporte.
-    url: (() => {
-      try {
-        return window.location.href.replace(/([?&](?:lnToken|entitlement|lnDemo)=)[^&]*/gi, '$1<redacted>');
-      } catch {
-        return null;
-      }
-    })(),
-    device: {
-      userAgent: navigator.userAgent,
-      viewport: `${window.innerWidth}x${window.innerHeight}`,
-    },
-    lunaSession: {
-      reason,
-      hasToken: Boolean(token),
-      // Claims SIN verificar (no incluimos la firma ni el token crudo). Lo que discrimina
-      // la causa: si tokenExpired es true fue expiración; si es false, mismatch de firma/claims.
-      tokenExpired: expired,
-      tokenAgeSec: iat !== null ? nowSec - iat : null,
-      secsPastExp: exp !== null ? nowSec - exp : null,
-      iss: typeof claims?.iss === 'string' ? claims.iss : null,
-      aud: typeof audClaim === 'string' ? audClaim : Array.isArray(audClaim) ? audClaim.join(',') : null,
-      scope: typeof claims?.scope === 'string' ? claims.scope : null,
-      likelyCause: expired === true
-        ? 'token-expirado'
-        : expired === false
-          ? 'firma-o-baseURL-mismatch'
-          : 'desconocido (token no decodificable)',
-    },
-  };
-  void fetch('/api/report', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(report),
-  }).catch((error) => console.warn('[luna-negra] no se pudo enviar el reporte del fallo de sesión', error));
-}
-
-function formatTokenSeconds(totalSec: number): string {
-  const s = Math.max(0, Math.round(totalSec));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return rem ? `${m}m ${rem}s` : `${m}m`;
-}
-
-// Mensaje de la puerta de login cuando Luna rechaza la sesión. En vez del 401 mudo, decimos
-// la razón DE VERDAD: decodificamos el token (sin verificar) para saber si venció — el caso más
-// común, y ahí el motivo es definitivo sin depender del server. Si seguía vigente, fue la firma
-// o el emisor (el juego apunta a otra instancia de Luna). `serverReason` es lo que devolvió el
-// backend (cuando Luna mande el code real de jose, aparece como detalle).
-function describeLunaSessionFailure(serverReason: string, token: string): string {
-  const claims = peekJwtClaims(token);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const exp = typeof claims?.exp === 'number' ? claims.exp : null;
-  let cause: string;
-  if (!claims) {
-    cause = 'el token de acceso no se pudo leer (no parece un entitlement válido)';
-  } else if (exp !== null && exp < nowSec) {
-    cause = `el token de acceso venció hace ${formatTokenSeconds(nowSec - exp)} (dura 5 min). Reabrí el juego desde Luna para obtener uno nuevo`;
-  } else if (exp !== null) {
-    cause = `el token seguía vigente (${formatTokenSeconds(exp - nowSec)} restantes), así que Luna lo rechazó por la firma o el emisor — el juego podría estar apuntando a otra instancia de Luna`;
-  } else {
-    cause = 'Luna lo rechazó y no se pudo determinar el motivo desde el token';
-  }
-  return `No pudimos validar tu sesión de Luna Negra: ${cause}. (detalle del servidor: ${serverReason}). Podés reintentar desde Luna o seguir como anónimo.`;
-}
-
-async function bootstrapLunaSession(): Promise<void> {
-  const params = new URLSearchParams(window.location.search);
-  // Aceptamos varios nombres por las dudas; el contrato es ?lnToken=<entitlement>.
-  const freshToken = (
-    params.get('lnToken')?.trim()
-    || params.get('entitlement')?.trim()
-    || params.get('lnDemo')?.trim()
-    || ''
-  ).trim();
-  if (freshToken) {
-    try {
-      const response = await lunaSocialClient.resolveSession(freshToken);
-      applyLunaIdentity(response.identity);
-      saveStoredLunaIdentity(response.identity);
-      lunaState.sessionError = null;
-    } catch (error) {
-      // Si Luna Negra rechaza un token fresco, la identidad cacheada ya no prueba sesión.
-      console.warn('[luna-negra] No se pudo resolver la sesión desde el token; entrando como invitado.', error);
-      clearLunaIdentity();
-      // Abriste el juego DESDE Luna (venías con token) pero la validación falló:
-      // dejá visible la razón en la puerta de login en vez de caer mudo a invitado.
-      // Usamos lunaState.sessionError (no onlineNetState.error) porque el refresco de
-      // salas públicas del arranque pisa este último. Causas típicas: LUNA_NEGRA_BASE_URL
-      // del deploy apunta a un store que no minteó este token, o el token expiró (~5 min).
-      const reason = error instanceof Error ? error.message : 'error desconocido';
-      lunaState.sessionError = describeLunaSessionFailure(reason, freshToken);
-      // Reporte automático del fallo (a Discord vía /api/report). Manda los claims del
-      // token SIN verificar para que el propio reporte diga la causa sin entrar por SSH.
-      reportLunaSessionFailure(reason, freshToken);
-    } finally {
-      removeLunaSessionParamsFromUrl();
-    }
-  } else {
-    const stored = loadStoredLunaIdentity();
-    if (stored) applyLunaIdentity(stored);
-  }
+// Restaura la identidad Nostr 2.0 persistida (npub/pubkey/nombre/avatar) al arrancar.
+// El login lo hace el firmante en el navegador (ver online/nostrLogin.ts + el flujo
+// de la puerta de bienvenida); acá solo rehidratamos lo guardado en localStorage.
+// Presencia y amigos usan la API key del servidor, no una sesión del usuario.
+async function restoreLunaIdentity(): Promise<void> {
+  const stored = loadStoredLunaIdentity();
+  if (stored) applyLunaIdentity(stored);
   if (!lunaState.identity) return;
+  // La identidad Nostr no trae gameId: completarlo para que invitar/apostar no
+  // queden gateados. Best-effort, no bloquea presencia.
+  void ensureLunaGameId();
   await syncLunaPresence();
-}
-
-// El token de Luna se consume UNA vez al cargar el módulo (bootstrapOnlineStartup). Si el
-// juego YA estaba abierto y Luna lo reabre con un ?lnToken= fresco, ese arranque no vuelve a
-// correr —pasa al restaurar desde bfcache (pageshow.persisted) o al re-enfocar la pestaña que
-// Luna navegó— y la sesión no iniciaría sola. Acá re-chequeamos cuando la pestaña vuelve al
-// frente: si quedó un token sin consumir en la URL, resolvemos la sesión igual. Idempotente y
-// sin spam: bootstrapLunaSession borra el token de la URL al terminar (éxito o fallo), así que
-// corre una sola vez por token nuevo. Guardado contra el arranque inicial (lunaBootstrapDone,
-// que aún está consumiendo el token) y contra reentrada por eventos solapados.
-let lunaSessionReinitInFlight = false;
-async function maybeReinitLunaSessionFromUrl(): Promise<void> {
-  if (!lunaBootstrapDone || lunaSessionReinitInFlight) return;
-  const params = new URLSearchParams(window.location.search);
-  const hasToken = Boolean(
-    params.get('lnToken')?.trim()
-    || params.get('entitlement')?.trim()
-    || params.get('lnDemo')?.trim(),
-  );
-  if (!hasToken) return;
-  lunaSessionReinitInFlight = true;
-  try {
-    await bootstrapLunaSession();
-  } finally {
-    lunaSessionReinitInFlight = false;
-  }
 }
 
 function applyLunaIdentity(identity: LunaIdentity): void {
@@ -2495,6 +2496,17 @@ function applyLunaIdentity(identity: LunaIdentity): void {
   });
   identityState.name = identityState.player.name;
   void syncLunaLaunchRequest();
+  void ensureNostrChallengeInbox();
+  // Amigos listos ANTES de abrir "Retar amigo": la carga desde relays tarda
+  // segundos, así que arranca acá y el picker la encuentra hecha (o en curso).
+  prefetchChallengeFriends();
+  // Presencia 2.0 al toque tras el login (con signer ya activo); si el firmante
+  // todavía no está (restore en paralelo), el hook de bootstrapOnlineStartup o el
+  // próximo latido la cubren. El throttle interno evita firmar de más.
+  void syncNostrPresence();
+  // Si había un "Luna Room Link" dirigido esperando a que se logueara la cuenta
+  // invitada, entrar a la sala ahora que la identidad coincide.
+  maybeResumePendingRoomLink();
 }
 
 async function bootstrapJoinLink(roomId: string): Promise<void> {
@@ -2503,6 +2515,137 @@ async function bootstrapJoinLink(roomId: string): Promise<void> {
   const url = new URL(window.location.href);
   url.searchParams.delete('join');
   window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+// ─────────────── "Luna Room Link": sala hosteada por ESTE juego ───────────────
+// Estándar de enlace de invitación de Luna Negra (docs/luna-room-link.md; §5·bis de
+// la guía de integración). Un enlace `<este-juego>/?lnRoom=<id>[&lnInvite=<jwt>]`
+// entra a una sala PartyKit propia (la que ya maneja `?join=`), creada lazy al primer
+// acceso. Es DISTINTO del par `?inviteToken=`+`?room=` (salas hosteadas por Luna).
+//   • Pública (sin lnInvite): cualquiera con el enlace entra, con la identidad actual.
+//   • Dirigida (con lnInvite): solo el npub autorizado; se valida el token offline y
+//     se exige login Nostr con esa cuenta si todavía no está.
+async function bootstrapLunaRoomLink(rawRoomId: string, params: URLSearchParams): Promise<void> {
+  const roomId = normalizeRoomId(rawRoomId);
+  const lnInvite = params.get('lnInvite')?.trim() ?? '';
+  // Descartar tokens de la URL antes de nada (no dejar el enlace en el historial).
+  cleanLunaRoomLinkFromUrl();
+  if (roomId.length < ROOM_ID_MIN_LENGTH) {
+    openOnlineMenu();
+    onlineNetState.error = 'El enlace de sala no es válido.';
+    return;
+  }
+
+  // Variante pública: entrar directo con la identidad actual (Nostr o local).
+  if (!lnInvite) {
+    await joinLunaRoomLink(roomId);
+    return;
+  }
+
+  // Variante dirigida: verificar el lnInvite (offline, vía JWKS de Luna) y exigir
+  // que el jugador sea el `toNpub` autorizado.
+  let toNpub = '';
+  try {
+    const { invite } = await lunaSocialClient.verifyRoomInvite(lnInvite);
+    if (invite && normalizeRoomId(invite.roomId) === roomId) toNpub = invite.toNpub;
+  } catch {
+    /* red/servicio caído → se trata como inválido abajo */
+  }
+  if (!toNpub) {
+    openOnlineMenu();
+    onlineNetState.error = 'La invitación no es válida o expiró.';
+    return;
+  }
+
+  if (lunaState.identity?.npub === toNpub) {
+    await joinLunaRoomLink(roomId);
+    return;
+  }
+
+  // Falta la identidad correcta: recordamos la sala y pedimos login Nostr. Al
+  // loguearse con la cuenta invitada, maybeResumePendingRoomLink entra solo.
+  lunaState.pendingRoomLink = { roomId, toNpub };
+  openOnlineMenu();
+  onlineNetState.error = lunaState.identity
+    ? 'Esta invitación es para otra cuenta de Nostr. Iniciá sesión con la cuenta invitada.'
+    : 'Iniciá sesión con Nostr para entrar a la sala.';
+  reopenLoginGate();
+}
+
+// Entra a la sala `lnRoom`: se UNE si ya existe, o la CREA con ese id si no (host =
+// el primero en entrar), como pide el estándar (la sala no pre-existe). A diferencia
+// de `joinOnlineRoom` (que solo se une y falla con "Room not found"), acá creamos la
+// sala PartyKit al vuelo. Espeja `createOnlineRoom` pero con el id fijo del enlace.
+async function joinLunaRoomLink(roomId: string): Promise<void> {
+  openOnlineMenu();
+  if (onlineNetState.busy) {
+    onlineNetState.error = 'Ya hay una acción online en curso.';
+    return;
+  }
+  onlineNetState.busy = true;
+  onlineNetState.error = null;
+  try {
+    // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
+    await leaveCurrentRoomBeforeNew(roomId);
+    identityState.player = saveOnlinePlayer({ ...identityState.player, name: identityState.name });
+    const who = {
+      roomId,
+      playerId: identityState.player.id,
+      npub: lunaState.identity?.npub ?? null,
+      name: identityState.player.name,
+      avatarUrl: identityState.player.avatarUrl,
+    };
+    const create = (): Promise<OnlineRoomResponse> =>
+      onlineClient.createRoom({
+        ...who,
+        lunaGameId: lunaState.identity?.gameId ?? null,
+        visibility: 'private',
+        mode: 'custom',
+        matchType: 'battle',
+        ruleset: onlineRulesetPatch(),
+        rules: battleRulesFromSettings(inputSettings),
+      });
+    // Unirse; si no existe (404) la creamos; si dos entran a la vez (409) unirse.
+    const response = await onlineClient.joinRoom(who).catch((error) => {
+      if (error instanceof OnlineApiError && error.status === 404) {
+        return create().catch((createError) => {
+          if (createError instanceof OnlineApiError && createError.status === 409) {
+            return onlineClient.joinRoom(who);
+          }
+          throw createError;
+        });
+      }
+      throw error;
+    });
+    syncOnlineClock(response.serverNowMs);
+    enterOnlineRoom(response.room, 'roomLobby');
+    void syncLunaPresence();
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+  } finally {
+    onlineNetState.busy = false;
+  }
+}
+
+// Quita los parámetros de "Luna Room Link" (y el handoff de identidad) de la URL.
+function cleanLunaRoomLinkFromUrl(): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('lnRoom');
+  url.searchParams.delete('lnInvite');
+  url.searchParams.delete('lnToken');
+  url.searchParams.delete('lnOrigin');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+// Tras un login Nostr, si había un "Luna Room Link" dirigido esperando la identidad
+// correcta y ahora coincide, entra a la sala. Lo llama applyLunaIdentity.
+function maybeResumePendingRoomLink(): void {
+  const pending = lunaState.pendingRoomLink;
+  if (!pending) return;
+  if (lunaState.identity?.npub !== pending.toNpub) return;
+  lunaState.pendingRoomLink = null;
+  onlineNetState.error = null;
+  void joinLunaRoomLink(pending.roomId);
 }
 
 async function restoreOnlineRoomSession(): Promise<boolean> {
@@ -2637,6 +2780,24 @@ function clearLunaIdentity(): void {
   lunaState.identity = null;
   lunaState.inviteNotice = null;
   lunaState.pendingLaunchRequest = null;
+  lunaState.pendingRoomLink = null;
+  lunaState.challenge.pickerOpen = false;
+  lunaState.challenge.loading = false;
+  lunaState.challenge.error = null;
+  lunaState.challenge.sendingPubkey = null;
+  lunaState.challenge.incoming = [];
+  lunaState.challenge.friends = [];
+  lunaState.challenge.loadedForPubkey = null;
+  challengeFriendsLoadingFor = null;
+  challengeInboxPubkey = null;
+  challengeInboxStarting = false;
+  stopChallengeInbox();
+  // Limpia la presencia NIP-38 mientras el firmante sigue activo (clearActiveSigner
+  // lo cierra a continuación), para no quedar "Jugando TETRA" hasta que caduque.
+  clearNostrPresence();
+  // Cierra y olvida el firmante Nostr (sesión 2.0) junto con la identidad.
+  clearActiveSigner();
+  resetNostrLoginFlow();
   clearStoredLunaIdentity();
   if (!roomState.current) {
     identityState.player = saveOnlinePlayer({ id: '', name: 'Player', avatarUrl: null });
@@ -2654,12 +2815,9 @@ function loadTrustedLunaOrigin(): string | null {
 }
 
 function rememberTrustedLunaOriginFromStartup(params: URLSearchParams): void {
-  const hasLunaEntry =
-    Boolean(params.get('inviteToken')?.trim())
-    || Boolean(params.get('lnToken')?.trim())
-    || Boolean(params.get('entitlement')?.trim())
-    || Boolean(params.get('lnDemo')?.trim());
-  if (!hasLunaEntry) return;
+  // Solo confiamos el origen de Luna cuando el juego se abre desde un invite de sala
+  // (?inviteToken=): habilita los postMessage de "entrar a sala" desde esa pestaña.
+  if (!params.get('inviteToken')?.trim()) return;
 
   const origin =
     parseHttpOrigin(params.get('lnOrigin') ?? '')
@@ -2720,15 +2878,6 @@ function isHttpOrigin(origin: string): boolean {
   return /^https?:\/\//.test(origin);
 }
 
-function removeLunaSessionParamsFromUrl(): void {
-  const url = new URL(window.location.href);
-  url.searchParams.delete('lnToken');
-  url.searchParams.delete('entitlement');
-  url.searchParams.delete('lnDemo');
-  url.searchParams.delete('lnOrigin');
-  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
-}
-
 // El jugador "está jugando" solo si tiene el juego visible en primer plano. Si
 // minimiza, cambia de pestaña/app o cierra el juego dejamos de latir, y al
 // caducar el heartbeat (20s) Luna Negra lo deja de mostrar como jugando. Esto
@@ -2741,17 +2890,55 @@ function isPlayerActivelyPresent(): boolean {
 // (in-game). Alimenta el orden del panel de amigos de los demás.
 async function syncLunaPresence(): Promise<void> {
   if (!lunaState.identity || !isPlayerActivelyPresent()) return;
-  try {
-    await lunaSocialClient.heartbeat({
-      npub: lunaState.identity.npub,
-      name: identityState.player.name,
-      avatarUrl: identityState.player.avatarUrl,
-      status: roomState.current ? 'in-game' : 'online',
-      roomId: roomState.current?.id ?? null,
-    });
-  } catch {
-    // La presencia es best-effort.
+  if (LUNA_REST_PRESENCE_ENABLED) {
+    try {
+      await lunaSocialClient.heartbeat({
+        npub: lunaState.identity.npub,
+        name: identityState.player.name,
+        avatarUrl: identityState.player.avatarUrl,
+        status: roomState.current ? 'in-game' : 'online',
+        roomId: roomState.current?.id ?? null,
+      });
+    } catch {
+      // La presencia es best-effort.
+    }
   }
+  // Presencia 2.0 firmada por el jugador (NIP-38). Se cuelga del mismo latido que
+  // la REST, pero con su propio throttle (no re-firma en cada llamada). Independiente:
+  // si la REST falló, igual queremos publicar el estado en Nostr.
+  void syncNostrPresence();
+}
+
+// Publica la presencia NIP-38 (kind:30315) firmada por el propio jugador, si hay
+// una sesión Nostr 2.0 (firmante activo). Sólo re-firma cuando cambia el estado o
+// cuando el último evento está por caducar (NOSTR_PRESENCE_REPUBLISH_MS), para no
+// molestar al firmante en cada latido. Best-effort.
+async function syncNostrPresence(): Promise<void> {
+  if (!lunaState.identity || !isPlayerActivelyPresent() || nostrPresenceInFlight) return;
+  const signer = getActiveSigner();
+  if (!signer) return;
+  const status: PresenceStatus = roomState.current ? 'in-game' : 'online';
+  const stale = Date.now() - nostrPresenceLastPublishAt >= NOSTR_PRESENCE_REPUBLISH_MS;
+  if (status === nostrPresenceLastStatus && !stale) return;
+  nostrPresenceInFlight = true;
+  try {
+    if (await publishPresence(signer, status)) {
+      nostrPresenceLastStatus = status;
+      nostrPresenceLastPublishAt = Date.now();
+    }
+  } finally {
+    nostrPresenceInFlight = false;
+  }
+}
+
+// Limpia la presencia Nostr al cerrar sesión (evento vacío + expiración inmediata),
+// para que "Jugando TETRA" desaparezca sin esperar el TTL. Debe llamarse ANTES de
+// clearActiveSigner() (necesita el firmante todavía activo).
+function clearNostrPresence(): void {
+  const signer = getActiveSigner();
+  nostrPresenceLastStatus = null;
+  nostrPresenceLastPublishAt = 0;
+  if (signer) void clearPresenceEvent(signer);
 }
 
 async function syncLunaLaunchRequest(): Promise<void> {
@@ -2844,6 +3031,348 @@ async function openLunaInviteWindow(): Promise<void> {
   }
 }
 
+type InviteActionModel = {
+  action: string;
+  label: string;
+  status: string;
+  unavailable: boolean;
+};
+
+function inviteActionModel(): InviteActionModel {
+  if (lunaState.identity?.pubkey && getActiveSigner()) {
+    return {
+      action: 'online-challenge-open',
+      label: 'Retar amigo',
+      status: 'Retos 1v1 por Nostr NIP-17.',
+      unavailable: false,
+    };
+  }
+  if (lunaState.identity?.gameId) {
+    return {
+      action: 'online-open-invite',
+      label: 'Invitar amigo',
+      status: 'Luna Negra abre la lista de amigos.',
+      unavailable: false,
+    };
+  }
+  return {
+    action: 'luna-login',
+    label: 'Iniciar sesión',
+    status: 'Inicia sesión con Nostr para retar a tus amigos.',
+    unavailable: true,
+  };
+}
+
+async function requireNostrChallengeSigner(): Promise<LunaSigner | null> {
+  if (!lunaState.identity?.pubkey) {
+    onlineNetState.error = 'Inicia sesión con Nostr para retar amigos.';
+    reopenLoginGate();
+    return null;
+  }
+  let signer = getActiveSigner();
+  if (!signer) signer = await restoreSigner();
+  if (!signer) {
+    onlineNetState.error = 'No hay un firmante Nostr activo para cifrar el reto.';
+    return null;
+  }
+  if (!signer.nip44Encrypt || !signer.nip44Decrypt) {
+    onlineNetState.error = 'Tu firmante Nostr no soporta NIP-44, necesario para retos NIP-17.';
+    return null;
+  }
+  try {
+    const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    if (signerPubkey !== lunaState.identity.pubkey.trim().toLowerCase()) {
+      onlineNetState.error = 'El firmante activo no coincide con la sesión Nostr de TETRA.';
+      return null;
+    }
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+    return null;
+  }
+  return signer;
+}
+
+async function openNostrChallengePicker(): Promise<void> {
+  if (lunaState.challenge.pickerOpen && lunaState.challenge.loading) return;
+  const signer = await requireNostrChallengeSigner();
+  if (!signer) return;
+  let myPubkey = '';
+  try {
+    myPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+    return;
+  }
+
+  lunaState.challenge.pickerOpen = true;
+  lunaState.challenge.error = null;
+  lunaState.challenge.query = '';
+  input.releaseAll();
+  void loadChallengeFriends(myPubkey);
+}
+
+function loadCachedChallengeFriends(pubkey: string): NostrChallengeFriend[] | null {
+  try {
+    const raw = localStorage.getItem(CHALLENGE_FRIENDS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { pubkey?: string; friends?: NostrChallengeFriend[] };
+    if (parsed.pubkey !== pubkey || !Array.isArray(parsed.friends)) return null;
+    return parsed.friends;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedChallengeFriends(pubkey: string, friends: NostrChallengeFriend[]): void {
+  if (friends.length === 0) return;
+  try {
+    localStorage.setItem(CHALLENGE_FRIENDS_CACHE_KEY, JSON.stringify({ pubkey, friends }));
+  } catch {
+    // Storage lleno o bloqueado: la caché es solo una mejora de velocidad.
+  }
+}
+
+function sortChallengeFriends(friends: NostrChallengeFriend[]): NostrChallengeFriend[] {
+  return friends.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+
+// Precarga la lista de amigos apenas hay identidad: contactos (kind:3) y perfiles
+// (kind:0) son datos públicos que no necesitan firmante, así "Retar amigo" abre
+// con la lista ya resuelta en vez de esperar a los relays.
+function prefetchChallengeFriends(): void {
+  const pubkey = lunaState.identity?.pubkey?.trim().toLowerCase() ?? '';
+  if (!/^[0-9a-f]{64}$/.test(pubkey)) return;
+  void loadChallengeFriends(pubkey);
+}
+
+// Carga los amigos en tres pasos visibles: (1) caché local al instante, (2) la
+// lista real apenas llega el kind:3 (con npub corto de nombre provisorio), (3)
+// nombres y avatares que van llegando por lotes de perfiles. Antes esperaba a que
+// TODO terminara (outbox → contactos → perfiles en serie) para mostrar algo.
+async function loadChallengeFriends(myPubkey: string): Promise<void> {
+  if (lunaState.challenge.loadedForPubkey === myPubkey) return;
+  if (challengeFriendsLoadingFor === myPubkey) return;
+  challengeFriendsLoadingFor = myPubkey;
+
+  const cached = loadCachedChallengeFriends(myPubkey);
+  if (cached && cached.length > 0) {
+    lunaState.challenge.friends = sortChallengeFriends(cached);
+  } else if (lunaState.challenge.loadedForPubkey !== null) {
+    // Cambio de cuenta sin caché: no mostrar los amigos del pubkey anterior.
+    lunaState.challenge.friends = [];
+  }
+  lunaState.challenge.loading = lunaState.challenge.friends.length === 0;
+
+  try {
+    const contacts = (await fetchContacts(myPubkey)).slice(0, CHALLENGE_CONTACT_LIMIT);
+    if (challengeFriendsLoadingFor !== myPubkey) return;
+    if (contacts.length > 0) {
+      // Lista visible ya mismo; los perfiles la visten a medida que llegan.
+      const known = new Map(lunaState.challenge.friends.map((f) => [f.pubkey, f]));
+      lunaState.challenge.friends = sortChallengeFriends(contacts.map((pubkey) => {
+        const prev = known.get(pubkey);
+        if (prev) return prev;
+        const npub = nip19.npubEncode(pubkey);
+        return { pubkey, npub, name: shortNpub(npub).slice(0, 32), avatarUrl: null };
+      }));
+      lunaState.challenge.loading = false;
+      await fetchProfiles(contacts, (profiles) => {
+        if (challengeFriendsLoadingFor !== myPubkey) return;
+        lunaState.challenge.friends = sortChallengeFriends(
+          lunaState.challenge.friends.map((friend) => {
+            const profile = profiles.get(friend.pubkey);
+            if (!profile) return friend;
+            return {
+              ...friend,
+              name: (profileName(profile) ?? shortNpub(friend.npub)).slice(0, 32),
+              avatarUrl: profile.picture ?? friend.avatarUrl,
+            };
+          }),
+        );
+      });
+      saveCachedChallengeFriends(myPubkey, lunaState.challenge.friends);
+    }
+    lunaState.challenge.loadedForPubkey = myPubkey;
+  } catch (error) {
+    if (lunaState.challenge.friends.length === 0) {
+      lunaState.challenge.error = onlineErrorText(error);
+    }
+  } finally {
+    lunaState.challenge.loading = false;
+    if (challengeFriendsLoadingFor === myPubkey) challengeFriendsLoadingFor = null;
+  }
+}
+
+function closeNostrChallengePicker(): void {
+  lunaState.challenge.pickerOpen = false;
+  lunaState.challenge.error = null;
+  lunaState.challenge.sendingPubkey = null;
+  if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
+  input.releaseAll();
+}
+
+async function sendNostrChallenge(pubkey: string): Promise<void> {
+  const toPubkey = pubkey.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(toPubkey) || lunaState.challenge.sendingPubkey) return;
+  const signer = await requireNostrChallengeSigner();
+  if (!signer) {
+    lunaState.challenge.error = onlineNetState.error;
+    return;
+  }
+
+  lunaState.challenge.sendingPubkey = toPubkey;
+  lunaState.challenge.error = null;
+  lunaState.inviteNotice = null;
+  try {
+    if (!roomState.current) {
+      await createOnlineRoom('private');
+    }
+    if (!roomState.current) {
+      throw new Error(onlineNetState.error ?? 'No se pudo crear la sala para el reto.');
+    }
+    const roomId = roomState.current.id;
+    const friend = lunaState.challenge.friends.find((candidate) => candidate.pubkey === toPubkey);
+    const { recipient, selfCopy } = await buildChallengeGiftWraps(signer, {
+      toPubkey,
+      roomId,
+      joinUrl: buildRoomInviteLink(roomId),
+      message: 'Te reto a una partida de TETRA.',
+    });
+    const published = await publishChallenge(recipient, toPubkey);
+    if (!published) throw new Error('No se pudo publicar el reto en los relays Nostr.');
+    // Auto-copia NIP-17 hacia mi propia bandeja: así el reto que mandé aparece en MI
+    // historial (Luna Negra / otros clientes). Best-effort: si falla, el reto ya salió.
+    const myPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    void publishChallenge(selfCopy, myPubkey);
+    lunaState.challenge.pickerOpen = false;
+    lunaState.challenge.query = '';
+    lunaState.inviteNotice = `Reto enviado a ${friend?.name ?? shortNpub(nip19.npubEncode(toPubkey))}.`;
+    onlineNetState.error = null;
+  } catch (error) {
+    lunaState.challenge.error = onlineErrorText(error);
+    onlineNetState.error = lunaState.challenge.error;
+  } finally {
+    lunaState.challenge.sendingPubkey = null;
+  }
+}
+
+async function ensureNostrChallengeInbox(): Promise<void> {
+  const identityPubkey = lunaState.identity?.pubkey?.trim().toLowerCase() ?? '';
+  if (!identityPubkey) {
+    if (challengeInboxPubkey) stopChallengeInbox();
+    challengeInboxPubkey = null;
+    return;
+  }
+  if (challengeInboxPubkey === identityPubkey || challengeInboxStarting) return;
+  if (challengeInboxPubkey && challengeInboxPubkey !== identityPubkey) {
+    stopChallengeInbox();
+    challengeInboxPubkey = null;
+  }
+  challengeInboxStarting = true;
+  try {
+    let signer = getActiveSigner();
+    if (!signer) signer = await restoreSigner();
+    if (!signer?.nip44Decrypt) return;
+    const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    if (signerPubkey !== identityPubkey) return;
+    startChallengeInbox(signer, signerPubkey, handleIncomingNostrChallenge);
+    challengeInboxPubkey = signerPubkey;
+  } catch {
+    // Recibir retos es best-effort.
+  } finally {
+    challengeInboxStarting = false;
+  }
+}
+
+function handleIncomingNostrChallenge(challenge: ParsedChallenge): void {
+  const exists = lunaState.challenge.incoming.some((candidate) =>
+    candidate.giftWrapId === challenge.giftWrapId
+    || (challenge.rumorId !== null && candidate.rumorId === challenge.rumorId)
+  );
+  if (exists) return;
+  const incoming = {
+    ...challenge,
+    fromName: shortNpub(challenge.fromNpub),
+    fromAvatarUrl: null,
+  };
+  lunaState.challenge.incoming = prependUniqueChallenges(
+    lunaState.challenge.incoming,
+    incoming,
+    CHALLENGE_INCOMING_LIMIT,
+  );
+  void enrichIncomingNostrChallenge(challenge.giftWrapId, challenge.fromPubkey);
+}
+
+async function enrichIncomingNostrChallenge(challengeId: string, pubkey: string): Promise<void> {
+  try {
+    const profile = (await fetchProfiles([pubkey])).get(pubkey) ?? null;
+    const name = profileName(profile);
+    const avatarUrl = profile?.picture ?? null;
+    if (!name && !avatarUrl) return;
+    lunaState.challenge.incoming = lunaState.challenge.incoming.map((challenge) =>
+      challenge.giftWrapId === challengeId
+        ? {
+            ...challenge,
+            fromName: (name ?? challenge.fromName).slice(0, 32),
+            fromAvatarUrl: avatarUrl ?? challenge.fromAvatarUrl,
+          }
+        : challenge
+    );
+  } catch {
+    // Perfil del remitente best-effort.
+  }
+}
+
+function prependUniqueChallenges(
+  current: typeof lunaState.challenge.incoming,
+  incoming: typeof lunaState.challenge.incoming[number],
+  limit: number,
+): typeof lunaState.challenge.incoming {
+  return [
+    incoming,
+    ...current.filter((candidate) =>
+      candidate.giftWrapId !== incoming.giftWrapId
+      && (incoming.rumorId === null || candidate.rumorId !== incoming.rumorId)
+    ),
+  ].slice(0, limit);
+}
+
+async function acceptIncomingNostrChallenge(challengeId: string): Promise<void> {
+  const challenge = lunaState.challenge.incoming.find((candidate) => candidate.giftWrapId === challengeId);
+  if (!challenge) return;
+  dismissIncomingNostrChallenge(challengeId);
+  await enterNostrChallengeRoom(challenge);
+}
+
+function dismissIncomingNostrChallenge(challengeId: string): void {
+  lunaState.challenge.incoming = lunaState.challenge.incoming.filter((candidate) => candidate.giftWrapId !== challengeId);
+}
+
+async function enterNostrChallengeRoom(challenge: ParsedChallenge): Promise<void> {
+  let roomId = normalizeRoomId(challenge.roomId ?? '');
+  try {
+    const url = new URL(challenge.joinUrl, window.location.href);
+    if (url.origin !== window.location.origin) {
+      onlineNetState.error = 'El reto apunta a otro origen y fue bloqueado.';
+      return;
+    }
+    roomId = normalizeRoomId(url.searchParams.get('join') ?? roomId);
+  } catch {
+    onlineNetState.error = 'El reto trae un link de sala inválido.';
+    return;
+  }
+  if (!roomId) {
+    onlineNetState.error = 'El reto no trae una sala válida.';
+    return;
+  }
+  openOnlineMenu();
+  await joinOnlineRoom(roomId);
+}
+
+function shortNpub(npub: string): string {
+  return npub.length > 18 ? `${npub.slice(0, 10)}…${npub.slice(-6)}` : npub;
+}
+
 // "Continuar como anónimo" desde la puerta de bienvenida: fija el nombre temporal
 // que el jugador tipeó (persistido en el perfil local) y descarta el gate por esta
 // sesión de pestaña. Sin login a Luna no hay amigos/invitaciones/apuestas, pero
@@ -2852,21 +3381,193 @@ function continueAsAnonymous(): void {
   const name = identityState.name.trim().slice(0, 18) || 'Jugador';
   identityState.player = saveOnlinePlayer({ ...identityState.player, name });
   identityState.name = identityState.player.name;
+  resetNostrLoginFlow();
   loginGateDismissed = true;
   saveLoginGateDismissed();
 }
 
-async function openLunaLogin(): Promise<void> {
-  if (onlineNetState.busy || lunaState.inviteWindowBusy) return;
-  lunaState.inviteWindowBusy = true;
-  onlineNetState.error = null;
+// "Iniciar sesión" desde cualquier lado (badge de identidad, invitar amigos): en la
+// 2.0 el login es la puerta de bienvenida con los métodos Nostr. La reabrimos
+// des-descartándola y volviendo al menú, donde se renderiza.
+function reopenLoginGate(): void {
+  if (lunaState.identity) return;
+  loginGateDismissed = false;
+  clearLoginGateDismissed();
+  if (!roomState.current && appMode !== 'menu') goToMenu();
+}
+
+// ─────────────────────── Login Nostr 2.0 (firmante local) ───────────────────────
+// Login directo con un firmante Nostr (NIP-07 extensión / NIP-46 bunker o QR /
+// clave local), sin depender del SSO `?lnToken=` de Luna. Produce la MISMA
+// `LunaIdentity` que el SSO, así que el resto de la app no cambia. Ver
+// src/online/nostrLogin.ts y nostrSigner.ts (porteados del repo de Luna Negra).
+
+// El `{ signer, nsec }` recién generado vive fuera del estado serializable: el
+// signer no es representable como HTML. Se descarta al cerrar la puerta.
+let nostrGeneratedSigner: { signer: LunaSigner; nsec: string } | null = null;
+// AbortController del handshake NIP-46 por QR en curso (se cancela al cambiar de
+// pestaña o cerrar la puerta).
+let nostrQrAbort: AbortController | null = null;
+
+// Finaliza cualquier método de login Nostr: resuelve identidad y la adopta igual
+// que el SSO (applyLunaIdentity + persistencia). Al setear lunaState.identity la
+// puerta de login desaparece sola (shouldShowLoginGate).
+async function finishNostrLogin(signer: LunaSigner, stored: StoredSigner): Promise<void> {
+  if (lunaState.nostrLogin.busy) return;
+  lunaState.nostrLogin.busy = true;
+  lunaState.nostrLogin.error = null;
   try {
-    const response = await lunaSocialClient.loginUrl();
-    window.location.href = response.url;
+    const identity = await loginWithSigner(signer, stored);
+    applyLunaIdentity(identity);
+    saveStoredLunaIdentity(identity);
+    resetNostrLoginFlow();
+    void ensureLunaGameId();
+    void syncLunaPresence();
   } catch (error) {
-    onlineNetState.error = onlineErrorText(error);
+    lunaState.nostrLogin.error = error instanceof Error ? error.message : 'Error de login';
   } finally {
-    lunaState.inviteWindowBusy = false;
+    lunaState.nostrLogin.busy = false;
+  }
+}
+
+// El login Nostr 2.0 no trae el gameId (eso lo daba la sesión SSO). Sin él, invitar
+// amigos y crear apuestas desde el panel quedan gateados (caen a "iniciar sesión").
+// Acá lo completamos desde la config server-side (LUNA_NEGRA_GAME_ID, el mismo que
+// usan apuestas/marcadores) y re-guardamos la identidad. Best-effort: si el server
+// no lo tiene configurado, la sesión sigue válida sin invitar/apostar.
+async function ensureLunaGameId(): Promise<void> {
+  if (!lunaState.identity || lunaState.identity.gameId) return;
+  try {
+    const info = await lunaSocialClient.gameInfo();
+    if (!lunaState.identity || lunaState.identity.gameId) return;
+    if (!info.gameId) return;
+    const identity = { ...lunaState.identity, gameId: info.gameId };
+    lunaState.identity = identity;
+    saveStoredLunaIdentity(identity);
+  } catch (error) {
+    console.warn('[luna-negra] no se pudo resolver el gameId del juego', error);
+  }
+}
+
+// Limpia el flujo de login Nostr (al loguearse, cerrar la puerta o cambiar de tab).
+function resetNostrLoginFlow(): void {
+  cancelNostrQrFlow();
+  nostrGeneratedSigner = null;
+  lunaState.nostrLogin.qrUri = null;
+  lunaState.nostrLogin.qrDataUrl = null;
+  lunaState.nostrLogin.authUrl = null;
+  lunaState.nostrLogin.generatedNsec = null;
+  lunaState.nostrLogin.nsecInput = '';
+}
+
+function cancelNostrQrFlow(): void {
+  nostrQrAbort?.abort();
+  nostrQrAbort = null;
+}
+
+function selectNostrLoginTab(tab: NostrLoginTab): void {
+  if (lunaState.nostrLogin.tab === tab) return;
+  cancelNostrQrFlow();
+  lunaState.nostrLogin.tab = tab;
+  lunaState.nostrLogin.error = null;
+  lunaState.nostrLogin.authUrl = null;
+  if (tab === 'qr') void startNostrQrFlow();
+}
+
+// NIP-07: firma con la extensión del navegador (nos2x / Alby).
+async function loginWithNostrExtension(): Promise<void> {
+  if (lunaState.nostrLogin.busy) return;
+  if (typeof window === 'undefined' || !window.nostr) {
+    lunaState.nostrLogin.error = 'No se encontró una extensión Nostr. Instalá nos2x o Alby, o usá otro método.';
+    return;
+  }
+  await finishNostrLogin(createNip07Signer(), { method: 'nip07' });
+}
+
+// NIP-46 por bunker:// pegado a mano (o NIP-05).
+async function loginWithNostrBunker(): Promise<void> {
+  const input = lunaState.nostrLogin.bunkerInput.trim();
+  if (!input || lunaState.nostrLogin.busy) return;
+  lunaState.nostrLogin.busy = true;
+  lunaState.nostrLogin.error = null;
+  try {
+    const { connectBunker } = await import('./online/nostrNip46');
+    const { signer, stored } = await connectBunker(input, (url) => {
+      lunaState.nostrLogin.authUrl = url;
+    });
+    lunaState.nostrLogin.busy = false;
+    await finishNostrLogin(signer, stored);
+  } catch (error) {
+    lunaState.nostrLogin.error = error instanceof Error ? error.message : 'No se pudo conectar al bunker';
+    lunaState.nostrLogin.busy = false;
+  }
+}
+
+// NIP-46 por QR / "abrir en la app" (Amber, nsec.app, Primal).
+async function startNostrQrFlow(): Promise<void> {
+  cancelNostrQrFlow();
+  const ctrl = new AbortController();
+  nostrQrAbort = ctrl;
+  lunaState.nostrLogin.qrUri = null;
+  lunaState.nostrLogin.qrDataUrl = null;
+  lunaState.nostrLogin.authUrl = null;
+  lunaState.nostrLogin.error = null;
+  try {
+    const { startNostrConnect } = await import('./online/nostrNip46');
+    const { uri, established } = startNostrConnect({
+      onauth: (url) => {
+        if (!ctrl.signal.aborted) lunaState.nostrLogin.authUrl = url;
+      },
+      signal: ctrl.signal,
+    });
+    if (ctrl.signal.aborted) return;
+    lunaState.nostrLogin.qrUri = uri;
+    // El QR se dibuja con canvas; navegadores con anti-fingerprinting lo bloquean y
+    // toDataURL lanza. No es un fallo de conexión: el usuario puede copiar el enlace.
+    try {
+      lunaState.nostrLogin.qrDataUrl = await QRCode.toDataURL(uri, {
+        margin: 2,
+        width: 240,
+        errorCorrectionLevel: 'M',
+      });
+    } catch {
+      lunaState.nostrLogin.qrDataUrl = null;
+    }
+    const { signer, stored } = await established;
+    if (ctrl.signal.aborted) {
+      void signer.close?.();
+      return;
+    }
+    await finishNostrLogin(signer, stored);
+  } catch (error) {
+    if (!ctrl.signal.aborted) {
+      lunaState.nostrLogin.error = error instanceof Error ? error.message : 'No se pudo conectar con el firmante remoto';
+    }
+  }
+}
+
+// Clave local: genera una nsec nueva (se muestra una vez para respaldar).
+function generateNostrLocalKey(): void {
+  if (lunaState.nostrLogin.busy) return;
+  lunaState.nostrLogin.error = null;
+  nostrGeneratedSigner = generateLocalSigner();
+  lunaState.nostrLogin.generatedNsec = nostrGeneratedSigner.nsec;
+}
+
+async function loginWithGeneratedNostrKey(): Promise<void> {
+  if (!nostrGeneratedSigner) return;
+  await finishNostrLogin(nostrGeneratedSigner.signer, { method: 'local', nsec: nostrGeneratedSigner.nsec });
+}
+
+// Clave local: importa una nsec existente.
+async function loginWithImportedNostrKey(): Promise<void> {
+  const nsec = lunaState.nostrLogin.nsecInput.trim();
+  if (!nsec || lunaState.nostrLogin.busy) return;
+  try {
+    const signer = importNsec(nsec);
+    await finishNostrLogin(signer, { method: 'local', nsec });
+  } catch (error) {
+    lunaState.nostrLogin.error = error instanceof Error ? error.message : 'nsec inválido';
   }
 }
 
@@ -3377,6 +4078,12 @@ async function joinOnlineRoom(roomId: string): Promise<void> {
     void syncLunaPresence();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
+    // La sala ya no existe (murió entre que se listó y el clic): la sacamos del
+    // listado local al toque, así desaparece sin recargar, y refrescamos la lista.
+    if (error instanceof OnlineApiError && error.status === 404) {
+      roomState.publicRooms = roomState.publicRooms.filter((room) => room.id !== normalizedRoomId);
+      void refreshPublicRooms({ silent: true });
+    }
   } finally {
     onlineNetState.busy = false;
   }
@@ -3504,12 +4211,19 @@ async function refreshLeaderboard(): Promise<void> {
 // Best-effort: el tablero global es secundario, nunca corta el juego local.
 async function submitLeaderboardWin(): Promise<void> {
   try {
-    await onlineClient.submitScore({
+    const response = await onlineClient.submitScore({
       playerId: identityState.player.id,
       name: identityState.name.trim() || identityState.player.name,
       avatarUrl: identityState.player.avatarUrl,
       npub: lunaState.identity?.npub ?? null,
     });
+    // Marcador 2.0 (Nostr, §6): el jugador firma su TOTAL de victorias como kind:31337
+    // y lo publica a los relays. Complementa el espejo REST 1.0 (server-side) — mismo
+    // board 'victorias', mismo ranking. Solo si hay sesión Nostr 2.0 (firmante activo);
+    // best-effort, no bloquea.
+    const mine = response.entries.find((entry) => entry.playerId === identityState.player.id);
+    const signer = getActiveSigner();
+    if (mine && signer) void publishScore(signer, NOSTR_BOARD_WINS, mine.wins);
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
   }
@@ -3583,6 +4297,14 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
       npub,
       durationMs,
     });
+
+    // Marcador 2.0 (Nostr, §6): el jugador firma su MEJOR tiempo (ms) como kind:31337
+    // y lo publica a los relays. Complementa el espejo REST 1.0 — mismo board
+    // 'supervivencia', mismas unidades (ms), mismo ranking. Solo si hay sesión Nostr
+    // 2.0 (firmante activo); best-effort, no bloquea.
+    const bestMs = Math.max(previousBestMs ?? 0, durationMs);
+    const signer = getActiveSigner();
+    if (signer) void publishScore(signer, NOSTR_BOARD_SURVIVAL, bestMs);
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
     leaderboardState.survivalRunRank = { status: 'error' };
@@ -3811,6 +4533,76 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
   }
 }
 
+// Firma el depósito v2 (zap NIP-57) y genera el invoice. El depósito SIEMPRE es un
+// zap anclado al contrato: Luna nos manda el 9734 SIN firmar (`depositZapRequest`),
+// el jugador lo firma con su identidad Nostr y el backend lo reenvía al callback
+// LNURL-pay para obtener el bolt11. Ese invoice compromete el zap (description hash),
+// así que después se puede pagar por QR o con la extensión y sigue siendo un zap
+// real; Luna publica el recibo 9735 al detectar el pago. Tras firmar, adoptamos la
+// sala (que ya trae el `bolt11`) y el render muestra el QR + pago con extensión.
+async function signAndGenerateBetDeposit(): Promise<void> {
+  const bet = roomState.current?.bet;
+  if (!bet || betState.paying) return;
+  const myEntry = myBetEntry(bet);
+  if (!myEntry || myEntry.depositStatus === 'paid') return;
+  if (myEntry.bolt11) return; // ya hay invoice emitido: no re-firmamos
+  const template = myEntry.depositZapRequest;
+  const callback = myEntry.depositCallback;
+  if (!template || !callback) {
+    onlineNetState.error = 'El depósito por zap no está disponible; usá «Pagar en Luna Negra».';
+    return;
+  }
+
+  let signer = getActiveSigner();
+  if (!signer) signer = await restoreSigner();
+  if (!signer) {
+    onlineNetState.error = 'No hay un firmante Nostr activo para firmar el depósito.';
+    reopenLoginGate();
+    return;
+  }
+
+  betState.paying = true;
+  try {
+    // El zap tiene que firmarlo la MISMA identidad del participante (Luna lo valida:
+    // signed.pubkey === part.pubkey). Chequeamos contra la sesión Nostr para dar un
+    // error claro antes de molestar al firmante.
+    const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    const identityPubkey = lunaState.identity?.pubkey?.trim().toLowerCase();
+    if (identityPubkey && signerPubkey !== identityPubkey) {
+      onlineNetState.error = 'El firmante activo no coincide con tu sesión Nostr.';
+      return;
+    }
+    const signed = await signer.signEvent(template);
+    // Comentario de participación (opcional): si Luna lo mandó, lo firmamos con la
+    // MISMA identidad y lo adjuntamos. Si el jugador gana, el premio se zapea a este
+    // comentario (queda como zap recibido en su perfil). Si la firma falla, seguimos
+    // sin él: el depósito no debe bloquearse (el premio caería al post del contrato).
+    let signedComment: typeof signed | undefined;
+    const commentTemplate = myEntry.participationComment;
+    if (commentTemplate) {
+      try {
+        signedComment = await signer.signEvent(commentTemplate);
+      } catch {
+        signedComment = undefined;
+      }
+    }
+    const response = await onlineClient.depositInvoice({
+      roomId: roomState.current!.id,
+      playerId: identityState.player.id,
+      signedZapRequest: signed,
+      signedComment,
+    });
+    syncOnlineClock(response.serverNowMs);
+    adoptOnlineRoom(response.room);
+    onlineNetState.error = null;
+    armOnlineBetFastPolling();
+  } catch (error) {
+    onlineNetState.error = onlineErrorText(error);
+  } finally {
+    betState.paying = false;
+  }
+}
+
 // Cobra el pozo del ganador invitado con la extensión WebLN (LNURL-withdraw). El
 // éxito se confirma por el polling normal (payoutStatus → claimed); acá solo
 // disparamos el retiro y aceleramos la detección.
@@ -4007,6 +4799,7 @@ function resetOnlineRoomState(): void {
   betState.fastPollUntil = 0;
   betState.refreshQueued = false;
   betState.celebratedBetId = null;
+  betState.autoSignedBetId = null;
   roundState.resultSubmitted = false;
   roundState.runStarted = false;
   roundState.spectatorRound = false;
@@ -4099,6 +4892,53 @@ function preserveVisiblePendingWithdrawal(previousRoom: OnlineRoom | null, incom
   };
 }
 
+// Los handles de depósito (`bolt11`, `depositZapRequest`, `depositCallback`) los arma
+// buildRoomBet FRESCO desde la respuesta de Luna, y solo en el refresh de la apuesta.
+// Un update que llega por otra vía —poll del transporte que lee el store, o un refresh
+// que falló con 409 (conflicto de versión bajo el churn del lobby)— puede traer la MISMA
+// apuesta pendiente pero SIN esos handles → el panel parpadea entre "Firmar depósito
+// (zap)"/QR y el fallback "Pagar en Luna Negra". Los conservamos del estado previo
+// mientras el depósito del participante siga pendiente y sea la misma apuesta. Mismo
+// criterio que preserveVisiblePendingWithdrawal para el cobro del ganador.
+function preserveVisibleDepositHandles(previousRoom: OnlineRoom | null, incomingRoom: OnlineRoom): OnlineRoom {
+  const previousBet = previousRoom?.bet;
+  const incomingBet = incomingRoom.bet;
+  if (
+    !previousRoom
+    || previousRoom.id !== incomingRoom.id
+    || !previousBet
+    || !incomingBet
+    || previousBet.betId !== incomingBet.betId
+    || incomingBet.status !== 'pending_deposits'
+  ) return incomingRoom;
+
+  const hasHandles = (entry: RoomBetParticipant): boolean =>
+    !!entry.bolt11 || (!!entry.depositZapRequest && !!entry.depositCallback);
+  const prevByKey = new Map<string, RoomBetParticipant>();
+  for (const prev of previousBet.participants) {
+    if (prev.playerId) prevByKey.set(`id:${prev.playerId}`, prev);
+    prevByKey.set(`npub:${prev.npub}`, prev);
+  }
+
+  let changed = false;
+  const participants = incomingBet.participants.map((entry) => {
+    // Solo rescatamos depósitos todavía pendientes que perdieron los handles.
+    if (entry.depositStatus !== 'pending' || hasHandles(entry)) return entry;
+    const prev = (entry.playerId ? prevByKey.get(`id:${entry.playerId}`) : undefined)
+      ?? prevByKey.get(`npub:${entry.npub}`);
+    if (!prev || prev.depositStatus !== 'pending' || !hasHandles(prev)) return entry;
+    changed = true;
+    return {
+      ...entry,
+      bolt11: entry.bolt11 ?? prev.bolt11,
+      depositZapRequest: entry.depositZapRequest ?? prev.depositZapRequest,
+      depositCallback: entry.depositCallback ?? prev.depositCallback,
+    };
+  });
+  if (!changed) return incomingRoom;
+  return { ...incomingRoom, bet: { ...incomingBet, participants } };
+}
+
 function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' | 'bet-refresh' = 'room-action'): void {
   const previousRoom = roomState.current;
   const previousRoundId = roundState.activeRoundId;
@@ -4116,8 +4956,12 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
     recordBetWithdrawalTrace(source, room, 'ignored-older-room');
     return;
   }
-  const protectedRoom = preserveVisiblePendingWithdrawal(previousRoom, room);
+  const protectedRoom = preserveVisibleDepositHandles(
+    previousRoom,
+    preserveVisiblePendingWithdrawal(previousRoom, room),
+  );
   recordBetWithdrawalTrace(source, protectedRoom);
+  recordBetLifecycle(protectedRoom);
   const nextRoundId = onlineRoundKey(protectedRoom);
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && protectedRoom.status === 'countdown';
@@ -4128,6 +4972,43 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
   maybeSubmitOnlineWin(protectedRoom);
   maybeCelebratePayout();
+  void maybeAutoSignBetDeposit();
+}
+
+// Evita solapar intentos de auto-firma: adoptOnlineRoom corre en cada poll y
+// maybeAutoSignBetDeposit es async (puede esperar a restoreSigner ~3s por la extensión),
+// así que sin este flag se dispararían varias restauraciones/firmas concurrentes.
+let autoSignBetInFlight = false;
+
+// Auto-firma del depósito: en cuanto Luna manda el 9734 sin firmar + su callback y el
+// jugador todavía no firmó, disparamos signAndGenerateBetDeposit() solo, sin esperar el
+// click en "Firmar depósito (zap)".
+//
+// El firmante puede NO estar activo en memoria cuando llegan los handles (al entrar
+// fresco a la sala, restoreSigner del arranque corre en paralelo y quizá no resolvió
+// todavía): por eso intentamos restaurarlo acá. Si aún no hay ninguno, NO marcamos el
+// guard y reintentamos en el próximo poll (cuando el firmante ya esté disponible); sin
+// abrir el gate de login solos. Una vez que hay firmante, marcamos autoSignedBetId para
+// firmar UNA sola vez por apuesta: si la firma falla o el usuario la rechaza, el botón
+// manual queda de fallback.
+async function maybeAutoSignBetDeposit(): Promise<void> {
+  const bet = roomState.current?.bet;
+  if (!bet || bet.status !== 'pending_deposits') return;
+  if (betState.paying || autoSignBetInFlight) return;
+  if (betState.autoSignedBetId === bet.betId) return;
+  const myEntry = myBetEntry(bet);
+  if (!myEntry || myEntry.depositStatus !== 'pending') return;
+  if (myEntry.bolt11) return; // ya hay invoice emitido: no re-firmamos
+  if (!myEntry.depositZapRequest || !myEntry.depositCallback) return; // sin handles de zap todavía
+  autoSignBetInFlight = true;
+  try {
+    const signer = getActiveSigner() ?? (await restoreSigner());
+    if (!signer) return; // sin firmante todavía: reintentamos en el próximo poll
+    betState.autoSignedBetId = bet.betId;
+    await signAndGenerateBetDeposit();
+  } finally {
+    autoSignBetInFlight = false;
+  }
 }
 
 // Festejo de "cobraste el pozo": solo cuando el pago realmente terminó. Un
@@ -5461,9 +6342,6 @@ function syncOnlineVisibilityChange(): void {
     syncOnlineBackground();
     return;
   }
-  // Reabrir el juego ya abierto desde Luna: si la pestaña volvió con un token fresco en
-  // la URL, iniciamos la sesión igual (no hubo recarga que dispare el arranque inicial).
-  void maybeReinitLunaSessionFromUrl();
   // Al volver al juego reanunciamos presencia de inmediato (sin esperar el
   // intervalo) para reaparecer como "jugando" apenas el jugador regresa.
   if (lunaState.identity) void syncLunaPresence();
@@ -5674,12 +6552,12 @@ function renderOverlay(state: GameState): void {
   }
   // Toast de invitación durante partida: capa propia con caché para que los
   // botones no se recreen cada frame (el juego sigue corriendo detrás).
-  const inviteHtml = lunaState.pendingLaunchRequest && lunaInviteShowsAsToast()
-    ? renderLunaInviteToast(lunaState.pendingLaunchRequest)
-    : '';
+  const inviteHtml = renderInviteOverlayHtml();
   if (inviteHtml !== overlayState.lastInvite) {
+    const inviteFocus = captureInviteOverlayFieldFocus();
     inviteOverlayElement.innerHTML = inviteHtml;
     overlayState.lastInvite = inviteHtml;
+    restoreInviteOverlayFieldFocus(inviteFocus);
   }
   document.body.classList.toggle('online-spectating', isOnlineSpectating());
   if (appMode === 'replayPlayback' && replayState.playback) updateReplayOverlay(replayState.playback.snapshot());
@@ -5733,6 +6611,36 @@ function restoreOverlayFieldFocus(snapshot: OverlayFieldFocusSnapshot | null): v
   if (!field) return;
   field.focus({ preventScroll: true });
   if (field instanceof HTMLInputElement && snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
+    field.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+  }
+}
+
+type InviteFieldFocusSnapshot = {
+  field: string;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+};
+
+function captureInviteOverlayFieldFocus(): InviteFieldFocusSnapshot | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLInputElement)) return null;
+  if (!inviteOverlayElement.contains(active)) return null;
+  const field = active.dataset.onlineField;
+  if (!field) return null;
+  return {
+    field,
+    selectionStart: active.selectionStart,
+    selectionEnd: active.selectionEnd,
+  };
+}
+
+function restoreInviteOverlayFieldFocus(snapshot: InviteFieldFocusSnapshot | null): void {
+  if (!snapshot) return;
+  const field = Array.from(inviteOverlayElement.querySelectorAll<HTMLInputElement>('[data-online-field]'))
+    .find((candidate) => candidate.dataset.onlineField === snapshot.field);
+  if (!field) return;
+  field.focus({ preventScroll: true });
+  if (snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
     field.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
   }
 }
@@ -6119,7 +7027,9 @@ function renderLunaLaunchRequestOverlay(request: PendingLunaLaunchRequest): stri
 function hasBlockingModal(): boolean {
   // La invitación de Luna durante una partida NO bloquea: se muestra como toast
   // clicable (ver renderLunaInviteToast) y el juego sigue corriendo.
-  return pendingConfirmAction !== null || (lunaState.pendingLaunchRequest !== null && !lunaInviteShowsAsToast());
+  return pendingConfirmAction !== null
+    || lunaState.challenge.pickerOpen
+    || (lunaState.pendingLaunchRequest !== null && !lunaInviteShowsAsToast());
 }
 
 // Con el juego corriendo (o pausado), la invitación se presenta como toast no
@@ -6142,6 +7052,82 @@ function renderLunaInviteToast(request: PendingLunaLaunchRequest): string {
       <div class="luna-invite-toast-actions">
         <button class="luna-invite-toast-btn luna-invite-toast-btn-accept" type="button" data-ui-action="luna-launch-accept">Unirme</button>
         <button class="luna-invite-toast-btn" type="button" data-ui-action="luna-launch-cancel">Ignorar</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderInviteOverlayHtml(): string {
+  if (lunaState.challenge.pickerOpen) return renderNostrChallengePicker();
+  const incoming = lunaState.challenge.incoming[0];
+  if (incoming) return renderNostrChallengeToast(incoming);
+  if (lunaState.pendingLaunchRequest && lunaInviteShowsAsToast()) {
+    return renderLunaInviteToast(lunaState.pendingLaunchRequest);
+  }
+  return '';
+}
+
+function renderNostrChallengePicker(): string {
+  const state = lunaState.challenge;
+  const query = state.query.trim().toLowerCase();
+  const friends = query
+    ? state.friends.filter((friend) =>
+        friend.name.toLowerCase().includes(query)
+        || friend.npub.toLowerCase().includes(query)
+      )
+    : state.friends;
+  const body = state.loading
+    ? '<div class="challenge-empty">Cargando amigos desde Nostr...</div>'
+    : friends.length === 0
+      ? `<div class="challenge-empty">${state.friends.length === 0 ? 'No encontré follows NIP-02 para esta cuenta.' : 'No hay amigos que coincidan.'}</div>`
+      : friends.map((friend) => {
+          const sending = state.sendingPubkey === friend.pubkey;
+          return `
+            <div class="challenge-friend-row">
+              ${renderOnlineAvatar({ name: friend.name, avatarUrl: friend.avatarUrl }, 'small', 'challenge-friend-avatar')}
+              <div class="challenge-friend-copy">
+                <strong>${escapeHtml(friend.name)}</strong>
+                <span>${escapeHtml(friend.npub)}</span>
+              </div>
+              <button class="challenge-send-btn" type="button" data-ui-action="online-challenge-send" data-pubkey="${escapeHtml(friend.pubkey)}"${sending || onlineNetState.busy ? ' disabled' : ''}>
+                ${sending ? 'Enviando...' : 'Retar'}
+              </button>
+            </div>`;
+        }).join('');
+
+  return `
+    <div class="menu-scrim challenge-scrim">
+      <section class="menu-panel challenge-panel" aria-label="Retar amigo por Nostr">
+        <div class="panel-eyebrow">NOSTR NIP-17</div>
+        <h1>Retar amigo</h1>
+        <p>Elegí un contacto de tu lista NIP-02. TETRA le manda un DM cifrado con el link de esta sala.</p>
+        <label class="challenge-search">
+          <span>Buscar</span>
+          <input type="search" value="${escapeHtml(state.query)}" data-online-field="challenge-search" autocomplete="off" placeholder="Nombre o npub" />
+        </label>
+        ${state.error ? `<div class="challenge-error">${escapeHtml(state.error)}</div>` : ''}
+        <div class="challenge-friend-list">${body}</div>
+        <div class="challenge-actions">
+          <button class="cs2-btn" type="button" data-ui-action="online-challenge-close">Cerrar</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderNostrChallengeToast(challenge: typeof lunaState.challenge.incoming[number]): string {
+  const room = challenge.roomId ? `Sala ${challenge.roomId}` : 'Partida 1v1';
+  return `
+    <div class="luna-invite-toast challenge-toast" role="status" aria-live="polite">
+      <div class="luna-invite-toast-body challenge-toast-body">
+        ${renderOnlineAvatar({ name: challenge.fromName, avatarUrl: challenge.fromAvatarUrl }, 'small', 'challenge-toast-avatar')}
+        <span class="luna-invite-toast-eyebrow">RETO NOSTR</span>
+        <strong>${escapeHtml(challenge.fromName)} te retó a jugar</strong>
+        <span class="challenge-toast-room">${escapeHtml(room)}</span>
+      </div>
+      <div class="luna-invite-toast-actions">
+        <button class="luna-invite-toast-btn luna-invite-toast-btn-accept" type="button" data-ui-action="online-challenge-accept" data-challenge-id="${escapeHtml(challenge.giftWrapId)}">Entrar</button>
+        <button class="luna-invite-toast-btn" type="button" data-ui-action="online-challenge-dismiss" data-challenge-id="${escapeHtml(challenge.giftWrapId)}">Ignorar</button>
       </div>
     </div>
   `;
@@ -6172,7 +7158,6 @@ function shouldShowLoginGate(): boolean {
 }
 
 function renderLoginGateOverlay(): string {
-  const busy = lunaState.inviteWindowBusy;
   // No mostramos el nombre por defecto ("Player"): dejamos el campo vacío para
   // que el jugador se vea forzado a escribir uno antes de continuar.
   const enteredName = identityState.name.trim() === 'Player' ? '' : identityState.name;
@@ -6181,12 +7166,9 @@ function renderLoginGateOverlay(): string {
     <div class="login-gate">
       <article class="cs2-card login-gate-card">
         <div class="panel-eyebrow">LUNA NEGRA</div>
-        <h1 class="login-gate-title">Iniciá sesión</h1>
-        <p class="login-gate-subtitle">Entrá con tu cuenta de Luna Negra para ver a tus amigos, invitarlos a jugar, apostar en sats y aparecer en los marcadores.</p>
-        ${lunaState.sessionError ? `<div class="panel-note panel-error">${escapeHtml(lunaState.sessionError)}</div>` : ''}
-        <button class="cs2-btn cs2-btn-accent login-gate-primary" type="button" data-ui-action="luna-login"${busy ? ' disabled' : ''}>
-          ${busy ? 'Abriendo…' : 'Iniciar sesión en Luna Negra'}
-        </button>
+        <h1 class="login-gate-title">Iniciá sesión con Nostr</h1>
+        <p class="login-gate-subtitle">Entrá con tu identidad Nostr (extensión, firmante remoto o clave) para ver a tus amigos, invitarlos a jugar, apostar en sats y aparecer en los marcadores.</p>
+        ${renderNostrLoginMethods()}
         <div class="login-gate-sep"><span>o</span></div>
         <label class="online-field login-gate-field">
           <span>Tu nombre</span>
@@ -6197,6 +7179,83 @@ function renderLoginGateOverlay(): string {
       </article>
     </div>
   `);
+}
+
+// Métodos de login Nostr 2.0 (firmante en el navegador): extensión NIP-07, Nostr
+// Connect por QR, bunker://, y clave local. Equivalente vanilla del login-modal de
+// Luna Negra. El estado vive en lunaState.nostrLogin.
+const NOSTR_LOGIN_TABS: { id: NostrLoginTab; label: string }[] = [
+  { id: 'extension', label: 'Extensión' },
+  { id: 'qr', label: 'QR' },
+  { id: 'bunker', label: 'Bunker' },
+  { id: 'local', label: 'Clave local' },
+];
+
+function renderNostrLoginMethods(): string {
+  const s = lunaState.nostrLogin;
+  const tabs = NOSTR_LOGIN_TABS.map((t) => `
+    <button class="nostr-login-tab${s.tab === t.id ? ' is-active' : ''}" type="button" data-ui-action="nostr-tab" data-tab="${t.id}" aria-pressed="${s.tab === t.id}">${t.label}</button>
+  `).join('');
+  return `
+    <div class="nostr-login">
+      <div class="nostr-login-tabs" role="tablist">${tabs}</div>
+      <div class="nostr-login-panel">${renderNostrLoginPanel()}</div>
+      ${s.error ? `<p class="panel-note panel-error nostr-login-error">${escapeHtml(s.error)}</p>` : ''}
+    </div>
+  `;
+}
+
+function renderNostrLoginPanel(): string {
+  const s = lunaState.nostrLogin;
+  const busy = s.busy;
+  if (s.tab === 'extension') {
+    const hasExtension = typeof window !== 'undefined' && Boolean(window.nostr);
+    return `
+      <p class="nostr-login-hint">Usá tu extensión del navegador (nos2x, Alby).</p>
+      <button class="cs2-btn cs2-btn-accent nostr-login-action" type="button" data-ui-action="nostr-login-extension"${busy || !hasExtension ? ' disabled' : ''}>${busy ? 'Conectando…' : 'Conectar con la extensión'}</button>
+      ${hasExtension ? '' : '<p class="login-gate-note">No se encontró una extensión Nostr. Instalá nos2x o Alby, o usá otro método.</p>'}
+    `;
+  }
+  if (s.tab === 'qr') {
+    const qr = s.qrDataUrl
+      ? `<img class="nostr-login-qr" src="${escapeHtml(s.qrDataUrl)}" alt="Código QR de Nostr Connect" width="240" height="240" />`
+      : `<div class="nostr-login-qr nostr-login-qr-empty">${s.qrUri ? 'Este navegador bloquea el QR. Copiá el enlace y pegalo en tu firmante.' : 'Generando QR…'}</div>`;
+    return `
+      <p class="nostr-login-hint">Escaneá con <strong>Amber</strong> o <strong>nsec.app</strong> y aprobá la conexión.</p>
+      ${qr}
+      ${s.qrUri ? `<button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="nostr-copy-qr">Copiar enlace nostrconnect://</button>` : ''}
+      ${s.authUrl ? `<a class="nostr-login-authlink" href="${escapeHtml(s.authUrl)}" target="_blank" rel="noopener noreferrer">Tu firmante pide autorización: abrir enlace ↗</a>` : ''}
+      <p class="nostr-login-waiting">Esperando conexión…</p>
+    `;
+  }
+  if (s.tab === 'bunker') {
+    return `
+      <p class="nostr-login-hint">Pegá la URL <code>bunker://…</code> de tu firmante remoto, o tu NIP-05 (<code>usuario@dominio</code>).</p>
+      <input class="online-field-input nostr-login-input" type="text" autocomplete="off" placeholder="bunker://… o usuario@dominio" value="${escapeHtml(s.bunkerInput)}" data-online-field="nostr-bunker" />
+      <button class="cs2-btn cs2-btn-accent nostr-login-action" type="button" data-ui-action="nostr-login-bunker"${busy || !s.bunkerInput.trim() ? ' disabled' : ''}>${busy ? 'Conectando…' : 'Conectar'}</button>
+      ${s.authUrl ? `<a class="nostr-login-authlink" href="${escapeHtml(s.authUrl)}" target="_blank" rel="noopener noreferrer">Tu firmante pide autorización: abrir enlace ↗</a>` : ''}
+    `;
+  }
+  // local
+  if (s.generatedNsec) {
+    return `
+      <p class="nostr-login-hint">Tu clave nueva. Guardala: se muestra una sola vez y es la única forma de recuperar tu cuenta.</p>
+      <div class="nostr-login-nsec">${escapeHtml(s.generatedNsec)}</div>
+      <div class="nostr-login-row">
+        <button class="cs2-btn cs2-btn-ghost" type="button" data-ui-action="nostr-copy-nsec">Copiar</button>
+        <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="nostr-login-generated"${busy ? ' disabled' : ''}>${busy ? 'Conectando…' : 'Continuar'}</button>
+      </div>
+    `;
+  }
+  return `
+    <p class="nostr-login-hint">Generá una clave nueva o importá tu <code>nsec</code>.</p>
+    <p class="login-gate-note nostr-login-warn">⚠ La clave queda guardada en este navegador sin cifrar. No uses tu identidad principal en una compu compartida.</p>
+    <button class="cs2-btn cs2-btn-ghost nostr-login-action" type="button" data-ui-action="nostr-generate-key"${busy ? ' disabled' : ''}>Generar clave nueva</button>
+    <div class="nostr-login-row">
+      <input class="online-field-input nostr-login-input" type="password" autocomplete="off" placeholder="nsec1…" value="${escapeHtml(s.nsecInput)}" data-online-field="nostr-nsec" />
+      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="nostr-login-import"${busy || !s.nsecInput.trim() ? ' disabled' : ''}>Importar</button>
+    </div>
+  `;
 }
 
 function renderOnlineMenuPanelContent(): string {
@@ -6343,18 +7402,14 @@ export function renderOnlineLobbyOverlay(): string {
 
 function renderLunaInviteAction(host: boolean): string {
   if (!host) return '';
-  const unavailable = !lunaState.identity?.gameId;
+  const model = inviteActionModel();
   const status = lunaState.inviteNotice
     ? lunaState.inviteNotice
-    : unavailable
-      ? 'Entrá desde Luna Negra para ver amigos e invitarlos.'
-      : 'Luna Negra abre la lista de amigos.';
-  const action = unavailable ? 'luna-login' : 'online-open-invite';
-  const label = unavailable ? 'Iniciar sesión' : 'Invitar amigo';
+    : model.status;
   return `
     <section class="cs2-invite-action" aria-label="Invitar amigo">
-      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="${action}"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>
-        ${lunaState.inviteWindowBusy ? 'Abriendo...' : label}
+      <button class="cs2-btn cs2-btn-accent" type="button" data-ui-action="${model.action}"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>
+        ${lunaState.inviteWindowBusy ? 'Abriendo...' : model.label}
       </button>
       <span>${escapeHtml(status)}</span>
     </section>
@@ -6416,7 +7471,16 @@ function renderOnlineResultsOverlay(state: GameState): string {
   const mustClaimBeforeLeaving = bet
     ? myBetEntry(bet)?.payoutStatus === 'withdraw_pending'
     : false;
-  const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded') ? bet.netPayoutSats : null;
+  // Sats del ganador: una vez liquidado, el pago REAL al ganador (payoutSats) es la
+  // fuente de verdad y puede diferir del pozo neto proyectado (netPayoutSats) por
+  // fees/redondeos del zap. Mostrar netPayoutSats hacía que la fila (+18) no cuadrara
+  // con el festejo de "pago recibido" (17). Antes de liquidar cae a la proyección.
+  const winnerEntrySats = bet
+    ? bet.participants.find((p) => p.playerId && p.playerId === ranked[0]?.id)?.payoutSats ?? null
+    : null;
+  const winnerSats = bet && (bet.status === 'settled' || bet.status === 'funded')
+    ? (winnerEntrySats ?? bet.netPayoutSats)
+    : null;
   // Frame en que terminó la partida = el del último rival eliminado. El ganador sigue
   // vivo, así que su elapsedFrames quedó congelado en su último snapshot y puede ser
   // MENOR al de quien eliminó; mostrarlo crudo hacía que el "último en pie" figurara
@@ -6697,6 +7761,71 @@ function renderOnlineKoToast(banner: { placement: string; won: boolean }): strin
   `;
 }
 
+// ── Avisos de firma Nostr ────────────────────────────────────────────────────
+// Antes de cada firma (marcador, presencia, reto) mostramos un toast que explica
+// qué está firmando la extensión. La presencia (kind:30315) se firma seguido, así
+// que solo se avisa la PRIMERA vez (flag persistido); el resto avisa cada vez.
+const SIGN_NOTICE_PRESENCE_KEY = 'stack40.sign_notice.presence.v1';
+const SIGN_TOAST_MS = 4500;
+
+function presenceNoticeShown(): boolean {
+  try {
+    return localStorage.getItem(SIGN_NOTICE_PRESENCE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markPresenceNoticeShown(): void {
+  try {
+    localStorage.setItem(SIGN_NOTICE_PRESENCE_KEY, '1');
+  } catch {
+    // Sin storage el aviso reaparecerá en la próxima sesión; no es grave.
+  }
+}
+
+// Texto amable por tipo de evento. Devuelve null para kinds que no queremos anunciar.
+function describeSignEvent(kind: number): { icon: string; text: string } | null {
+  switch (kind) {
+    case 31337: // marcador (score addressable)
+      return { icon: '🏆', text: 'Firmando tu puntaje para el marcador (Nostr).' };
+    case 30315: // presencia NIP-38
+      return { icon: '🎮', text: 'Firmando tu presencia «Jugando TETRA» (Nostr).' };
+    case 13: // seal NIP-59 de un reto 1v1 (NIP-17)
+      return { icon: '⚔️', text: 'Firmando un reto cifrado para tu rival (Nostr).' };
+    default:
+      return { icon: '🔑', text: `Firmando un evento Nostr (kind ${kind}).` };
+  }
+}
+
+// Notificador cableado al signer (setSignEventNotifier). Corre justo antes de firmar.
+function notifySignEvent(event: UnsignedEvent): void {
+  const info = describeSignEvent(event.kind);
+  if (!info) return;
+  if (event.kind === 30315) {
+    if (presenceNoticeShown()) return; // presencia: solo la primera vez
+    markPresenceNoticeShown();
+  }
+  showSignToast(info.icon, info.text);
+}
+
+// Píldora no invasiva que se apila en la esquina y se va sola. No roba clicks.
+function showSignToast(icon: string, text: string): void {
+  const pill = document.createElement('div');
+  pill.className = 'sign-toast';
+  pill.setAttribute('role', 'status');
+  pill.setAttribute('aria-live', 'polite');
+  // `icon` es un emoji literal nuestro; solo el texto puede necesitar escape.
+  pill.innerHTML = `
+    <span class="sign-toast-icon" aria-hidden="true">${icon}</span>
+    <span class="sign-toast-text">${escapeHtml(text)}</span>
+  `;
+  signToastElement.appendChild(pill);
+  // Tope de pila: si se acumulan, sacamos el más viejo.
+  while (signToastElement.childElementCount > 3) signToastElement.firstElementChild?.remove();
+  setTimeout(() => pill.remove(), SIGN_TOAST_MS);
+}
+
 // Aviso de conexión/desconexión de mandos. Vive en su propia capa persistente
 // (gamepadToastElement) y se desvanece solo por CSS; el setTimeout limpia el nodo
 // al terminar para que un mando reconectado vuelva a animar desde cero.
@@ -6972,8 +8101,32 @@ function renderOnlineBetPanel(host: boolean): string {
   // renderOnlineBetResult, que ya maneja ganador/perdedor/reembolso y el retiro
   // LNURL del invitado. Ver [[bet-payout-survives-abandon-gc]] (fix #3).
   if (['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status)) {
+    // Recrear tras una apuesta terminal SIN salir de la sala: si sigo en el lobby
+    // (típico de una apuesta vencida/cancelada, donde la ronda nunca arrancó) y no
+    // queda ningún cobro/reembolso sin resolver, el host puede lanzar otra con los
+    // jugadores actuales. El servidor acepta createBet sobre una apuesta terminal.
+    // (Para una apuesta `settled` la sala está `finished` y la reapertura la maneja
+    // reopenOnlineRoom desde la pantalla de resultados.)
+    const canRecreate = host
+      && roomState.current.status === 'lobby'
+      && !hasUnresolvedRoomBetPayout(bet);
+    let recreate = '';
+    if (canRecreate) {
+      const blocked = lunaNegraBettingBlockedReason();
+      const canCreate = !blocked && !betState.busy && !betState.creating;
+      recreate = `
+        <div class="online-bet-recreate">
+          <p class="online-bet-note">¿Otra vuelta? Creá una nueva apuesta con los jugadores de la sala.</p>
+          <div class="online-bet-create-row">
+            <input type="text" inputmode="numeric" class="dash-input online-bet-input" maxlength="7" value="${escapeHtml(betState.stakeInput)}" data-online-field="bet-stake" autocomplete="off" placeholder="ej. 50"${betState.creating ? ' disabled' : ''} />
+            <button class="dash-action-btn accent online-bet-create-button" type="button" data-ui-action="online-bet-create"${canCreate ? '' : ' disabled'}>${betState.creating ? `${BET_SPINNER}<span>Creando…</span>` : 'Crear otra apuesta'}</button>
+          </div>
+          ${blocked ? `<p class="online-bet-note online-bet-warning">${escapeHtml(blocked)}</p>` : ''}
+        </div>
+      `;
+    }
     return `
-      <section class="online-bet-panel">
+      <section class="online-bet-panel${betState.creating ? ' online-bet-panel--creating' : ''}">
         <div class="online-bet-head">
           <span>Apuesta · ${escapeHtml(betStatusLabel(bet.status))}</span>
           <small>${bet.feePct ? `comisión ${bet.feePct}%` : `comisión ${bet.feeSats} sats`}</small>
@@ -6982,6 +8135,7 @@ function renderOnlineBetPanel(host: boolean): string {
         <div class="online-bet-actions">
           <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
         </div>
+        ${recreate}
       </section>
     `;
   }
@@ -6994,42 +8148,80 @@ function renderOnlineBetPanel(host: boolean): string {
   `).join('');
 
   const myDepositPending = !!myEntry && myEntry.depositStatus === 'pending';
-  const myHasPayHandles = !!(myEntry && (myEntry.bolt11 || myEntry.lnurl || myEntry.payUrl));
-  const myLightningDepositPayload = myEntry?.bolt11 || myEntry?.lnurl || '';
-  const myDeposit = myDepositPending && myHasPayHandles
-    ? `
+  // v2 (zaps): el depósito SIEMPRE es un zap NIP-57 anclado al contrato, así que hay
+  // que FIRMARLO. Dos estados:
+  //   - Con `bolt11` ya emitido (el jugador ya firmó, acá o en un intento previo):
+  //     mostramos el QR + pago con extensión + copiar invoice. Ese invoice compromete
+  //     el zap vía description hash, así que cualquier método lo paga como zap real.
+  //   - Sin invoice todavía pero con el 9734 sin firmar (`depositZapRequest`) + su
+  //     callback: el jugador firma en el juego con un click y ahí generamos el invoice.
+  // `payUrl` (firmar y pagar en la web de Luna) queda de fallback siempre.
+  const myDepositBolt11 = myEntry?.bolt11 || '';
+  const myDepositZapRequest = myEntry?.depositZapRequest ?? null;
+  const myDepositCallback = myEntry?.depositCallback || '';
+  const myPayUrl = myEntry?.payUrl || '';
+  const canZapInGame = !!myDepositZapRequest && !!myDepositCallback;
+  const payLunaBtn = myPayUrl
+    ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myPayUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>`
+    : '';
+
+  let myDeposit = '';
+  if (myDepositPending && myDepositBolt11) {
+    // Invoice de zap ya emitido: cualquier método (QR, extensión, copiar) lo paga y
+    // Luna publica el recibo 9735 del depósito al detectar el pago.
+    myDeposit = `
       <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
-        ${myLightningDepositPayload
-          ? `<button class="dash-action-btn success online-bet-wallet-link" type="button" data-ui-action="online-bet-open-wallet" data-lightning="${escapeHtml(myLightningDepositPayload)}">📱 Abrir wallet Lightning</button>`
-          : ''}
-        ${myEntry!.bolt11 ? renderBetInvoiceQr(myEntry!.bolt11) : ''}
+        <button class="dash-action-btn success online-bet-wallet-link" type="button" data-ui-action="online-bet-open-wallet" data-lightning="${escapeHtml(myDepositBolt11)}">📱 Abrir wallet Lightning</button>
+        ${renderBetInvoiceQr(myDepositBolt11)}
         <div class="online-bet-deposit-actions">
-          ${myEntry!.bolt11 ? `<button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myEntry!.bolt11)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>` : ''}
-          ${myEntry!.payUrl ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myEntry!.payUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>` : ''}
-          ${myEntry!.bolt11 ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry!.bolt11)}">Copiar invoice</button>` : ''}
-          ${myEntry!.lnurl ? `<button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myEntry!.lnurl)}">Copiar LNURL</button>` : ''}
+          <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myDepositBolt11)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>
+          ${payLunaBtn}
+          <button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myDepositBolt11)}">Copiar invoice</button>
         </div>
       </div>
-    `
-    : myDepositPending
-      // Depósito pendiente pero Luna Negra todavía no devolvió los handles de pago
-      // (bolt11/payUrl). Si vino `depositError`, mostramos el motivo real (NWC sin
-      // permiso make-invoice, budget agotado, relay caído); si no, asumimos que se
-      // está generando. En ambos casos el polling reintenta solo y ofrecemos un
-      // reintento manual, en vez de un panel mudo sin forma de pagar.
-      ? `
+    `;
+  } else if (myDepositPending && canZapInGame) {
+    // Falta firmar: con un click el jugador firma el 9734 con su identidad Nostr y
+    // generamos el invoice (después aparecen el QR + pago con extensión).
+    myDeposit = `
+      <div class="online-bet-deposit" data-bet-deposit>
+        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        <p class="online-bet-note">Tu depósito es un zap ⚡ anclado al contrato. Firmalo con tu identidad Nostr para generar el pago (QR o extensión).</p>
+        <div class="online-bet-deposit-actions">
+          <button class="dash-action-btn accent online-bet-sign-zap" type="button" data-ui-action="online-bet-sign-zap"${betState.paying ? ' disabled' : ''}>${betState.paying ? 'Firmando…' : '⚡ Firmar depósito (zap)'}</button>
+          ${payLunaBtn}
+        </div>
+      </div>
+    `;
+  } else if (myDepositPending && myPayUrl) {
+    // Sin firmante Nostr en el juego (o Luna no mandó el 9734): que firme y pague su
+    // zap en la web de Luna Negra.
+    myDeposit = `
+      <div class="online-bet-deposit" data-bet-deposit>
+        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
+        <p class="online-bet-note">Firmá y pagá tu depósito (zap ⚡) en Luna Negra.</p>
+        <div class="online-bet-deposit-actions">
+          ${payLunaBtn}
+        </div>
+      </div>
+    `;
+  } else if (myDepositPending) {
+    // Depósito pendiente pero Luna todavía no devolvió handles (bolt11/zap/payUrl): o
+    // se está preparando, o falló con un motivo real (NWC sin permiso, relay caído).
+    // El polling reintenta solo; ofrecemos además un refresh manual.
+    myDeposit = `
       <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
         ${myEntry!.depositError
-          ? `<p class="online-bet-note online-bet-warning">⚠️ No se pudo generar el invoice de pago: ${escapeHtml(myEntry!.depositError)}. Reintentando…</p>`
-          : `<p class="online-bet-note">⏳ Generando el invoice de pago… Si tarda, tocá «Actualizar».</p>`}
+          ? `<p class="online-bet-note online-bet-warning">⚠️ No se pudo preparar el depósito: ${escapeHtml(myEntry!.depositError)}. Reintentando…</p>`
+          : `<p class="online-bet-note">⏳ Preparando el depósito… Si tarda, tocá «Actualizar».</p>`}
         <div class="online-bet-deposit-actions">
           <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
         </div>
       </div>
-    `
-      : '';
+    `;
+  }
 
   const terminal = ['settled', 'cancelled', 'expired', 'refunded'].includes(bet.status);
   const retryInvoice = canRetryBetInvoiceGeneration(bet, host)
@@ -7217,6 +8409,25 @@ function renderOnlineBetWithdraw(entry: RoomBetParticipant, bet: RoomBet): strin
   `;
 }
 
+// Cobro del ganador invitado en v2 (zaps): la API por clave no expone una LNURL de
+// retiro, así que enlazamos a la página hosteada de Luna Negra donde reclama su
+// parte con su sesión. El que tiene dirección Lightning cobra por zap automático.
+function renderOnlineBetWithdrawLink(entry: RoomBetParticipant, bet: RoomBet): string {
+  const amount = entry.payoutSats ?? bet.netPayoutSats;
+  const url = entry.withdrawUrl!;
+  return `
+    <div class="bet-settle bet-settle--paid">
+      <div class="bet-settle-title bet-settle-title--win"><span>💰 ¡Ganaste el pozo!</span></div>
+      <div class="bet-settle-amount">+${amount.toLocaleString('es-AR')} <small>sats</small></div>
+      <p class="bet-settle-hint">Reclamá tu premio en Luna Negra para cobrarlo en tu billetera.</p>
+      <div class="online-bet-deposit-actions">
+        <a class="dash-action-btn success" href="${escapeHtml(url)}" target="_blank" rel="noopener">💰 Cobrar en Luna Negra</a>
+        <button class="dash-copy-btn" type="button" data-ui-action="online-bet-refresh"${betState.busy ? ' disabled' : ''}>Actualizar</button>
+      </div>
+    </div>
+  `;
+}
+
 // Card de liquidación: dos pasos (reportar → liquidar) con el activo animado y el
 // hecho tildado, más una expectativa de tiempo. El pago Lightning puede tardar y
 // el card lo comunica para que "esto sigue andando", no "se colgó".
@@ -7253,9 +8464,11 @@ function renderOnlineBetResult(): string {
   if (bet.status === 'settled' && amIWinner) {
     switch (myEntry?.payoutStatus) {
       case 'withdraw_pending':
-        // Invitado sin billetera: cobra por LNURL-withdraw. Con handle → QR +
-        // extensión; sin handle todavía (deploy/relay) → aviso para reintentar.
+        // Invitado sin billetera. v1: cobra por LNURL-withdraw in-app (QR + extensión).
+        // v2 (zaps): la API por clave no expone la LNURL; se reclama en la página
+        // hosteada de Luna Negra (withdrawUrl). Sin ningún handle todavía → reintentar.
         if (myEntry.withdrawLnurl) return renderOnlineBetWithdraw(myEntry, bet);
+        if (myEntry.withdrawUrl) return renderOnlineBetWithdrawLink(myEntry, bet);
         return `
           <div class="bet-settle">
             <div class="bet-settle-title">${BET_SPINNER}<span>¡Ganaste el pozo!</span></div>
@@ -8742,7 +9955,7 @@ function renderMobileRoomManager(): string {
   const startReason = !ready
     ? 'Marcate listo para poder empezar'
     : (readyCount < 2 ? 'Necesitás al menos 2 jugadores listos' : 'Todo listo · arrancá la partida');
-  const inviteUnavailable = !lunaState.identity?.gameId;
+  const inviteModel = inviteActionModel();
 
   const playersHtml = room.players.map((candidate) => {
     const isSelf = candidate.id === identityState.player.id;
@@ -8759,9 +9972,9 @@ function renderMobileRoomManager(): string {
       </div>`;
   }).join('');
 
-  const inviteBtn = inviteUnavailable
+  const inviteBtn = inviteModel.unavailable
     ? `<button class="mdash-add-friend" type="button" data-ui-action="luna-login"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo…' : 'Iniciar sesión para invitar'}</button>`
-    : `<button class="mdash-add-friend" type="button" data-ui-action="online-open-invite"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo…' : '+ Invitar amigos'}</button>`;
+    : `<button class="mdash-add-friend" type="button" data-ui-action="${inviteModel.action}"${onlineNetState.busy || lunaState.inviteWindowBusy ? ' disabled' : ''}>${lunaState.inviteWindowBusy ? 'Abriendo…' : inviteModel.label}</button>`;
 
   const visToggle = host && isLobby
     ? `<button class="mdash-vis-toggle ${isPublic ? 'is-public' : ''}" type="button" role="switch" aria-checked="${isPublic}" aria-label="${isPublic ? 'Sala pública' : 'Sala privada'}" data-ui-action="online-visibility-toggle"${onlineNetState.busy ? ' disabled' : ''}>
@@ -8933,7 +10146,7 @@ function renderSurvivalLeaderboardBody(): string {
 // visibilidad, apuesta) y los avatares se pre-renderizan acá.
 function renderDashboardRoomPanel(): string {
   const room = roomState.current;
-  const inviteUnavailable = !lunaState.identity?.gameId;
+  const inviteModel = inviteActionModel();
 
   if (!room) {
     return renderRoomPanelEmpty({
@@ -8976,7 +10189,9 @@ function renderDashboardRoomPanel(): string {
       isReady: candidate.ready,
     })),
     inviteLinkCopied: roomInviteLinkRecentlyCopied(),
-    inviteUnavailable,
+    inviteUnavailable: inviteModel.unavailable,
+    inviteAction: inviteModel.action,
+    inviteLabel: inviteModel.label,
     inviteWindowBusy: lunaState.inviteWindowBusy,
     busy: onlineNetState.busy,
     onlineErrorHtml: renderOnlineError(),

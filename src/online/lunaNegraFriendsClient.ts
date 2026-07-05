@@ -3,20 +3,16 @@ import type {
   LunaInviteRequest,
   LunaInviteResponse,
   LunaInviteWindowResponse,
+  LunaGameInfoResponse,
   LunaLaunchRequestResponse,
-  LunaLoginUrlResponse,
   LunaPresenceRequest,
-  LunaSessionResponse,
+  LunaRoomInviteResponse,
 } from './protocol';
 
 // Cliente del frontend para la capa social de Luna Negra. Habla con los
 // endpoints proxy /api/luna-negra/* (la API key vive en el servidor).
 export class LunaSocialClient {
   constructor(private readonly basePath = '/api/luna-negra') {}
-
-  resolveSession(token: string): Promise<LunaSessionResponse> {
-    return this.get(`/session?token=${encodeURIComponent(token)}`);
-  }
 
   listFriends(npub: string): Promise<LunaFriendsResponse> {
     return this.get(`/friends?npub=${encodeURIComponent(npub)}`);
@@ -35,12 +31,18 @@ export class LunaSocialClient {
     return this.get(`/invite-window?${params.toString()}`);
   }
 
-  loginUrl(): Promise<LunaLoginUrlResponse> {
-    return this.get('/login-url');
+  gameInfo(): Promise<LunaGameInfoResponse> {
+    return this.get('/game-info');
   }
 
   launchRequest(npub: string): Promise<LunaLaunchRequestResponse> {
     return this.get(`/launch-request?npub=${encodeURIComponent(npub)}`);
+  }
+
+  /** Verifica un `lnInvite` de "Luna Room Link" (invitación dirigida a una sala de
+   * este juego). Devuelve el payload o `null` si el token es inválido. */
+  verifyRoomInvite(lnInvite: string): Promise<LunaRoomInviteResponse> {
+    return this.post('/verify-room-invite', { lnInvite });
   }
 
   private async get<T>(path: string): Promise<T> {

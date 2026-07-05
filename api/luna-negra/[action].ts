@@ -6,9 +6,9 @@ import {
   heartbeatLunaPresence,
   listLunaFriends,
   consumeLunaLaunchRequest,
-  resolveLunaSession,
   sendLunaInvite,
 } from '../../src/online/lunaNegraSocial.js';
+import { verifyRoomInvite } from '../../src/online/lunaNegraRoomInvite.js';
 import { OnlineRoomError, loadRoom, normalizeRoomId } from '../../src/online/roomService.js';
 import {
   getBetRoomStore,
@@ -30,12 +30,6 @@ export default function handler(request: IncomingMessage, response: ServerRespon
 export async function GET(request: Request): Promise<Response> {
   try {
     const action = actionFromRequest(request);
-    if (action === 'session') {
-      const token = queryParam(request, 'token');
-      if (!token) throw new OnlineRoomError('Falta el token de sesión de Luna Negra.', 400);
-      const { identity, source } = await resolveLunaSession(token);
-      return sendJson(200, { identity, source, serverNowMs: Date.now() });
-    }
     if (action === 'friends') {
       const npub = queryParam(request, 'npub');
       if (!npub) throw new OnlineRoomError('Falta el npub.', 400);
@@ -55,8 +49,14 @@ export async function GET(request: Request): Promise<Response> {
       }
       return sendJson(200, { url: buildInviteWindowUrl(gameId, roomId), serverNowMs: Date.now() });
     }
-    if (action === 'login-url') {
-      return sendJson(200, { url: buildLunaLoginUrl(), serverNowMs: Date.now() });
+    if (action === 'game-info') {
+      // Expone el gameId (cuid) y slug del juego —ya configurados server-side para
+      // apuestas/marcadores— al cliente. Lo usa el login Nostr 2.0 para poblar
+      // identity.gameId (sin él, invitar/apostar quedan gateados). No es secreto:
+      // el gameId ya viajaba en la sesión SSO 1.0 y en las URLs de invitación.
+      const gameId = (process.env.LUNA_NEGRA_GAME_ID ?? '').trim() || null;
+      const slug = (process.env.LUNA_NEGRA_GAME_SLUG ?? '').trim() || null;
+      return sendJson(200, { gameId, slug, serverNowMs: Date.now() });
     }
     if (action === 'launch-request') {
       const npub = queryParam(request, 'npub');
@@ -77,6 +77,16 @@ export async function POST(request: Request): Promise<Response> {
       const body = await readJsonBody<LunaPresenceRequest>(request);
       const { source } = await heartbeatLunaPresence(body);
       return sendJson(200, { ok: true, source, serverNowMs: Date.now() });
+    }
+    if (action === 'verify-room-invite') {
+      // Verifica offline (JWKS de Luna) el `lnInvite` de una invitación dirigida a
+      // una sala de ESTE juego ("Luna Room Link"). No requiere API key: el token
+      // es autocontenido y solo autoriza entrada a sala (no toca dinero).
+      const body = await readJsonBody<{ lnInvite?: string }>(request);
+      const token = typeof body.lnInvite === 'string' ? body.lnInvite.trim() : '';
+      if (!token) throw new OnlineRoomError('Falta el lnInvite.', 400);
+      const invite = await verifyRoomInvite(token);
+      return sendJson(200, { invite, serverNowMs: Date.now() });
     }
     if (action === 'invite') {
       const body = await readJsonBody<LunaInviteRequest>(request);
@@ -127,14 +137,3 @@ function buildInviteWindowUrl(gameId: string, roomId: string): string {
   return url.toString();
 }
 
-function buildLunaLoginUrl(): string {
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL is not configured.', 500);
-  const slug = normalizeLunaGameSlug(process.env.LUNA_NEGRA_GAME_SLUG ?? 'tetris-beta');
-  return new URL(`/game/${slug}`, baseUrl).toString();
-}
-
-function normalizeLunaGameSlug(value: string): string {
-  const slug = value.trim().toLowerCase();
-  return /^[a-z0-9_-]+$/.test(slug) ? slug : 'tetris-beta';
-}

@@ -27,6 +27,11 @@ export interface BetState {
   // en cada render, así que el festejo se dispara vía maybeCelebratePayout() desde
   // adoptOnlineRoom, marcando acá el betId ya festejado.
   celebratedBetId: string | null;
+  // Guard de "auto-firma del depósito una sola vez por apuesta": en cuanto Luna manda
+  // el 9734 sin firmar + callback, maybeAutoSignBetDeposit() dispara la firma solo,
+  // marcando acá el betId ya intentado para no spamear al firmante en cada poll. Si
+  // el intento falla o el usuario lo rechaza, queda el botón manual como fallback.
+  autoSignedBetId: string | null;
 }
 
 export const betState: BetState = {
@@ -38,4 +43,5 @@ export const betState: BetState = {
   fastPollUntil: 0,
   refreshQueued: false,
   celebratedBetId: null,
+  autoSignedBetId: null,
 };

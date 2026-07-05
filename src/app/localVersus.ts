@@ -60,6 +60,10 @@ export interface LocalVersusOptions {
   colorBlind?: boolean;
   onExit: () => void;
   audio?: LocalVersusAudioHooks;
+  // Arranca directo en la pantalla de cobro recuperando el QR de retiro guardado
+  // (tras un refresh de la página). Si no hay cobro pendiente o ya se cobró, cae
+  // a la configuración de asientos normal.
+  resumePayout?: boolean;
 }
 
 type Phase = 'seatSetup' | 'betDeposit' | 'countdown' | 'playing' | 'finished';
@@ -199,7 +203,48 @@ function controlChipsHtml(device: SeatDevice, seat: 1 | 2, variant: 'setup' | 'p
 
 const SEAT_STORAGE_KEY = 'tetra:localVersus:seats:v1';
 const STAKE_STORAGE_KEY = 'tetra:localVersus:stake:v1';
+const PAYOUT_STORAGE_KEY = 'tetra:localVersus:pendingPayout:v1';
 const DEFAULT_STAKE_SATS = 100;
+
+// Registro mínimo para recuperar el QR de retiro tras un refresh: la apuesta vive
+// en Luna Negra (por `betId`), así que solo guardamos la referencia + el mapa
+// asiento→npub (lo pide el GET de estado) + quién ganó + si ya se reveló el QR.
+interface PendingPayoutRecord {
+  betId: string;
+  seats: Array<{ seat: number; npub: string }>;
+  winnerSeat: 1 | 2 | null;
+  revealed: boolean;
+}
+
+function loadPendingPayout(): PendingPayoutRecord | null {
+  try {
+    const raw = localStorage.getItem(PAYOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingPayoutRecord;
+    if (!parsed?.betId || !Array.isArray(parsed.seats)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingPayout(record: PendingPayoutRecord): void {
+  try {
+    localStorage.setItem(PAYOUT_STORAGE_KEY, JSON.stringify(record));
+  } catch { /* best-effort: el stand puede correr sin localStorage */ }
+}
+
+function clearPendingPayout(): void {
+  try {
+    localStorage.removeItem(PAYOUT_STORAGE_KEY);
+  } catch { /* best-effort */ }
+}
+
+// ¿Hay un cobro de duelo local pendiente de recuperar al recargar la página?
+// (main.ts lo consulta en el arranque para reabrir la pantalla con el mismo QR.)
+export function hasPendingLocalPayout(): boolean {
+  return loadPendingPayout() !== null;
+}
 
 function loadStake(): number {
   try {
@@ -359,6 +404,10 @@ class LocalVersusMatch {
   private readonly qrCache = new Map<string, string>();
   private readonly qrPending = new Set<string>();
   private qrZoomEl: HTMLElement | null = null;
+  // El ganador decide CUÁNDO revelar su QR de retiro: arranca oculto y solo se
+  // muestra cuando toca "Mostrar QR para cobrar" (así se prepara la billetera
+  // antes de que aparezca en pantalla, útil en un stand con gente mirando).
+  private payoutRevealed = false;
 
   constructor(options: LocalVersusOptions) {
     this.options = options;
@@ -368,9 +417,13 @@ class LocalVersusMatch {
     document.body.appendChild(this.overlay);
     this.overlay.addEventListener('keydown', this.onKeyDown);
     this.overlay.tabIndex = -1;
-    this.renderSeatSetup();
-    this.overlay.focus();
-    void this.checkBetAvailable();
+    if (options.resumePayout && loadPendingPayout()) {
+      void this.resumePendingPayout();
+    } else {
+      this.renderSeatSetup();
+      this.overlay.focus();
+      void this.checkBetAvailable();
+    }
   }
 
   destroy(): void {
@@ -408,6 +461,9 @@ class LocalVersusMatch {
   };
 
   private exit(): void {
+    // Salir de la pantalla es un descarte deliberado del cobro: ya no hace falta
+    // recuperarlo en el próximo refresh.
+    clearPendingPayout();
     this.options.onExit();
     this.destroy();
   }
@@ -415,6 +471,7 @@ class LocalVersusMatch {
   private backToSeatSetup(): void {
     cancelAnimationFrame(this.rafId);
     window.clearTimeout(this.betPollTimer);
+    clearPendingPayout();
     this.teardownSeats();
     this.bet = null;
     this.betError = null;
@@ -663,8 +720,13 @@ class LocalVersusMatch {
     let body: string;
     if (paid) {
       body = '<div class="lv-deposit-ok">✅ Depósito recibido</div>';
-    } else if (p?.bolt11) {
-      body = `${this.renderQr(p.bolt11)}<span class="lv-qr-hint">Escaneá con tu billetera · tocá para agrandar</span>`;
+    } else if (p?.bolt11 || p?.lnurl) {
+      // v2 (zaps): el depósito es un zap NIP-57 que hay que firmar. Los asientos del
+      // duelo local son invitados custodiales: Luna firma el 9734 en su nombre y
+      // emite el `bolt11` (invoice que compromete el zap vía description hash), así el
+      // QR lo paga CUALQUIER billetera y sigue siendo zap. Preferimos ese bolt11; la
+      // LNURL cruda solo sirve para wallets NIP-57 y la dejamos de último recurso.
+      body = `${this.renderQr(p.bolt11 ?? p.lnurl!)}<span class="lv-qr-hint">Escaneá con tu billetera · tocá para agrandar</span>`;
     } else if (p?.depositError) {
       body = `<p class="lv-bet-note lv-bet-warn">⚠️ ${escapeText(p.depositError)} · reintentando…</p>`;
     } else {
@@ -694,14 +756,20 @@ class LocalVersusMatch {
   // corrección de error 'L' (menos módulos = cada uno más grande) y bolt11 en
   // MAYÚSCULAS (modo alfanumérico del QR = menos módulos todavía). Clickeable: lo
   // agranda a pantalla completa.
-  private renderQr(value: string): string {
-    const cached = this.qrCache.get(value);
+  private renderQr(value: string, opts?: { lightning?: boolean }): string {
+    // Lightning (invoice/LNURL): prefijo `lightning:` + MAYÚSCULAS (modo
+    // alfanumérico = menos módulos). URLs (reclamo web v2): se codifican tal cual,
+    // sin tocar, para que el celular las abra como link. El payload real es la clave
+    // de caché y el `data-qr` (así el zoom encuentra el SVG correcto).
+    const lightning = opts?.lightning ?? true;
+    const payload = lightning ? `lightning:${value.toUpperCase()}` : value;
+    const cached = this.qrCache.get(payload);
     if (cached) {
-      return `<div class="lv-qr" data-lv="qr-zoom" data-qr="${escapeAttr(value)}" title="Tocá para agrandar">${cached}</div>`;
+      return `<div class="lv-qr" data-lv="qr-zoom" data-qr="${escapeAttr(payload)}" title="Tocá para agrandar">${cached}</div>`;
     }
-    if (!this.qrPending.has(value)) {
-      this.qrPending.add(value);
-      void QRCode.toString(`lightning:${value.toUpperCase()}`, {
+    if (!this.qrPending.has(payload)) {
+      this.qrPending.add(payload);
+      void QRCode.toString(payload, {
         type: 'svg', errorCorrectionLevel: 'L', margin: 2, color: { dark: '#000000', light: '#ffffff' },
       }).then((svg) => {
         // `crispEdges` mata el anti-aliasing entre módulos (bordes duros) y el
@@ -711,13 +779,13 @@ class LocalVersusMatch {
           .replace(/<svg /, '<svg shape-rendering="crispEdges" preserveAspectRatio="xMidYMid meet" ')
           // Solo el width/height del <svg> (espacio delante); NO toca stroke-width.
           .replace(/\s(width|height)="[^"]*"/g, ' ');
-        this.qrCache.set(value, processed);
-        this.qrPending.delete(value);
+        this.qrCache.set(payload, processed);
+        this.qrPending.delete(payload);
         if (this.destroyed) return;
         if (this.phase === 'betDeposit') this.renderBetDeposit();
         else if (this.phase === 'finished') this.renderFinished();
-        if (this.qrZoomEl?.dataset.qr === value) this.openQrZoom(value); // refresca el zoom abierto
-      }).catch(() => { this.qrPending.delete(value); });
+        if (this.qrZoomEl?.dataset.qr === payload) this.openQrZoom(payload); // refresca el zoom abierto
+      }).catch(() => { this.qrPending.delete(payload); });
     }
     return '<div class="lv-qr lv-qr-loading">Generando QR…</div>';
   }
@@ -759,6 +827,8 @@ class LocalVersusMatch {
     this.outcome = 'playing';
     this.frame = 0;
     this.phase = 'countdown';
+    // Cada duelo empieza con el cobro oculto: el ganador lo revela al final.
+    this.payoutRevealed = false;
     // Resetea los drivers de audio por asiento al estado inicial (sin disparar
     // sonidos) y desbloquea los AudioContext para la música y los efectos.
     this.options.audio?.matchStart?.(this.seats.seat1.state, this.seats.seat2.state);
@@ -870,6 +940,82 @@ class LocalVersusMatch {
     if (this.bet && !isPayoutResolved(this.bet)) this.scheduleBetPoll();
   }
 
+  // Recuperación tras un refresh: relee la apuesta guardada desde Luna Negra y, si
+  // el ganador todavía tiene un cobro sin reclamar, reabre la MISMA pantalla con el
+  // MISMO QR de retiro. Si ya cobró (o la apuesta se resolvió sin premio), limpia
+  // el registro y cae a la configuración de asientos.
+  private async resumePendingPayout(): Promise<void> {
+    const saved = loadPendingPayout();
+    if (!saved) { this.exit(); return; }
+    this.phase = 'finished';
+    this.outcome = saved.winnerSeat === 1 ? 'seat1' : saved.winnerSeat === 2 ? 'seat2' : 'draw';
+    this.payoutRevealed = !!saved.revealed;
+    this.overlay.innerHTML = `
+      <div class="lv-finished">
+        <h1 class="lv-win-title">Recuperando tu cobro…</h1>
+        <p class="lv-bet-note">⏳ Cargando el QR de retiro…</p>
+      </div>`;
+    this.overlay.focus();
+    // OJO: hay que separar "la consulta falló" (transitorio) de "la consulta
+    // respondió y ya no hay cobro". Un fallo de red NO debe borrar el registro
+    // (si no, un solo refresh con mala conexión pierde el QR para siempre).
+    let fetched = false;
+    try {
+      this.bet = await this.betApi<LocalBetView>('state', { betId: saved.betId, seats: saved.seats });
+      fetched = true;
+    } catch {
+      // transitorio: se reintenta abajo.
+    }
+    if (this.destroyed) return;
+    if (!fetched) {
+      // No pudimos contactar a Luna Negra: mantenemos el registro y reintentamos
+      // (auto + botón). El cobro sigue vivo; solo falló la lectura.
+      this.renderResumeReconnecting();
+      window.clearTimeout(this.betPollTimer);
+      this.betPollTimer = window.setTimeout(() => void this.resumePendingPayout(), 3000);
+      return;
+    }
+    if (!this.bet) {
+      // Respuesta vacía inesperada: la tratamos como reconexión, no como "sin
+      // cobro" (no borramos el registro).
+      this.renderResumeReconnecting();
+      window.clearTimeout(this.betPollTimer);
+      this.betPollTimer = window.setTimeout(() => void this.resumePendingPayout(), 3000);
+      return;
+    }
+    // La consulta respondió: SOLO cerramos si el cobro ya está pagado o la apuesta
+    // murió. Si el ganador está confirmado pero el handle de retiro todavía no llegó,
+    // mostramos la pantalla y seguimos poleando (NO borramos el registro).
+    if (payoutIsDone(this.bet)) {
+      clearPendingPayout();
+      this.exit();
+      return;
+    }
+    this.renderFinished();
+    if (!isPayoutResolved(this.bet)) this.scheduleBetPoll();
+  }
+
+  // Pantalla de reconexión durante la recuperación: NO limpia el registro. Deja
+  // reintentar (auto cada 3 s y a mano) o salir a propósito (eso sí descarta).
+  private renderResumeReconnecting(): void {
+    this.overlay.innerHTML = `
+      <div class="lv-finished">
+        <h1 class="lv-win-title">Recuperando tu cobro…</h1>
+        <p class="lv-bet-note lv-bet-warn">⚠️ No se pudo contactar a Luna Negra. Reintentando…</p>
+        <div class="lv-win-actions">
+          <button class="lv-btn lv-btn--primary" type="button" data-lv="resume-retry">Reintentar ahora</button>
+          <button class="lv-btn lv-btn--ghost" type="button" data-lv="resume-exit">Salir</button>
+        </div>
+      </div>`;
+    this.overlay.querySelectorAll<HTMLElement>('[data-lv]').forEach((el) => {
+      el.addEventListener('click', () => {
+        if (el.dataset.lv === 'resume-retry') { window.clearTimeout(this.betPollTimer); void this.resumePendingPayout(); }
+        else if (el.dataset.lv === 'resume-exit') this.exit();
+      });
+    });
+    this.overlay.focus();
+  }
+
   // ── Render del escenario (canvases persistentes + HUD reescribible) ─────────
 
   private renderStage(): void {
@@ -949,6 +1095,15 @@ class LocalVersusMatch {
   private renderFinished(): void {
     cancelAnimationFrame(this.rafId);
     const winnerSeat = this.outcome === 'seat1' ? 1 : this.outcome === 'seat2' ? 2 : null;
+    // Persistimos el cobro para sobrevivir un refresh mientras siga sin reclamar;
+    // en cuanto se paga (o la apuesta muere) borramos el registro. Si el premio
+    // todavía se está preparando (sin handle aún) dejamos el registro como está —
+    // NO lo borramos, para no perderlo por un refresh en ese instante.
+    if (this.bet && winnerHasUnclaimedWithdraw(this.bet)) {
+      savePendingPayout({ betId: this.bet.betId, seats: this.bet.seats, winnerSeat, revealed: this.payoutRevealed });
+    } else if (this.bet && payoutIsDone(this.bet)) {
+      clearPendingPayout();
+    }
     const winner = winnerSeat ? `Jugador ${winnerSeat}` : null;
     const heading = winner ? `🏆 ${winner} gana` : '🤝 Empate';
     this.overlay.innerHTML = `
@@ -967,7 +1122,8 @@ class LocalVersusMatch {
         const action = el.dataset.lv;
         if (action === 'exit') this.exit();
         else if (action === 'setup') this.backToSeatSetup();
-        else if (action === 'rematch') { this.bet = null; this.teardownSeats(); this.beginCountdown(); }
+        else if (action === 'rematch') { clearPendingPayout(); this.bet = null; this.teardownSeats(); this.beginCountdown(); }
+        else if (action === 'payout-reveal') { this.payoutRevealed = true; this.renderFinished(); }
         else if (action === 'qr-zoom' && el.dataset.qr) this.openQrZoom(el.dataset.qr);
       });
     });
@@ -983,12 +1139,37 @@ class LocalVersusMatch {
       return '<p class="lv-bet-note">Empate: se reembolsa el depósito de cada jugador a su billetera.</p>';
     }
     const winner = bet.participants.find((p) => p.seat === winnerSeat);
+    const amount = winner?.payoutSats ?? bet.netPayoutSats;
+    // CAMINO A (LNURL-withdraw): el QR ES un cobro Lightning → se escanea con la
+    // BILLETERA y los sats caen solos. El QR lleva prefijo `lightning:`.
     if (winner?.withdrawLnurl) {
+      // El QR arranca oculto: el ganador lo revela cuando ya tiene la billetera
+      // lista, para que nadie más lo escanee de sorpresa.
+      if (!this.payoutRevealed) {
+        return this.renderPayoutReveal(winnerSeat, amount, 'lnurl');
+      }
       return `
         <div class="lv-bet-payout">
-          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${winner.payoutSats ?? bet.netPayoutSats} sats</strong>. Escaneá para cobrar:</p>
+          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>. Escaneá con tu billetera Lightning:</p>
           ${this.renderQr(winner.withdrawLnurl)}
-          <span class="lv-qr-hint">QR de retiro · tocá para agrandar</span>
+          <span class="lv-qr-hint">QR de retiro · escaneá con tu billetera Lightning · tocá para agrandar</span>
+        </div>`;
+    }
+    // CAMINO B (v2 zaps, invitado sin billetera): NO hay LNURL de retiro por API
+    // key. El "QR" es una PÁGINA WEB (`/apuestas/{betId}`) donde el ganador reclama
+    // pegando su factura/LNURL. Por eso se abre con la CÁMARA del teléfono (o el
+    // botón si estás en esta misma compu), NO con la billetera Lightning.
+    if (winner?.payoutStatus === 'withdraw_pending' && winner.withdrawUrl) {
+      if (!this.payoutRevealed) {
+        return this.renderPayoutReveal(winnerSeat, amount, 'web');
+      }
+      return `
+        <div class="lv-bet-payout">
+          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>. Cobrá tu premio en Luna Negra:</p>
+          <a class="lv-btn lv-btn--primary" href="${escapeAttr(winner.withdrawUrl)}" target="_blank" rel="noopener">💰 Cobrar en Luna Negra</a>
+          <div class="lv-payout-or">o escaneá con la <strong>cámara del teléfono</strong> (no con la billetera):</div>
+          ${this.renderQr(winner.withdrawUrl, { lightning: false })}
+          <span class="lv-qr-hint">Abre la página de cobro · ahí pegás tu factura Lightning</span>
         </div>`;
     }
     if (winner?.payoutStatus === 'paid' || winner?.payoutStatus === 'claimed') {
@@ -996,6 +1177,22 @@ class LocalVersusMatch {
     }
     if (this.betError) return `<p class="lv-bet-note lv-bet-warn">⚠️ ${escapeText(this.betError)}</p>`;
     return '<p class="lv-bet-note">⏳ Preparando el cobro del ganador…</p>';
+  }
+
+  // Pantalla previa al cobro: el premio está listo, pero el QR/link queda oculto
+  // hasta que el ganador toca "Mostrar QR". Así puede prepararse con calma antes de
+  // exponer el cobro. El texto de ayuda cambia según cómo se cobra: 'lnurl' se
+  // escanea con la billetera Lightning; 'web' se abre con la cámara (es una página).
+  private renderPayoutReveal(winnerSeat: number, amount: number, mode: 'lnurl' | 'web'): string {
+    const hint = mode === 'lnurl'
+      ? 'Abrí tu billetera Lightning y tocá cuando estés listo.'
+      : 'Tené a mano el teléfono: el cobro se abre en una página de Luna Negra.';
+    return `
+      <div class="lv-bet-payout">
+        <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>.</p>
+        <button class="lv-btn lv-btn--primary" type="button" data-lv="payout-reveal">💰 Mostrar cobro</button>
+        <span class="lv-qr-hint">${hint}</span>
+      </div>`;
   }
 }
 
@@ -1012,8 +1209,29 @@ function isPayoutResolved(bet: LocalBetView): boolean {
   const winner = bet.participants.find((p) => p.result === 'won');
   if (!winner) return false;
   if (winner.payoutStatus === 'paid' || winner.payoutStatus === 'claimed') return true;
-  // withdraw_pending con QR ya disponible: dejamos de polear (el QR está en pantalla).
-  return winner.payoutStatus === 'withdraw_pending' && !!winner.withdrawLnurl;
+  // withdraw_pending con handle ya disponible (v1 LNURL-QR o v2 link de reclamo):
+  // dejamos de polear porque ya hay forma de cobrar en pantalla.
+  return winner.payoutStatus === 'withdraw_pending' && !!(winner.withdrawLnurl || winner.withdrawUrl);
+}
+
+// El ganador tiene un cobro por retirar (QR/link) que TODAVÍA no reclamó. Es la
+// condición para persistir el cobro y recuperarlo tras un refresh.
+function winnerHasUnclaimedWithdraw(bet: LocalBetView): boolean {
+  const winner = bet.participants.find((p) => p.result === 'won');
+  if (!winner) return false;
+  if (winner.payoutStatus === 'paid' || winner.payoutStatus === 'claimed') return false;
+  return !!(winner.withdrawLnurl || winner.withdrawUrl);
+}
+
+// El cobro está DEFINITIVAMENTE terminado: ya se pagó/reclamó o la apuesta murió.
+// Solo en este caso conviene borrar el registro y cerrar la recuperación. Un
+// ganador confirmado SIN handle de retiro aún (premio preparándose) NO cuenta:
+// hay que seguir esperando, no descartar el cobro.
+function payoutIsDone(bet: LocalBetView): boolean {
+  if (['cancelled', 'refunded', 'expired', 'voided'].includes(bet.status)) return true;
+  const winner = bet.participants.find((p) => p.result === 'won');
+  if (!winner) return false;
+  return winner.payoutStatus === 'paid' || winner.payoutStatus === 'claimed';
 }
 
 function escapeText(value: string): string {
@@ -1090,7 +1308,7 @@ function ensureStyles(): void {
     .lv-clock { font-variant-numeric: tabular-nums; font-size: 22px; opacity: .85; }
     .lv-lines { display: flex; flex-direction: column; gap: 4px; font-size: 13px; opacity: .7; text-align: center; }
     .lv-count { font-size: clamp(64px, 14vw, 160px); font-weight: 900; line-height: 1; text-shadow: 0 0 40px rgba(0,245,255,.6); }
-    .lv-win-title { font-size: clamp(32px, 6vw, 64px); margin: 0; }
+    .lv-win-title { font-size: clamp(32px, 6vw, 64px); margin: 0 0 18px; line-height: 1.1; }
     .lv-bet-setup { margin-top: 22px; padding: 16px 18px; border: 1px solid rgba(255,182,39,.35); border-radius: 12px; background: rgba(255,182,39,.06); text-align: left; }
     .lv-bet-toggle { display: flex; align-items: center; gap: 10px; font-weight: 700; cursor: pointer; font-size: 16px; }
     .lv-bet-toggle input { width: 18px; height: 18px; accent-color: #ffb627; }
@@ -1111,6 +1329,11 @@ function ensureStyles(): void {
     .lv-deposit-ok { font-size: 18px; font-weight: 700; color: #4dd07a; padding: 70px 0; }
     .lv-bet-payout { margin: 18px auto 8px; }
     .lv-bet-win { font-size: 17px; margin-bottom: 6px; }
+    .lv-payout-link { margin-top: 10px; font-size: 13px; }
+    .lv-payout-link a { color: var(--dash-neon-cyan); opacity: .8; }
+    .lv-payout-link a:hover { opacity: 1; }
+    .lv-payout-or { margin: 14px 0 4px; font-size: 13px; opacity: .75; }
+    .lv-payout-or strong { color: #ffb627; }
     .lv-qr-zoom { position: fixed; inset: 0; z-index: 70; background: rgba(2,4,8,.94); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; cursor: zoom-out; }
     .lv-qr-zoom-box { width: min(92vw, 92vh); height: min(92vw, 92vh); background: #fff; padding: clamp(16px, 4vw, 40px); border-radius: 16px; box-sizing: border-box; }
     .lv-qr-zoom-box svg { display: block; width: 100%; height: 100%; }

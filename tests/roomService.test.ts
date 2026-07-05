@@ -541,6 +541,25 @@ describe('room abandonment cleanup', () => {
     expect(listed.map((room) => room.id)).not.toContain(stale.id);
     expect(await store.getRoom(stale.id)).toBeNull();
   });
+
+  it('hides a room whose players went stale without deleting it, and re-lists it when presence returns', async () => {
+    const store = new MemoryRoomStore();
+    const created = await createRoom(store, { playerId: HOST_ID, name: 'Host', visibility: 'public' }, 1_000_000);
+
+    // Presencia fresca: la sala se ofrece normalmente.
+    expect((await listPublicRooms(store, 1_000_000, { matchType: 'custom' })).map((r) => r.id)).toContain(created.id);
+
+    // El host dejó de dar señal: pasado PLAYER_STALE_MS (pero antes del GC de
+    // abandono) la sala se cae del listado —no es unible— pero NO se borra.
+    const stalledAt = 1_000_000 + PLAYER_STALE_MS + 1;
+    expect(await listPublicRooms(store, stalledAt, { matchType: 'custom' })).toEqual([]);
+    expect(await store.getRoom(created.id)).not.toBeNull();
+
+    // El host vuelve (blip de red) y refresca su presencia via poll: reaparece.
+    const returnedAt = stalledAt + 1_000;
+    await getRoomState(store, created.id, returnedAt, HOST_ID);
+    expect((await listPublicRooms(store, returnedAt, { matchType: 'custom' })).map((r) => r.id)).toContain(created.id);
+  });
 });
 
 describe('spectators when not everyone is ready', () => {

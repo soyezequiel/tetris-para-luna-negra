@@ -168,6 +168,22 @@ export class RoomServer extends Server<Env> {
   }
 
   /**
+   * ¿Esta sala sigue siendo ofertable en el listado público? La usa el LobbyServer
+   * para auto-sanar su lista cuando perdió un aviso de remoción: `arm-removal` es
+   * best-effort (si el POST falla no se reintenta) y `onClose` puede no dispararse
+   * ante una caída sucia (el host durmió la laptop / se le murió la red). Viva =
+   * existe, está en lobby/countdown y tiene al menos una conexión WebSocket abierta.
+   * Una sala sin conexiones ya no es unible; el lobby la saca tras su gracia (así un
+   * blip transitorio de PartySocket que reconecta no la baja de la lista).
+   */
+  async isListableAlive(): Promise<boolean> {
+    const room = await this.store.getRoom(this.name);
+    if (!room) return false;
+    if (room.status !== 'lobby' && room.status !== 'countdown') return false;
+    return [...this.getConnections()].length > 0;
+  }
+
+  /**
    * Reemplaza la sala con una copia leida previamente del mismo DO.
    * MemoryRoomStore valida la version, asi que una escritura vieja devuelve 409.
    */

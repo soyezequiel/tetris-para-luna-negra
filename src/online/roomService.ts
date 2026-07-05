@@ -854,6 +854,14 @@ export async function listPublicRooms(
     })
     .map((room) => applyStalePlayers(room, nowMs))
     .filter((room) => room.status === 'lobby' || room.status === 'countdown')
+    // Liveness del listado: una sala solo se ofrece para unirse si tiene al menos
+    // un jugador con presencia reciente (PLAYER_STALE_MS). Es más estricto que el
+    // GC de abandono (ROOM_ABANDONED_MS, 30s): una sala cuyo host cerró la pestaña
+    // se cae del navegador en ~10s —bastante antes de que se borre—, así el usuario
+    // deja de ver salas muertas sin recargar (el cliente auto-refresca cada pocos s).
+    // No se elimina: si el host vuelve (blip de red) y refresca su presencia, la
+    // sala reaparece; solo la ocultamos mientras nadie da señal de vida.
+    .filter((room) => roomHasLivePlayerForListing(room, nowMs))
     .filter((room) => roomMatchesPublicFilters(room, filters));
   for (const id of abandoned) await removeRoomEverywhere(store, id);
   return visible
@@ -865,6 +873,17 @@ export async function listPublicRooms(
 function isRoomAbandoned(room: OnlineRoom, nowMs: number): boolean {
   if (room.players.length === 0) return true;
   return room.players.every((player) => nowMs - player.updatedAtServerMs > ROOM_ABANDONED_MS);
+}
+
+/**
+ * ¿La sala está viva para ofrecerse en el listado público? Requiere al menos un
+ * jugador con presencia dentro de PLAYER_STALE_MS (el mismo umbral con que
+ * applyStalePlayers ya marca a un jugador como "desconectado"). Una sala donde
+ * todos están stale no es realmente unible, así que la ocultamos del navegador
+ * aunque todavía no llegue al GC de abandono.
+ */
+function roomHasLivePlayerForListing(room: OnlineRoom, nowMs: number): boolean {
+  return room.players.some((player) => nowMs - player.updatedAtServerMs <= PLAYER_STALE_MS);
 }
 
 async function getRoomStateOnce(
@@ -1739,6 +1758,29 @@ function normalizeNullableString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+// v2 (zaps): el 9734 sin firmar del depósito. Valida la forma mínima que el cliente
+// necesita para firmarlo (kind/created_at/content/tags de strings). Sin esto,
+// normalizeBet lo borraba en cada store y el panel caía al fallback "Pagar en Luna
+// Negra" en vez de mostrar el QR/firma en el juego.
+function normalizeBetZapRequest(value: unknown): RoomBetParticipant['depositZapRequest'] {
+  if (!isObject(value)) return null;
+  if (
+    typeof value.kind !== 'number'
+    || typeof value.created_at !== 'number'
+    || typeof value.content !== 'string'
+    || !Array.isArray(value.tags)
+    || !value.tags.every((tag) => Array.isArray(tag) && tag.every((item) => typeof item === 'string'))
+  ) {
+    return null;
+  }
+  return {
+    kind: value.kind,
+    created_at: value.created_at,
+    tags: value.tags as string[][],
+    content: value.content,
+  };
+}
+
 function normalizeNullableSats(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const numeric = Number(value);
@@ -1759,6 +1801,14 @@ function normalizeBet(value: unknown): RoomBet | null {
         bolt11: normalizeNullableString(entry.bolt11),
         lnurl: normalizeNullableString(entry.lnurl),
         payUrl: normalizeNullableString(entry.payUrl),
+        depositZapRequest: normalizeBetZapRequest(entry.depositZapRequest),
+        depositCallback: normalizeNullableString(entry.depositCallback),
+        // El comentario de participación comparte forma con el 9734 (kind/created_at/
+        // tags/content). Sin estos dos campos acá, normalizeBet los dropeaba al cargar
+        // la sala del store → el cliente no firmaba el comentario y el premio caía al
+        // post del contrato en vez del comentario del ganador.
+        participationComment: normalizeBetZapRequest(entry.participationComment),
+        commentCallback: normalizeNullableString(entry.commentCallback),
         depositError: normalizeNullableString(entry.depositError),
         payoutSats: normalizeNullableSats(entry.payoutSats),
         payoutStatus: normalizeBetPayoutStatus(entry.payoutStatus),

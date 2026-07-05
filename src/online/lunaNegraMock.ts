@@ -21,14 +21,15 @@ export function isLunaMockEnabled(): boolean {
 }
 
 interface MockParticipant {
+  participantId: string;
   npub: string;
   guest: boolean;
   depositStatus: 'pending' | 'paid' | 'refunded' | 'failed';
   payoutStatus: 'none' | 'paid' | 'claimed' | 'withdraw_pending';
+  payoutKind: 'zap' | 'lnurl' | 'withdraw' | null;
   payoutSats: number | null;
-  bolt11: string | null;
+  // v2 (zaps): el handle de depósito es un LNURL-pay por asiento (no un bolt11).
   lnurl: string | null;
-  withdrawLnurl: string | null;
 }
 
 interface MockBet {
@@ -37,6 +38,7 @@ interface MockBet {
   status: 'pending_deposits' | 'funded' | 'settled' | 'cancelled';
   participants: MockParticipant[];
   winnerNpubs: string[] | null;
+  anchorEventId: string;
 }
 
 const bets = new Map<string, MockBet>();
@@ -57,11 +59,12 @@ function potSats(bet: MockBet): number {
   return bet.stakeSats * paidCount(bet);
 }
 
-/** Detalle (GET /api/v1/bets/{id}) con la forma exacta que espera buildRoomBet. */
+/** Detalle (GET /api/v2/bets/{id}) con la forma exacta que espera buildRoomBet. */
 function betDetail(bet: MockBet): unknown {
   const pot = potSats(bet);
   return {
     betId: bet.betId,
+    apiVersion: 2,
     status: bet.status,
     stakeSats: bet.stakeSats,
     potSats: pot,
@@ -72,16 +75,18 @@ function betDetail(bet: MockBet): unknown {
     depositDeadline: null,
     depositsReceived: paidCount(bet),
     depositsTotal: bet.participants.length,
+    anchorEventId: bet.anchorEventId,
     participants: bet.participants.map((p) => ({
+      participantId: p.participantId,
       npub: p.npub,
       depositStatus: p.depositStatus,
       payoutStatus: p.payoutStatus,
+      payoutKind: p.payoutKind,
       payoutSats: p.payoutSats,
-      bolt11: p.bolt11,
+      // v2: sin bolt11; depósito por LNURL-pay. El invitado que gana no trae LNURL de
+      // retiro (reclama en la página hosteada), igual que la Luna real.
       lnurl: p.lnurl,
       payUrl: null,
-      withdrawLnurl: p.withdrawLnurl,
-      withdrawUrl: null,
       depositError: null,
     })),
   };
@@ -105,28 +110,32 @@ function createBet(body: CreateBody): unknown {
     const guest = typeof entry !== 'string';
     const npub = guest ? `npubguest${sequence}seat${seat}` : entry;
     return {
+      participantId: `${betId}-p${seat}`,
       npub,
       guest,
       depositStatus: 'paid',
       payoutStatus: 'none',
+      payoutKind: null,
       payoutSats: null,
-      bolt11: guest ? null : `lnbcmock${betId}s${seat}`,
-      lnurl: guest ? `lnurlmock${betId}s${seat}` : null,
-      withdrawLnurl: null,
+      // v2: LNURL-pay de depósito para todos los asientos (no hay bolt11).
+      lnurl: `lnurlmock${betId}s${seat}`,
     };
   });
-  const bet: MockBet = { betId, stakeSats, status: 'funded', participants, winnerNpubs: null };
+  const anchorEventId = `mockanchor-${sequence}`;
+  const bet: MockBet = { betId, stakeSats, status: 'funded', participants, winnerNpubs: null, anchorEventId };
   bets.set(betId, bet);
   const pot = potSats(bet);
   return {
     betId,
+    apiVersion: 2,
+    anchorEventId,
     stakeSats,
     potTargetSats: stakeSats * participants.length,
     feePct: 0,
     feeSats: 0,
     netPayoutSats: pot,
     depositDeadline: null,
-    participants: participants.map((p, seat) => ({ seat, npub: p.npub })),
+    participants: participants.map((p, seat) => ({ seat: seat + 1, npub: p.npub, participantId: p.participantId })),
   };
 }
 
@@ -139,9 +148,10 @@ function cancelBet(bet: MockBet): unknown {
   return { ok: true, status: 'cancelled' };
 }
 
-// Reporta ganadores = liquida el pozo. El ganador con billetera cobra automático
-// (`paid`); el invitado cae en `withdraw_pending` con su LNURL de retiro. Sin
-// ganadores (empate/anulación) reembolsa a todos.
+// Reporta ganadores = liquida el pozo. v2 (zaps): el ganador con dirección Lightning
+// cobra automático por zap (`paid`); el invitado sin destino cae en
+// `withdraw_pending` con `payoutKind:"withdraw"` (reclama en la página hosteada, sin
+// LNURL por API key). Sin ganadores (empate/anulación) reembolsa a todos.
 function reportResult(bet: MockBet, winners: string[]): unknown {
   if (winners.length === 0) {
     cancelBet(bet);
@@ -156,9 +166,10 @@ function reportResult(bet: MockBet, winners: string[]): unknown {
     p.payoutSats = share;
     if (p.guest) {
       p.payoutStatus = 'withdraw_pending';
-      p.withdrawLnurl = `lnurlwithdrawmock${bet.betId}`;
+      p.payoutKind = 'withdraw';
     } else {
       p.payoutStatus = 'paid';
+      p.payoutKind = 'zap';
     }
   }
   return { ok: true, status: 'settled' };
@@ -187,11 +198,11 @@ function dispatch(path: string, init: { method: 'GET' | 'POST'; body?: unknown }
   // /api/v1/provider/webhook → sin webhook configurado en el mock.
   if (path.startsWith('/api/v1/provider/webhook')) return { url: null, secret: null };
 
-  if (path === '/api/v1/bets' && init.method === 'POST') {
+  if (path === '/api/v2/bets' && init.method === 'POST') {
     return createBet((init.body ?? {}) as CreateBody);
   }
 
-  const betPath = path.match(/^\/api\/v1\/bets\/([^/]+)(\/(cancel|result))?$/);
+  const betPath = path.match(/^\/api\/v2\/bets\/([^/]+)(\/(cancel|result))?$/);
   if (betPath) {
     const betId = decodeURIComponent(betPath[1]);
     const bet = bets.get(betId);

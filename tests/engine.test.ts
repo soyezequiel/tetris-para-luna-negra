@@ -1698,7 +1698,7 @@ describe('core stacker engine', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? 'GET').toUpperCase();
-      if (url.endsWith('/api/v1/bets') && method === 'POST') {
+      if (url.endsWith('/api/v2/bets') && method === 'POST') {
         // Luna devuelve el mapeo seat→npub (en el orden enviado): el invitado
         // recibió una identidad efímera distinta a cualquier npub de la sala.
         return Response.json({
@@ -1753,7 +1753,7 @@ describe('core stacker engine', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? 'GET').toUpperCase();
-      if (url.endsWith('/api/v1/bets') && method === 'POST') {
+      if (url.endsWith('/api/v2/bets') && method === 'POST') {
         const body = JSON.parse(String(init?.body)) as {
           participants: Array<{ guest?: boolean }>;
         };
@@ -2090,24 +2090,24 @@ describe('core stacker engine', () => {
     else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
   });
 
-  it('builds the Luna Negra game login URL from backend config', async () => {
-    const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
+  it('exposes the Luna Negra game id/slug from backend config (para el login Nostr 2.0)', async () => {
+    const previousId = process.env.LUNA_NEGRA_GAME_ID;
     const previousSlug = process.env.LUNA_NEGRA_GAME_SLUG;
     try {
-      process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example/';
-      delete process.env.LUNA_NEGRA_GAME_SLUG;
-
-      const defaultUrl = await lunaNegraApiGet(new Request('http://local/api/luna-negra/login-url'));
-      expect(defaultUrl.status).toBe(200);
-      expect(await defaultUrl.json()).toMatchObject({ url: 'https://luna.example/game/tetris-beta' });
-
+      process.env.LUNA_NEGRA_GAME_ID = 'cmr0game';
       process.env.LUNA_NEGRA_GAME_SLUG = 'tetra-test';
-      const customUrl = await lunaNegraApiGet(new Request('http://local/api/luna-negra/login-url'));
-      expect(customUrl.status).toBe(200);
-      expect(await customUrl.json()).toMatchObject({ url: 'https://luna.example/game/tetra-test' });
+      const set = await lunaNegraApiGet(new Request('http://local/api/luna-negra/game-info'));
+      expect(set.status).toBe(200);
+      expect(await set.json()).toMatchObject({ gameId: 'cmr0game', slug: 'tetra-test' });
+
+      delete process.env.LUNA_NEGRA_GAME_ID;
+      delete process.env.LUNA_NEGRA_GAME_SLUG;
+      const unset = await lunaNegraApiGet(new Request('http://local/api/luna-negra/game-info'));
+      expect(unset.status).toBe(200);
+      expect(await unset.json()).toMatchObject({ gameId: null, slug: null });
     } finally {
-      if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
-      else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
+      if (previousId === undefined) delete process.env.LUNA_NEGRA_GAME_ID;
+      else process.env.LUNA_NEGRA_GAME_ID = previousId;
       if (previousSlug === undefined) delete process.env.LUNA_NEGRA_GAME_SLUG;
       else process.env.LUNA_NEGRA_GAME_SLUG = previousSlug;
     }

@@ -13,8 +13,10 @@ import type {
   RoomBetParticipant,
   RoomBetPayoutStatus,
   RoomBetStatus,
+  UnsignedZapRequestTemplate,
 } from './protocol';
 import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
+import { alertBetDepositHandlesIncomplete } from './moneyPathAlert.js';
 
 interface LunaConfig {
   baseUrl: string;
@@ -49,9 +51,22 @@ interface LunaBetDetail extends LunaEconomics {
     bolt11?: string | null;
     lnurl?: string | null;
     payUrl?: string | null;
+    // v2 (zaps): 9734 sin firmar + callback para que el cliente firme el depósito y
+    // obtenga el invoice (así extensión y QR son zaps reales, no LNURL-pay plano).
+    depositZapRequest?: UnsignedZapRequestTemplate | null;
+    depositCallback?: string | null;
+    // v2 (zaps): comentario de participación sin firmar + callback donde postearlo
+    // firmado. Si el jugador gana, el premio se ancla a su comentario.
+    participationComment?: UnsignedZapRequestTemplate | null;
+    commentCallback?: string | null;
     withdrawLnurl?: string | null;
     withdrawUrl?: string | null;
     depositError?: string | null;
+    // v2 (zaps): el cobro es push por zap. `payoutKind` = 'zap' | 'lnurl' | 'withdraw'.
+    // 'withdraw' (invitado sin destino) no trae LNURL por API key: se reclama en la
+    // página hosteada <base>/apuestas/{betId}. `participantId` es el asiento estable.
+    payoutKind?: string | null;
+    participantId?: string | null;
   }>;
 }
 
@@ -81,6 +96,33 @@ export function isLunaNegraApiConfigured(): boolean {
   );
 }
 
+// Base URL pública de Luna Negra para armar links web (claim de retiro del ganador
+// invitado en v2). En mock no hay página real, así que devolvemos ''.
+function publicLunaBaseUrl(): string {
+  if (isLunaMockEnabled()) return '';
+  return (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
+}
+
+/**
+ * URL de reclamo del cobro para un ganador invitado en v2. El escrow por zaps paga
+ * automático (`payoutStatus: paid`) al ganador con dirección Lightning; el invitado
+ * sin destino queda `withdraw_pending` y reclama su parte en la página hosteada
+ * `<base>/apuestas/{betId}` (con su sesión). Esa página NO viene por la API key, así
+ * que la construimos acá. Devuelve null si no aplica o si no hay base URL (mock).
+ */
+function withdrawClaimUrl(
+  betId: string,
+  payoutStatus: RoomBetPayoutStatus,
+  payoutKind: string | null | undefined,
+  detailWithdrawUrl: string | null,
+): string | null {
+  if (detailWithdrawUrl) return detailWithdrawUrl;
+  const isWithdraw = payoutStatus === 'withdraw_pending' || payoutKind === 'withdraw';
+  if (!isWithdraw) return null;
+  const base = publicLunaBaseUrl();
+  return base ? `${base}/apuestas/${encodeURIComponent(betId)}` : null;
+}
+
 // Error de la API de Luna Negra que conserva el status HTTP real y el código de
 // error del proveedor, para poder clasificar fallos (transitorio vs. definitivo)
 // sin perder información al aplanar el status que ve el resto de la app.
@@ -93,6 +135,24 @@ class LunaApiError extends OnlineRoomError {
   ) {
     super(message, status);
   }
+}
+
+// Traduce los códigos de error propios de la v2 (zaps) a mensajes claros para el
+// panel; el resto conserva el mensaje del proveedor. Reemplazo duro a v2: si el
+// deploy no la tiene habilitada, todas las apuestas fallan, así que el motivo tiene
+// que ser legible y no un 502 mudo.
+function messageForBetError(
+  code: string | null,
+  providerMessage: string | undefined,
+  httpStatus: number,
+): string {
+  if (code === 'BETS_V2_DISABLED') {
+    return 'Las apuestas por zaps no están habilitadas en este servidor de Luna Negra.';
+  }
+  if (code === 'ANCHOR_PUBLISH_FAILED') {
+    return 'No se pudo anclar el contrato de la apuesta en Nostr; reintentá en un momento.';
+  }
+  return providerMessage ?? `Luna Negra respondió ${httpStatus}.`;
 }
 
 async function lunaFetch<T>(
@@ -117,9 +177,10 @@ async function lunaFetch<T>(
   const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | T | null;
   if (!response.ok) {
     const err = payload as { error?: { code?: string; message?: string } } | null;
-    const message = err?.error?.message ?? `Luna Negra respondió ${response.status}.`;
+    const code = err?.error?.code ?? null;
+    const message = messageForBetError(code, err?.error?.message, response.status);
     const status = response.status === 400 || response.status === 409 ? response.status : 502;
-    throw new LunaApiError(message, status, response.status, err?.error?.code ?? null);
+    throw new LunaApiError(message, status, response.status, code);
   }
   return payload as T;
 }
@@ -153,6 +214,29 @@ function asPayoutStatus(value: unknown): RoomBetPayoutStatus {
   return PAYOUT_STATUSES.includes(value as RoomBetPayoutStatus)
     ? (value as RoomBetPayoutStatus)
     : 'none';
+}
+
+// Estrecha el 9734 sin firmar que manda Luna (v2): validamos la forma mínima que el
+// signer necesita (kind/created_at/tags/content). Si no cuadra, va null y el panel
+// cae al fallback `payUrl` (firmar en la web de Luna).
+function asUnsignedZapRequest(value: unknown): UnsignedZapRequestTemplate | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.kind !== 'number' ||
+    typeof v.created_at !== 'number' ||
+    typeof v.content !== 'string' ||
+    !Array.isArray(v.tags) ||
+    !v.tags.every((t) => Array.isArray(t) && t.every((s) => typeof s === 'string'))
+  ) {
+    return null;
+  }
+  return {
+    kind: v.kind,
+    created_at: v.created_at,
+    tags: v.tags as string[][],
+    content: v.content,
+  };
 }
 
 function isTerminalBetStatus(status: RoomBetStatus | undefined | null): boolean {
@@ -196,15 +280,26 @@ function buildRoomBet(
       bolt11: typeof d?.bolt11 === 'string' ? d.bolt11 : null,
       lnurl: typeof d?.lnurl === 'string' ? d.lnurl : null,
       payUrl: typeof d?.payUrl === 'string' ? d.payUrl : null,
+      depositZapRequest: asUnsignedZapRequest(d?.depositZapRequest),
+      depositCallback: typeof d?.depositCallback === 'string' ? d.depositCallback : null,
+      participationComment: asUnsignedZapRequest(d?.participationComment),
+      commentCallback: typeof d?.commentCallback === 'string' ? d.commentCallback : null,
       depositError: typeof d?.depositError === 'string' ? d.depositError : null,
       payoutSats: typeof d?.payoutSats === 'number' ? d.payoutSats : null,
       payoutStatus,
       withdrawLnurl: preserveWithdrawHandle && previousParticipant.withdrawLnurl
         ? previousParticipant.withdrawLnurl
         : (typeof d?.withdrawLnurl === 'string' ? d.withdrawLnurl : null),
+      // v2: el detalle no trae withdrawUrl para el invitado; lo derivamos a la página
+      // hosteada de reclamo. Conservamos el handle previo mientras siga pendiente.
       withdrawUrl: preserveWithdrawHandle && previousParticipant.withdrawUrl
         ? previousParticipant.withdrawUrl
-        : (typeof d?.withdrawUrl === 'string' ? d.withdrawUrl : null),
+        : withdrawClaimUrl(
+            econ.betId,
+            payoutStatus,
+            typeof d?.payoutKind === 'string' ? d.payoutKind : null,
+            typeof d?.withdrawUrl === 'string' ? d.withdrawUrl : null,
+          ),
     };
   });
   // El detalle viene fresco (Cache-Control: no-store) y es la fuente de verdad:
@@ -241,13 +336,34 @@ function settlementErrorMessage(error: unknown): string {
   return code ? `${code}: ${message}` : message;
 }
 
-// GET /api/v1/bets/{id} trae todo en una sola llamada: estado, economía y, por
+// GET /api/v2/bets/{id} trae todo en una sola llamada: estado, economía y, por
 // participante, su depósito + los handles de pago (bolt11/lnurl/payUrl).
 async function getBetDetail(config: LunaConfig, betId: string): Promise<LunaBetDetail | null> {
   return lunaFetch<LunaBetDetail>(
     config,
-    `/api/v1/bets/${encodeURIComponent(betId)}`,
+    `/api/v2/bets/${encodeURIComponent(betId)}`,
   ).catch(() => null);
+}
+
+/**
+ * Radiografía temporal del pago de una apuesta (GET /api/v2/bets/{id}/timeline):
+ * timestamps crudos (creación, fondeo, liquidación; depósito y payout por
+ * participante; asientos del ledger) + duraciones por fase ya calculadas por Luna.
+ * La usa el reporte del botón "Reportar problema" para adjuntar el desglose y poder
+ * ver EN QUÉ FASE se fue el tiempo. Best-effort: devuelve null ante cualquier fallo
+ * (Luna no configurada, red, apuesta no encontrada) — el reporte se manda igual.
+ */
+export async function fetchBetPaymentTimeline(betId: string): Promise<unknown | null> {
+  if (!betId || !isLunaNegraApiConfigured()) return null;
+  try {
+    const config = readApiConfig();
+    return await lunaFetch<unknown>(
+      config,
+      `/api/v2/bets/${encodeURIComponent(betId)}/timeline`,
+    );
+  } catch {
+    return null;
+  }
 }
 
 export async function createBetForRoom(
@@ -279,7 +395,7 @@ export async function createBetForRoom(
     (player) => (player.npub ? player.npub : { guest: true }),
   );
 
-  const create = await lunaFetch<LunaBetCreateWithSeats>(config, '/api/v1/bets', {
+  const create = await lunaFetch<LunaBetCreateWithSeats>(config, '/api/v2/bets', {
     method: 'POST',
     body: {
       gameId,
@@ -312,7 +428,13 @@ export async function createBetForRoom(
 
   const detail = await getBetDetail(config, create.betId);
   const bet = buildRoomBet(room, npubs, create, detail, null, input.playerId, nowMs, playerIdByNpub);
-  return setRoomBet(store, room.id, bet, nowMs);
+  const updatedRoom = await setRoomBet(store, room.id, bet, nowMs);
+  // Reporte de diagnóstico a Discord: si algún participante quedó sin forma de depositar
+  // en el juego (ni bolt11 ni 9734+callback), avisamos con el detalle de qué vino y qué
+  // falta. `await` a propósito: en serverless, sin esperar, el fetch se corta al terminar
+  // la función. Nunca lanza (best-effort), así que no afecta la creación de la apuesta.
+  await alertBetDepositHandlesIncomplete(bet, { roomId: room.id, gameId });
+  return updatedRoom;
 }
 
 /**
@@ -350,7 +472,7 @@ export async function syncBetParticipantsWithRoom(
     if (!someoneLeft) return room;
     try {
       const config = readApiConfig();
-      await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' });
+      await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' });
       const refreshed = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
       if (refreshed.bet && isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
       // El GET no reflejó la cancelación: forzamos el estado terminal igual (como
@@ -374,7 +496,7 @@ export async function syncBetParticipantsWithRoom(
 
   try {
     const config = readApiConfig();
-    await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' }).catch(() => undefined);
+    await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' }).catch(() => undefined);
     // Limpiamos la apuesta local antes de recrear: createBetForRoom rechaza
     // salas con una apuesta no terminal.
     await setRoomBet(store, room.id, null, nowMs);
@@ -414,6 +536,137 @@ export async function refreshRoomBet(
   return (await maybeReportRoomBetResult(store, updated, nowMs)) ?? updated;
 }
 
+/**
+ * Emite el invoice de depósito v2 a partir del zap request 9734 ya firmado por el
+ * jugador. Reenvía el 9734 al callback LNURL-pay del participante (`?amount&nostr=`)
+ * y devuelve el bolt11. Ese invoice compromete el zap vía description hash, así que
+ * pagarlo con extensión o escaneando el QR queda como un zap NIP-57 real: Luna Negra
+ * publica el recibo 9735 al detectar el pago. Idempotente: si ya hay invoice emitido
+ * lo devuelve sin re-firmar.
+ */
+export async function generateBetDepositInvoice(
+  store: RoomStore,
+  roomId: string,
+  playerId: string,
+  signedZapRequest: unknown,
+  signedComment: unknown = null,
+  nowMs = Date.now(),
+): Promise<{ room: OnlineRoom; invoice: string }> {
+  let room = await loadRoom(store, roomId);
+  let bet = room.bet;
+  if (!bet) throw new OnlineRoomError('No hay apuesta activa para depositar.', 404);
+  let participant = bet.participants.find((p) => p.playerId === playerId);
+  if (!participant) throw new OnlineRoomError('No sos participante de esta apuesta.', 403);
+  if (participant.depositStatus === 'paid') {
+    throw new OnlineRoomError('Ya depositaste.', 409);
+  }
+
+  // Auto-sanado contra un RoomStore desactualizado: si el snapshot local no tiene ni
+  // invoice ni callback (p.ej. la firma anterior YA emitió el invoice en Luna pero la
+  // respuesta no alcanzó a persistirse acá, o un poll viejo dejó al asiento sin
+  // handles), refetcheamos el detalle desde Luna —la fuente de verdad— antes de tirar
+  // "no disponible". Luna suele devolver ya el `bolt11` del depósito y el flujo sigue
+  // sin re-firmar. Si Luna está caída, `refreshRoomBet` devuelve la sala sin tocar.
+  if (!participant.bolt11 && !participant.depositCallback) {
+    room = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
+    participant = room.bet?.participants.find((p) => p.playerId === playerId) ?? participant;
+    bet = room.bet ?? bet;
+  }
+
+  // Idempotencia: si ya se emitió el invoice (este intento u otro previo), reusamos
+  // el mismo en vez de pedir otro. El QR y "pagar con extensión" pagan ese bolt11.
+  if (participant.bolt11) return { room, invoice: participant.bolt11 };
+
+  const callback = participant.depositCallback;
+  if (!callback) {
+    throw new OnlineRoomError(
+      'El depósito por zap no está disponible ahora; usá «Pagar en Luna Negra».',
+      409,
+    );
+  }
+  if (!signedZapRequest || typeof signedZapRequest !== 'object') {
+    throw new OnlineRoomError('Falta el zap request firmado.', 400);
+  }
+
+  const amountMsat = bet.stakeSats * 1000;
+  const invoice = await fetchDepositInvoiceFromCallback(callback, amountMsat, signedZapRequest);
+
+  // Comentario de participación (best-effort): si el jugador lo firmó, lo mandamos al
+  // callback de Luna. Si gana, el premio se ancla a él. NUNCA rompe el depósito: un
+  // fallo acá solo hace que el premio caiga al post del contrato (comportamiento previo).
+  // `await` a propósito (serverless: sin esperar, el fetch se corta al terminar la función).
+  if (signedComment && typeof signedComment === 'object' && participant.commentCallback) {
+    await postParticipationComment(participant.commentCallback, signedComment).catch(() => undefined);
+  }
+
+  // Persistimos el invoice en la apuesta local para que el QR sobreviva a los polls
+  // (el próximo GET a Luna ya lo devuelve en `bolt11` y reconcilia). Sin esto, el
+  // panel volvería a pedir la firma en el siguiente refresh.
+  const participants = bet.participants.map((p) =>
+    p.playerId === playerId ? { ...p, bolt11: invoice } : p,
+  );
+  const updated: RoomBet = { ...bet, participants, updatedAtServerMs: nowMs };
+  const updatedRoom = await setRoomBet(store, room.id, updated, nowMs);
+  return { room: updatedRoom, invoice };
+}
+
+// GET al callback LNURL-pay del participante con el 9734 firmado. Devuelve el bolt11
+// (`pr`) o lanza con el motivo del proveedor. El callback responde 200 incluso en
+// error (formato LNURL `{ status:"ERROR", reason }`), así que el éxito lo determina
+// la presencia de `pr`, no el status HTTP.
+async function fetchDepositInvoiceFromCallback(
+  callback: string,
+  amountMsat: number,
+  signedZapRequest: unknown,
+): Promise<string> {
+  if (isLunaMockEnabled()) {
+    // El mock auto-fondea los depósitos, así que este camino no debería ejecutarse.
+    throw new OnlineRoomError('Depósito por zap no soportado en modo mock.', 409);
+  }
+  let url: URL;
+  try {
+    url = new URL(callback);
+  } catch {
+    throw new OnlineRoomError('El callback de depósito de Luna Negra es inválido.', 502);
+  }
+  url.searchParams.set('amount', String(amountMsat));
+  url.searchParams.set('nostr', JSON.stringify(signedZapRequest));
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString());
+  } catch {
+    throw new OnlineRoomError('No se pudo contactar a Luna Negra para emitir el invoice.', 502);
+  }
+  const payload = (await response.json().catch(() => null)) as
+    | { pr?: string; reason?: string }
+    | null;
+  if (!payload || typeof payload.pr !== 'string' || !payload.pr) {
+    const reason = payload?.reason ?? `Luna Negra respondió ${response.status}.`;
+    throw new OnlineRoomError(reason, 502);
+  }
+  return payload.pr;
+}
+
+// POST del comentario de participación firmado al endpoint de Luna Negra
+// (`/api/v2/bets/{id}/comment`). La FIRMA del evento es la autenticación (no hay API
+// key). Best-effort: cualquier fallo se ignora arriba — el depósito ya salió y sin
+// comentario el premio simplemente cae al post del contrato (fallback previo).
+async function postParticipationComment(callback: string, signedComment: unknown): Promise<void> {
+  if (isLunaMockEnabled()) return;
+  let url: URL;
+  try {
+    url = new URL(callback);
+  } catch {
+    return;
+  }
+  await fetch(url.toString(), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ signedComment }),
+  });
+}
+
 export async function cancelRoomBet(
   store: RoomStore,
   roomId: string,
@@ -429,7 +682,7 @@ export async function cancelRoomBet(
   }
   const cancelResult = await lunaFetch<{ ok?: boolean; status?: string }>(
     config,
-    `/api/v1/bets/${encodeURIComponent(room.bet.betId)}/cancel`,
+    `/api/v2/bets/${encodeURIComponent(room.bet.betId)}/cancel`,
     { method: 'POST' },
   );
   // El POST ya canceló la apuesta en Luna. refreshRoomBet es best-effort: si el GET de
@@ -473,7 +726,7 @@ export async function retryRoomBetInvoiceGeneration(
   ));
   if (!hasInvoiceFailure) return refreshRoomBet(store, roomId, nowMs);
 
-  await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' }).catch(() => undefined);
+  await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(bet.betId)}/cancel`, { method: 'POST' }).catch(() => undefined);
   await setRoomBet(store, room.id, null, nowMs);
   return createBetForRoom(store, {
     roomId: room.id,
@@ -530,7 +783,7 @@ export async function maybeReportRoomBetResult(
   // Camino por API key: Luna Negra firma el resultado con el oráculo gestionado
   // del proveedor. El game server no toca Nostr. winners vacío = empate/anulación.
   try {
-    await lunaFetch(config, `/api/v1/bets/${encodeURIComponent(bet.betId)}/result`, {
+    await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(bet.betId)}/result`, {
       method: 'POST',
       body: { winners },
     });

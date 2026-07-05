@@ -1,8 +1,13 @@
-import type { CreateBetRequest, RoomBetActionRequest } from '../../src/online/protocol.js';
+import type {
+  CreateBetRequest,
+  RoomBetActionRequest,
+  RoomBetDepositInvoiceRequest,
+} from '../../src/online/protocol.js';
 import {
   cancelRoomBet,
   createBetForRoom,
   ensureWebhookRegistered,
+  generateBetDepositInvoice,
   refreshRoomBet,
   retryRoomBetInvoiceGeneration,
   settleRoomBet,
@@ -22,6 +27,22 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../../src/online/vercelApi.js';
 
+// NOTA DEPLOY (cache de funciones Vercel): este handler importa la lógica de
+// ../../src/online/* (lunaNegraBets, etc.). El build cache de Vercel cachea la
+// función por el hash de ESTE archivo entry y NO re-traza los imports locales
+// transitivos: cambios en lunaNegraBets.ts (p. ej. agregar depositZapRequest al
+// participante) NO rebuildean la función salvo que cambie este archivo. Si tocás la
+// lógica de apuestas y no se refleja en el deploy, bumpeá `deploy-rev` de abajo (o
+// seteá VERCEL_FORCE_NO_BUILD_CACHE=1 en el proyecto para desactivar el cache).
+// deploy-rev: 8
+//
+// BET_API_REV: marcador de versión HORNEADO en el código de ESTA función. Como el build
+// cache de Vercel puede servir una copia vieja de la función (sin re-trazar los imports),
+// exponemos esta constante por `GET /api/bets/version` para saber, desde afuera y sin
+// una sala viva, qué código está realmente corriendo. Si `version` no existe (405) o la
+// `rev` es vieja → la función está cacheada vieja. Subilo cada vez que toques la lógica.
+const BET_API_REV = 8;
+
 export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   return handleNodeApi(request, response, { GET, POST });
 }
@@ -29,6 +50,21 @@ export default function handler(request: IncomingMessage, response: ServerRespon
 export async function GET(request: Request): Promise<Response> {
   try {
     const action = actionFromRequest(request);
+    if (action === 'version') {
+      // Diagnóstico de deploy: rev horneada + commit del deploy (Vercel) + si el reporte
+      // de Discord tiene webhook configurado en ESTE entorno. No requiere sala.
+      return sendJson(200, {
+        rev: BET_API_REV,
+        commit: (process.env.VERCEL_GIT_COMMIT_SHA ?? 'local').slice(0, 7),
+        hasBetReportWebhook: Boolean(
+          (process.env.DISCORD_BET_REPORT_WEBHOOK_URL
+            ?? process.env.DISCORD_ALERT_WEBHOOK_URL
+            ?? process.env.DISCORD_WEBHOOK_URL
+            ?? '').trim(),
+        ),
+        serverNowMs: Date.now(),
+      });
+    }
     if (action === 'state') {
       const room = await refreshBetWithParticipantSync(queryParam(request, 'roomId'));
       return sendJson(200, { room, serverNowMs: Date.now() });
@@ -51,19 +87,37 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'create') {
       const body = await readJsonBody<CreateBetRequest>(request);
       alertContext = { roomId: body.roomId, playerId: body.playerId, stakeSats: body.stakeSats };
-      await ensureWebhookRegistered(new URL(request.url).origin);
-      const room = await createBetForRoom(getBetRoomStore(), {
-        roomId: body.roomId,
-        playerId: body.playerId,
-        stakeSats: body.stakeSats,
-        victoryCondition: body.victoryCondition,
-      });
+      // El registro del webhook (round trips a Luna) no condiciona la creación de
+      // la apuesta, así que lo corremos EN PARALELO en vez de antes: en un cold
+      // start de Vercel esto solapa ~1 round trip que antes se serializaba.
+      // ensureWebhookRegistered nunca lanza (best-effort); si falla, el lobby
+      // igual refresca por polling.
+      const [room] = await Promise.all([
+        createBetForRoom(getBetRoomStore(), {
+          roomId: body.roomId,
+          playerId: body.playerId,
+          stakeSats: body.stakeSats,
+          victoryCondition: body.victoryCondition,
+        }),
+        ensureWebhookRegistered(new URL(request.url).origin),
+      ]);
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'refresh') {
       const body = await readJsonBody<RoomBetActionRequest>(request);
       const room = await refreshBetWithParticipantSync(body.roomId);
       return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'deposit-invoice') {
+      const body = await readJsonBody<RoomBetDepositInvoiceRequest>(request);
+      const { room, invoice } = await generateBetDepositInvoice(
+        getBetRoomStore(),
+        body.roomId,
+        body.playerId,
+        body.signedZapRequest,
+        body.signedComment,
+      );
+      return sendJson(200, { room, invoice, serverNowMs: Date.now() });
     }
     if (action === 'cancel') {
       const body = await readJsonBody<RoomBetActionRequest>(request);

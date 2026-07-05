@@ -175,10 +175,39 @@ popup no reaparezca en loop. `inviteToken` se usa contra
 
 ---
 
+## 6) "Luna Room Link" — invitación a sala hosteada por TETRA (`?lnRoom=`)
+
+Estándar de enlace de invitación de Luna Negra (ver `docs/luna-room-link.md` en el
+repo de Luna). Permite invitar a jugar **desde la ficha de Luna, sin abrir TETRA
+primero**, con un enlace que lleva el dominio de TETRA y una sala que **no
+pre-existe** (la crea el primer jugador que entra). Es DISTINTO del par
+`?inviteToken=`+`?room=` (salas hosteadas por Luna, §4): acá la sala vive en el
+backend de TETRA (las mismas salas PartyKit que usa `?join=`).
+
+Enlace: `https://<deploy-tetris>/?lnRoom=<roomId>[&lnInvite=<jwt>]`.
+
+- **Pública** (sin `lnInvite`): cualquiera con el enlace entra a la sala `lnRoom`
+  con su identidad actual (Nostr o local).
+- **Dirigida** (con `lnInvite`): TETRA verifica el token **offline** contra el JWKS
+  de Luna (`POST /api/luna-negra/verify-room-invite`) y exige que el jugador sea el
+  `toNpub` autorizado; si no está logueado con esa cuenta, abre la **puerta de login
+  Nostr** y entra sola al completar el login (no usa el rebote a `/launch` de Luna,
+  porque esta build es Nostr-nativa).
+
+Al cargar, TETRA descarta los params (`lnRoom`/`lnInvite`/`lnToken`/`lnOrigin`) de la
+URL. Para que Luna muestre el botón **"Invitar"** en la ficha, el proveedor declara la
+capacidad `roomLink` en el panel de integración de Luna.
+
+Consumo: `bootstrapLunaRoomLink` en `src/main.ts` (dispatch en `bootstrapOnlineStartup`),
+verificación en `src/online/lunaNegraRoomInvite.ts` (server, `jose`), acción
+`verify-room-invite` en `api/luna-negra/[action].ts`.
+
+---
+
 ## Cómo lo consume el juego (referencia)
 
-- Backend proxy: `api/luna-negra/[action].ts` → `session`, `friends`, `presence`, `invite`, `launch-request`.
-- Lógica (cliente server-side de la capa social): `src/online/lunaNegraSocial.ts`.
+- Backend proxy: `api/luna-negra/[action].ts` → `session`, `friends`, `presence`, `invite`, `launch-request`, `verify-room-invite`.
+- Lógica (cliente server-side de la capa social): `src/online/lunaNegraSocial.ts`; verificación de `lnInvite`: `src/online/lunaNegraRoomInvite.ts`.
 - Cliente del browser: `src/online/lunaNegraFriendsClient.ts`.
 - UI (panel de amigos + lobby CS2): `src/main.ts` (`renderFriendsSidebar`, `renderOnlineLobbyOverlay`).
 
