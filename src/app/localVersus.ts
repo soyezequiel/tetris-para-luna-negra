@@ -1140,31 +1140,36 @@ class LocalVersusMatch {
     }
     const winner = bet.participants.find((p) => p.seat === winnerSeat);
     const amount = winner?.payoutSats ?? bet.netPayoutSats;
+    // CAMINO A (LNURL-withdraw): el QR ES un cobro Lightning → se escanea con la
+    // BILLETERA y los sats caen solos. El QR lleva prefijo `lightning:`.
     if (winner?.withdrawLnurl) {
       // El QR arranca oculto: el ganador lo revela cuando ya tiene la billetera
       // lista, para que nadie más lo escanee de sorpresa.
       if (!this.payoutRevealed) {
-        return this.renderPayoutReveal(winnerSeat, amount);
+        return this.renderPayoutReveal(winnerSeat, amount, 'lnurl');
       }
       return `
         <div class="lv-bet-payout">
-          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>. Escaneá para cobrar:</p>
+          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>. Escaneá con tu billetera Lightning:</p>
           ${this.renderQr(winner.withdrawLnurl)}
-          <span class="lv-qr-hint">QR de retiro · tocá para agrandar</span>
+          <span class="lv-qr-hint">QR de retiro · escaneá con tu billetera Lightning · tocá para agrandar</span>
         </div>`;
     }
-    // v2 (zaps): el invitado sin destino reclama en la página hosteada de Luna Negra
-    // (la API por clave no expone una LNURL de retiro).
+    // CAMINO B (v2 zaps, invitado sin billetera): NO hay LNURL de retiro por API
+    // key. El "QR" es una PÁGINA WEB (`/apuestas/{betId}`) donde el ganador reclama
+    // pegando su factura/LNURL. Por eso se abre con la CÁMARA del teléfono (o el
+    // botón si estás en esta misma compu), NO con la billetera Lightning.
     if (winner?.payoutStatus === 'withdraw_pending' && winner.withdrawUrl) {
       if (!this.payoutRevealed) {
-        return this.renderPayoutReveal(winnerSeat, amount);
+        return this.renderPayoutReveal(winnerSeat, amount, 'web');
       }
       return `
         <div class="lv-bet-payout">
-          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>. Escaneá para cobrar:</p>
+          <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>. Cobrá tu premio en Luna Negra:</p>
+          <a class="lv-btn lv-btn--primary" href="${escapeAttr(winner.withdrawUrl)}" target="_blank" rel="noopener">💰 Cobrar en Luna Negra</a>
+          <div class="lv-payout-or">o escaneá con la <strong>cámara del teléfono</strong> (no con la billetera):</div>
           ${this.renderQr(winner.withdrawUrl, { lightning: false })}
-          <span class="lv-qr-hint">QR de cobro · tocá para agrandar</span>
-          <div class="lv-payout-link"><a href="${escapeAttr(winner.withdrawUrl)}" target="_blank" rel="noopener">o abrir en Luna Negra ↗</a></div>
+          <span class="lv-qr-hint">Abre la página de cobro · ahí pegás tu factura Lightning</span>
         </div>`;
     }
     if (winner?.payoutStatus === 'paid' || winner?.payoutStatus === 'claimed') {
@@ -1175,14 +1180,18 @@ class LocalVersusMatch {
   }
 
   // Pantalla previa al cobro: el premio está listo, pero el QR/link queda oculto
-  // hasta que el ganador toca "Mostrar QR". Así puede abrir su billetera con calma
-  // antes de exponer el cobro en pantalla.
-  private renderPayoutReveal(winnerSeat: number, amount: number): string {
+  // hasta que el ganador toca "Mostrar QR". Así puede prepararse con calma antes de
+  // exponer el cobro. El texto de ayuda cambia según cómo se cobra: 'lnurl' se
+  // escanea con la billetera Lightning; 'web' se abre con la cámara (es una página).
+  private renderPayoutReveal(winnerSeat: number, amount: number, mode: 'lnurl' | 'web'): string {
+    const hint = mode === 'lnurl'
+      ? 'Abrí tu billetera Lightning y tocá cuando estés listo.'
+      : 'Tené a mano el teléfono: el cobro se abre en una página de Luna Negra.';
     return `
       <div class="lv-bet-payout">
         <p class="lv-bet-win">El Jugador ${winnerSeat} gana <strong>${amount} sats</strong>.</p>
-        <button class="lv-btn lv-btn--primary" type="button" data-lv="payout-reveal">💰 Mostrar QR para cobrar</button>
-        <span class="lv-qr-hint">Abrí tu billetera Lightning y tocá cuando estés listo.</span>
+        <button class="lv-btn lv-btn--primary" type="button" data-lv="payout-reveal">💰 Mostrar cobro</button>
+        <span class="lv-qr-hint">${hint}</span>
       </div>`;
   }
 }
@@ -1323,6 +1332,8 @@ function ensureStyles(): void {
     .lv-payout-link { margin-top: 10px; font-size: 13px; }
     .lv-payout-link a { color: var(--dash-neon-cyan); opacity: .8; }
     .lv-payout-link a:hover { opacity: 1; }
+    .lv-payout-or { margin: 14px 0 4px; font-size: 13px; opacity: .75; }
+    .lv-payout-or strong { color: #ffb627; }
     .lv-qr-zoom { position: fixed; inset: 0; z-index: 70; background: rgba(2,4,8,.94); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; cursor: zoom-out; }
     .lv-qr-zoom-box { width: min(92vw, 92vh); height: min(92vw, 92vh); background: #fff; padding: clamp(16px, 4vw, 40px); border-radius: 16px; box-sizing: border-box; }
     .lv-qr-zoom-box svg { display: block; width: 100%; height: 100%; }
