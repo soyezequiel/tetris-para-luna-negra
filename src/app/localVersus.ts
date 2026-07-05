@@ -956,21 +956,64 @@ class LocalVersusMatch {
         <p class="lv-bet-note">⏳ Cargando el QR de retiro…</p>
       </div>`;
     this.overlay.focus();
+    // OJO: hay que separar "la consulta falló" (transitorio) de "la consulta
+    // respondió y ya no hay cobro". Un fallo de red NO debe borrar el registro
+    // (si no, un solo refresh con mala conexión pierde el QR para siempre).
+    let fetched = false;
     try {
       this.bet = await this.betApi<LocalBetView>('state', { betId: saved.betId, seats: saved.seats });
+      fetched = true;
     } catch {
-      this.betError = 'No se pudo recuperar la apuesta.';
+      // transitorio: se reintenta abajo.
     }
     if (this.destroyed) return;
-    // Sin cobro pendiente que mostrar (ya pagado o la apuesta murió) → nada que
-    // recuperar: limpiamos el registro y cerramos el overlay para volver a la app.
-    if (!this.bet || !winnerHasUnclaimedWithdraw(this.bet)) {
+    if (!fetched) {
+      // No pudimos contactar a Luna Negra: mantenemos el registro y reintentamos
+      // (auto + botón). El cobro sigue vivo; solo falló la lectura.
+      this.renderResumeReconnecting();
+      window.clearTimeout(this.betPollTimer);
+      this.betPollTimer = window.setTimeout(() => void this.resumePendingPayout(), 3000);
+      return;
+    }
+    if (!this.bet) {
+      // Respuesta vacía inesperada: la tratamos como reconexión, no como "sin
+      // cobro" (no borramos el registro).
+      this.renderResumeReconnecting();
+      window.clearTimeout(this.betPollTimer);
+      this.betPollTimer = window.setTimeout(() => void this.resumePendingPayout(), 3000);
+      return;
+    }
+    // La consulta respondió: SOLO cerramos si el cobro ya está pagado o la apuesta
+    // murió. Si el ganador está confirmado pero el handle de retiro todavía no llegó,
+    // mostramos la pantalla y seguimos poleando (NO borramos el registro).
+    if (payoutIsDone(this.bet)) {
       clearPendingPayout();
       this.exit();
       return;
     }
     this.renderFinished();
     if (!isPayoutResolved(this.bet)) this.scheduleBetPoll();
+  }
+
+  // Pantalla de reconexión durante la recuperación: NO limpia el registro. Deja
+  // reintentar (auto cada 3 s y a mano) o salir a propósito (eso sí descarta).
+  private renderResumeReconnecting(): void {
+    this.overlay.innerHTML = `
+      <div class="lv-finished">
+        <h1 class="lv-win-title">Recuperando tu cobro…</h1>
+        <p class="lv-bet-note lv-bet-warn">⚠️ No se pudo contactar a Luna Negra. Reintentando…</p>
+        <div class="lv-win-actions">
+          <button class="lv-btn lv-btn--primary" type="button" data-lv="resume-retry">Reintentar ahora</button>
+          <button class="lv-btn lv-btn--ghost" type="button" data-lv="resume-exit">Salir</button>
+        </div>
+      </div>`;
+    this.overlay.querySelectorAll<HTMLElement>('[data-lv]').forEach((el) => {
+      el.addEventListener('click', () => {
+        if (el.dataset.lv === 'resume-retry') { window.clearTimeout(this.betPollTimer); void this.resumePendingPayout(); }
+        else if (el.dataset.lv === 'resume-exit') this.exit();
+      });
+    });
+    this.overlay.focus();
   }
 
   // ── Render del escenario (canvases persistentes + HUD reescribible) ─────────
@@ -1053,10 +1096,12 @@ class LocalVersusMatch {
     cancelAnimationFrame(this.rafId);
     const winnerSeat = this.outcome === 'seat1' ? 1 : this.outcome === 'seat2' ? 2 : null;
     // Persistimos el cobro para sobrevivir un refresh mientras siga sin reclamar;
-    // en cuanto se paga (o la apuesta se resuelve sin premio) borramos el registro.
+    // en cuanto se paga (o la apuesta muere) borramos el registro. Si el premio
+    // todavía se está preparando (sin handle aún) dejamos el registro como está —
+    // NO lo borramos, para no perderlo por un refresh en ese instante.
     if (this.bet && winnerHasUnclaimedWithdraw(this.bet)) {
       savePendingPayout({ betId: this.bet.betId, seats: this.bet.seats, winnerSeat, revealed: this.payoutRevealed });
-    } else if (this.bet) {
+    } else if (this.bet && payoutIsDone(this.bet)) {
       clearPendingPayout();
     }
     const winner = winnerSeat ? `Jugador ${winnerSeat}` : null;
@@ -1167,6 +1212,17 @@ function winnerHasUnclaimedWithdraw(bet: LocalBetView): boolean {
   if (!winner) return false;
   if (winner.payoutStatus === 'paid' || winner.payoutStatus === 'claimed') return false;
   return !!(winner.withdrawLnurl || winner.withdrawUrl);
+}
+
+// El cobro está DEFINITIVAMENTE terminado: ya se pagó/reclamó o la apuesta murió.
+// Solo en este caso conviene borrar el registro y cerrar la recuperación. Un
+// ganador confirmado SIN handle de retiro aún (premio preparándose) NO cuenta:
+// hay que seguir esperando, no descartar el cobro.
+function payoutIsDone(bet: LocalBetView): boolean {
+  if (['cancelled', 'refunded', 'expired', 'voided'].includes(bet.status)) return true;
+  const winner = bet.participants.find((p) => p.result === 'won');
+  if (!winner) return false;
+  return winner.payoutStatus === 'paid' || winner.payoutStatus === 'claimed';
 }
 
 function escapeText(value: string): string {
