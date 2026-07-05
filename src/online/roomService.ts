@@ -1816,7 +1816,7 @@ export function winnerNpubsFromRoom(room: OnlineRoom): string[] {
   const winner = room.players.find((player) => player.id === room.winnerPlayerId);
   return winner?.npub ? [winner.npub] : [];
 }
-
+ 
 /**
  * npub del ganador en términos de la APUESTA (vacío = empate/anulación → reembolso).
  * Resuelve por el participante cuyo `playerId` coincide con el ganador de la sala,
