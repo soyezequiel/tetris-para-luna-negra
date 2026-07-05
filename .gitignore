@@ -16,3 +16,4 @@ stack40-*.png
 .env.local
 .env*.local
 .dev.vars
+.env
