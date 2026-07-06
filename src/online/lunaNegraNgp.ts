@@ -142,11 +142,11 @@ export async function fetchNgpConfig(
 }
 
 /**
- * Texto humano de fallback (NIP-31 `alt`): los clientes Nostr que no saben
- * renderizar el kind:1339 muestran este texto en vez de "no se puede manejar el
- * evento". El formato máquina (tags a/p/stake/deadline) queda intacto.
+ * Texto humano de la apuesta. Es el content del POST PRINCIPAL (kind:1) que
+ * renderiza en cualquier cliente Nostr, y también se usa como `alt` (NIP-31) del
+ * contrato kind:1339 que cuelga como comentario.
  */
-function buildContractAlt(p: {
+function buildContractHuman(p: {
   participantPubkeys: string[];
   stakeSats: number;
   victoryCondition: string;
@@ -186,10 +186,29 @@ async function publishToRelays(ev: ReturnType<typeof finalizeEvent>): Promise<bo
   }
 }
 
+/** Firma con la clave de servicio y publica; devuelve el id del evento. Lanza si
+ *  ningún relay aceptó. */
+async function signAndPublish(
+  sk: Uint8Array,
+  template: { kind: number; created_at: number; tags: string[][]; content: string },
+): Promise<string> {
+  const ev = finalizeEvent(template, sk);
+  const accepted = await publishToRelays(ev);
+  if (!accepted) {
+    throw new OnlineRoomError('No se pudo publicar el evento NGP en ningún relay.', 502);
+  }
+  return ev.id;
+}
+
 /**
- * Construye, firma (clave de servicio) y publica el contrato NGP kind:1339. Los
- * `p` participantes van en orden; la tienda (escrow) y el oráculo con su marker.
- * Devuelve el id del evento (= ancla de la apuesta). Lanza si ningún relay aceptó.
+ * Publica la apuesta como DOS eventos:
+ *  1) un POST PRINCIPAL kind:1 humano (la cara legible, renderiza en cualquier
+ *     cliente Nostr), y
+ *  2) el CONTRATO máquina kind:1339 como COMENTARIO (reply `e` root) de ese post,
+ *     con los tags estructurados (a/p/escrow/oracle/stake/deadline).
+ * Devuelve el id del CONTRATO (1339); Luna lo materializa y usa el post humano
+ * como ancla (deriva el root del `e` del contrato), así depósitos/estado/premio
+ * cuelgan de la nota legible. Lanza si algún publish no llega a ningún relay.
  */
 export async function publishNgpContract(params: {
   gameCoord: string;
@@ -204,38 +223,46 @@ export async function publishNgpContract(params: {
   const sk = ngpServiceKey();
   if (!sk) throw new OnlineRoomError('NGP no configurado (falta LUNA_NEGRA_NGP_NSEC).', 500);
 
-  const tags: string[][] = [
-    ['a', params.gameCoord],
-    ...params.participantPubkeys.map((pk) => ['p', pk]),
-    ['p', params.storePubkey, '', 'escrow'],
-    ['p', params.oraclePubkey, '', 'oracle'],
-    ['stake', String(params.stakeSats)],
-    ['deadline', String(params.deadlineSec)],
-    ['room', params.roomId],
-    ['t', NGP_TAG],
-    // NIP-31: texto humano de fallback para clientes que no rendericen el kind:1339.
-    [
-      'alt',
-      buildContractAlt({
-        participantPubkeys: params.participantPubkeys,
-        stakeSats: params.stakeSats,
-        victoryCondition: params.victoryCondition,
-        deadlineSec: params.deadlineSec,
-      }),
+  const createdAt = Math.floor(Date.now() / 1000);
+  const human = buildContractHuman({
+    participantPubkeys: params.participantPubkeys,
+    stakeSats: params.stakeSats,
+    victoryCondition: params.victoryCondition,
+    deadlineSec: params.deadlineSec,
+  });
+  const relay = PUBLIC_WRITE_RELAYS[0] ?? '';
+
+  // 1) Post principal humano (kind:1): lo que ve la gente. `p` participantes para
+  //    que aparezcan como menciones/pills; `t=ngp-bet` para discovery.
+  const rootId = await signAndPublish(sk, {
+    kind: 1,
+    created_at: createdAt,
+    tags: [
+      ...params.participantPubkeys.map((pk) => ['p', pk]),
+      ['t', NGP_TAG],
     ],
-  ];
-  const ev = finalizeEvent(
-    {
-      kind: NGP_CONTRACT_KIND,
-      created_at: Math.floor(Date.now() / 1000),
-      tags,
-      content: params.victoryCondition,
-    },
-    sk,
-  );
-  const accepted = await publishToRelays(ev);
-  if (!accepted) {
-    throw new OnlineRoomError('No se pudo publicar el contrato NGP en ningún relay.', 502);
-  }
-  return ev.id;
+    content: human,
+  });
+
+  // 2) Contrato máquina (kind:1339) como comentario del post principal.
+  const contractId = await signAndPublish(sk, {
+    kind: NGP_CONTRACT_KIND,
+    created_at: createdAt,
+    tags: [
+      ['e', rootId, relay, 'root'],
+      ['a', params.gameCoord],
+      ...params.participantPubkeys.map((pk) => ['p', pk]),
+      ['p', params.storePubkey, '', 'escrow'],
+      ['p', params.oraclePubkey, '', 'oracle'],
+      ['stake', String(params.stakeSats)],
+      ['deadline', String(params.deadlineSec)],
+      ['room', params.roomId],
+      ['t', NGP_TAG],
+      // NIP-31: fallback humano para clientes que sí lo soporten (además del post raíz).
+      ['alt', human],
+    ],
+    content: params.victoryCondition,
+  });
+
+  return contractId;
 }
