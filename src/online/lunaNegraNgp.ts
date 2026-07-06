@@ -1,5 +1,5 @@
 import { SimplePool, nip19 } from 'nostr-tools';
-import { finalizeEvent } from 'nostr-tools/pure';
+import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import { OnlineRoomError } from './roomService.js';
 import { PUBLIC_WRITE_RELAYS } from './nostrRelays.js';
 import { isLunaMockEnabled } from './lunaNegraMock.js';
@@ -45,6 +45,32 @@ export function ngpBetsEnabled(): boolean {
   if (isLunaMockEnabled()) return false;
   if ((process.env.LUNA_NEGRA_NGP_BETS ?? '').trim() !== '1') return false;
   return ngpServiceKey() !== null;
+}
+
+/**
+ * Estado de la config NGP tal como la ve ESTA función deployada. Sin secretos: solo
+ * booleanos + la pubkey pública de servicio (que firma los 1339, para poder
+ * matchearlos en relays). Lo expone `GET /api/bets/version` para diagnosticar por
+ * qué NGP corre o no sin adivinar entre env/cache/gate.
+ */
+export function ngpDiagnostics(): {
+  flag: boolean;
+  hasKey: boolean;
+  enabled: boolean;
+  mock: boolean;
+  servicePubkey: string | null;
+} {
+  const flag = (process.env.LUNA_NEGRA_NGP_BETS ?? '').trim() === '1';
+  const sk = ngpServiceKey();
+  let servicePubkey: string | null = null;
+  if (sk) {
+    try {
+      servicePubkey = getPublicKey(sk);
+    } catch {
+      servicePubkey = null;
+    }
+  }
+  return { flag, hasKey: sk !== null, enabled: ngpBetsEnabled(), mock: isLunaMockEnabled(), servicePubkey };
 }
 
 /** Convierte un npub a pubkey hex. Lanza si es inválido. */

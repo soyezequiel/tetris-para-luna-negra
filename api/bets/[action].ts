@@ -14,6 +14,7 @@ import {
   syncBetParticipantsWithRoom,
 } from '../../src/online/lunaNegraBets.js';
 import { alertMoneyPathError } from '../../src/online/moneyPathAlert.js';
+import { ngpDiagnostics } from '../../src/online/lunaNegraNgp.js';
 import {
   getBetRoomStore,
   handleApiError,
@@ -34,14 +35,14 @@ export { config } from '../../src/online/vercelApi.js';
 // participante) NO rebuildean la función salvo que cambie este archivo. Si tocás la
 // lógica de apuestas y no se refleja en el deploy, bumpeá `deploy-rev` de abajo (o
 // seteá VERCEL_FORCE_NO_BUILD_CACHE=1 en el proyecto para desactivar el cache).
-// deploy-rev: 9
+// deploy-rev: 10
 //
 // BET_API_REV: marcador de versión HORNEADO en el código de ESTA función. Como el build
 // cache de Vercel puede servir una copia vieja de la función (sin re-trazar los imports),
 // exponemos esta constante por `GET /api/bets/version` para saber, desde afuera y sin
 // una sala viva, qué código está realmente corriendo. Si `version` no existe (405) o la
 // `rev` es vieja → la función está cacheada vieja. Subilo cada vez que toques la lógica.
-const BET_API_REV = 9;
+const BET_API_REV = 10;
 
 export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   return handleNodeApi(request, response, { GET, POST });
@@ -62,6 +63,9 @@ export async function GET(request: Request): Promise<Response> {
             ?? process.env.DISCORD_WEBHOOK_URL
             ?? '').trim(),
         ),
+        // Estado NGP en la función deployada (sin secretos): permite ver de una si el
+        // flag/clave llegan y si la ruta de contrato Nostr se activaría. Ver ngpDiagnostics.
+        ngp: ngpDiagnostics(),
         serverNowMs: Date.now(),
       });
     }
