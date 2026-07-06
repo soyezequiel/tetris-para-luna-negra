@@ -47,6 +47,44 @@ export function ngpBetsEnabled(): boolean {
   return ngpServiceKey() !== null;
 }
 
+/** Clave (bytes) con la que Tetris firma el RESULTADO 1341 como oráculo BYO. Por
+ *  defecto es la misma clave de servicio que firma el contrato (Tetris es a la vez
+ *  organizador y árbitro); se puede separar con LUNA_NEGRA_NGP_ORACLE_NSEC. Null si
+ *  no hay clave. */
+function ngpOracleKey(): Uint8Array | null {
+  const s = (process.env.LUNA_NEGRA_NGP_ORACLE_NSEC ?? '').trim();
+  if (s) {
+    try {
+      if (s.startsWith('nsec')) return nip19.decode(s).data as Uint8Array;
+      return Uint8Array.from(Buffer.from(s, 'hex'));
+    } catch {
+      return null;
+    }
+  }
+  return ngpServiceKey();
+}
+
+/** Pubkey (hex) del oráculo BYO de Tetris, o null si no hay clave. */
+export function ngpOraclePubkey(): string | null {
+  const sk = ngpOracleKey();
+  if (!sk) return null;
+  try {
+    return getPublicKey(sk);
+  } catch {
+    return null;
+  }
+}
+
+/** ¿Reportamos el resultado KEYLESS (firmando nuestro propio 1341) en vez de por
+ *  API key (oráculo gestionado por Luna)? Requiere NGP + el flag explícito + clave de
+ *  oráculo. Es opt-in para no romper el flujo gestionado que ya corre en prod: hasta
+ *  que se declara la clave BYO en Luna, el camino gestionado sigue siendo el válido. */
+export function ngpKeylessEnabled(): boolean {
+  if (!ngpBetsEnabled()) return false;
+  if ((process.env.LUNA_NEGRA_NGP_KEYLESS ?? '').trim() !== '1') return false;
+  return ngpOracleKey() !== null;
+}
+
 /**
  * Estado de la config NGP tal como la ve ESTA función deployada. Sin secretos: solo
  * booleanos + la pubkey pública de servicio (que firma los 1339, para poder
@@ -63,6 +101,12 @@ export function ngpDiagnostics(): {
    *  no es secreto): revela comillas literales, "true"/"yes" u otro valor inesperado
    *  que no cuadre con el `=== '1'` esperado. */
   rawFlagValue: string;
+  /** Reporte de resultado keyless (BYO): flag activo + hay clave de oráculo. */
+  keyless: boolean;
+  /** Pubkey del oráculo BYO con la que se firmarían los 1341 (para matchear en Luna). */
+  oraclePubkey: string | null;
+  /** Valor crudo de LUNA_NEGRA_NGP_KEYLESS (no es secreto). */
+  rawKeylessValue: string;
 } {
   const raw = process.env.LUNA_NEGRA_NGP_BETS ?? '';
   const flag = raw.trim() === '1';
@@ -82,6 +126,9 @@ export function ngpDiagnostics(): {
     mock: isLunaMockEnabled(),
     servicePubkey,
     rawFlagValue: JSON.stringify(raw),
+    keyless: ngpKeylessEnabled(),
+    oraclePubkey: ngpOraclePubkey(),
+    rawKeylessValue: JSON.stringify(process.env.LUNA_NEGRA_NGP_KEYLESS ?? ''),
   };
 }
 
@@ -265,4 +312,81 @@ export async function publishNgpContract(params: {
   });
 
   return contractId;
+}
+
+// Declaración de la clave de oráculo BYO ante Luna, memoizada por instancia
+// serverless (idempotente: re-declarar la misma clave es un no-op del lado de Luna).
+let oracleDeclared = false;
+
+/**
+ * Declara la clave de oráculo PROPIA de Tetris ante Luna (keyless). Prueba posesión:
+ * pide el reto (`GET /api/provider/oracle/self`, API key), lo firma con la clave de
+ * oráculo y lo postea (`POST … { proof }`). DEBE correr antes de publicar el 1339,
+ * porque la ingesta valida que el oráculo del contrato == `provider.oraclePubkey`
+ * (ORACLE_MISMATCH). Lanza si falla: sin declaración, el pozo no debe crearse.
+ */
+export async function ensureOracleDeclared(baseUrl: string, apiKey: string): Promise<void> {
+  if (oracleDeclared) return;
+  const sk = ngpOracleKey();
+  if (!sk) throw new OnlineRoomError('NGP keyless sin clave de oráculo (LUNA_NEGRA_NGP_NSEC).', 500);
+  const base = baseUrl.replace(/\/+$/, '');
+  const headers = { authorization: `Bearer ${apiKey}` };
+
+  let challenge: string;
+  try {
+    const r = await fetch(`${base}/api/provider/oracle/self`, { headers });
+    const j = (await r.json().catch(() => null)) as { challenge?: string; error?: string } | null;
+    if (!r.ok || !j?.challenge) {
+      throw new OnlineRoomError(j?.error || `Luna respondió ${r.status} al pedir el reto de oráculo.`, 502);
+    }
+    challenge = j.challenge;
+  } catch (e) {
+    if (e instanceof OnlineRoomError) throw e;
+    throw new OnlineRoomError('No se pudo contactar a Luna para declarar el oráculo.', 502);
+  }
+
+  const proof = finalizeEvent(
+    { kind: 27235, created_at: Math.floor(Date.now() / 1000), tags: [], content: challenge },
+    sk,
+  );
+  const r = await fetch(`${base}/api/provider/oracle/self`, {
+    method: 'POST',
+    headers: { ...headers, 'content-type': 'application/json' },
+    body: JSON.stringify({ proof }),
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => null)) as { error?: string } | null;
+    throw new OnlineRoomError(j?.error || `Luna rechazó la clave de oráculo (${r.status}).`, 502);
+  }
+  oracleDeclared = true;
+}
+
+/**
+ * Firma el evento de RESULTADO (kind:1341) con la clave de oráculo BYO. Lleva el tag
+ * `bet` (id interno de Luna, que usa `handleSignedEvent` para localizar la apuesta) y
+ * los ganadores como `winner` (npub, formato que lee ese endpoint) y como `p` (pubkey,
+ * formato NGP del 1341 en relays). Ganadores vacío = empate/anulación → reembolso.
+ * Luna valida la firma contra `oraclePubkey` (sin API key) y republica el evento.
+ */
+export function signNgpResultEvent(params: {
+  betId: string;
+  winnerNpubs: string[];
+  gameCoord?: string;
+}): ReturnType<typeof finalizeEvent> {
+  const sk = ngpOracleKey();
+  if (!sk) throw new OnlineRoomError('NGP keyless sin clave de oráculo.', 500);
+  const tags: string[][] = [
+    ['bet', params.betId],
+    ['status', params.winnerNpubs.length > 0 ? 'win' : 'draw'],
+    ['t', NGP_TAG],
+  ];
+  for (const np of params.winnerNpubs) {
+    tags.push(['winner', np]);
+    tags.push(['p', pubkeyFromNpub(np)]);
+  }
+  if (params.gameCoord) tags.push(['a', params.gameCoord]);
+  return finalizeEvent(
+    { kind: 1341, created_at: Math.floor(Date.now() / 1000), tags, content: '' },
+    sk,
+  );
 }

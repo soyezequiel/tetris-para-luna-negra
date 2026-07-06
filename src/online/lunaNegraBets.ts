@@ -19,6 +19,10 @@ import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
 import { alertBetDepositHandlesIncomplete } from './moneyPathAlert.js';
 import {
   ngpBetsEnabled,
+  ngpKeylessEnabled,
+  ngpOraclePubkey,
+  ensureOracleDeclared,
+  signNgpResultEvent,
   fetchNgpConfig,
   publishNgpContract,
   pubkeyFromNpub,
@@ -452,10 +456,24 @@ async function createBetViaNgpContract(
     );
   }
   const participantPubkeys = room.players.map((player) => pubkeyFromNpub(player.npub as string));
+
+  // Keyless (BYO): declaramos NUESTRA clave de oráculo ante Luna ANTES de publicar el
+  // contrato y la usamos como `oracle` del 1339. Así el resultado lo firmamos nosotros
+  // (sin API key) y la ingesta valida oracle==provider.oraclePubkey. Si no es keyless,
+  // el oráculo es el gestionado por Luna (de la config) y el resultado va por API key.
+  let oraclePubkey = ngp.oraclePubkey;
+  if (ngpKeylessEnabled()) {
+    const own = ngpOraclePubkey();
+    if (own) {
+      await ensureOracleDeclared(config.baseUrl, config.apiKey);
+      oraclePubkey = own;
+    }
+  }
+
   const contractEventId = await publishNgpContract({
     gameCoord: ngp.gameCoord,
     storePubkey: ngp.storePubkey,
-    oraclePubkey: ngp.oraclePubkey,
+    oraclePubkey,
     participantPubkeys,
     stakeSats,
     victoryCondition: victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
@@ -850,12 +868,25 @@ export async function maybeReportRoomBetResult(
     updatedRoom = await setRoomBet(store, room.id, reportedBet, nowMs);
   }
 
-  // Camino por API key: Luna Negra firma el resultado con el oráculo gestionado
-  // del proveedor. El game server no toca Nostr. winners vacío = empate/anulación.
+  // Dos caminos de reporte (mismo endpoint):
+  //  - KEYLESS (BYO): firmamos NUESTRO 1341 con la clave de oráculo y lo mandamos como
+  //    { event }. Luna valida la firma contra oraclePubkey (sin API key) y liquida.
+  //  - Gestionado: mandamos { winners } y Luna firma con el oráculo que custodia.
+  // winners vacío = empate/anulación → reembolso, en ambos casos.
   try {
+    let body: { event: unknown } | { winners: string[] };
+    if (ngpKeylessEnabled()) {
+      // Aseguramos que NUESTRA clave esté declarada como oráculo (idempotente): si no,
+      // Luna rechazaría el { event } con WRONG_SIGNER. Cubre el caso de reportar sin
+      // haber creado una apuesta NGP en esta instancia (cold start).
+      await ensureOracleDeclared(config.baseUrl, config.apiKey);
+      body = { event: signNgpResultEvent({ betId: bet.betId, winnerNpubs: winners }) };
+    } else {
+      body = { winners };
+    }
     await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(bet.betId)}/result`, {
       method: 'POST',
-      body: { winners },
+      body,
     });
   } catch (error) {
     // El reporte falló de verdad. El éxito —incluido re-reportar el mismo ganador—
