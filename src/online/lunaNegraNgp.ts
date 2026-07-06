@@ -141,6 +141,30 @@ export async function fetchNgpConfig(
   return cfg;
 }
 
+/**
+ * Texto humano de fallback (NIP-31 `alt`): los clientes Nostr que no saben
+ * renderizar el kind:1339 muestran este texto en vez de "no se puede manejar el
+ * evento". El formato máquina (tags a/p/stake/deadline) queda intacto.
+ */
+function buildContractAlt(p: {
+  participantPubkeys: string[];
+  stakeSats: number;
+  victoryCondition: string;
+  deadlineSec: number;
+}): string {
+  const who = p.participantPubkeys.map((pk) => `nostr:${nip19.npubEncode(pk)}`).join(" vs ");
+  const vence = new Date(p.deadlineSec * 1000).toISOString().replace("T", " ").slice(0, 16);
+  return [
+    "🌑 Apuesta en Tetra (Tetris)",
+    "",
+    who,
+    `${p.stakeSats} sats cada uno · gana: ${p.victoryCondition}`,
+    "",
+    "El ganador se lleva el pozo menos la comisión de la casa. Depósitos y premio por zaps anclados a este contrato. Escrow: Luna Negra.",
+    `Ventana de depósito hasta ${vence} UTC.`,
+  ].join("\n");
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     p,
@@ -189,6 +213,16 @@ export async function publishNgpContract(params: {
     ['deadline', String(params.deadlineSec)],
     ['room', params.roomId],
     ['t', NGP_TAG],
+    // NIP-31: texto humano de fallback para clientes que no rendericen el kind:1339.
+    [
+      'alt',
+      buildContractAlt({
+        participantPubkeys: params.participantPubkeys,
+        stakeSats: params.stakeSats,
+        victoryCondition: params.victoryCondition,
+        deadlineSec: params.deadlineSec,
+      }),
+    ],
   ];
   const ev = finalizeEvent(
     {
