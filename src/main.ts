@@ -126,6 +126,13 @@ import { clearPresenceEvent, publishPresence, type PresenceStatus } from './onli
 import { NOSTR_BOARD_SURVIVAL, NOSTR_BOARD_WINS, publishScore } from './online/nostrLeaderboard';
 import { fetchContacts } from './online/nostrContacts';
 import { fetchProfiles, profileName } from './online/nostrProfile';
+import {
+  fetchKnownTetraPlayers,
+  loadFriendAffinities,
+  prioritizeChallengeFriends,
+  rememberFriendActivity,
+  type FriendAffinities,
+} from './online/challengeFriendPriority';
 import { decidePeerKoAction } from './online/peerKoAuthority';
 import { OnlinePeerBroadcaster, type OnlinePeerKoMessage, type OnlinePeerReplayMessage } from './online/peerBroadcast';
 import { OnlineReplayCollector } from './app/multiplayerReplay';
@@ -480,6 +487,9 @@ const CHALLENGE_FRIENDS_CACHE_KEY = 'tetra.challengeFriends.v1';
 // Evita cargas duplicadas (precarga al login + apertura del picker) y descarta
 // una carga vieja si el usuario cambió de cuenta a mitad de camino.
 let challengeFriendsLoadingFor: string | null = null;
+let challengeFriendAffinitiesFor: string | null = null;
+let challengeFriendAffinities: FriendAffinities = new Map();
+let lastRememberedRoomAffinityKey: string | null = null;
 
 const activeTouchInputs = new Map<number, { sourceId: string; control: HTMLElement }>();
 
@@ -2789,6 +2799,9 @@ function clearLunaIdentity(): void {
   lunaState.challenge.friends = [];
   lunaState.challenge.loadedForPubkey = null;
   challengeFriendsLoadingFor = null;
+  challengeFriendAffinitiesFor = null;
+  challengeFriendAffinities = new Map();
+  lastRememberedRoomAffinityKey = null;
   challengeInboxPubkey = null;
   challengeInboxStarting = false;
   stopChallengeInbox();
@@ -3143,8 +3156,16 @@ function saveCachedChallengeFriends(pubkey: string, friends: NostrChallengeFrien
   }
 }
 
-function sortChallengeFriends(friends: NostrChallengeFriend[]): NostrChallengeFriend[] {
-  return friends.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+function affinitiesForChallengeOwner(pubkey: string): FriendAffinities {
+  if (challengeFriendAffinitiesFor !== pubkey) {
+    challengeFriendAffinitiesFor = pubkey;
+    challengeFriendAffinities = loadFriendAffinities(pubkey);
+  }
+  return challengeFriendAffinities;
+}
+
+function sortChallengeFriends(friends: NostrChallengeFriend[], ownerPubkey: string): NostrChallengeFriend[] {
+  return prioritizeChallengeFriends(friends, affinitiesForChallengeOwner(ownerPubkey));
 }
 
 // Precarga la lista de amigos apenas hay identidad: contactos (kind:3) y perfiles
@@ -3167,7 +3188,7 @@ async function loadChallengeFriends(myPubkey: string): Promise<void> {
 
   const cached = loadCachedChallengeFriends(myPubkey);
   if (cached && cached.length > 0) {
-    lunaState.challenge.friends = sortChallengeFriends(cached);
+    lunaState.challenge.friends = sortChallengeFriends(cached, myPubkey);
   } else if (lunaState.challenge.loadedForPubkey !== null) {
     // Cambio de cuenta sin caché: no mostrar los amigos del pubkey anterior.
     lunaState.challenge.friends = [];
@@ -3185,9 +3206,9 @@ async function loadChallengeFriends(myPubkey: string): Promise<void> {
         if (prev) return prev;
         const npub = nip19.npubEncode(pubkey);
         return { pubkey, npub, name: shortNpub(npub).slice(0, 32), avatarUrl: null };
-      }));
+      }), myPubkey);
       lunaState.challenge.loading = false;
-      await fetchProfiles(contacts, (profiles) => {
+      const profilesTask = fetchProfiles(contacts, (profiles) => {
         if (challengeFriendsLoadingFor !== myPubkey) return;
         lunaState.challenge.friends = sortChallengeFriends(
           lunaState.challenge.friends.map((friend) => {
@@ -3199,8 +3220,16 @@ async function loadChallengeFriends(myPubkey: string): Promise<void> {
               avatarUrl: profile.picture ?? friend.avatarUrl,
             };
           }),
+          myPubkey,
         );
       });
+      const activityTask = fetchKnownTetraPlayers(contacts).then((knownTetraPlayers) => {
+        if (challengeFriendsLoadingFor !== myPubkey || knownTetraPlayers.size === 0) return;
+        challengeFriendAffinities = rememberFriendActivity(myPubkey, knownTetraPlayers);
+        challengeFriendAffinitiesFor = myPubkey;
+        lunaState.challenge.friends = sortChallengeFriends(lunaState.challenge.friends, myPubkey);
+      });
+      await Promise.all([profilesTask, activityTask]);
       saveCachedChallengeFriends(myPubkey, lunaState.challenge.friends);
     }
     lunaState.challenge.loadedForPubkey = myPubkey;
@@ -3301,6 +3330,12 @@ function handleIncomingNostrChallenge(challenge: ParsedChallenge): void {
     || (challenge.rumorId !== null && candidate.rumorId === challenge.rumorId)
   );
   if (exists) return;
+  const ownerPubkey = lunaState.identity?.pubkey?.trim().toLowerCase() ?? '';
+  if (/^[0-9a-f]{64}$/.test(ownerPubkey)) {
+    challengeFriendAffinities = rememberFriendActivity(ownerPubkey, [challenge.fromPubkey]);
+    challengeFriendAffinitiesFor = ownerPubkey;
+    lunaState.challenge.friends = sortChallengeFriends(lunaState.challenge.friends, ownerPubkey);
+  }
   const incoming = {
     ...challenge,
     fromName: shortNpub(challenge.fromNpub),
@@ -4950,6 +4985,43 @@ function preserveVisibleDepositHandles(previousRoom: OnlineRoom | null, incoming
   return { ...incomingRoom, bet: { ...incomingBet, participants } };
 }
 
+function nostrPubkeyForRoomPlayer(player: OnlinePlayer): string | null {
+  if (!player.npub) return null;
+  try {
+    const decoded = nip19.decode(player.npub);
+    return decoded.type === 'npub' && typeof decoded.data === 'string'
+      ? decoded.data.trim().toLowerCase()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// Ver a otro usuario autenticado en una sala prueba que abrió TETRA. Cuando la
+// ronda ya empezó (o terminó), guardamos además que efectivamente jugamos juntos.
+function rememberOnlineChallengeFriends(room: OnlineRoom): void {
+  const ownerPubkey = lunaState.identity?.pubkey?.trim().toLowerCase() ?? '';
+  if (!/^[0-9a-f]{64}$/.test(ownerPubkey)) return;
+  const friendPubkeys = room.players
+    .map(nostrPubkeyForRoomPlayer)
+    .filter((pubkey): pubkey is string => pubkey !== null && pubkey !== ownerPubkey)
+    .sort();
+  if (friendPubkeys.length === 0) return;
+  const played = room.status === 'playing' || room.status === 'finished';
+  const matchId = played ? `${room.id}:${room.seed}` : null;
+  const observationKey = `${ownerPubkey}:${matchId ?? `seen:${room.id}`}:${friendPubkeys.join(',')}`;
+  if (observationKey === lastRememberedRoomAffinityKey) return;
+  lastRememberedRoomAffinityKey = observationKey;
+  challengeFriendAffinities = rememberFriendActivity(ownerPubkey, friendPubkeys, {
+    matchId,
+    atMs: room.updatedAtServerMs,
+  });
+  challengeFriendAffinitiesFor = ownerPubkey;
+  if (lunaState.challenge.friends.length > 0) {
+    lunaState.challenge.friends = sortChallengeFriends(lunaState.challenge.friends, ownerPubkey);
+  }
+}
+
 function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' | 'bet-refresh' = 'room-action'): void {
   const previousRoom = roomState.current;
   const previousRoundId = roundState.activeRoundId;
@@ -4977,6 +5049,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && protectedRoom.status === 'countdown';
   roomState.current = protectedRoom;
+  rememberOnlineChallengeFriends(protectedRoom);
   saveOnlineRoomSession(protectedRoom);
   if (protectedRoom.bet?.status !== 'pending_deposits') betState.fastPollUntil = 0;
   roundState.activeRoundId = nextRoundId;

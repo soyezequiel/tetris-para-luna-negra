@@ -2047,6 +2047,8 @@ describe('core stacker engine', () => {
       friends: [
         { npub: 'npub-online', displayName: 'Online', presence: 'online', roomId: null },
         { npub: 'npub-ingame', displayName: 'InGame', presence: 'in-game', roomId: 'AB12' },
+        { npub: 'npub-new', displayName: 'Ana', presence: 'offline', roomId: null, lastSeenMs: null },
+        { npub: 'npub-returning', displayName: 'Zoe', presence: 'offline', roomId: null, lastSeenMs: 1733600000000 },
       ],
     })));
 
@@ -2056,6 +2058,8 @@ describe('core stacker engine', () => {
     expect(friends.map((friend) => [friend.npub, friend.presence])).toEqual([
       ['npub-ingame', 'in-game'],
       ['npub-online', 'online'],
+      ['npub-returning', 'offline'],
+      ['npub-new', 'offline'],
     ]);
 
     vi.unstubAllGlobals();
