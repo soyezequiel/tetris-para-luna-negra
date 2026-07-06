@@ -17,6 +17,12 @@ import type {
 } from './protocol';
 import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
 import { alertBetDepositHandlesIncomplete } from './moneyPathAlert.js';
+import {
+  ngpBetsEnabled,
+  fetchNgpConfig,
+  publishNgpContract,
+  pubkeyFromNpub,
+} from './lunaNegraNgp.js';
 
 interface LunaConfig {
   baseUrl: string;
@@ -386,11 +392,22 @@ export async function createBetForRoom(
     throw new OnlineRoomError('Monto de apuesta inválido.', 400);
   }
 
-  // Pozo MIXTO: por cada jugador, su npub real si entró con cuenta Luna; si es
-  // invitado (sin npub), un placeholder `{ guest: true }` que Luna convierte en
-  // una identidad efímera. Así el de cuenta cobra a su billetera y el invitado
-  // cobra por LNURL-withdraw. El orden se conserva para mapear asiento→jugador.
   const players = room.players;
+
+  // NGP (escrow transparente): cuando está habilitado Y todos los jugadores tienen
+  // npub, el contrato se publica como evento Nostr kind:1339 firmado por Tetris y
+  // Luna lo materializa (POST /from-contract), en vez de crearlo por API. El pozo
+  // con invitados (sin npub) NO puede ir por acá —NGP puro no tiene asientos
+  // custodiados— así que cae al camino legacy. Ver docs/nostr-games-protocol-apuestas.md.
+  if (ngpBetsEnabled() && players.every((player) => !!player.npub)) {
+    const created = await createBetViaNgpContract(config, room, gameId, stakeSats, input.victoryCondition);
+    return finalizeCreatedBet(store, room, config, created, gameId, input.playerId, nowMs);
+  }
+
+  // Legacy (custodial / API key). Pozo MIXTO: por cada jugador, su npub real si
+  // entró con cuenta Luna; si es invitado (sin npub), un placeholder `{ guest: true }`
+  // que Luna convierte en una identidad efímera. Así el de cuenta cobra a su billetera
+  // y el invitado cobra por LNURL-withdraw. El orden se conserva para mapear asiento→jugador.
   const spec: Array<string | { guest: true }> = players.map(
     (player) => (player.npub ? player.npub : { guest: true }),
   );
@@ -412,9 +429,62 @@ export async function createBetForRoom(
     },
   });
 
-  // Si hubo invitados, Luna devuelve el mapeo asiento→npub (en el mismo orden que
-  // mandamos), así que zippeamos seat i ↔ players[i]. Si fue 100% con cuenta, no
-  // viene el mapeo y los npubs son los de los jugadores (mapeo directo por npub).
+  return finalizeCreatedBet(store, room, config, create, gameId, input.playerId, nowMs);
+}
+
+/**
+ * Publica el contrato NGP kind:1339 (clave de servicio de Tetris) y pide a Luna
+ * materializar la apuesta desde él. Devuelve la misma forma que `POST /api/v2/bets`.
+ * Solo se llama cuando todos los jugadores tienen npub (validado por el caller).
+ */
+async function createBetViaNgpContract(
+  config: LunaConfig,
+  room: OnlineRoom,
+  gameId: string,
+  stakeSats: number,
+  victoryCondition: string | undefined,
+): Promise<LunaBetCreateWithSeats> {
+  const ngp = await fetchNgpConfig(config.baseUrl, config.apiKey, gameId);
+  if (stakeSats < ngp.minStakeSats || stakeSats > ngp.maxStakeSats) {
+    throw new OnlineRoomError(
+      `El monto debe estar entre ${ngp.minStakeSats} y ${ngp.maxStakeSats} sats.`,
+      400,
+    );
+  }
+  const participantPubkeys = room.players.map((player) => pubkeyFromNpub(player.npub as string));
+  const contractEventId = await publishNgpContract({
+    gameCoord: ngp.gameCoord,
+    storePubkey: ngp.storePubkey,
+    oraclePubkey: ngp.oraclePubkey,
+    participantPubkeys,
+    stakeSats,
+    victoryCondition: victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
+    roomId: room.id,
+    // El contrato pide una ventana holgada; Luna la acota a su propia ventana de depósito.
+    deadlineSec: Math.floor(Date.now() / 1000) + 3600,
+  });
+  return lunaFetch<LunaBetCreateWithSeats>(config, '/api/v2/bets/from-contract', {
+    method: 'POST',
+    body: { contractEventId },
+  });
+}
+
+/**
+ * Cola común de la creación (legacy y NGP): mapea asiento→jugador, trae el detalle
+ * con los handles de depósito, arma el RoomBet y lo persiste. Si hubo invitados
+ * (solo legacy) Luna devuelve el mapeo asiento→npub en orden; si fue 100% con
+ * cuenta, el mapeo es directo por npub.
+ */
+async function finalizeCreatedBet(
+  store: RoomStore,
+  room: OnlineRoom,
+  config: LunaConfig,
+  create: LunaBetCreateWithSeats,
+  gameId: string,
+  createdByPlayerId: string,
+  nowMs: number,
+): Promise<OnlineRoom> {
+  const players = room.players;
   let npubs: string[];
   const playerIdByNpub = new Map<string, string | null>();
   if (create.participants && create.participants.length) {
@@ -427,7 +497,7 @@ export async function createBetForRoom(
   }
 
   const detail = await getBetDetail(config, create.betId);
-  const bet = buildRoomBet(room, npubs, create, detail, null, input.playerId, nowMs, playerIdByNpub);
+  const bet = buildRoomBet(room, npubs, create, detail, null, createdByPlayerId, nowMs, playerIdByNpub);
   const updatedRoom = await setRoomBet(store, room.id, bet, nowMs);
   // Reporte de diagnóstico a Discord: si algún participante quedó sin forma de depositar
   // en el juego (ni bolt11 ni 9734+callback), avisamos con el detalle de qué vino y qué
