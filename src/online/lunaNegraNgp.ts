@@ -59,8 +59,13 @@ export function ngpDiagnostics(): {
   enabled: boolean;
   mock: boolean;
   servicePubkey: string | null;
+  /** Valor crudo de LUNA_NEGRA_NGP_BETS tal como lo ve la función (JSON.stringify,
+   *  no es secreto): revela comillas literales, "true"/"yes" u otro valor inesperado
+   *  que no cuadre con el `=== '1'` esperado. */
+  rawFlagValue: string;
 } {
-  const flag = (process.env.LUNA_NEGRA_NGP_BETS ?? '').trim() === '1';
+  const raw = process.env.LUNA_NEGRA_NGP_BETS ?? '';
+  const flag = raw.trim() === '1';
   const sk = ngpServiceKey();
   let servicePubkey: string | null = null;
   if (sk) {
@@ -70,7 +75,14 @@ export function ngpDiagnostics(): {
       servicePubkey = null;
     }
   }
-  return { flag, hasKey: sk !== null, enabled: ngpBetsEnabled(), mock: isLunaMockEnabled(), servicePubkey };
+  return {
+    flag,
+    hasKey: sk !== null,
+    enabled: ngpBetsEnabled(),
+    mock: isLunaMockEnabled(),
+    servicePubkey,
+    rawFlagValue: JSON.stringify(raw),
+  };
 }
 
 /** Convierte un npub a pubkey hex. Lanza si es inválido. */
