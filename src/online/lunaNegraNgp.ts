@@ -483,15 +483,9 @@ export function signNgpResultEvent(params: {
   );
 }
 
-/**
- * MODO EVENTOS: firma un 1341 `status=void` con la clave de SERVICIO (la que firmó el
- * 1339 = el "retador"). Es el cancel pre-fondeo: `ngp-bet-result-sync` de Luna lo
- * detecta como VOID DEL RETADOR (firmante == autor del contrato) y reembolsa/anula.
- * `e` = id del 1339 para que lo ubique. Reemplaza `POST /cancel`.
- */
-export function signNgpVoidEvent(contractId: string): ReturnType<typeof finalizeEvent> {
-  const sk = ngpServiceKey();
-  if (!sk) throw new OnlineRoomError('NGP no configurado (falta LUNA_NEGRA_NGP_NSEC).', 500);
+/** Firma un 1341 `status=void` para el contrato `contractId` con la clave `sk`. `e` =
+ *  id del 1339 para que Luna ubique la apuesta. */
+function signVoidEvent(contractId: string, sk: Uint8Array): ReturnType<typeof finalizeEvent> {
   return finalizeEvent(
     {
       kind: 1341,
@@ -506,4 +500,33 @@ export function signNgpVoidEvent(contractId: string): ReturnType<typeof finalize
     },
     sk,
   );
+}
+
+/**
+ * MODO EVENTOS: anula una apuesta publicando el/los 1341 `status=void` que Luna
+ * necesita según el estado, SIN depender de que el estado local esté fresco. Luna
+ * distingue dos anulaciones por el firmante:
+ *  - VOID DEL RETADOR (clave de SERVICIO == autor del 1339): válido solo PRE-fondeo
+ *    (`pending_deposits`), vía `isChallengerVoid`.
+ *  - VOID DEL ÁRBITRO (clave de ORÁCULO): Luna lo liquida como reembolso una vez
+ *    FONDEADA (`ready`), vía `isValidResultSigner` — ahí el retador ya no puede anular.
+ * Si el oráculo es una clave SEPARADA (LUNA_NEGRA_NGP_ORACLE_NSEC), un único void de
+ * servicio fallaría en silencio sobre una apuesta ya fondeada; por eso publicamos
+ * también el void de oráculo. Con la clave por defecto (oráculo == servicio) el segundo
+ * es redundante y se omite. Luna aplica el que corresponda al estado real; el otro es
+ * no-op. Reemplaza `POST /cancel`. Lanza si ningún relay aceptó ningún evento.
+ */
+export async function publishNgpVoidEvents(contractId: string): Promise<boolean> {
+  const svc = ngpServiceKey();
+  if (!svc) throw new OnlineRoomError('NGP no configurado (falta LUNA_NEGRA_NGP_NSEC).', 500);
+  const events = [signVoidEvent(contractId, svc)];
+  const oracle = ngpOracleKey();
+  if (oracle && getPublicKey(oracle) !== getPublicKey(svc)) {
+    events.push(signVoidEvent(contractId, oracle));
+  }
+  const accepted = await Promise.all(events.map((ev) => publishToRelays(ev)));
+  if (!accepted.some(Boolean)) {
+    throw new OnlineRoomError('Ningún relay aceptó el evento de anulación NGP.', 502);
+  }
+  return true;
 }

@@ -25,7 +25,7 @@ import {
   ngpOraclePubkey,
   ensureOracleDeclared,
   signNgpResultEvent,
-  signNgpVoidEvent,
+  publishNgpVoidEvents,
   fetchNgpConfig,
   publishNgpContract,
   publishBareNgpContract,
@@ -392,13 +392,14 @@ async function getBetDetail(config: LunaConfig, betId: string): Promise<LunaBetD
 }
 
 /**
- * Cancela/anula una apuesta según el modo: por EVENTOS (publica un 1341 `status=void`
- * firmado por el retador → Luna reembolsa) o por REST (`POST /cancel`). `betId` en modo
+ * Cancela/anula una apuesta según el modo: por EVENTOS (publica el/los 1341 `status=void`
+ * que Luna necesita según el estado —void del retador pre-fondeo y/o void del oráculo ya
+ * fondeada— vía `publishNgpVoidEvents`) o por REST (`POST /cancel`). `betId` en modo
  * eventos == id del 1339. Devuelve una promesa para conservar el `.catch` de los callers.
  */
 async function cancelBetRemote(config: LunaConfig, betId: string): Promise<unknown> {
   if (ngpEventsEnabled()) {
-    return publishSignedEventToRelays(signNgpVoidEvent(betId));
+    return publishNgpVoidEvents(betId);
   }
   return lunaFetch(config, `/api/v2/bets/${encodeURIComponent(betId)}/cancel`, { method: 'POST' });
 }
