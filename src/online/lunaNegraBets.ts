@@ -366,6 +366,15 @@ function buildRoomBet(
   };
 }
 
+function comparableRoomBet(bet: RoomBet): Omit<RoomBet, 'updatedAtServerMs'> {
+  const { updatedAtServerMs: _updatedAtServerMs, ...rest } = bet;
+  return rest;
+}
+
+function sameRoomBetForRefresh(current: RoomBet, next: RoomBet): boolean {
+  return JSON.stringify(comparableRoomBet(current)) === JSON.stringify(comparableRoomBet(next));
+}
+
 function settlementErrorMessage(error: unknown): string {
   const code = error instanceof LunaApiError ? error.code : null;
   const message = error instanceof Error ? error.message : 'No se pudo reportar el resultado a Luna Negra.';
@@ -798,6 +807,7 @@ export async function refreshRoomBet(
     room.bet.createdByPlayerId,
     nowMs,
   );
+  if (sameRoomBetForRefresh(room.bet, bet)) return room;
   const updated = await setRoomBet(store, room.id, bet, nowMs);
   if (options.reportResult === false) return updated;
   return (await maybeReportRoomBetResult(store, updated, nowMs)) ?? updated;
