@@ -126,6 +126,7 @@ import { clearPresenceEvent, publishPresence, type PresenceStatus } from './onli
 import { NOSTR_BOARD_SURVIVAL, NOSTR_BOARD_WINS, publishScore } from './online/nostrLeaderboard';
 import { fetchContacts } from './online/nostrContacts';
 import { fetchProfiles, profileName } from './online/nostrProfile';
+import { ngpBetStateWatcherTarget, setNgpBetStateWatcherTarget, startNgpBetStateWatcher } from './online/ngpBetStateWatcher';
 import {
   fetchKnownTetraPlayers,
   loadFriendAffinities,
@@ -680,6 +681,7 @@ type BetWithdrawalTraceSource =
   | 'room-poll'
   | 'bet-refresh'
   | 'bet-refresh-error'
+  | 'ngp-push'
   | 'withdraw-render'
   | 'withdraw-regression'
   | 'withdraw-resolved';
@@ -722,6 +724,22 @@ interface BetLifecycleMilestones {
   myPayoutPaidSeenAt: number | null;  // mi premio visto 'paid'/'claimed'
 }
 let betLifecycle: BetLifecycleMilestones | null = null;
+
+const ngpPushState: {
+  betId: string | null;
+  stop: (() => void) | null;
+  events: number;
+  refreshes: number;
+  lastEventAt: number | null;
+  lastEventCreatedAt: number | null;
+} = {
+  betId: null,
+  stop: null,
+  events: 0,
+  refreshes: 0,
+  lastEventAt: null,
+  lastEventCreatedAt: null,
+};
 
 function recordBetLifecycle(room: OnlineRoom | null): void {
   const bet = room?.bet;
@@ -973,6 +991,12 @@ function buildPerfReport(): Record<string, unknown> {
       betPaying: betState.paying,
       roomReopenInFlight: roundState.roomReopenInFlight,
       lastBetPollAt: Math.round(betState.lastPollAt),
+      ngpPushActive: !!ngpPushState.stop,
+      ngpPushBetId: ngpPushState.betId,
+      ngpPushEvents: ngpPushState.events,
+      ngpPushRefreshes: ngpPushState.refreshes,
+      ngpPushLastEventAt: ngpPushState.lastEventAt,
+      ngpPushLastEventCreatedAt: ngpPushState.lastEventCreatedAt,
       trace: betWithdrawalTrace.slice(),
       // Hitos en reloj de pared (epoch ms) tal como los vio ESTE cliente: se cruzan
       // con el timeline server-authoritative que adjunta el backend (paymentTimeline)
@@ -4852,6 +4876,7 @@ function resetOnlineRoomState(): void {
   peerState.states = new Map();
   peerState.displaySnapshots = new Map();
   resetSpectatorFocus();
+  stopNgpBetStateWatcher();
   roomState.current = null;
   onlineNetState.error = null;
   betState.stakeInput = String(DEFAULT_ONLINE_BET_STAKE_SATS);
@@ -5043,6 +5068,26 @@ function rememberOnlineChallengeFriends(room: OnlineRoom): void {
   }
 }
 
+function stopNgpBetStateWatcher(): void {
+  setNgpBetStateWatcherTarget(ngpPushState, null, () => () => undefined);
+}
+
+function syncNgpBetStateWatcher(room: OnlineRoom | null): void {
+  const bet = room?.bet;
+  const targetBetId = ngpBetStateWatcherTarget(bet?.betId, !!bet && isRefreshableRoomBet(bet));
+  setNgpBetStateWatcherTarget(ngpPushState, targetBetId, (activeBetId) =>
+    startNgpBetStateWatcher(activeBetId, (push) => {
+      if (ngpPushState.betId !== activeBetId) return;
+      ngpPushState.events += 1;
+      ngpPushState.lastEventAt = push.receivedAtMs;
+      ngpPushState.lastEventCreatedAt = push.createdAt;
+      recordBetWithdrawalTrace('ngp-push', roomState.current, `${push.eventId.slice(0, 12)}:${push.createdAt}`);
+      armOnlineBetFastPolling();
+      ngpPushState.refreshes += 1;
+      void refreshOnlineBet(true, { queueIfBusy: true });
+    }));
+}
+
 function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' | 'bet-refresh' = 'room-action'): void {
   const previousRoom = roomState.current;
   const previousRoundId = roundState.activeRoundId;
@@ -5070,6 +5115,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && protectedRoom.status === 'countdown';
   roomState.current = protectedRoom;
+  syncNgpBetStateWatcher(protectedRoom);
   rememberOnlineChallengeFriends(protectedRoom);
   saveOnlineRoomSession(protectedRoom);
   if (protectedRoom.bet?.status !== 'pending_deposits') betState.fastPollUntil = 0;

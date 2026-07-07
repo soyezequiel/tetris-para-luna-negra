@@ -2,6 +2,7 @@ import { bech32 } from '@scure/base';
 import type { UnsignedZapRequestTemplate } from './protocol';
 import { queryRelays } from './lunaNegraNgp.js';
 import { NGP_TAG } from './lunaNegraNgp.js';
+import { NGP_READ_RELAYS } from './ngpRelays.js';
 
 // MODO EVENTOS (sin REST autenticada de Luna). Helpers puros de LECTURA/construcción
 // sobre Nostr para el flujo NGP de apuestas de Tetris:
@@ -10,16 +11,6 @@ import { NGP_TAG } from './lunaNegraNgp.js';
 //  - el 9734 de depósito armado localmente (LNURL-pay a la tienda) en vez de que
 //    Luna lo mande en el detalle.
 // El flujo (crear/depositar/reportar) vive en lunaNegraBets.ts, que usa estos helpers.
-
-// Relays donde Luna PUBLICA terms/estado/contratos (= su set RELAYS). Leemos de
-// varios porque ninguno es 100% fiable.
-export const NGP_READ_RELAYS = [
-  'wss://relay.lacrypta.ar',
-  'wss://relay.damus.io',
-  'wss://relay.nostr.band',
-  'wss://nos.lol',
-  'wss://relay.primal.net',
-];
 
 /** Bech32 del URL LNURL (idéntico a `encodeLnurl` de Luna: el 9734 debe llevar este
  *  `lnurl` tag para pasar `validateDepositZapRequest`). Límite alto: las URLs superan
