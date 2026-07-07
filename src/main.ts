@@ -740,6 +740,9 @@ const ngpPushState: {
   lastEventAt: null,
   lastEventCreatedAt: null,
 };
+const INCOMPLETE_DEPOSIT_WAKE_MS = 1500;
+let lastIncompleteDepositWakeKey: string | null = null;
+let lastIncompleteDepositWakeAt = 0;
 
 function recordBetLifecycle(room: OnlineRoom | null): void {
   const bet = room?.bet;
@@ -5088,6 +5091,23 @@ function syncNgpBetStateWatcher(room: OnlineRoom | null): void {
     }));
 }
 
+function wakeIncompleteOwnDepositHandles(room: OnlineRoom): void {
+  const bet = room.bet;
+  if (!bet || bet.status !== 'pending_deposits') return;
+  const myEntry = roomBetEntryForLocalPlayer(room);
+  if (!myEntry || myEntry.depositStatus !== 'pending') return;
+  if (myEntry.bolt11 || (myEntry.depositZapRequest && myEntry.depositCallback)) return;
+
+  const key = `${room.id}:${bet.betId}:${identityState.player.id}`;
+  const now = performance.now();
+  if (lastIncompleteDepositWakeKey === key && now - lastIncompleteDepositWakeAt < INCOMPLETE_DEPOSIT_WAKE_MS) return;
+  lastIncompleteDepositWakeKey = key;
+  lastIncompleteDepositWakeAt = now;
+  recordBetWithdrawalTrace('bet-refresh', room, 'missing-deposit-handles');
+  armOnlineBetFastPolling();
+  void refreshOnlineBet(true, { queueIfBusy: true });
+}
+
 function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' | 'bet-refresh' = 'room-action'): void {
   const previousRoom = roomState.current;
   const previousRoundId = roundState.activeRoundId;
@@ -5124,6 +5144,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   maybeSubmitOnlineWin(protectedRoom);
   maybeCelebratePayout();
   void maybeAutoSignBetDeposit();
+  wakeIncompleteOwnDepositHandles(protectedRoom);
 }
 
 // Evita solapar intentos de auto-firma: adoptOnlineRoom corre en cada poll y

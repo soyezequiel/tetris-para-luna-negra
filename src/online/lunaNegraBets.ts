@@ -613,6 +613,10 @@ async function synthesizeEventsBetDetail(
   const storeCallback = storeLnurlUrl(baseUrl);
   const depositedByPubkey = new Set(state?.depositedPubkeys ?? []);
   const prevByNpub = new Map((previous?.participants ?? []).map((p) => [p.npub, p]));
+  const potTargetSats = stakeSats * npubs.length;
+  const potSats = stakeSats * depositedByPubkey.size;
+  const feeSats = Math.floor(potTargetSats * (terms.feePct / 100));
+  const netPayoutSats = Math.max(0, potTargetSats - feeSats);
 
   const participants = npubs.map((npub) => {
     const pubkey = pubkeyFromNpub(npub);
@@ -639,6 +643,11 @@ async function synthesizeEventsBetDetail(
     betId: contractId,
     status: state ? mapNgpStatusToRoomStatus(state.status) : 'pending_deposits',
     stakeSats,
+    potSats,
+    potTargetSats,
+    feeSats,
+    feePct: terms.feePct,
+    netPayoutSats,
     depositsReceived: depositedByPubkey.size,
     depositsTotal: npubs.length,
     participants,

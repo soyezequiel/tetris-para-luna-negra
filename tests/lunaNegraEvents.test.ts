@@ -16,13 +16,20 @@ describe('parseTermsEvent', () => {
       pubkey: STORE,
       content: JSON.stringify({ minStakeSats: 10, maxStakeSats: 100000, feePct: 5 }),
     });
-    expect(terms).toEqual({ storePubkey: STORE, minStakeSats: 10, maxStakeSats: 100000 });
+    expect(terms).toEqual({ storePubkey: STORE, minStakeSats: 10, maxStakeSats: 100000, feePct: 5 });
   });
   it('content inválido → null', () => {
     expect(parseTermsEvent({ pubkey: STORE, content: 'no-json' })).toBeNull();
   });
   it('sin límites numéricos → null', () => {
     expect(parseTermsEvent({ pubkey: STORE, content: JSON.stringify({}) })).toBeNull();
+  });
+  it('feePct ausente -> 0', () => {
+    const terms = parseTermsEvent({
+      pubkey: STORE,
+      content: JSON.stringify({ minStakeSats: 10, maxStakeSats: 100000 }),
+    });
+    expect(terms?.feePct).toBe(0);
   });
 });
 

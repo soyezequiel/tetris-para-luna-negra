@@ -29,6 +29,7 @@ export interface NgpTerms {
   storePubkey: string;
   minStakeSats: number;
   maxStakeSats: number;
+  feePct: number;
 }
 
 /** Parsea el evento `terms` (autor = tienda; content = límites/comisiones). Puro. */
@@ -41,8 +42,14 @@ export function parseTermsEvent(ev: { pubkey: string; content: string }): NgpTer
   }
   const min = Number(data.minStakeSats);
   const max = Number(data.maxStakeSats);
+  const feePct = Number(data.feePct ?? 0);
   if (!ev.pubkey || !Number.isFinite(min) || !Number.isFinite(max)) return null;
-  return { storePubkey: ev.pubkey, minStakeSats: min, maxStakeSats: max };
+  return {
+    storePubkey: ev.pubkey,
+    minStakeSats: min,
+    maxStakeSats: max,
+    feePct: Number.isFinite(feePct) ? Math.max(0, feePct) : 0,
+  };
 }
 
 // Terms cacheadas por instancia (no cambian salvo que el admin toque la economía).
