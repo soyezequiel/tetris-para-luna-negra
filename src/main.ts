@@ -991,6 +991,25 @@ async function sendBetPaymentDiagnosticReport(
   }
 }
 
+function sendBetPaymentDiagnosticReportAfterFrames(
+  stage: string,
+  extra: Record<string, unknown> = {},
+  frames = 2,
+): void {
+  const startedAt = performance.now();
+  const waitFrame = (remaining: number): void => {
+    if (remaining <= 0) {
+      void sendBetPaymentDiagnosticReport(stage, {
+        ...extra,
+        renderWaitMs: performance.now() - startedAt,
+      });
+      return;
+    }
+    requestAnimationFrame(() => waitFrame(remaining - 1));
+  };
+  waitFrame(Math.max(0, frames));
+}
+
 function buildPerfReport(): Record<string, unknown> {
   const nav = navigator;
   const localBetEntry = roomBetEntryForLocalPlayer(roomState.current);
@@ -4659,9 +4678,11 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
   }
   betState.paying = true;
   const startedAt = performance.now();
+  let paymentSent = false;
   try {
     await provider.enable();
     await provider.sendPayment(bolt11);
+    paymentSent = true;
     onlineNetState.error = null;
     void sendBetPaymentDiagnosticReport('webln-payment-sent', {
       reason: 'sendPayment-resolved',
@@ -4683,6 +4704,15 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
     });
   } finally {
     betState.paying = false;
+    if (paymentSent) {
+      wakeUpBetDetection();
+      sendBetPaymentDiagnosticReportAfterFrames('post-webln-refresh-check', {
+        reason: 'after-paying-flag-cleared',
+        weblnElapsedMs: performance.now() - startedAt,
+        invoiceChars: bolt11.length,
+        invoicePrefix: bolt11.slice(0, 12),
+      }, 3);
+    }
   }
 }
 
@@ -4706,9 +4736,22 @@ async function signAndGenerateBetDeposit(): Promise<void> {
     return;
   }
 
+  const depositFlowStartedAt = performance.now();
   let signer = getActiveSigner();
+  const hadActiveSigner = !!signer;
+  void sendBetPaymentDiagnosticReport('deposit-sign-start', {
+    reason: 'handles-ready',
+    hasActiveSigner: hadActiveSigner,
+    hasCommentTemplate: !!myEntry.participationComment,
+  });
   if (!signer) signer = await restoreSigner();
+  const signerElapsedMs = performance.now() - depositFlowStartedAt;
   if (!signer) {
+    void sendBetPaymentDiagnosticReport('deposit-signer-missing', {
+      reason: 'restoreSigner-returned-null',
+      signerElapsedMs,
+      hadActiveSigner,
+    });
     onlineNetState.error = 'No hay un firmante Nostr activo para firmar el depósito.';
     reopenLoginGate();
     return;
@@ -4724,22 +4767,61 @@ async function signAndGenerateBetDeposit(): Promise<void> {
     const identityPubkey = lunaState.identity?.pubkey?.trim().toLowerCase();
     if (identityPubkey && signerPubkey !== identityPubkey) {
       onlineNetState.error = 'El firmante activo no coincide con tu sesión Nostr.';
+      void sendBetPaymentDiagnosticReport('deposit-signer-mismatch', {
+        reason: 'signer-pubkey-mismatch',
+        signerElapsedMs,
+        hadActiveSigner,
+      });
       return;
     }
+    void sendBetPaymentDiagnosticReport('deposit-signer-ready', {
+      reason: 'signer-pubkey-ok',
+      signerElapsedMs,
+      hadActiveSigner,
+    });
+    const zapSignStartedAt = performance.now();
     const signed = await signer.signEvent(template);
+    const zapSignElapsedMs = performance.now() - zapSignStartedAt;
+    void sendBetPaymentDiagnosticReport('deposit-zap-signed', {
+      reason: 'signEvent-9734-resolved',
+      signerElapsedMs,
+      zapSignElapsedMs,
+      sinceStartMs: performance.now() - depositFlowStartedAt,
+    });
     // Comentario de participación (opcional): si Luna lo mandó, lo firmamos con la
     // MISMA identidad y lo adjuntamos. Si el jugador gana, el premio se zapea a este
     // comentario (queda como zap recibido en su perfil). Si la firma falla, seguimos
     // sin él: el depósito no debe bloquearse (el premio caería al post del contrato).
     let signedComment: typeof signed | undefined;
+    let commentSignElapsedMs: number | null = null;
     const commentTemplate = myEntry.participationComment;
     if (commentTemplate) {
       try {
+        const commentSignStartedAt = performance.now();
         signedComment = await signer.signEvent(commentTemplate);
+        commentSignElapsedMs = performance.now() - commentSignStartedAt;
       } catch {
         signedComment = undefined;
       }
     }
+    if (commentTemplate) {
+      void sendBetPaymentDiagnosticReport('deposit-comment-signed', {
+        reason: signedComment ? 'signEvent-comment-resolved' : 'signEvent-comment-failed',
+        signerElapsedMs,
+        zapSignElapsedMs,
+        commentSignElapsedMs,
+        sinceStartMs: performance.now() - depositFlowStartedAt,
+      });
+    }
+    const depositInvoiceStartedAt = performance.now();
+    void sendBetPaymentDiagnosticReport('deposit-invoice-request', {
+      reason: 'calling-depositInvoice',
+      signerElapsedMs,
+      zapSignElapsedMs,
+      commentSignElapsedMs,
+      hasSignedComment: !!signedComment,
+      sinceStartMs: performance.now() - depositFlowStartedAt,
+    });
     const response = await onlineClient.depositInvoice({
       roomId: roomState.current!.id,
       playerId: identityState.player.id,
@@ -4753,7 +4835,22 @@ async function signAndGenerateBetDeposit(): Promise<void> {
     void sendBetPaymentDiagnosticReport('invoice-issued', {
       reason: 'depositInvoice-resolved',
       invoiceElapsedMs: performance.now() - invoiceStartedAt,
+      signerElapsedMs,
+      zapSignElapsedMs,
+      commentSignElapsedMs,
+      depositInvoiceElapsedMs: performance.now() - depositInvoiceStartedAt,
+      sinceStartMs: performance.now() - depositFlowStartedAt,
       hasSignedComment: !!signedComment,
+      invoiceChars: response.invoice.length,
+      invoicePrefix: response.invoice.slice(0, 12),
+    });
+    sendBetPaymentDiagnosticReportAfterFrames('invoice-render-check', {
+      reason: 'post-render-after-invoice',
+      signerElapsedMs,
+      zapSignElapsedMs,
+      commentSignElapsedMs,
+      depositInvoiceElapsedMs: performance.now() - depositInvoiceStartedAt,
+      sinceStartMs: performance.now() - depositFlowStartedAt,
       invoiceChars: response.invoice.length,
       invoicePrefix: response.invoice.slice(0, 12),
     });
@@ -4764,6 +4861,8 @@ async function signAndGenerateBetDeposit(): Promise<void> {
     void sendBetPaymentDiagnosticReport('invoice-error', {
       reason: onlineNetState.error.slice(0, 240),
       invoiceElapsedMs: performance.now() - invoiceStartedAt,
+      signerElapsedMs,
+      sinceStartMs: performance.now() - depositFlowStartedAt,
     });
   } finally {
     betState.paying = false;

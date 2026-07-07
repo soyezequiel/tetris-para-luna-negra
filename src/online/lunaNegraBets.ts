@@ -611,7 +611,10 @@ async function synthesizeEventsBetDetail(
   baseUrl: string,
   previous?: RoomBet | null,
 ): Promise<LunaBetDetail> {
-  const state = await fetchNgpBetState(contractId);
+  // El 31340 es opcional antes del primer depósito y, además, los relays pueden
+  // tardar/timeout. Los handles de depósito se pueden construir localmente con el
+  // contrato + terms, así que no dejamos que una lectura lenta de estado bloquee el QR.
+  const state = await fetchNgpBetState(contractId).catch(() => null);
   const lnurl = encodeLnurl(storeLnurlUrl(baseUrl));
   const freshTemplate = buildDepositZapRequestTemplate({
     contractId,

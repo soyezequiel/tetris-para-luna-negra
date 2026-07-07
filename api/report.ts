@@ -161,6 +161,12 @@ interface ReportPayload {
     reason?: unknown;
     playerId?: unknown;
     invoiceElapsedMs?: unknown;
+    signerElapsedMs?: unknown;
+    zapSignElapsedMs?: unknown;
+    commentSignElapsedMs?: unknown;
+    depositInvoiceElapsedMs?: unknown;
+    sinceStartMs?: unknown;
+    renderWaitMs?: unknown;
     weblnElapsedMs?: unknown;
     refreshElapsedMs?: unknown;
     sinceCreatedMs?: unknown;
@@ -256,6 +262,7 @@ function buildBetPaymentDiagnosticSummary(report: ReportPayload): string {
     `room=${str(bet.roomStatus)} betStatus=${str(bet.betStatus)} deposit=${str(bet.depositStatus)} handles: bolt11=${str(bet.hasDepositBolt11)} zapReq=${str(bet.hasDepositZapRequest)} cb=${str(bet.hasDepositCallback)}`,
     `qr: dom=${str(bet.depositQrInDom)} connected=${str(bet.depositQrConnected)} complete=${str(bet.depositQrComplete)} paying=${str(bet.betPaying)} busy=${str(bet.betBusy)}`,
     `ngpPush: active=${str(bet.ngpPushActive)} events=${str(bet.ngpPushEvents)} refreshes=${str(bet.ngpPushRefreshes)} last=${str(bet.ngpPushLastEventAt)} trace=${traceCount}`,
+    `firma: signer=${ms(diag.signerElapsedMs)} zap=${ms(diag.zapSignElapsedMs)} comment=${ms(diag.commentSignElapsedMs)} request=${ms(diag.depositInvoiceElapsedMs)} renderWait=${ms(diag.renderWaitMs)} sinceStart=${ms(diag.sinceStartMs)}`,
     `latencias: invoice=${ms(diag.invoiceElapsedMs)} webln=${ms(diag.weblnElapsedMs)} refresh=${ms(diag.refreshElapsedMs)} sinceCreated=${ms(diag.sinceCreatedMs)} sinceInvoice=${ms(diag.sinceInvoiceMs)} sincePush=${ms(diag.sinceLastPushMs)}`,
     `cliente: ${str(dev.viewport)} cores=${str(dev.cores)} dpr=${str(dev.dpr)} transport=${str(dev.transport)}`,
     buildPaymentTimelineLine(report.paymentTimeline),
