@@ -726,6 +726,7 @@ interface BetLifecycleMilestones {
 let betLifecycle: BetLifecycleMilestones | null = null;
 const reportedPaymentDiagnosticKeys = new Set<string>();
 const invoiceIssuedAtByBetId = new Map<string, number>();
+const paymentAttemptedBetIds = new Set<string>();
 
 const ngpPushState: {
   betId: string | null;
@@ -961,6 +962,7 @@ async function sendBetPaymentDiagnosticReport(
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   const betId = roomState.current?.bet?.betId ?? 'no-bet';
+  if (!shouldSendBetPaymentDiagnostic(stage, betId)) return;
   const key = `${stage}:${betId}:${String(extra.reason ?? '')}`;
   if (reportedPaymentDiagnosticKeys.has(key)) return;
   reportedPaymentDiagnosticKeys.add(key);
@@ -988,6 +990,20 @@ async function sendBetPaymentDiagnosticReport(
     if (!response.ok) console.error(`[payment-report] HTTP ${response.status}`);
   } catch (error) {
     console.error('[payment-report] no se pudo enviar diagnÃ³stico de pago', error);
+  }
+}
+
+function shouldSendBetPaymentDiagnostic(stage: string, betId: string): boolean {
+  switch (stage) {
+    case 'webln-payment-sent':
+    case 'webln-payment-error':
+    case 'post-webln-refresh-check':
+    case 'deposit-paid-seen':
+      return true;
+    case 'bet-refresh-error':
+      return paymentAttemptedBetIds.has(betId);
+    default:
+      return false;
   }
 }
 
@@ -4679,6 +4695,8 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
   betState.paying = true;
   const startedAt = performance.now();
   let paymentSent = false;
+  const activeBetId = roomState.current?.bet?.betId;
+  if (activeBetId) paymentAttemptedBetIds.add(activeBetId);
   try {
     await provider.enable();
     await provider.sendPayment(bolt11);
