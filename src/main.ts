@@ -5307,11 +5307,11 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
     preserveVisiblePendingWithdrawal(previousRoom, room),
   );
   recordBetWithdrawalTrace(source, protectedRoom);
-  recordBetLifecycle(protectedRoom);
   const nextRoundId = onlineRoundKey(protectedRoom);
   const roundChanged = previousRoundId !== null && nextRoundId !== null && previousRoundId !== nextRoundId;
   const roomRestarted = previousRoom?.status === 'finished' && protectedRoom.status === 'countdown';
   roomState.current = protectedRoom;
+  recordBetLifecycle(protectedRoom);
   syncNgpBetStateWatcher(protectedRoom);
   rememberOnlineChallengeFriends(protectedRoom);
   saveOnlineRoomSession(protectedRoom);
