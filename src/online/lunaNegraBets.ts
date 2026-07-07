@@ -397,11 +397,12 @@ async function fetchDetail(
   betId: string,
   npubs: string[],
   stakeSats: number,
+  previous?: RoomBet | null,
 ): Promise<LunaBetDetail | null> {
   if (ngpEventsEnabled()) {
     const terms = await fetchNgpTerms();
     if (!terms) return null;
-    return synthesizeEventsBetDetail(betId, npubs, stakeSats, terms, config.baseUrl);
+    return synthesizeEventsBetDetail(betId, npubs, stakeSats, terms, config.baseUrl, previous);
   }
   return getBetDetail(config, betId);
 }
@@ -599,10 +600,11 @@ async function synthesizeEventsBetDetail(
   stakeSats: number,
   terms: NgpTerms,
   baseUrl: string,
+  previous?: RoomBet | null,
 ): Promise<LunaBetDetail> {
   const state = await fetchNgpBetState(contractId);
   const lnurl = encodeLnurl(storeLnurlUrl(baseUrl));
-  const template = buildDepositZapRequestTemplate({
+  const freshTemplate = buildDepositZapRequestTemplate({
     contractId,
     storePubkey: terms.storePubkey,
     stakeSats,
@@ -610,18 +612,23 @@ async function synthesizeEventsBetDetail(
   });
   const storeCallback = storeLnurlUrl(baseUrl);
   const depositedByPubkey = new Set(state?.depositedPubkeys ?? []);
+  const prevByNpub = new Map((previous?.participants ?? []).map((p) => [p.npub, p]));
 
   const participants = npubs.map((npub) => {
     const pubkey = pubkeyFromNpub(npub);
     const paid = depositedByPubkey.has(pubkey);
     const payout = state?.payouts[pubkey];
+    const prev = prevByNpub.get(npub);
     return {
       npub,
       depositStatus: paid ? 'paid' : 'pending',
-      // Handles armados localmente: el browser firma `template` y se paga al LNURL de
-      // la tienda; el primer pago materializa la apuesta en Luna.
-      depositZapRequest: paid ? null : template,
-      depositCallback: paid ? null : storeCallback,
+      // Handles ESTABLES entre polls: reusamos el invoice ya emitido (`bolt11`) y el
+      // template YA armado del estado previo. Sin esto, cada refresh reconstruía el
+      // template (con `created_at` nuevo) y perdía el bolt11 → el QR parpadeaba y se
+      // re-pedía la firma a cada rato. Solo armamos uno nuevo si no había previo.
+      bolt11: paid ? null : (prev?.bolt11 ?? null),
+      depositZapRequest: paid ? null : (prev?.depositZapRequest ?? freshTemplate),
+      depositCallback: paid ? null : (prev?.depositCallback ?? storeCallback),
       payoutStatus: payout?.status ?? 'none',
       payoutSats: payout ? payout.sats : null,
       payoutKind: payout?.kind ?? null,
@@ -759,7 +766,7 @@ export async function refreshRoomBet(
   const room = await loadRoom(store, roomId);
   if (!room.bet) return room;
   const npubs = room.bet.participants.map((p) => p.npub);
-  const detail = await fetchDetail(config, room.bet.betId, npubs, room.bet.stakeSats);
+  const detail = await fetchDetail(config, room.bet.betId, npubs, room.bet.stakeSats, room.bet);
   if (!detail) return room;
   const bet = buildRoomBet(
     room,
@@ -1076,7 +1083,7 @@ export async function maybeReportRoomBetResult(
     updatedAtServerMs: nowMs,
   };
   let updated = await setRoomBet(store, updatedRoom.id, reported, nowMs);
-  const detail = await fetchDetail(config, bet.betId, bet.participants.map((p) => p.npub), bet.stakeSats);
+  const detail = await fetchDetail(config, bet.betId, bet.participants.map((p) => p.npub), bet.stakeSats, updated.bet ?? bet);
   if (detail) {
     const npubs = reported.participants.map((p) => p.npub);
     const synced = buildRoomBet(

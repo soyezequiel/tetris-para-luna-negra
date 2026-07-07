@@ -382,14 +382,20 @@ export async function publishSignedEventToRelays(
 }
 
 /** Lee eventos de los relays con un pool fresco (sockets no persisten entre
- *  invocaciones serverless). Devuelve [] ante cualquier fallo/timeout. */
+ *  invocaciones serverless). Devuelve [] ante cualquier fallo/timeout. `maxWait` corta
+ *  la espera apenas los relays rápidos responden (el estado 31340 está replicado, no
+ *  hace falta esperar al más lento) para que el polling del pago no se sienta lento. */
 export async function queryRelays(
   relays: string[],
   filter: Parameters<SimplePool['querySync']>[1],
+  maxWaitMs = 2500,
 ): Promise<ReturnType<typeof finalizeEvent>[]> {
   const pool = new SimplePool();
   try {
-    return (await withTimeout(pool.querySync(relays, filter), 5000)) as ReturnType<typeof finalizeEvent>[];
+    return (await withTimeout(
+      pool.querySync(relays, filter, { maxWait: maxWaitMs }),
+      maxWaitMs + 1500,
+    )) as ReturnType<typeof finalizeEvent>[];
   } catch {
     return [];
   } finally {
