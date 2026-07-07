@@ -969,18 +969,22 @@ export async function cancelRoomBet(
   if (['settled', 'cancelled', 'expired', 'refunded'].includes(room.bet.status)) {
     return room;
   }
-  const cancelResult = await lunaFetch<{ ok?: boolean; status?: string }>(
-    config,
-    `/api/v2/bets/${encodeURIComponent(room.bet.betId)}/cancel`,
-    { method: 'POST' },
-  );
-  // El POST ya canceló la apuesta en Luna. refreshRoomBet es best-effort: si el GET de
-  // detalle falla (red, 404 transitorio) devuelve la sala sin tocar el bet → la apuesta
-  // quedaría "pendiente" pese a estar cancelada, sin error visible. Forzamos el estado
-  // terminal que devolvió el propio cancel para que el host vea la cancelación igual.
+  // Cancela según el modo: por EVENTOS publica un 1341 `void` firmado por el retador
+  // (Luna reembolsa), por REST hace POST /cancel. `cancelRoomBet` llamaba al REST directo,
+  // que en modo eventos (sin API key) devolvía 401 → el host nunca podía cancelar.
+  const cancelResult = await cancelBetRemote(config, room.bet.betId);
+  // El cancel ya salió (POST o 1341). refreshRoomBet es best-effort: si el GET de detalle
+  // falla (red, 404 transitorio) devuelve la sala sin tocar el bet → la apuesta quedaría
+  // "pendiente" pese a estar cancelada, sin error visible. Forzamos el estado terminal que
+  // devolvió el propio cancel para que el host vea la cancelación igual. En modo eventos el
+  // resultado es un booleano del publish (sin `status`), así que caemos al default 'cancelled'.
   const refreshed = await refreshRoomBet(store, roomId, nowMs);
   if (!refreshed.bet || isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
-  const reported = asBetStatus(cancelResult?.status, 'cancelled');
+  const reportedStatus =
+    cancelResult && typeof cancelResult === 'object'
+      ? (cancelResult as { status?: string }).status
+      : undefined;
+  const reported = asBetStatus(reportedStatus, 'cancelled');
   const terminalStatus = isTerminalRoomBetStatus(reported) ? reported : 'cancelled';
   const bet: RoomBet = { ...refreshed.bet, status: terminalStatus, updatedAtServerMs: nowMs };
   return setRoomBet(store, roomId, bet, nowMs);
