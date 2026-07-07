@@ -1,8 +1,13 @@
 import { bech32 } from '@scure/base';
 import type { UnsignedZapRequestTemplate } from './protocol';
-import { queryRelays } from './lunaNegraNgp.js';
-import { NGP_TAG } from './lunaNegraNgp.js';
-import { NGP_READ_RELAYS } from './ngpRelays.js';
+
+export const NGP_READ_RELAYS = [
+  'wss://relay.lacrypta.ar',
+  'wss://relay.damus.io',
+  'wss://relay.nostr.band',
+  'wss://nos.lol',
+  'wss://relay.primal.net',
+];
 
 // MODO EVENTOS (sin REST autenticada de Luna). Helpers puros de LECTURA/construcción
 // sobre Nostr para el flujo NGP de apuestas de Tetris:
@@ -25,81 +30,7 @@ export function storeLnurlUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/.well-known/lnurlp/luna`;
 }
 
-const NGP_SYNC_POKE_MIN_MS = 1500;
-const ngpSyncPokeAt = new Map<string, number>();
 
-/** Despierta la detección on-demand de depósitos en Luna sin leer estado privado.
- *  El estado de verdad sigue viniendo por `31340`; este endpoint solo hace que Luna
- *  consulte NWC ahora, en vez de esperar el tick de escrow. Best-effort. */
-export async function pokeNgpBetDepositSync(baseUrl: string, contractId: string): Promise<boolean> {
-  if (!/^[a-f0-9]{64}$/i.test(contractId)) return false;
-  const now = Date.now();
-  const key = contractId.toLowerCase();
-  if (now - (ngpSyncPokeAt.get(key) ?? 0) < NGP_SYNC_POKE_MIN_MS) return false;
-  ngpSyncPokeAt.set(key, now);
-  try {
-    const url = new URL('/api/v2/bets/ngp-sync', baseUrl);
-    url.searchParams.set('contractId', key);
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      cache: 'no-store',
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-export function resetNgpBetDepositSyncPokeForTests(): void {
-  ngpSyncPokeAt.clear();
-}
-
-export interface NgpTerms {
-  storePubkey: string;
-  minStakeSats: number;
-  maxStakeSats: number;
-  feePct: number;
-}
-
-/** Parsea el evento `terms` (autor = tienda; content = límites/comisiones). Puro. */
-export function parseTermsEvent(ev: { pubkey: string; content: string }): NgpTerms | null {
-  let data: Record<string, unknown>;
-  try {
-    data = JSON.parse(ev.content) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const min = Number(data.minStakeSats);
-  const max = Number(data.maxStakeSats);
-  const feePct = Number(data.feePct ?? 0);
-  if (!ev.pubkey || !Number.isFinite(min) || !Number.isFinite(max)) return null;
-  return {
-    storePubkey: ev.pubkey,
-    minStakeSats: min,
-    maxStakeSats: max,
-    feePct: Number.isFinite(feePct) ? Math.max(0, feePct) : 0,
-  };
-}
-
-// Terms cacheadas por instancia (no cambian salvo que el admin toque la economía).
-let termsCache: NgpTerms | null = null;
-
-/** Lee las `terms` del escrow de relays (kind:31340, d=terms, t=ngp-bet). Reemplaza
- *  GET /ngp-config. Devuelve null si ningún relay las tiene. Memoizada. */
-export async function fetchNgpTerms(): Promise<NgpTerms | null> {
-  if (termsCache) return termsCache;
-  const events = await queryRelays(NGP_READ_RELAYS, {
-    kinds: [31340],
-    '#d': ['terms'],
-    '#t': [NGP_TAG],
-  });
-  const latest = events.sort((a, b) => b.created_at - a.created_at)[0];
-  if (!latest) return null;
-  const parsed = parseTermsEvent(latest);
-  if (parsed) termsCache = parsed;
-  return parsed;
-}
 
 export interface NgpBetState {
   /** Id interno de la apuesta en Luna (del content del 31340), si ya materializó. */
@@ -145,14 +76,7 @@ export function parseBetStateEvent(ev: { content: string }): NgpBetState | null 
   };
 }
 
-/** Lee el estado más reciente de la apuesta (31340, d=contrato). Reemplaza el GET del
- *  detalle. Devuelve null si Luna todavía no publicó estado (pre-materialización). */
-export async function fetchNgpBetState(contractId: string): Promise<NgpBetState | null> {
-  const events = await queryRelays(NGP_READ_RELAYS, { kinds: [31340], '#d': [contractId] });
-  const latest = events.sort((a, b) => b.created_at - a.created_at)[0];
-  if (!latest) return null;
-  return parseBetStateEvent(latest);
-}
+
 
 // Vocabulario de estado de Tetris (RoomBetStatus).
 type RoomStatus = 'pending_deposits' | 'funded' | 'settled' | 'cancelled' | 'expired' | 'refunded';

@@ -1,4 +1,5 @@
 import { getPublicKey } from 'nostr-tools/pure';
+import { nip19 } from 'nostr-tools';
 import { NGE, parseNgeUri, NgeError, type NgeBinding } from './nge.js';
 import { OnlineRoomError } from './roomService.js';
 import { parseBetStateEvent, type NgpBetState } from './lunaNegraEvents.js';
@@ -172,4 +173,14 @@ export async function fetchNgeBetState(contractId: string): Promise<NgpBetState 
     if (!s) return null;
     return parseBetStateEvent(s.event);
   });
+}
+
+export function pubkeyFromNpub(npub: string): string {
+  if (npub.startsWith('npub1')) {
+    try {
+      const { type, data } = nip19.decode(npub);
+      if (type === 'npub') return data as string;
+    } catch {}
+  }
+  return npub;
 }

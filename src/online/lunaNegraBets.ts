@@ -19,30 +19,12 @@ import type {
 import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
 import { alertBetDepositHandlesIncomplete } from './moneyPathAlert.js';
 import {
-  ngpBetsEnabled,
-  ngpKeylessEnabled,
-  ngpEventsEnabled,
-  ngpOraclePubkey,
-  ensureOracleDeclared,
-  signNgpResultEvent,
-  publishNgpVoidEvents,
-  fetchNgpConfig,
-  publishNgpContract,
-  publishBareNgpContract,
-  publishSignedEventToRelays,
-  pubkeyFromNpub,
-} from './lunaNegraNgp.js';
-import {
-  fetchNgpTerms,
-  fetchNgpBetState,
-  pokeNgpBetDepositSync,
   mapNgpStatusToRoomStatus,
   buildDepositZapRequestTemplate,
   encodeLnurl,
-  storeLnurlUrl,
-  type NgpTerms,
 } from './lunaNegraEvents.js';
 import {
+  pubkeyFromNpub,
   ngeConnected,
   fetchNgeConfig,
   fetchNgeBetState,
@@ -122,7 +104,7 @@ function readApiConfig(): LunaConfig {
   // Modo eventos: no se usa la API key (todo va por eventos + LNURL de la tienda). Solo
   // hace falta la base URL para armar el LNURL-pay. En el resto de los modos, la key es
   // obligatoria.
-  if (!apiKey && !ngpEventsEnabled()) {
+  if (!apiKey && !ngeConnected()) {
     throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
   }
   return { baseUrl, apiKey };
@@ -131,8 +113,6 @@ function readApiConfig(): LunaConfig {
 export function isLunaNegraApiConfigured(): boolean {
   if (isLunaMockEnabled()) return true;
   if (ngeConnected()) return true;
-  // Modo eventos: alcanza con la base URL (la API key no se usa).
-  if (ngpEventsEnabled()) return Boolean((process.env.LUNA_NEGRA_BASE_URL ?? '').trim());
   return Boolean(
     (process.env.LUNA_NEGRA_BASE_URL ?? '').trim()
     && (process.env.LUNA_NEGRA_API_KEY ?? '').trim(),
@@ -286,10 +266,7 @@ function isTerminalBetStatus(status: RoomBetStatus | undefined | null): boolean 
   return status === 'settled' || status === 'cancelled' || status === 'expired' || status === 'refunded';
 }
 
-function hasPendingNgpInvoice(bet: RoomBet | null | undefined): boolean {
-  return bet?.status === 'pending_deposits'
-    && bet.participants.some((p) => p.depositStatus === 'pending' && typeof p.bolt11 === 'string' && p.bolt11.length > 0);
-}
+
 
 function buildRoomBet(
   room: OnlineRoom,
@@ -413,9 +390,6 @@ async function cancelBetRemote(config: LunaConfig | null, betId: string): Promis
     await voidNgeBet(betId);
     return undefined;
   }
-  if (ngpEventsEnabled()) {
-    return publishNgpVoidEvents(betId);
-  }
   if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
   return lunaFetch(config, `/api/v2/bets/${encodeURIComponent(betId)}/cancel`, { method: 'POST' });
 }
@@ -434,21 +408,7 @@ async function fetchDetail(
 ): Promise<LunaBetDetail | null> {
   if (ngeConnected()) {
     const ngeConfig = await fetchNgeConfig();
-    if (hasPendingNgpInvoice(previous)) {
-      // Base de Luna para el poke = host del lud16 del bind (el riel de depósito no
-      // depende de LUNA_NEGRA_BASE_URL). Best-effort.
-      await pokeNgpBetDepositSync(`https://${ngeConfig.lud16.split('@')[1]}`, betId);
-    }
     return synthesizeNgeBetDetail(betId, npubs, stakeSats, ngeConfig, previous);
-  }
-  if (ngpEventsEnabled()) {
-    if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
-    const terms = await fetchNgpTerms();
-    if (!terms) return null;
-    if (hasPendingNgpInvoice(previous)) {
-      await pokeNgpBetDepositSync(config.baseUrl, betId);
-    }
-    return synthesizeEventsBetDetail(betId, npubs, stakeSats, terms, config.baseUrl, previous);
   }
   if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
   return getBetDetail(config, betId);
@@ -462,20 +422,8 @@ async function fetchDetail(
  * ver EN QUÉ FASE se fue el tiempo. Best-effort: devuelve null ante cualquier fallo
  * (Luna no configurada, red, apuesta no encontrada) — el reporte se manda igual.
  */
-export async function fetchBetPaymentTimeline(betId: string): Promise<unknown | null> {
-  if (ngeConnected()) return null;
-  // Modo eventos: el timeline es un diagnóstico REST; no está disponible sin API key.
-  if (ngpEventsEnabled()) return null;
-  if (!betId || !isLunaNegraApiConfigured()) return null;
-  try {
-    const config = readApiConfig();
-    return await lunaFetch<unknown>(
-      config,
-      `/api/v2/bets/${encodeURIComponent(betId)}/timeline`,
-    );
-  } catch {
-    return null;
-  }
+export async function fetchBetPaymentTimeline(_betId: string): Promise<unknown | null> {
+  return null;
 }
 
 export async function createBetForRoom(
@@ -511,208 +459,14 @@ export async function createBetForRoom(
     return finalizeCreatedBet(store, room, null, created, gameId || 'nge', input.playerId, nowMs);
   }
 
-  if (!gameId) throw new OnlineRoomError('No se pudo determinar el gameId de Luna Negra para esta sala.', 409);
-  const config = readApiConfig();
-
-  if (ngpBetsEnabled() && players.every((player) => !!player.npub)) {
-    const created = await createBetViaNgpContract(config, room, gameId, stakeSats, input.victoryCondition);
-    return finalizeCreatedBet(store, room, config, created, gameId, input.playerId, nowMs);
-  }
-
-  // Legacy (custodial / API key). Pozo MIXTO: por cada jugador, su npub real si
-  // entró con cuenta Luna; si es invitado (sin npub), un placeholder `{ guest: true }`
-  // que Luna convierte en una identidad efímera. Así el de cuenta cobra a su billetera
-  // y el invitado cobra por LNURL-withdraw. El orden se conserva para mapear asiento→jugador.
-  const spec: Array<string | { guest: true }> = players.map(
-    (player) => (player.npub ? player.npub : { guest: true }),
-  );
-
-  const create = await lunaFetch<LunaBetCreateWithSeats>(config, '/api/v2/bets', {
-    method: 'POST',
-    body: {
-      gameId,
-      participants: spec,
-      stakeSats,
-      victoryCondition: input.victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
-      roomId: room.id,
-      metadata: { roomId: room.id },
-      // Resiliencia del pozo: si algún jugador arrastra un npub de una sesión vieja que
-      // Luna ya no reconoce (cuenta borrada / DB reseteada), que ese asiento se degrade a
-      // invitado (cobra por LNURL-withdraw) en vez de tirar abajo TODA la apuesta. Sin
-      // esto, en una sala grande basta un npub fantasma para bloquear el pozo entero.
-      unknownNpubsAsGuests: true,
-    },
-  });
-
-  return finalizeCreatedBet(store, room, config, create, gameId, input.playerId, nowMs);
+  throw new OnlineRoomError('El servidor usa el modo NGE que requiere que todos los jugadores tengan cuenta.', 400);
 }
 
-/**
- * Publica el contrato NGP kind:1339 (clave de servicio de Tetris) y pide a Luna
- * materializar la apuesta desde él. Devuelve la misma forma que `POST /api/v2/bets`.
- * Solo se llama cuando todos los jugadores tienen npub (validado por el caller).
- */
-async function createBetViaNgpContract(
-  config: LunaConfig,
-  room: OnlineRoom,
-  gameId: string,
-  stakeSats: number,
-  victoryCondition: string | undefined,
-): Promise<LunaBetCreateWithSeats> {
-  // MODO EVENTOS: config por `terms`, publicar SOLO el 1339 (sin from-contract, sin
-  // declarar oráculo — TOFU). El betId de tracking = id del 1339. Luna materializa
-  // lazy al primer depósito. Ver createBetViaEvents.
-  if (ngpEventsEnabled()) {
-    return createBetViaEvents(room, stakeSats, victoryCondition);
-  }
 
-  const ngp = await fetchNgpConfig(config.baseUrl, config.apiKey, gameId);
-  if (stakeSats < ngp.minStakeSats || stakeSats > ngp.maxStakeSats) {
-    throw new OnlineRoomError(
-      `El monto debe estar entre ${ngp.minStakeSats} y ${ngp.maxStakeSats} sats.`,
-      400,
-    );
-  }
-  const participantPubkeys = room.players.map((player) => pubkeyFromNpub(player.npub as string));
 
-  // Keyless (BYO): declaramos NUESTRA clave de oráculo ante Luna ANTES de publicar el
-  // contrato y la usamos como `oracle` del 1339. Así el resultado lo firmamos nosotros
-  // (sin API key) y la ingesta valida oracle==provider.oraclePubkey. Si no es keyless,
-  // el oráculo es el gestionado por Luna (de la config) y el resultado va por API key.
-  let oraclePubkey = ngp.oraclePubkey;
-  if (ngpKeylessEnabled()) {
-    const own = ngpOraclePubkey();
-    if (own) {
-      await ensureOracleDeclared(config.baseUrl, config.apiKey);
-      oraclePubkey = own;
-    }
-  }
 
-  const contractEventId = await publishNgpContract({
-    gameCoord: ngp.gameCoord,
-    storePubkey: ngp.storePubkey,
-    oraclePubkey,
-    participantPubkeys,
-    stakeSats,
-    victoryCondition: victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
-    roomId: room.id,
-    // El contrato pide una ventana holgada; Luna la acota a su propia ventana de depósito.
-    deadlineSec: Math.floor(Date.now() / 1000) + 3600,
-  });
-  return lunaFetch<LunaBetCreateWithSeats>(config, '/api/v2/bets/from-contract', {
-    method: 'POST',
-    body: { contractEventId },
-  });
-}
 
-/**
- * MODO EVENTOS: crea la apuesta publicando SOLO el contrato 1339 (sin post raíz), sin
- * llamar a la REST. Config desde `terms` (relays); oráculo = clave BYO de Tetris
- * (declarada EN el contrato, TOFU). El `betId` de tracking = id del 1339 (Luna lo
- * materializa lazy al primer depósito). La coordenada del juego viene de env
- * (`LUNA_NEGRA_GAME_COORD`, valor público de setup) porque no consultamos ngp-config.
- */
-async function createBetViaEvents(
-  room: OnlineRoom,
-  stakeSats: number,
-  victoryCondition: string | undefined,
-): Promise<LunaBetCreateWithSeats> {
-  const terms = await fetchNgpTerms();
-  if (!terms) throw new OnlineRoomError('No se pudieron leer las condiciones del escrow de los relays.', 502);
-  if (stakeSats < terms.minStakeSats || stakeSats > terms.maxStakeSats) {
-    throw new OnlineRoomError(`El monto debe estar entre ${terms.minStakeSats} y ${terms.maxStakeSats} sats.`, 400);
-  }
-  const oraclePubkey = ngpOraclePubkey();
-  if (!oraclePubkey) throw new OnlineRoomError('NGP eventos sin clave de oráculo.', 500);
-  const gameCoord = (process.env.LUNA_NEGRA_GAME_COORD ?? '').trim();
-  if (!gameCoord) throw new OnlineRoomError('Falta LUNA_NEGRA_GAME_COORD (coordenada 30023 del juego).', 500);
 
-  const participantPubkeys = room.players.map((player) => pubkeyFromNpub(player.npub as string));
-  const contractId = await publishBareNgpContract({
-    gameCoord,
-    storePubkey: terms.storePubkey,
-    oraclePubkey,
-    participantPubkeys,
-    stakeSats,
-    victoryCondition: victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
-    roomId: room.id,
-    deadlineSec: Math.floor(Date.now() / 1000) + 3600,
-  });
-  // El betId de tracking es el id del contrato: en modo eventos no hay betId interno
-  // de Luna hasta que materializa (y ahí lo trae el 31340). Todo el flujo local usa
-  // el contractId como clave y el estado sale de los eventos.
-  return { betId: contractId, stakeSats };
-}
-
-/**
- * MODO EVENTOS: sintetiza un `LunaBetDetail` (la forma que consume buildRoomBet) a
- * partir del estado en relays (31340) + contexto local, en vez del GET REST. Los
- * handles de depósito se arman localmente (9734 + LNURL de la tienda). Si Luna aún no
- * publicó estado (pre-materialización), devuelve un detalle en `pending_deposits` con
- * todos los asientos sin pagar pero con handles válidos para depositar.
- */
-async function synthesizeEventsBetDetail(
-  contractId: string,
-  npubs: string[],
-  stakeSats: number,
-  terms: NgpTerms,
-  baseUrl: string,
-  previous?: RoomBet | null,
-): Promise<LunaBetDetail> {
-  // El 31340 es opcional antes del primer depósito y, además, los relays pueden
-  // tardar/timeout. Los handles de depósito se pueden construir localmente con el
-  // contrato + terms, así que no dejamos que una lectura lenta de estado bloquee el QR.
-  const state = await fetchNgpBetState(contractId).catch(() => null);
-  const lnurl = encodeLnurl(storeLnurlUrl(baseUrl));
-  const freshTemplate = buildDepositZapRequestTemplate({
-    contractId,
-    storePubkey: terms.storePubkey,
-    stakeSats,
-    storeLnurlBech32: lnurl,
-  });
-  const storeCallback = storeLnurlUrl(baseUrl);
-  const depositedByPubkey = new Set(state?.depositedPubkeys ?? []);
-  const prevByNpub = new Map((previous?.participants ?? []).map((p) => [p.npub, p]));
-  const potTargetSats = stakeSats * npubs.length;
-  const potSats = stakeSats * depositedByPubkey.size;
-  const feeSats = Math.floor(potTargetSats * (terms.feePct / 100));
-  const netPayoutSats = Math.max(0, potTargetSats - feeSats);
-
-  const participants = npubs.map((npub) => {
-    const pubkey = pubkeyFromNpub(npub);
-    const paid = depositedByPubkey.has(pubkey);
-    const payout = state?.payouts[pubkey];
-    const prev = prevByNpub.get(npub);
-    return {
-      npub,
-      depositStatus: paid ? 'paid' : 'pending',
-      // Handles ESTABLES entre polls: reusamos el invoice ya emitido (`bolt11`) y el
-      // template YA armado del estado previo. Sin esto, cada refresh reconstruía el
-      // template (con `created_at` nuevo) y perdía el bolt11 → el QR parpadeaba y se
-      // re-pedía la firma a cada rato. Solo armamos uno nuevo si no había previo.
-      bolt11: paid ? null : (prev?.bolt11 ?? null),
-      depositZapRequest: paid ? null : (prev?.depositZapRequest ?? freshTemplate),
-      depositCallback: paid ? null : (prev?.depositCallback ?? storeCallback),
-      payoutStatus: payout?.status ?? 'none',
-      payoutSats: payout ? payout.sats : null,
-      payoutKind: payout?.kind ?? null,
-    };
-  });
-
-  return {
-    betId: contractId,
-    status: state ? mapNgpStatusToRoomStatus(state.status) : 'pending_deposits',
-    stakeSats,
-    potSats,
-    potTargetSats,
-    feeSats,
-    feePct: terms.feePct,
-    netPayoutSats,
-    depositsReceived: depositedByPubkey.size,
-    depositsTotal: npubs.length,
-    participants,
-  };
-}
 
 /**
  * NGE: crea la apuesta publicando el 1339 con la credencial `NGE_CONNECTION`. Solo
@@ -1198,25 +952,9 @@ export async function maybeReportRoomBetResult(
       // NGE: el SDK firma el 1341 con la clave de la credencial y lo publica; el
       // `e`=contractId (== bet.betId) lo ubica en ngp-bet-result-sync. Vacío = empate.
       await reportNgeResult(bet.betId, winners);
-    } else if (ngpEventsEnabled()) {
-      const ev = signNgpResultEvent({
-        betId: bet.betId,
-        winnerNpubs: winners,
-        anchorEventId: bet.betId,
-      });
-      await publishSignedEventToRelays(ev);
     } else {
       if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
-      let body: { event: unknown } | { winners: string[] };
-      if (ngpKeylessEnabled()) {
-        // Aseguramos que NUESTRA clave esté declarada como oráculo (idempotente): si no,
-        // Luna rechazaría el { event } con WRONG_SIGNER. Cubre el caso de reportar sin
-        // haber creado una apuesta NGP en esta instancia (cold start).
-        await ensureOracleDeclared(config.baseUrl, config.apiKey);
-        body = { event: signNgpResultEvent({ betId: bet.betId, winnerNpubs: winners }) };
-      } else {
-        body = { winners };
-      }
+      const body = { winners };
       await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(bet.betId)}/result`, {
         method: 'POST',
         body,
@@ -1288,9 +1026,6 @@ function webhookPath(): string {
  */
 export async function ensureWebhookRegistered(requestOrigin: string): Promise<void> {
   if (ngeConnected()) return;
-  // Modo eventos: no hay webhooks (el estado se sigue por relays / 31340), y el
-  // registro requiere API key que no usamos. No-op.
-  if (ngpEventsEnabled()) return;
   if (webhookSetupDone || !isLunaNegraApiConfigured()) return;
   webhookSetupDone = true;
   try {

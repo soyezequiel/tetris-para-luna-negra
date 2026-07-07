@@ -14,7 +14,6 @@ import {
   syncBetParticipantsWithRoom,
 } from '../../src/online/lunaNegraBets.js';
 import { alertMoneyPathError } from '../../src/online/moneyPathAlert.js';
-import { ngpDiagnostics } from '../../src/online/lunaNegraNgp.js';
 import {
   getBetRoomStore,
   handleApiError,
@@ -63,9 +62,6 @@ export async function GET(request: Request): Promise<Response> {
             ?? process.env.DISCORD_WEBHOOK_URL
             ?? '').trim(),
         ),
-        // Estado NGP en la función deployada (sin secretos): permite ver de una si el
-        // flag/clave llegan y si la ruta de contrato Nostr se activaría. Ver ngpDiagnostics.
-        ngp: ngpDiagnostics(),
         serverNowMs: Date.now(),
       });
     }
