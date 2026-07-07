@@ -130,6 +130,7 @@ function readApiConfig(): LunaConfig {
 
 export function isLunaNegraApiConfigured(): boolean {
   if (isLunaMockEnabled()) return true;
+  if (ngeConnected()) return true;
   // Modo eventos: alcanza con la base URL (la API key no se usa).
   if (ngpEventsEnabled()) return Boolean((process.env.LUNA_NEGRA_BASE_URL ?? '').trim());
   return Boolean(
@@ -407,7 +408,7 @@ async function getBetDetail(config: LunaConfig, betId: string): Promise<LunaBetD
  * fondeada— vía `publishNgpVoidEvents`) o por REST (`POST /cancel`). `betId` en modo
  * eventos == id del 1339. Devuelve una promesa para conservar el `.catch` de los callers.
  */
-async function cancelBetRemote(config: LunaConfig, betId: string): Promise<unknown> {
+async function cancelBetRemote(config: LunaConfig | null, betId: string): Promise<unknown> {
   if (ngeConnected()) {
     await voidNgeBet(betId);
     return undefined;
@@ -415,6 +416,7 @@ async function cancelBetRemote(config: LunaConfig, betId: string): Promise<unkno
   if (ngpEventsEnabled()) {
     return publishNgpVoidEvents(betId);
   }
+  if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
   return lunaFetch(config, `/api/v2/bets/${encodeURIComponent(betId)}/cancel`, { method: 'POST' });
 }
 
@@ -424,7 +426,7 @@ async function cancelBetRemote(config: LunaConfig, betId: string): Promise<unkno
  * `npubs`/`stakeSats` solo se usan en modo eventos (el REST los trae en la respuesta).
  */
 async function fetchDetail(
-  config: LunaConfig,
+  config: LunaConfig | null,
   betId: string,
   npubs: string[],
   stakeSats: number,
@@ -440,6 +442,7 @@ async function fetchDetail(
     return synthesizeNgeBetDetail(betId, npubs, stakeSats, ngeConfig, previous);
   }
   if (ngpEventsEnabled()) {
+    if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
     const terms = await fetchNgpTerms();
     if (!terms) return null;
     if (hasPendingNgpInvoice(previous)) {
@@ -447,6 +450,7 @@ async function fetchDetail(
     }
     return synthesizeEventsBetDetail(betId, npubs, stakeSats, terms, config.baseUrl, previous);
   }
+  if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
   return getBetDetail(config, betId);
 }
 
@@ -459,6 +463,7 @@ async function fetchDetail(
  * (Luna no configurada, red, apuesta no encontrada) — el reporte se manda igual.
  */
 export async function fetchBetPaymentTimeline(betId: string): Promise<unknown | null> {
+  if (ngeConnected()) return null;
   // Modo eventos: el timeline es un diagnóstico REST; no está disponible sin API key.
   if (ngpEventsEnabled()) return null;
   if (!betId || !isLunaNegraApiConfigured()) return null;
@@ -478,7 +483,6 @@ export async function createBetForRoom(
   input: { roomId: string; playerId: string; stakeSats: number; victoryCondition?: string },
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const config = readApiConfig();
   const room = await loadRoom(store, input.roomId);
   if (room.hostPlayerId !== input.playerId) throw new OnlineRoomError('Solo el host puede crear la apuesta.', 403);
   if (room.status !== 'lobby') throw new OnlineRoomError('La sala ya empezó.', 409);
@@ -487,7 +491,6 @@ export async function createBetForRoom(
   }
   if (room.players.length < 2) throw new OnlineRoomError('Se necesitan al menos 2 jugadores para apostar.', 409);
   const gameId = room.lunaGameId?.trim() || (process.env.LUNA_NEGRA_GAME_ID ?? '').trim();
-  if (!gameId) throw new OnlineRoomError('No se pudo determinar el gameId de Luna Negra para esta sala.', 409);
   const stakeSats = Math.floor(Number(input.stakeSats));
   if (!Number.isFinite(stakeSats) || stakeSats < LUNA_NEGRA_MIN_STAKE_SATS || stakeSats > LUNA_NEGRA_MAX_STAKE_SATS) {
     throw new OnlineRoomError('Monto de apuesta inválido.', 400);
@@ -505,8 +508,11 @@ export async function createBetForRoom(
   // apuesta va 100% por eventos con el SDK NGE. Es la vía preferida sobre el NGP viejo.
   if (ngeConnected() && players.every((player) => !!player.npub)) {
     const created = await createBetViaNge(room, stakeSats, input.victoryCondition);
-    return finalizeCreatedBet(store, room, config, created, gameId, input.playerId, nowMs);
+    return finalizeCreatedBet(store, room, null, created, gameId || 'nge', input.playerId, nowMs);
   }
+
+  if (!gameId) throw new OnlineRoomError('No se pudo determinar el gameId de Luna Negra para esta sala.', 409);
+  const config = readApiConfig();
 
   if (ngpBetsEnabled() && players.every((player) => !!player.npub)) {
     const created = await createBetViaNgpContract(config, room, gameId, stakeSats, input.victoryCondition);
@@ -798,7 +804,7 @@ async function synthesizeNgeBetDetail(
 async function finalizeCreatedBet(
   store: RoomStore,
   room: OnlineRoom,
-  config: LunaConfig,
+  config: LunaConfig | null,
   create: LunaBetCreateWithSeats,
   gameId: string,
   createdByPlayerId: string,
@@ -861,7 +867,7 @@ export async function syncBetParticipantsWithRoom(
     );
     if (!someoneLeft) return room;
     try {
-      const config = readApiConfig();
+      const config = ngeConnected() ? null : readApiConfig();
       await cancelBetRemote(config, bet.betId);
       const refreshed = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
       if (refreshed.bet && isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
@@ -885,7 +891,7 @@ export async function syncBetParticipantsWithRoom(
   if (desired.length < 2) return room;
 
   try {
-    const config = readApiConfig();
+    const config = ngeConnected() ? null : readApiConfig();
     await cancelBetRemote(config, bet.betId).catch(() => undefined);
     // Limpiamos la apuesta local antes de recrear: createBetForRoom rechaza
     // salas con una apuesta no terminal.
@@ -906,7 +912,7 @@ export async function refreshRoomBet(
   nowMs = Date.now(),
   options: { reportResult?: boolean } = {},
 ): Promise<OnlineRoom> {
-  const config = readApiConfig();
+  const config = ngeConnected() ? null : readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) return room;
   const npubs = room.bet.participants.map((p) => p.npub);
@@ -1075,7 +1081,7 @@ export async function cancelRoomBet(
   playerId: string,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const config = readApiConfig();
+  const config = ngeConnected() ? null : readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) throw new OnlineRoomError('No hay apuesta para cancelar.', 404);
   if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede cancelar la apuesta.', 403);
@@ -1109,7 +1115,7 @@ export async function retryRoomBetInvoiceGeneration(
   playerId: string,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const config = readApiConfig();
+  const config = ngeConnected() ? null : readApiConfig();
   const room = await loadRoom(store, roomId);
   const bet = room.bet;
   if (!bet) throw new OnlineRoomError('No hay apuesta para reintentar.', 404);
@@ -1152,7 +1158,7 @@ export async function settleRoomBet(
   playerId: string,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  readApiConfig();
+  if (!ngeConnected()) readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) throw new OnlineRoomError('No hay apuesta para liquidar.', 404);
   if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede liquidar la apuesta.', 403);
@@ -1173,7 +1179,7 @@ export async function maybeReportRoomBetResult(
   if (room.status !== 'finished') return null;
   if (bet.status !== 'funded') return null;
   if (!isLunaNegraApiConfigured()) return null;
-  const config = readApiConfig();
+  const config = ngeConnected() ? null : readApiConfig();
   // Usamos los ganadores ya registrados en la apuesta si existen, o los calculamos y persistimos de inmediato
   let winners = bet.winnerNpubs;
   let updatedRoom = room;
@@ -1204,6 +1210,7 @@ export async function maybeReportRoomBetResult(
       });
       await publishSignedEventToRelays(ev);
     } else {
+      if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
       let body: { event: unknown } | { winners: string[] };
       if (ngpKeylessEnabled()) {
         // Aseguramos que NUESTRA clave esté declarada como oráculo (idempotente): si no,
@@ -1284,6 +1291,7 @@ function webhookPath(): string {
  * `requestOrigin` es el origin público del deploy (ej. https://mi-tetris.vercel.app).
  */
 export async function ensureWebhookRegistered(requestOrigin: string): Promise<void> {
+  if (ngeConnected()) return;
   // Modo eventos: no hay webhooks (el estado se sigue por relays / 31340), y el
   // registro requiere API key que no usamos. No-op.
   if (ngpEventsEnabled()) return;
@@ -1318,6 +1326,7 @@ export async function ensureWebhookRegistered(requestOrigin: string): Promise<vo
  * si no, lo obtiene/cachea desde Luna Negra con la API key (sin pegarlo a mano).
  */
 export async function getWebhookSecret(): Promise<string | null> {
+  if (ngeConnected()) return null;
   const override = (process.env.LUNA_NEGRA_WEBHOOK_SECRET ?? '').trim();
   if (override) return override;
   if (cachedWebhookSecret) return cachedWebhookSecret;
