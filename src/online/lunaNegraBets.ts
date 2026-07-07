@@ -2,6 +2,7 @@ import {
   loadRoom,
   isTerminalRoomBetStatus,
   OnlineRoomError,
+  RoomVersionConflictError,
   setRoomBet,
   winnerBetNpubsFromRoom,
   type RoomStore,
@@ -808,7 +809,15 @@ export async function refreshRoomBet(
     nowMs,
   );
   if (sameRoomBetForRefresh(room.bet, bet)) return room;
-  const updated = await setRoomBet(store, room.id, bet, nowMs);
+  let updated: OnlineRoom;
+  try {
+    updated = await setRoomBet(store, room.id, bet, nowMs);
+  } catch (error) {
+    if (error instanceof RoomVersionConflictError) {
+      return loadRoom(store, room.id).catch(() => room);
+    }
+    throw error;
+  }
   if (options.reportResult === false) return updated;
   return (await maybeReportRoomBetResult(store, updated, nowMs)) ?? updated;
 }

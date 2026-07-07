@@ -39,7 +39,8 @@ import {
   updateProgress,
 } from '../../src/online/roomService.js';
 import { maybeReportRoomBetResult, syncBetParticipantsWithRoom } from '../../src/online/lunaNegraBets.js';
-import { getRoomStore, handleApiError, handleNodeApi, queryParam, readJsonBody, sendJson, sendMethodNotAllowed } from '../../src/online/vercelApi.js';
+import { alertMoneyPathError } from '../../src/online/moneyPathAlert.js';
+import { getBetRoomStore, getRoomStore, handleApiError, handleNodeApi, queryParam, readJsonBody, sendJson, sendMethodNotAllowed } from '../../src/online/vercelApi.js';
 import type { OnlineRoom } from '../../src/online/protocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -156,8 +157,13 @@ async function syncBetParticipants(room: OnlineRoom): Promise<OnlineRoom> {
 async function settleBetIfFinished(room: OnlineRoom): Promise<OnlineRoom> {
   if (room.status !== 'finished' || !room.bet || room.bet.resultReported || room.bet.status !== 'funded') return room;
   try {
-    return (await maybeReportRoomBetResult(getRoomStore(), room)) ?? room;
-  } catch {
+    return (await maybeReportRoomBetResult(getBetRoomStore(), room)) ?? room;
+  } catch (error) {
+    await alertMoneyPathError('room:settle-bet-if-finished', {
+      roomId: room.id,
+      betId: room.bet.betId,
+      winnerPlayerId: room.winnerPlayerId,
+    }, error);
     return room;
   }
 }
