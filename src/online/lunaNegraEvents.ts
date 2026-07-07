@@ -25,6 +25,36 @@ export function storeLnurlUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/.well-known/lnurlp/luna`;
 }
 
+const NGP_SYNC_POKE_MIN_MS = 1500;
+const ngpSyncPokeAt = new Map<string, number>();
+
+/** Despierta la detección on-demand de depósitos en Luna sin leer estado privado.
+ *  El estado de verdad sigue viniendo por `31340`; este endpoint solo hace que Luna
+ *  consulte NWC ahora, en vez de esperar el tick de escrow. Best-effort. */
+export async function pokeNgpBetDepositSync(baseUrl: string, contractId: string): Promise<boolean> {
+  if (!/^[a-f0-9]{64}$/i.test(contractId)) return false;
+  const now = Date.now();
+  const key = contractId.toLowerCase();
+  if (now - (ngpSyncPokeAt.get(key) ?? 0) < NGP_SYNC_POKE_MIN_MS) return false;
+  ngpSyncPokeAt.set(key, now);
+  try {
+    const url = new URL('/api/v2/bets/ngp-sync', baseUrl);
+    url.searchParams.set('contractId', key);
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function resetNgpBetDepositSyncPokeForTests(): void {
+  ngpSyncPokeAt.clear();
+}
+
 export interface NgpTerms {
   storePubkey: string;
   minStakeSats: number;

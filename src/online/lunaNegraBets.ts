@@ -34,6 +34,7 @@ import {
 import {
   fetchNgpTerms,
   fetchNgpBetState,
+  pokeNgpBetDepositSync,
   mapNgpStatusToRoomStatus,
   buildDepositZapRequestTemplate,
   encodeLnurl,
@@ -273,6 +274,11 @@ function isTerminalBetStatus(status: RoomBetStatus | undefined | null): boolean 
   return status === 'settled' || status === 'cancelled' || status === 'expired' || status === 'refunded';
 }
 
+function hasPendingNgpInvoice(bet: RoomBet | null | undefined): boolean {
+  return bet?.status === 'pending_deposits'
+    && bet.participants.some((p) => p.depositStatus === 'pending' && typeof p.bolt11 === 'string' && p.bolt11.length > 0);
+}
+
 function buildRoomBet(
   room: OnlineRoom,
   npubs: string[],
@@ -402,6 +408,9 @@ async function fetchDetail(
   if (ngpEventsEnabled()) {
     const terms = await fetchNgpTerms();
     if (!terms) return null;
+    if (hasPendingNgpInvoice(previous)) {
+      await pokeNgpBetDepositSync(config.baseUrl, betId);
+    }
     return synthesizeEventsBetDetail(betId, npubs, stakeSats, terms, config.baseUrl, previous);
   }
   return getBetDetail(config, betId);

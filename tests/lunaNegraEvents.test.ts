@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   parseTermsEvent,
   parseBetStateEvent,
@@ -6,9 +6,16 @@ import {
   buildDepositZapRequestTemplate,
   encodeLnurl,
   storeLnurlUrl,
+  pokeNgpBetDepositSync,
+  resetNgpBetDepositSyncPokeForTests,
 } from '../src/online/lunaNegraEvents';
 
 const STORE = 'a'.repeat(64);
+
+afterEach(() => {
+  resetNgpBetDepositSyncPokeForTests();
+  vi.unstubAllGlobals();
+});
 
 describe('parseTermsEvent', () => {
   it('lee storePubkey (autor) + límites del content', () => {
@@ -92,5 +99,30 @@ describe('encodeLnurl', () => {
     expect(enc.startsWith('lnurl1')).toBe(true);
     // determinístico
     expect(encodeLnurl('https://luna.example/.well-known/lnurlp/luna')).toBe(enc);
+  });
+});
+
+describe('pokeNgpBetDepositSync', () => {
+  it('llama el sync publico de Luna una sola vez por ventana de throttle', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const contractId = 'b'.repeat(64);
+
+    await expect(pokeNgpBetDepositSync('https://luna.example/', contractId)).resolves.toBe(true);
+    await expect(pokeNgpBetDepositSync('https://luna.example/', contractId)).resolves.toBe(false);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://luna.example/api/v2/bets/ngp-sync?contractId=${contractId}`,
+    );
+  });
+
+  it('ignora ids que no son contratos NGP', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(pokeNgpBetDepositSync('https://luna.example', 'not-a-contract')).resolves.toBe(false);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
