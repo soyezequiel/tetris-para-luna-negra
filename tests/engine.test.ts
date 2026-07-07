@@ -1686,6 +1686,103 @@ describe('core stacker engine', () => {
     delete process.env.LUNA_NEGRA_API_KEY;
   });
 
+  it('reports the result on refresh even when the funded bet state did not change', async () => {
+    const store = new MemoryRoomStore();
+    let room = await createRoom(store, { playerId: 'host-player-st', npub: 'npub-host-st', name: 'Host', visibility: 'public' }, 1000);
+    room = await joinRoom(store, { roomId: room.id, playerId: 'guest-player-st', npub: 'npub-guest-st', name: 'Guest' }, 1010);
+
+    room.bet = {
+      betId: 'bet-still-funded-test',
+      status: 'funded',
+      stakeSats: 50,
+      potSats: 100,
+      potTargetSats: 100,
+      feeSats: 1,
+      feePct: 1,
+      netPayoutSats: 99,
+      depositDeadline: null,
+      depositsReceived: 2,
+      depositsTotal: 2,
+      participants: [
+        {
+          npub: 'npub-host-st',
+          playerId: 'host-player-st',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          depositError: null,
+          payoutSats: null,
+          payoutStatus: 'none',
+          withdrawLnurl: null,
+          withdrawUrl: null,
+        },
+        {
+          npub: 'npub-guest-st',
+          playerId: 'guest-player-st',
+          depositStatus: 'paid',
+          bolt11: null,
+          lnurl: null,
+          payUrl: null,
+          depositError: null,
+          payoutSats: null,
+          payoutStatus: 'none',
+          withdrawLnurl: null,
+          withdrawUrl: null,
+        },
+      ],
+      winnerNpubs: null,
+      resultReported: false,
+      settlementError: null,
+      createdByPlayerId: 'host-player-st',
+      createdAtServerMs: 1000,
+      updatedAtServerMs: 1000,
+    };
+    room.status = 'finished';
+    room.winnerPlayerId = 'host-player-st';
+    await store.saveRoom(room);
+
+    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
+    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/result')) {
+        return Response.json({ status: 'ok' });
+      }
+      expect(init?.method ?? 'GET').toBe('GET');
+      return Response.json({
+        betId: 'bet-still-funded-test',
+        status: 'funded',
+        stakeSats: 50,
+        potSats: 100,
+        potTargetSats: 100,
+        feeSats: 1,
+        feePct: 1,
+        netPayoutSats: 99,
+        depositsReceived: 2,
+        depositsTotal: 2,
+        participants: [
+          { npub: 'npub-host-st', depositStatus: 'paid', payoutStatus: 'none' },
+          { npub: 'npub-guest-st', depositStatus: 'paid', payoutStatus: 'none' },
+        ],
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const refreshed = await refreshRoomBet(store, room.id, 1050);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://luna.example/api/v2/bets/bet-still-funded-test/result',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(refreshed.bet?.winnerNpubs).toEqual(['npub-host-st']);
+    expect(refreshed.bet?.resultReported).toBe(true);
+
+    vi.unstubAllGlobals();
+    delete process.env.LUNA_NEGRA_BASE_URL;
+    delete process.env.LUNA_NEGRA_API_KEY;
+  });
+
   it('creates a MIXED pool (account + guest) mapping seats to players, and reports the guest winner by ephemeral npub', async () => {
     const store = new MemoryRoomStore();
     let room = await createRoom(store, { playerId: 'host-player-m', npub: 'npub-host-m', name: 'Host', visibility: 'public' }, 1000);

@@ -808,7 +808,10 @@ export async function refreshRoomBet(
     room.bet.createdByPlayerId,
     nowMs,
   );
-  if (sameRoomBetForRefresh(room.bet, bet)) return room;
+  if (sameRoomBetForRefresh(room.bet, bet)) {
+    if (options.reportResult === false) return room;
+    return (await maybeReportRoomBetResult(store, room, nowMs)) ?? room;
+  }
   let updated: OnlineRoom;
   try {
     updated = await setRoomBet(store, room.id, bet, nowMs);
