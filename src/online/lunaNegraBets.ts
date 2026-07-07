@@ -999,14 +999,6 @@ export async function generateBetDepositInvoice(
   const amountMsat = bet.stakeSats * 1000;
   const invoice = await fetchDepositInvoiceFromCallback(callback, amountMsat, signedZapRequest);
 
-  // Comentario de participación (best-effort): si el jugador lo firmó, lo mandamos al
-  // callback de Luna. Si gana, el premio se ancla a él. NUNCA rompe el depósito: un
-  // fallo acá solo hace que el premio caiga al post del contrato (comportamiento previo).
-  // `await` a propósito (serverless: sin esperar, el fetch se corta al terminar la función).
-  if (signedComment && typeof signedComment === 'object' && participant.commentCallback) {
-    await postParticipationComment(participant.commentCallback, signedComment).catch(() => undefined);
-  }
-
   // Persistimos el invoice en la apuesta local para que el QR sobreviva a los polls
   // (el próximo GET a Luna ya lo devuelve en `bolt11` y reconcilia). Sin esto, el
   // panel volvería a pedir la firma en el siguiente refresh.
@@ -1015,6 +1007,10 @@ export async function generateBetDepositInvoice(
   );
   const updated: RoomBet = { ...bet, participants, updatedAtServerMs: nowMs };
   const updatedRoom = await setRoomBet(store, room.id, updated, nowMs);
+  // Comentario de participacion (best-effort): no bloquea la respuesta del invoice.
+  if (signedComment && typeof signedComment === 'object' && participant.commentCallback) {
+    void postParticipationComment(participant.commentCallback, signedComment).catch(() => undefined);
+  }
   return { room: updatedRoom, invoice };
 }
 

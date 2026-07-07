@@ -16,6 +16,10 @@ export interface BetState {
   // (que el polling alterna) para que el botón "Pagar con extensión" no quede
   // deshabilitado tragando clicks cada vez que hay un poll en vuelo.
   paying: boolean;
+  // Fase visible del flujo de depósito/cobro disparado por el usuario o por la
+  // preparación automática. Evita mostrar "Firmando" mientras en realidad esperamos
+  // al callback LNURL/Lightning.
+  paymentPhase: 'idle' | 'restoring' | 'signing' | 'invoice' | 'paying' | 'claiming';
   // Bandera dedicada a la creación de la apuesta disparada por el host. Separada de
   // `busy` para mostrar "Creando apuesta…" sin parpadear con cada poll. Crear tarda
   // varios segundos: Luna Negra genera un invoice Lightning por jugador (NWC).
@@ -38,6 +42,7 @@ export const betState: BetState = {
   stakeInput: String(DEFAULT_ONLINE_BET_STAKE_SATS),
   busy: false,
   paying: false,
+  paymentPhase: 'idle',
   creating: false,
   lastPollAt: 0,
   fastPollUntil: 0,
