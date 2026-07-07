@@ -85,6 +85,15 @@ export function ngpKeylessEnabled(): boolean {
   return ngpOracleKey() !== null;
 }
 
+/** ¿Operamos la apuesta 100% por EVENTOS Nostr (sin la REST autenticada de Luna)?
+ *  Config por `terms`, crear = publicar 1339, depósito por LNURL de la tienda, estado
+ *  por 31340, resultado por 1341 en relays. Requiere keyless (firmamos el 1341) + el
+ *  flag explícito. Opt-in: sin él, sigue el camino REST/keyless que ya corre. */
+export function ngpEventsEnabled(): boolean {
+  if (!ngpKeylessEnabled()) return false;
+  return (process.env.LUNA_NEGRA_NGP_EVENTS ?? '').trim() === '1';
+}
+
 /**
  * Estado de la config NGP tal como la ve ESTA función deployada. Sin secretos: solo
  * booleanos + la pubkey pública de servicio (que firma los 1339, para poder
@@ -107,6 +116,10 @@ export function ngpDiagnostics(): {
   oraclePubkey: string | null;
   /** Valor crudo de LUNA_NEGRA_NGP_KEYLESS (no es secreto). */
   rawKeylessValue: string;
+  /** Flujo 100% por eventos (sin REST autenticada): keyless + LUNA_NEGRA_NGP_EVENTS=1. */
+  events: boolean;
+  /** Valor crudo de LUNA_NEGRA_NGP_EVENTS (no es secreto). */
+  rawEventsValue: string;
 } {
   const raw = process.env.LUNA_NEGRA_NGP_BETS ?? '';
   const flag = raw.trim() === '1';
@@ -129,6 +142,8 @@ export function ngpDiagnostics(): {
     keyless: ngpKeylessEnabled(),
     oraclePubkey: ngpOraclePubkey(),
     rawKeylessValue: JSON.stringify(process.env.LUNA_NEGRA_NGP_KEYLESS ?? ''),
+    events: ngpEventsEnabled(),
+    rawEventsValue: JSON.stringify(process.env.LUNA_NEGRA_NGP_EVENTS ?? ''),
   };
 }
 
@@ -314,6 +329,74 @@ export async function publishNgpContract(params: {
   return contractId;
 }
 
+/**
+ * MODO EVENTOS (sin REST): publica SOLO el contrato kind:1339 (sin post raíz), así
+ * el `anchorEventId` que Luna materializa == id del 1339 (necesario para que el
+ * depósito lazy por LNURL de la tienda resuelva el contrato). Devuelve el id del 1339.
+ * `oracle` = la pubkey BYO de Tetris (TOFU: Luna la guarda por-apuesta y valida el 1341).
+ */
+export async function publishBareNgpContract(params: {
+  gameCoord: string;
+  storePubkey: string;
+  oraclePubkey: string;
+  participantPubkeys: string[];
+  stakeSats: number;
+  victoryCondition: string;
+  roomId: string;
+  deadlineSec: number;
+}): Promise<string> {
+  const sk = ngpServiceKey();
+  if (!sk) throw new OnlineRoomError('NGP no configurado (falta LUNA_NEGRA_NGP_NSEC).', 500);
+  const human = buildContractHuman({
+    participantPubkeys: params.participantPubkeys,
+    stakeSats: params.stakeSats,
+    victoryCondition: params.victoryCondition,
+    deadlineSec: params.deadlineSec,
+  });
+  return signAndPublish(sk, {
+    kind: NGP_CONTRACT_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['a', params.gameCoord],
+      ...params.participantPubkeys.map((pk) => ['p', pk]),
+      ['p', params.storePubkey, '', 'escrow'],
+      ['p', params.oraclePubkey, '', 'oracle'],
+      ['stake', String(params.stakeSats)],
+      ['deadline', String(params.deadlineSec)],
+      ['room', params.roomId],
+      ['t', NGP_TAG],
+      ['alt', human], // NIP-31: fallback humano (no hay post raíz en modo eventos).
+    ],
+    content: params.victoryCondition,
+  });
+}
+
+/** Publica un evento YA firmado (p. ej. el 1341 del resultado) a los relays de
+ *  escritura. Devuelve true si ≥1 aceptó. Lanza si ninguno lo tomó. */
+export async function publishSignedEventToRelays(
+  ev: ReturnType<typeof finalizeEvent>,
+): Promise<boolean> {
+  const accepted = await publishToRelays(ev);
+  if (!accepted) throw new OnlineRoomError('Ningún relay aceptó el evento.', 502);
+  return accepted;
+}
+
+/** Lee eventos de los relays con un pool fresco (sockets no persisten entre
+ *  invocaciones serverless). Devuelve [] ante cualquier fallo/timeout. */
+export async function queryRelays(
+  relays: string[],
+  filter: Parameters<SimplePool['querySync']>[1],
+): Promise<ReturnType<typeof finalizeEvent>[]> {
+  const pool = new SimplePool();
+  try {
+    return (await withTimeout(pool.querySync(relays, filter), 5000)) as ReturnType<typeof finalizeEvent>[];
+  } catch {
+    return [];
+  } finally {
+    pool.close(relays);
+  }
+}
+
 // Declaración de la clave de oráculo BYO ante Luna, memoizada por instancia
 // serverless (idempotente: re-declarar la misma clave es un no-op del lado de Luna).
 let oracleDeclared = false;
@@ -365,13 +448,15 @@ export async function ensureOracleDeclared(baseUrl: string, apiKey: string): Pro
  * Firma el evento de RESULTADO (kind:1341) con la clave de oráculo BYO. Lleva el tag
  * `bet` (id interno de Luna, que usa `handleSignedEvent` para localizar la apuesta) y
  * los ganadores como `winner` (npub, formato que lee ese endpoint) y como `p` (pubkey,
- * formato NGP del 1341 en relays). Ganadores vacío = empate/anulación → reembolso.
- * Luna valida la firma contra `oraclePubkey` (sin API key) y republica el evento.
+ * formato NGP del 1341 en relays). En modo EVENTOS se pasa `anchorEventId` (= id del
+ * 1339) para el tag `e`, que es como `ngp-bet-result-sync` localiza la apuesta al
+ * levantar el 1341 de relays. Ganadores vacío = empate/anulación → reembolso.
  */
 export function signNgpResultEvent(params: {
   betId: string;
   winnerNpubs: string[];
   gameCoord?: string;
+  anchorEventId?: string;
 }): ReturnType<typeof finalizeEvent> {
   const sk = ngpOracleKey();
   if (!sk) throw new OnlineRoomError('NGP keyless sin clave de oráculo.', 500);
@@ -380,6 +465,7 @@ export function signNgpResultEvent(params: {
     ['status', params.winnerNpubs.length > 0 ? 'win' : 'draw'],
     ['t', NGP_TAG],
   ];
+  if (params.anchorEventId) tags.push(['e', params.anchorEventId]);
   for (const np of params.winnerNpubs) {
     tags.push(['winner', np]);
     tags.push(['p', pubkeyFromNpub(np)]);
@@ -387,6 +473,31 @@ export function signNgpResultEvent(params: {
   if (params.gameCoord) tags.push(['a', params.gameCoord]);
   return finalizeEvent(
     { kind: 1341, created_at: Math.floor(Date.now() / 1000), tags, content: '' },
+    sk,
+  );
+}
+
+/**
+ * MODO EVENTOS: firma un 1341 `status=void` con la clave de SERVICIO (la que firmó el
+ * 1339 = el "retador"). Es el cancel pre-fondeo: `ngp-bet-result-sync` de Luna lo
+ * detecta como VOID DEL RETADOR (firmante == autor del contrato) y reembolsa/anula.
+ * `e` = id del 1339 para que lo ubique. Reemplaza `POST /cancel`.
+ */
+export function signNgpVoidEvent(contractId: string): ReturnType<typeof finalizeEvent> {
+  const sk = ngpServiceKey();
+  if (!sk) throw new OnlineRoomError('NGP no configurado (falta LUNA_NEGRA_NGP_NSEC).', 500);
+  return finalizeEvent(
+    {
+      kind: 1341,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ['bet', contractId],
+        ['e', contractId],
+        ['status', 'void'],
+        ['t', NGP_TAG],
+      ],
+      content: '',
+    },
     sk,
   );
 }
