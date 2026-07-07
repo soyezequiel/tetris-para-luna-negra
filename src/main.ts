@@ -724,6 +724,8 @@ interface BetLifecycleMilestones {
   myPayoutPaidSeenAt: number | null;  // mi premio visto 'paid'/'claimed'
 }
 let betLifecycle: BetLifecycleMilestones | null = null;
+const reportedPaymentDiagnosticKeys = new Set<string>();
+const invoiceIssuedAtByBetId = new Map<string, number>();
 
 const ngpPushState: {
   betId: string | null;
@@ -766,6 +768,12 @@ function recordBetLifecycle(room: OnlineRoom | null): void {
   const entry = roomBetEntryForLocalPlayer(room);
   if (m.myDepositPaidSeenAt === null && entry?.depositStatus === 'paid') {
     m.myDepositPaidSeenAt = now;
+    void sendBetPaymentDiagnosticReport('deposit-paid-seen', {
+      reason: 'local-player-deposit-status-paid',
+      sinceCreatedMs: typeof m.createdSeenAt === 'number' ? now - m.createdSeenAt : null,
+      sinceInvoiceMs: invoiceIssuedAtByBetId.has(m.betId) ? now - invoiceIssuedAtByBetId.get(m.betId)! : null,
+      sinceLastPushMs: ngpPushState.lastEventAt ? now - ngpPushState.lastEventAt : null,
+    });
   }
   if (
     m.myPayoutPaidSeenAt === null &&
@@ -947,6 +955,42 @@ async function sendPerfReport(): Promise<void> {
     console.error('[report] no se pudo enviar el reporte', error);
   }
 }
+
+async function sendBetPaymentDiagnosticReport(
+  stage: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const betId = roomState.current?.bet?.betId ?? 'no-bet';
+  const key = `${stage}:${betId}:${String(extra.reason ?? '')}`;
+  if (reportedPaymentDiagnosticKeys.has(key)) return;
+  reportedPaymentDiagnosticKeys.add(key);
+  if (reportedPaymentDiagnosticKeys.size > 100) {
+    const first = reportedPaymentDiagnosticKeys.values().next().value;
+    if (first) reportedPaymentDiagnosticKeys.delete(first);
+  }
+  try {
+    const report = buildPerfReport();
+    const response = await fetch('/api/report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...report,
+        kind: 'bet-payment-diagnostic',
+        comment: `auto:${stage}`,
+        paymentDiagnostic: {
+          stage,
+          playerId: identityState.player.id,
+          at: new Date().toISOString(),
+          ...extra,
+        },
+      }),
+    });
+    if (!response.ok) console.error(`[payment-report] HTTP ${response.status}`);
+  } catch (error) {
+    console.error('[payment-report] no se pudo enviar diagnÃ³stico de pago', error);
+  }
+}
+
 function buildPerfReport(): Record<string, unknown> {
   const nav = navigator;
   const localBetEntry = roomBetEntryForLocalPlayer(roomState.current);
@@ -4563,6 +4607,13 @@ async function refreshOnlineBet(
       error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
     );
     if (!silent) onlineNetState.error = onlineErrorText(error);
+    if (roomState.current?.bet?.status === 'pending_deposits') {
+      void sendBetPaymentDiagnosticReport('bet-refresh-error', {
+        reason: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+        refreshElapsedMs: error instanceof OnlineBetDiagnosticError ? error.elapsedMs : null,
+        status: error instanceof OnlineBetDiagnosticError ? error.status : null,
+      });
+    }
   } finally {
     betState.busy = false;
     const shouldRefreshAgain = betState.refreshQueued;
@@ -4607,16 +4658,29 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
     return;
   }
   betState.paying = true;
+  const startedAt = performance.now();
   try {
     await provider.enable();
     await provider.sendPayment(bolt11);
     onlineNetState.error = null;
+    void sendBetPaymentDiagnosticReport('webln-payment-sent', {
+      reason: 'sendPayment-resolved',
+      weblnElapsedMs: performance.now() - startedAt,
+      invoiceChars: bolt11.length,
+      invoicePrefix: bolt11.slice(0, 12),
+    });
     wakeUpBetDetection();
   } catch (error) {
     // El usuario pudo cancelar el popup de la extensión, o el pago falló.
     onlineNetState.error = error instanceof Error && error.message
       ? `No se pudo pagar con la extensión: ${error.message}`
       : 'No se pudo pagar con la extensión.';
+    void sendBetPaymentDiagnosticReport('webln-payment-error', {
+      reason: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+      weblnElapsedMs: performance.now() - startedAt,
+      invoiceChars: bolt11.length,
+      invoicePrefix: bolt11.slice(0, 12),
+    });
   } finally {
     betState.paying = false;
   }
@@ -4651,6 +4715,7 @@ async function signAndGenerateBetDeposit(): Promise<void> {
   }
 
   betState.paying = true;
+  const invoiceStartedAt = performance.now();
   try {
     // El zap tiene que firmarlo la MISMA identidad del participante (Luna lo valida:
     // signed.pubkey === part.pubkey). Chequeamos contra la sesión Nostr para dar un
@@ -4683,10 +4748,23 @@ async function signAndGenerateBetDeposit(): Promise<void> {
     });
     syncOnlineClock(response.serverNowMs);
     adoptOnlineRoom(response.room);
+    const updatedBetId = response.room.bet?.betId ?? bet.betId;
+    invoiceIssuedAtByBetId.set(updatedBetId, Date.now());
+    void sendBetPaymentDiagnosticReport('invoice-issued', {
+      reason: 'depositInvoice-resolved',
+      invoiceElapsedMs: performance.now() - invoiceStartedAt,
+      hasSignedComment: !!signedComment,
+      invoiceChars: response.invoice.length,
+      invoicePrefix: response.invoice.slice(0, 12),
+    });
     onlineNetState.error = null;
     armOnlineBetFastPolling();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
+    void sendBetPaymentDiagnosticReport('invoice-error', {
+      reason: onlineNetState.error.slice(0, 240),
+      invoiceElapsedMs: performance.now() - invoiceStartedAt,
+    });
   } finally {
     betState.paying = false;
   }

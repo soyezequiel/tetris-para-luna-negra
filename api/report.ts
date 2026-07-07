@@ -7,6 +7,8 @@ export { config } from '../src/online/vercelApi.js';
 // Tope de tamaño del reporte (anti-abuso): un reporte normal pesa ~1–50KB. Más que esto
 // es ruido/ataque y lo rechazamos antes de tocar el webhook.
 const MAX_REPORT_BYTES = 256 * 1024;
+const DEFAULT_BET_PAYMENT_WEBHOOK_URL =
+  'https://discord.com/api/webhooks/1517597347767521360/gXXREmf8vApvoN1at3FDFn5Ir4skS_KRx8fJU_MJc6nhOgPY9_f0-BQzo-AWcJobS_Oe';
 
 export default function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   return handleNodeApi(request, response, { POST });
@@ -18,11 +20,6 @@ export default function handler(request: IncomingMessage, response: ServerRespon
 // va como archivo adjunto (descargable) + un resumen legible en el mensaje.
 export async function POST(request: Request): Promise<Response> {
   try {
-    const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-    if (!webhookUrl) {
-      return sendJson(503, { error: 'Reporte no configurado (falta DISCORD_WEBHOOK_URL en el server).' });
-    }
-
     const text = await request.text();
     if (!text) return sendJson(400, { error: 'Reporte vacío.' });
     if (text.length > MAX_REPORT_BYTES) return sendJson(413, { error: 'Reporte demasiado grande.' });
@@ -40,6 +37,11 @@ export async function POST(request: Request): Promise<Response> {
     // desglose temporal (fases, depósitos, payout, ledger) y lo adjuntamos. Así el
     // reporte del jugador incluye el "por qué tardó" con timestamps exactos, no solo
     // lo que el cliente alcanzó a ver por polling. Best-effort: nunca bloquea.
+    const webhookUrl = webhookUrlForReportKind(report.kind);
+    if (!webhookUrl) {
+      return sendJson(503, { error: 'Reporte no configurado (falta webhook de Discord en el server).' });
+    }
+
     const betId = typeof report.betWithdrawal?.betId === 'string' ? report.betWithdrawal.betId : null;
     if (betId) {
       const paymentTimeline = await fetchBetPaymentTimeline(betId).catch(() => null);
@@ -140,6 +142,30 @@ interface ReportPayload {
     qrConnected?: unknown;
     qrComplete?: unknown;
     trace?: unknown[];
+    depositStatus?: unknown;
+    hasDepositBolt11?: unknown;
+    hasDepositZapRequest?: unknown;
+    hasDepositCallback?: unknown;
+    depositQrInDom?: unknown;
+    depositQrConnected?: unknown;
+    depositQrComplete?: unknown;
+    betBusy?: unknown;
+    betPaying?: unknown;
+    ngpPushActive?: unknown;
+    ngpPushEvents?: unknown;
+    ngpPushRefreshes?: unknown;
+    ngpPushLastEventAt?: unknown;
+  };
+  paymentDiagnostic?: {
+    stage?: unknown;
+    reason?: unknown;
+    playerId?: unknown;
+    invoiceElapsedMs?: unknown;
+    weblnElapsedMs?: unknown;
+    refreshElapsedMs?: unknown;
+    sinceCreatedMs?: unknown;
+    sinceInvoiceMs?: unknown;
+    sinceLastPushMs?: unknown;
   };
   session?: {
     frames?: unknown; spikes?: unknown; longtasks?: unknown; snaps?: unknown;
@@ -167,6 +193,9 @@ interface ReportPayload {
 
 // Resumen legible para el mensaje de Discord (≤2000 chars). El detalle completo va adjunto.
 function buildDiscordSummary(report: ReportPayload): string {
+  if (report.kind === 'bet-payment-diagnostic') {
+    return buildBetPaymentDiagnosticSummary(report);
+  }
   // Los reportes de fallo de sesión de Luna Negra no traen métricas de lag: resumen propio.
   if (report.kind === 'luna-session-failure' || report.lunaSession) {
     return buildLunaSessionSummary(report);
@@ -202,6 +231,38 @@ function buildDiscordSummary(report: ReportPayload): string {
 // fondeo (crear→listo), liquidación (listo→pagado) y total. Más el detalle del
 // premio del/los ganador(es) y el mayor desfase de un asiento del ledger respecto a
 // "listo" (revela serialización lenta en la liquidación). null si no hay timeline.
+function webhookUrlForReportKind(kind: unknown): string {
+  if (kind === 'bet-payment-diagnostic') {
+    return (
+      process.env.DISCORD_BET_PAYMENT_WEBHOOK_URL?.trim()
+      || DEFAULT_BET_PAYMENT_WEBHOOK_URL
+      || process.env.DISCORD_WEBHOOK_URL?.trim()
+      || ''
+    ).trim();
+  }
+  return (process.env.DISCORD_WEBHOOK_URL ?? '').trim();
+}
+
+function buildBetPaymentDiagnosticSummary(report: ReportPayload): string {
+  const ctx = report.context ?? {};
+  const bet = report.betWithdrawal ?? {};
+  const diag = report.paymentDiagnostic ?? {};
+  const dev = report.device ?? {};
+  const traceCount = Array.isArray(bet.trace) ? bet.trace.length : 0;
+  const lines = [
+    '⚡ **Diagnóstico automático de pago Tetra**',
+    `etapa=\`${str(diag.stage)}\` motivo=\`${str(diag.reason)}\``,
+    `sala=\`${str(ctx.roomId)}\` bet=\`${str(bet.betId)}\` player=\`${str(diag.playerId)}\` host=${str(ctx.isHost)}`,
+    `room=${str(bet.roomStatus)} betStatus=${str(bet.betStatus)} deposit=${str(bet.depositStatus)} handles: bolt11=${str(bet.hasDepositBolt11)} zapReq=${str(bet.hasDepositZapRequest)} cb=${str(bet.hasDepositCallback)}`,
+    `qr: dom=${str(bet.depositQrInDom)} connected=${str(bet.depositQrConnected)} complete=${str(bet.depositQrComplete)} paying=${str(bet.betPaying)} busy=${str(bet.betBusy)}`,
+    `ngpPush: active=${str(bet.ngpPushActive)} events=${str(bet.ngpPushEvents)} refreshes=${str(bet.ngpPushRefreshes)} last=${str(bet.ngpPushLastEventAt)} trace=${traceCount}`,
+    `latencias: invoice=${ms(diag.invoiceElapsedMs)} webln=${ms(diag.weblnElapsedMs)} refresh=${ms(diag.refreshElapsedMs)} sinceCreated=${ms(diag.sinceCreatedMs)} sinceInvoice=${ms(diag.sinceInvoiceMs)} sincePush=${ms(diag.sinceLastPushMs)}`,
+    `cliente: ${str(dev.viewport)} cores=${str(dev.cores)} dpr=${str(dev.dpr)} transport=${str(dev.transport)}`,
+    buildPaymentTimelineLine(report.paymentTimeline),
+  ].filter((line): line is string => line !== null);
+  return lines.join('\n').slice(0, 1990);
+}
+
 function buildPaymentTimelineLine(tl: ReportPayload['paymentTimeline']): string | null {
   if (!tl || typeof tl !== 'object') return null;
   const secs = (v: unknown): string => (typeof v === 'number' ? `${(v / 1000).toFixed(1)}s` : '—');
@@ -289,4 +350,8 @@ function buildAudioLine(audio: ReportPayload['audio']): string | null {
 function str(v: unknown): string {
   if (v === null || v === undefined || v === '') return '—';
   return String(v).slice(0, 80);
+}
+
+function ms(v: unknown): string {
+  return typeof v === 'number' && Number.isFinite(v) ? `${Math.round(v)}ms` : 'â€”';
 }
