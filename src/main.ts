@@ -696,6 +696,10 @@ interface BetWithdrawalTraceEvent {
   payoutSats: number | null;
   hasWithdrawLnurl: boolean;
   withdrawHandleVersion: number;
+  depositStatus: string | null;
+  hasDepositBolt11: boolean;
+  hasDepositZapRequest: boolean;
+  hasDepositCallback: boolean;
 }
 const BET_WITHDRAWAL_TRACE_MAX = 80;
 const betWithdrawalTrace: BetWithdrawalTraceEvent[] = [];
@@ -783,6 +787,10 @@ function recordBetWithdrawalTrace(
     payoutSats: entry?.payoutSats ?? null,
     hasWithdrawLnurl: !!handle,
     withdrawHandleVersion,
+    depositStatus: entry?.depositStatus ?? null,
+    hasDepositBolt11: !!entry?.bolt11,
+    hasDepositZapRequest: !!entry?.depositZapRequest,
+    hasDepositCallback: !!entry?.depositCallback,
   };
   const signature = JSON.stringify({ ...event, t: 0, note: null });
   if (!note && signature === lastWithdrawalTraceSignatureBySource.get(source)) return;
@@ -921,6 +929,7 @@ async function sendPerfReport(): Promise<void> {
 function buildPerfReport(): Record<string, unknown> {
   const nav = navigator;
   const localBetEntry = roomBetEntryForLocalPlayer(roomState.current);
+  const depositQr = overlayElement.querySelector<HTMLImageElement>('img[alt="QR de la invoice Lightning"]');
   const withdrawQr = overlayElement.querySelector<HTMLImageElement>('img[alt="QR de retiro Lightning"]');
   return {
     generatedAt: new Date().toISOString(),
@@ -947,6 +956,13 @@ function buildPerfReport(): Record<string, unknown> {
       betStatus: roomState.current?.bet?.status ?? null,
       payoutStatus: localBetEntry?.payoutStatus ?? null,
       payoutSats: localBetEntry?.payoutSats ?? null,
+      depositStatus: localBetEntry?.depositStatus ?? null,
+      hasDepositBolt11: !!localBetEntry?.bolt11,
+      hasDepositZapRequest: !!localBetEntry?.depositZapRequest,
+      hasDepositCallback: !!localBetEntry?.depositCallback,
+      depositQrInDom: !!depositQr,
+      depositQrConnected: depositQr?.isConnected ?? false,
+      depositQrComplete: depositQr?.complete ?? false,
       hasWithdrawLnurl: !!localBetEntry?.withdrawLnurl,
       withdrawHandleVersion,
       qrInDom: !!withdrawQr,
@@ -4958,7 +4974,7 @@ function preserveVisibleDepositHandles(previousRoom: OnlineRoom | null, incoming
     || incomingBet.status !== 'pending_deposits'
   ) return incomingRoom;
 
-  const hasHandles = (entry: RoomBetParticipant): boolean =>
+  const hasAnyDepositHandle = (entry: RoomBetParticipant): boolean =>
     !!entry.bolt11 || (!!entry.depositZapRequest && !!entry.depositCallback);
   const prevByKey = new Map<string, RoomBetParticipant>();
   for (const prev of previousBet.participants) {
@@ -4968,11 +4984,16 @@ function preserveVisibleDepositHandles(previousRoom: OnlineRoom | null, incoming
 
   let changed = false;
   const participants = incomingBet.participants.map((entry) => {
-    // Solo rescatamos depósitos todavía pendientes que perdieron los handles.
-    if (entry.depositStatus !== 'pending' || hasHandles(entry)) return entry;
+    // Solo rescatamos depositos pendientes. `bolt11` es mas especifico que el
+    // template de firma: si ya emitimos invoice, un update viejo con
+    // depositZapRequest+callback pero sin bolt11 no debe volver el panel a "firmar".
+    if (entry.depositStatus !== 'pending') return entry;
     const prev = (entry.playerId ? prevByKey.get(`id:${entry.playerId}`) : undefined)
       ?? prevByKey.get(`npub:${entry.npub}`);
-    if (!prev || prev.depositStatus !== 'pending' || !hasHandles(prev)) return entry;
+    if (!prev || prev.depositStatus !== 'pending' || !hasAnyDepositHandle(prev)) return entry;
+    const lostBolt11 = !!prev.bolt11 && !entry.bolt11;
+    const lostAllHandles = !hasAnyDepositHandle(entry);
+    if (!lostBolt11 && !lostAllHandles) return entry;
     changed = true;
     return {
       ...entry,
