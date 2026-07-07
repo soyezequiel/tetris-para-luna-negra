@@ -56,7 +56,7 @@ import {
 import { listLunaFriends } from '../src/online/lunaNegraSocial';
 import { createBetForRoom, maybeReportRoomBetResult, refreshRoomBet, settleRoomBet, syncBetParticipantsWithRoom } from '../src/online/lunaNegraBets';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
-import { GET as lunaNegraApiGet } from '../api/luna-negra/[action]';
+import { GET as lunaNegraApiGet, POST as lunaNegraApiPost } from '../api/luna-negra/[action]';
 import { decidePeerKoAction } from '../src/online/peerKoAuthority';
 import { selectAttackTarget } from '../src/online/targeting';
 import { InputController } from '../src/input';
@@ -2176,6 +2176,13 @@ describe('core stacker engine', () => {
     }));
     expect(missingConfig.status).toBe(500);
     expect(await missingConfig.json()).toEqual({ error: 'LUNA_NEGRA_BASE_URL is not configured.' });
+
+    const missingRoomLinkConfig = await lunaNegraApiPost(new Request('http://local/api/luna-negra/verify-room-invite', {
+      method: 'POST',
+      body: JSON.stringify({ lnInvite: 'token' }),
+    }));
+    expect(missingRoomLinkConfig.status).toBe(500);
+    expect(await missingRoomLinkConfig.json()).toEqual({ error: 'LUNA_NEGRA_BASE_URL is not configured.' });
 
     process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ valid: false })));

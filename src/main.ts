@@ -114,6 +114,7 @@ import {
   getActiveSigner,
   importNsec,
   restoreSigner,
+  setActiveSigner,
   setSignEventNotifier,
   type LunaSigner,
   type StoredSigner,
@@ -1727,7 +1728,7 @@ function handleOverlayInput(event: Event): void {
       // No re-renderizamos (perdería el foco), así que togglear el botón a mano:
       // "Continuar como anónimo" exige un nombre escrito.
       const anonButton = document.querySelector<HTMLButtonElement>('[data-ui-action="anon-continue"]');
-      if (anonButton) anonButton.disabled = identityState.name.trim().length === 0;
+      if (anonButton) anonButton.disabled = identityState.name.trim().length === 0 || lunaState.nostrLogin.busy;
     }
     if (field === 'nostr-bunker') lunaState.nostrLogin.bunkerInput = target.value.trim();
     if (field === 'nostr-nsec') lunaState.nostrLogin.nsecInput = target.value.trim();
@@ -2021,7 +2022,7 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'online-open-invite') openLunaInviteWindow();
   if (action === 'luna-login') reopenLoginGate();
   if (action === 'luna-logout') logOut();
-  if (action === 'anon-continue') continueAsAnonymous();
+  if (action === 'anon-continue') void continueAsAnonymous();
   if (action === 'nostr-tab') selectNostrLoginTab((control.dataset.tab as NostrLoginTab | undefined) ?? 'extension');
   if (action === 'nostr-login-extension') void loginWithNostrExtension();
   if (action === 'nostr-login-bunker') void loginWithNostrBunker();
@@ -2719,6 +2720,7 @@ async function joinLunaRoomLink(roomId: string): Promise<void> {
   try {
     // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
     await leaveCurrentRoomBeforeNew(roomId);
+    if (!(await ensureEphemeralNostrIdentity(identityState.name))) return;
     identityState.player = saveOnlinePlayer({ ...identityState.player, name: identityState.name });
     const who = {
       roomId,
@@ -3541,15 +3543,46 @@ function shortNpub(npub: string): string {
   return npub.length > 18 ? `${npub.slice(0, 10)}…${npub.slice(-6)}` : npub;
 }
 
-// "Continuar como anónimo" desde la puerta de bienvenida: fija el nombre temporal
-// que el jugador tipeó (persistido en el perfil local) y descarta el gate por esta
-// sesión de pestaña. Sin login a Luna no hay amigos/invitaciones/apuestas, pero
-// puede jugar solo y online por código igual.
-function continueAsAnonymous(): void {
+// "Continuar como anónimo" crea una cuenta Nostr local descartable en este
+// navegador. Así el jugador tiene npub y signer propio para salas/apuestas NGE,
+// sin exigir una identidad Nostr principal.
+async function ensureEphemeralNostrIdentity(nameHint?: string): Promise<boolean> {
+  if (lunaState.identity) return true;
+  if (lunaState.nostrLogin.busy) return false;
+  const name = (nameHint ?? identityState.name).trim().slice(0, 18) || 'Jugador';
+  lunaState.nostrLogin.busy = true;
+  lunaState.nostrLogin.error = null;
+  try {
+    const { signer, nsec } = generateLocalSigner();
+    const pubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) {
+      throw new Error('El firmante local devolvió una pubkey inválida');
+    }
+    const identity: LunaIdentity = {
+      npub: nip19.npubEncode(pubkey),
+      pubkey,
+      name,
+      avatarUrl: identityState.player.avatarUrl,
+      gameId: null,
+    };
+    setActiveSigner(signer, { method: 'local', nsec });
+    applyLunaIdentity(identity);
+    saveStoredLunaIdentity(identity);
+    resetNostrLoginFlow();
+    void ensureLunaGameId();
+    void syncLunaPresence();
+    return true;
+  } catch (error) {
+    lunaState.nostrLogin.error = error instanceof Error ? error.message : 'No se pudo crear la cuenta local';
+    return false;
+  } finally {
+    lunaState.nostrLogin.busy = false;
+  }
+}
+
+async function continueAsAnonymous(): Promise<void> {
   const name = identityState.name.trim().slice(0, 18) || 'Jugador';
-  identityState.player = saveOnlinePlayer({ ...identityState.player, name });
-  identityState.name = identityState.player.name;
-  resetNostrLoginFlow();
+  if (!(await ensureEphemeralNostrIdentity(name))) return;
   loginGateDismissed = true;
   saveLoginGateDismissed();
 }
@@ -3998,6 +4031,7 @@ async function createOnlineRoom(
   try {
     // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
     await leaveCurrentRoomBeforeNew();
+    if (!(await ensureEphemeralNostrIdentity(identityState.name))) return;
     identityState.player = saveOnlinePlayer({ ...identityState.player, name: identityState.name });
     // Supervivencia online = reglas fijas (BATTLE_RULES); todos compiten igual.
     const rules = matchType === 'battle' ? battleRulesFromSettings(inputSettings) : onlineCustomRulesFromSettings();
@@ -4233,6 +4267,7 @@ async function joinOnlineRoom(roomId: string): Promise<void> {
   try {
     // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
     await leaveCurrentRoomBeforeNew(normalizedRoomId);
+    if (!(await ensureEphemeralNostrIdentity(identityState.name))) return;
     identityState.player = saveOnlinePlayer({ ...identityState.player, name: identityState.name });
     const response = await onlineClient.joinRoom({
       roomId: normalizedRoomId,
@@ -7528,7 +7563,8 @@ function renderLoginGateOverlay(): string {
   // No mostramos el nombre por defecto ("Player"): dejamos el campo vacío para
   // que el jugador se vea forzado a escribir uno antes de continuar.
   const enteredName = identityState.name.trim() === 'Player' ? '' : identityState.name;
-  const canContinue = enteredName.trim().length > 0;
+  const busy = lunaState.nostrLogin.busy;
+  const canContinue = enteredName.trim().length > 0 && !busy;
   return renderLobbyShell(`
     <div class="login-gate">
       <article class="cs2-card login-gate-card">
@@ -7539,10 +7575,10 @@ function renderLoginGateOverlay(): string {
         <div class="login-gate-sep"><span>o</span></div>
         <label class="online-field login-gate-field">
           <span>Tu nombre</span>
-          <input type="text" maxlength="18" value="${escapeHtml(enteredName)}" data-online-field="anon-name" autocomplete="off" placeholder="Tu nombre" />
+          <input type="text" maxlength="18" value="${escapeHtml(enteredName)}" data-online-field="anon-name" autocomplete="off" placeholder="Tu nombre"${busy ? ' disabled' : ''} />
         </label>
-        <button class="cs2-btn login-gate-anon" type="button" data-ui-action="anon-continue"${canContinue ? '' : ' disabled'}>Continuar como anónimo</button>
-        <p class="login-gate-note">Sin cuenta podés jugar solo y unirte a salas por código, pero no verás amigos ni invitaciones.</p>
+        <button class="cs2-btn login-gate-anon" type="button" data-ui-action="anon-continue"${canContinue ? '' : ' disabled'}>${busy ? 'Creando cuenta...' : 'Continuar con cuenta local'}</button>
+        <p class="login-gate-note">La cuenta local queda guardada en este navegador. Podés jugar y apostar; amigos e invitaciones requieren tu cuenta Nostr.</p>
       </article>
     </div>
   `);

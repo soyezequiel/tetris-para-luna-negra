@@ -85,6 +85,9 @@ export async function POST(request: Request): Promise<Response> {
       const body = await readJsonBody<{ lnInvite?: string }>(request);
       const token = typeof body.lnInvite === 'string' ? body.lnInvite.trim() : '';
       if (!token) throw new OnlineRoomError('Falta el lnInvite.', 400);
+      if (!(process.env.LUNA_NEGRA_BASE_URL ?? '').trim()) {
+        throw new OnlineRoomError('LUNA_NEGRA_BASE_URL is not configured.', 500);
+      }
       const invite = await verifyRoomInvite(token);
       return sendJson(200, { invite, serverNowMs: Date.now() });
     }

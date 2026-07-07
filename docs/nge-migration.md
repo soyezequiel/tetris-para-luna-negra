@@ -46,10 +46,11 @@ custodial de apuestas, también los `WEBHOOK_*` (ver §Env vars).
   `fetchNgeConfig()` (config del `bind`), `createNgeContract`, `reportNgeResult`,
   `voidNgeBet`, `fetchNgeBetState`, `ngeStoreLnurlUrl` (LNURL del `lud16`). Los gates
   viejos (`ngpBetsEnabled`/`ngpEventsEnabled`) siguen como fallback hasta el Paso 5.
-- [ ] **3. Invitado → cuenta efímera.** Al entrar a una sala apostable (o al crear/
-  unirse a la apuesta), si el jugador es anónimo sin npub, mintear una cuenta local
-  (`generateLocalSigner`) y adoptarla como su identidad de sala. Persistirla como el
-  login `local`. Garantiza que `players.every(p => !!p.npub)`. **PENDIENTE.**
+- [x] **3. Invitado → cuenta efímera.** `continueAsAnonymous()` ahora mintea una
+  cuenta local (`generateLocalSigner`) y la adopta como identidad Nostr browser-held
+  con `setActiveSigner(..., { method: 'local', nsec })`. `createOnlineRoom`,
+  `joinOnlineRoom` y `joinLunaRoomLink` aseguran esa identidad antes de entrar a una
+  sala, cubriendo sesiones viejas que ya tenían el gate descartado. Build verde.
 - [x] **4. Rewire de `lunaNegraBets.ts` (NGE-first).** Ruteo NGE cuando
   `ngeConnected()` en las 4 operaciones, con los paths NGP/legacy como fallback:
   `createBetForRoom` → `createBetViaNge`; `fetchDetail` → `synthesizeNgeBetDetail`
