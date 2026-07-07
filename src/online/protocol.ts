@@ -374,10 +374,6 @@ export interface OnlineRoomResponse {
   serverNowMs: number;
 }
 
-/** Respuesta de `deposit-invoice`: la sala actualizada + el bolt11 del depósito zap. */
-export interface OnlineBetDepositInvoiceResponse extends OnlineRoomResponse {
-  invoice: string;
-}
 
 export interface LunaNegraEnterRequest {
   inviteToken: string;
@@ -548,34 +544,6 @@ export interface CreateBetRequest {
 export interface RoomBetActionRequest {
   roomId: string;
   playerId: string;
-}
-
-/** Evento Nostr FIRMADO (lo que devuelve un signer NIP-07/46/local). */
-export interface SignedNostrEvent {
-  kind: number;
-  pubkey: string;
-  created_at: number;
-  content: string;
-  tags: string[][];
-  id: string;
-  sig: string;
-}
-
-/**
- * Pide el invoice de depósito v2 mandando el zap request 9734 ya FIRMADO por el
- * jugador. El backend lo reenvía al callback LNURL-pay de Luna Negra y devuelve el
- * bolt11 (que compromete el zap vía description hash): así extensión y QR son zaps.
- */
-export interface RoomBetDepositInvoiceRequest {
-  roomId: string;
-  playerId: string;
-  signedZapRequest: SignedNostrEvent;
-  /**
-   * v2 (opcional): comentario de participación (kind:1) firmado por el jugador. El
-   * backend lo reenvía a `commentCallback` de Luna Negra (best-effort). Si el jugador
-   * gana, el premio se ancla a este comentario en vez del post del contrato.
-   */
-  signedComment?: SignedNostrEvent | null;
 }
 
 export interface PublicRoomsResponse {

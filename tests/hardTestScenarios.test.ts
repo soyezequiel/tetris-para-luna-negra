@@ -1,12 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   createRoom,
   eliminatePlayer,
   getRoomState,
   HOST_STALE_MS,
   joinRoom,
-  leaveRoom,
-  loadRoom,
   MemoryRoomStore,
   PLAYER_ABANDON_MS,
   ROOM_START_DELAY_MS,
@@ -16,8 +14,6 @@ import {
   type RoomStore,
 } from '../src/online/roomService';
 import type { EliminateRequest, OnlineRoom, ProgressRequest } from '../src/online/protocol';
-import { createBetForRoom, settleRoomBet, syncBetParticipantsWithRoom } from '../src/online/lunaNegraBets';
-import { resetLunaMock, setLunaMockEnabled } from '../src/online/lunaNegraMock';
 import { evaluateHardTest, type HardTestConfig, type HardTestEvidence } from '../src/dev/hardTestReport';
 
 // 8 jugadores: el host + 7 invitados, igual que el hard test interactivo (vos + 7 bots).
@@ -29,7 +25,6 @@ const P = (i: number): string => PLAYER_IDS[i];
 const baseConfig: HardTestConfig = {
   playerCount: 8,
   scenarios: { hostDisconnect: false, playerAbandon: false, doubleKo: false },
-  withMockedBet: false,
   stakeSats: 10,
 };
 
@@ -155,77 +150,6 @@ describe('hard test: caminos no felices a nivel roomService', () => {
       doubleKoPlayerIds: [P(1), P(2)],
     }));
     expect(result.checks.find((c) => c.name === 'recrown')?.pass).toBe(true);
-  });
-});
-
-describe('hard test: apuesta mockeada (money-path)', () => {
-  beforeEach(() => {
-    setLunaMockEnabled(true);
-    resetLunaMock();
-    process.env.LUNA_NEGRA_GAME_ID = 'test-game';
-  });
-  afterEach(() => {
-    setLunaMockEnabled(false);
-    delete process.env.LUNA_NEGRA_GAME_ID;
-  });
-
-  async function lobbyRoom(store: RoomStore): Promise<OnlineRoom> {
-    const created = await createRoom(store, { playerId: HOST_ID, name: HOST_ID, visibility: 'private' });
-    for (const id of PLAYER_IDS.slice(1)) {
-      await joinRoom(store, { roomId: created.id, playerId: id, name: id });
-    }
-    return loadRoom(store, created.id);
-  }
-
-  it('crea y fondea la apuesta (mock auto-funded) con un asiento por jugador', async () => {
-    const store = new MemoryRoomStore();
-    const lobby = await lobbyRoom(store);
-    const room = await createBetForRoom(store, { roomId: lobby.id, playerId: HOST_ID, stakeSats: 10 });
-    expect(room.bet?.status).toBe('funded');
-    expect(room.bet?.participants).toHaveLength(8);
-    expect(room.bet?.participants.every((p) => p.depositStatus === 'paid')).toBe(true);
-  });
-
-  it('reembolso a todos cuando un fundeador deja la sala en el lobby', async () => {
-    const store = new MemoryRoomStore();
-    const lobby = await lobbyRoom(store);
-    await createBetForRoom(store, { roomId: lobby.id, playerId: HOST_ID, stakeSats: 10 });
-    // Un participante con depósito se va: sync cancela y reembolsa todo el pozo.
-    await leaveRoom(store, { roomId: lobby.id, playerId: P(5) });
-    const room = await syncBetParticipantsWithRoom(store, lobby.id);
-    expect(['cancelled', 'refunded']).toContain(room.bet?.status);
-    expect(room.bet?.participants.every((p) => p.depositStatus !== 'paid')).toBe(true);
-  });
-
-  it('liquida y paga al ganador cuando la sala termina', async () => {
-    const store = new MemoryRoomStore();
-    const lobby = await lobbyRoom(store);
-    await createBetForRoom(store, { roomId: lobby.id, playerId: HOST_ID, stakeSats: 10 });
-
-    // Llevamos la sala a 'playing' y coronamos a p1 eliminando a los otros 7.
-    for (const id of PLAYER_IDS) {
-      await setPlayerReady(store, { roomId: lobby.id, playerId: id, ready: true });
-    }
-    await startRoom(store, { roomId: lobby.id, playerId: HOST_ID });
-    let room = await updateProgress(store, progressOf(lobby.id, HOST_ID, lobby.seed), Date.now());
-    for (const id of PLAYER_IDS) {
-      if (id === P(1)) continue;
-      room = await eliminatePlayer(store, eliminateReq(room, id, 300));
-    }
-    expect(room.status).toBe('finished');
-    expect(room.winnerPlayerId).toBe(P(1));
-
-    const settled = await settleRoomBet(store, room.id, HOST_ID);
-    expect(settled.bet?.status).toBe('settled');
-    const winnerEntry = settled.bet?.participants.find((p) => p.playerId === P(1));
-    expect(winnerEntry?.payoutSats ?? 0).toBeGreaterThan(0);
-
-    const result = evaluateHardTest(evidenceFrom(settled, {
-      config: { ...baseConfig, withMockedBet: true },
-    }));
-    expect(result.checks.find((c) => c.name === 'betConserved')?.pass).toBe(true);
-    expect(result.checks.find((c) => c.name === 'singleWinner')?.pass).toBe(true);
-    expect(result.checks.find((c) => c.name === 'noHang')?.pass).toBe(true);
   });
 });
 

@@ -37,8 +37,6 @@ export interface HardTestHost {
   poll(): Promise<void>;
   /** Arranca la ronda (startOnlineRoom). */
   startRound(): Promise<void>;
-  /** Prende/apaga el mock de Luna en el server (endpoint dev). */
-  setLunaMock(on: boolean): Promise<void>;
   createBet(stakeSats: number): Promise<void>;
   /** Refresca la apuesta (sincroniza depósitos y, si la sala terminó, liquida). */
   refreshBet(): Promise<void>;
@@ -138,28 +136,12 @@ export class HardTestRun {
     }
     this.host.setAutoplay(true);
 
-    if (this.config.withMockedBet) {
-      this.setPhase('Creando apuesta (mock)…');
-      await this.host.setLunaMock(true);
-      await this.host.poll();
-      try {
-        await this.host.createBet(this.config.stakeSats);
-        await this.host.refreshBet();
-      } catch (error) {
-        this.errors.push(`apuesta: ${String(error).slice(0, 160)}`);
-      }
-    }
-
     this.setPhase('Arrancando ronda…');
     await this.host.poll();
     await this.host.startRound();
 
     await this.observeRound();
 
-    // Si la sala terminó con apuesta, un refresh final liquida (paga al ganador o reembolsa).
-    if (this.config.withMockedBet && this.host.getRoom()?.status === 'finished') {
-      await this.host.refreshBet().catch((error) => this.errors.push(`liquidación: ${String(error).slice(0, 160)}`));
-    }
     await this.host.poll().catch(() => {});
 
     const finalRoom = this.host.getRoom();

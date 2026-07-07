@@ -13,8 +13,6 @@ import type {
   LunaNegraEnterRequest,
   LunaNegraEnterResponse,
   RoomBetActionRequest,
-  RoomBetDepositInvoiceRequest,
-  OnlineBetDepositInvoiceResponse,
   OnlineErrorResponse,
   SubmitScoreRequest,
   OnlineRoomResponse,
@@ -55,7 +53,6 @@ export interface OnlineClientApi {
   retryBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
   cancelBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
   settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
-  depositInvoice(request: RoomBetDepositInvoiceRequest): Promise<OnlineBetDepositInvoiceResponse>;
   setReady(request: ReadyRequest): Promise<OnlineRoomResponse>;
   startRoom(request: StartRoomRequest): Promise<OnlineRoomResponse>;
   restartRoom(request: RestartRoomRequest): Promise<OnlineRoomResponse>;
@@ -117,10 +114,6 @@ export class OnlineClient implements OnlineClientApi {
 
   settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
     return this.post('/api/bets/settle', request);
-  }
-
-  depositInvoice(request: RoomBetDepositInvoiceRequest): Promise<OnlineBetDepositInvoiceResponse> {
-    return this.post('/api/bets/deposit-invoice', request);
   }
 
   setReady(request: ReadyRequest): Promise<OnlineRoomResponse> {

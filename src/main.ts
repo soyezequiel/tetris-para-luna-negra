@@ -372,7 +372,6 @@ const HARD_TEST_BOT_CADENCE_FRAMES = 8;
 // Config elegida en el panel dev (qué caminos activar + apuesta mock).
 const hardTestConfig = {
   scenarios: { hostDisconnect: true, playerAbandon: true, doubleKo: true },
-  withMockedBet: true,
 };
 // DUELO LOCAL: sesión del modo 1v1 en la misma compu (overlay propio). Mientras
 // está activa, el loop principal queda en pausa (ver loopBody).
@@ -1862,8 +1861,7 @@ function handleOverlayClick(event: MouseEvent): void {
     }
     if (action === 'hard-test-toggle') {
       const key = control.dataset.key ?? '';
-      if (key === 'withMockedBet') hardTestConfig.withMockedBet = !hardTestConfig.withMockedBet;
-      else if (key === 'hostDisconnect' || key === 'playerAbandon' || key === 'doubleKo') {
+      if (key === 'hostDisconnect' || key === 'playerAbandon' || key === 'doubleKo') {
         hardTestConfig.scenarios[key] = !hardTestConfig.scenarios[key];
       }
       overlayState.lastDevBot = '';
@@ -1978,9 +1976,6 @@ function handleOverlayClick(event: MouseEvent): void {
   }
   if (action === 'online-bet-webln') {
     void payOnlineBetWithExtension(control.dataset.invoice ?? '');
-  }
-  if (action === 'online-bet-sign-zap') {
-    void signAndGenerateBetDeposit();
   }
   if (action === 'online-bet-claim-webln') {
     void claimOnlineBetWithExtension(control.dataset.lnurl ?? '');
@@ -4127,9 +4122,6 @@ async function startHardTest(): Promise<void> {
     setAutoplay: (on) => { autoPlayState.accessGranted = on; autoPlayState.enabled = on; },
     poll: () => pollOnlineRoom(),
     startRound: () => startOnlineRoom(),
-    setLunaMock: async (on) => {
-      await fetch(`/api/hard-test/luna-mock?on=${on ? '1' : '0'}`, { method: 'POST' }).catch(() => {});
-    },
     createBet: async (stakeSats) => {
       const room = roomState.current;
       if (!room) throw new Error('sin sala');
@@ -4162,7 +4154,6 @@ async function startHardTest(): Promise<void> {
       // poll seguiría golpeando /api/bets/refresh — que daría 500 con el mock ya apagado.
       resetOnlineRoomState();
       goToMenu();
-      await host.setLunaMock(false);
     },
     sendReport: async (result) => {
       if (!webhookUrl) return { ok: false, detail: 'falta VITE_HARD_TEST_WEBHOOK_URL en .env.local' };
@@ -4186,7 +4177,6 @@ async function startHardTest(): Promise<void> {
   const config = {
     playerCount: 8,
     scenarios: { ...hardTestConfig.scenarios },
-    withMockedBet: hardTestConfig.withMockedBet,
     stakeSats: DEFAULT_ONLINE_BET_STAKE_SATS,
   };
   const run = new HardTestRun(host, config, () => { overlayState.lastDevBot = ''; renderDevBotOverlay(); });
@@ -4748,164 +4738,6 @@ async function payOnlineBetWithExtension(bolt11: string): Promise<void> {
   }
 }
 
-// Firma el depósito v2 (zap NIP-57) y genera el invoice. El depósito SIEMPRE es un
-// zap anclado al contrato: Luna nos manda el 9734 SIN firmar (`depositZapRequest`),
-// el jugador lo firma con su identidad Nostr y el backend lo reenvía al callback
-// LNURL-pay para obtener el bolt11. Ese invoice compromete el zap (description hash),
-// así que después se puede pagar por QR o con la extensión y sigue siendo un zap
-// real; Luna publica el recibo 9735 al detectar el pago. Tras firmar, adoptamos la
-// sala (que ya trae el `bolt11`) y el render muestra el QR + pago con extensión.
-async function signAndGenerateBetDeposit(): Promise<void> {
-  const bet = roomState.current?.bet;
-  if (!bet || betState.paying) return;
-  const myEntry = myBetEntry(bet);
-  if (!myEntry || myEntry.depositStatus === 'paid') return;
-  if (myEntry.bolt11) return; // ya hay invoice emitido: no re-firmamos
-  const template = myEntry.depositZapRequest;
-  const callback = myEntry.depositCallback;
-  if (!template || !callback) {
-    onlineNetState.error = 'El depósito por zap no está disponible; usá «Pagar en Luna Negra».';
-    return;
-  }
-
-  const depositFlowStartedAt = performance.now();
-  let signer = getActiveSigner();
-  const hadActiveSigner = !!signer;
-  void sendBetPaymentDiagnosticReport('deposit-sign-start', {
-    reason: 'handles-ready',
-    hasActiveSigner: hadActiveSigner,
-    hasCommentTemplate: !!myEntry.participationComment,
-  });
-  betState.paying = true;
-  betState.paymentPhase = 'restoring';
-  if (!signer) signer = await restoreSigner();
-  const signerElapsedMs = performance.now() - depositFlowStartedAt;
-  if (!signer) {
-    void sendBetPaymentDiagnosticReport('deposit-signer-missing', {
-      reason: 'restoreSigner-returned-null',
-      signerElapsedMs,
-      hadActiveSigner,
-    });
-    onlineNetState.error = 'No hay un firmante Nostr activo para firmar el depósito.';
-    betState.paying = false;
-    betState.paymentPhase = 'idle';
-    reopenLoginGate();
-    return;
-  }
-
-  betState.paymentPhase = 'signing';
-  const invoiceStartedAt = performance.now();
-  try {
-    // El zap tiene que firmarlo la MISMA identidad del participante (Luna lo valida:
-    // signed.pubkey === part.pubkey). Chequeamos contra la sesión Nostr para dar un
-    // error claro antes de molestar al firmante.
-    const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
-    const identityPubkey = lunaState.identity?.pubkey?.trim().toLowerCase();
-    if (identityPubkey && signerPubkey !== identityPubkey) {
-      onlineNetState.error = 'El firmante activo no coincide con tu sesión Nostr.';
-      void sendBetPaymentDiagnosticReport('deposit-signer-mismatch', {
-        reason: 'signer-pubkey-mismatch',
-        signerElapsedMs,
-        hadActiveSigner,
-      });
-      return;
-    }
-    void sendBetPaymentDiagnosticReport('deposit-signer-ready', {
-      reason: 'signer-pubkey-ok',
-      signerElapsedMs,
-      hadActiveSigner,
-    });
-    const zapSignStartedAt = performance.now();
-    const signed = await signer.signEvent(template);
-    const zapSignElapsedMs = performance.now() - zapSignStartedAt;
-    void sendBetPaymentDiagnosticReport('deposit-zap-signed', {
-      reason: 'signEvent-9734-resolved',
-      signerElapsedMs,
-      zapSignElapsedMs,
-      sinceStartMs: performance.now() - depositFlowStartedAt,
-    });
-    // Comentario de participación (opcional): si Luna lo mandó, lo firmamos con la
-    // MISMA identidad y lo adjuntamos. Si el jugador gana, el premio se zapea a este
-    // comentario (queda como zap recibido en su perfil). Si la firma falla, seguimos
-    // sin él: el depósito no debe bloquearse (el premio caería al post del contrato).
-    let signedComment: typeof signed | undefined;
-    let commentSignElapsedMs: number | null = null;
-    const commentTemplate = myEntry.participationComment;
-    if (commentTemplate) {
-      try {
-        const commentSignStartedAt = performance.now();
-        signedComment = await signer.signEvent(commentTemplate);
-        commentSignElapsedMs = performance.now() - commentSignStartedAt;
-      } catch {
-        signedComment = undefined;
-      }
-    }
-    if (commentTemplate) {
-      void sendBetPaymentDiagnosticReport('deposit-comment-signed', {
-        reason: signedComment ? 'signEvent-comment-resolved' : 'signEvent-comment-failed',
-        signerElapsedMs,
-        zapSignElapsedMs,
-        commentSignElapsedMs,
-        sinceStartMs: performance.now() - depositFlowStartedAt,
-      });
-    }
-    const depositInvoiceStartedAt = performance.now();
-    betState.paymentPhase = 'invoice';
-    void sendBetPaymentDiagnosticReport('deposit-invoice-request', {
-      reason: 'calling-depositInvoice',
-      signerElapsedMs,
-      zapSignElapsedMs,
-      commentSignElapsedMs,
-      hasSignedComment: !!signedComment,
-      sinceStartMs: performance.now() - depositFlowStartedAt,
-    });
-    const response = await onlineClient.depositInvoice({
-      roomId: roomState.current!.id,
-      playerId: identityState.player.id,
-      signedZapRequest: signed,
-      signedComment,
-    });
-    syncOnlineClock(response.serverNowMs);
-    adoptOnlineRoom(response.room);
-    const updatedBetId = response.room.bet?.betId ?? bet.betId;
-    invoiceIssuedAtByBetId.set(updatedBetId, Date.now());
-    void sendBetPaymentDiagnosticReport('invoice-issued', {
-      reason: 'depositInvoice-resolved',
-      invoiceElapsedMs: performance.now() - invoiceStartedAt,
-      signerElapsedMs,
-      zapSignElapsedMs,
-      commentSignElapsedMs,
-      depositInvoiceElapsedMs: performance.now() - depositInvoiceStartedAt,
-      sinceStartMs: performance.now() - depositFlowStartedAt,
-      hasSignedComment: !!signedComment,
-      invoiceChars: response.invoice.length,
-      invoicePrefix: response.invoice.slice(0, 12),
-    });
-    sendBetPaymentDiagnosticReportAfterFrames('invoice-render-check', {
-      reason: 'post-render-after-invoice',
-      signerElapsedMs,
-      zapSignElapsedMs,
-      commentSignElapsedMs,
-      depositInvoiceElapsedMs: performance.now() - depositInvoiceStartedAt,
-      sinceStartMs: performance.now() - depositFlowStartedAt,
-      invoiceChars: response.invoice.length,
-      invoicePrefix: response.invoice.slice(0, 12),
-    });
-    onlineNetState.error = null;
-    armOnlineBetFastPolling();
-  } catch (error) {
-    onlineNetState.error = onlineErrorText(error);
-    void sendBetPaymentDiagnosticReport('invoice-error', {
-      reason: onlineNetState.error.slice(0, 240),
-      invoiceElapsedMs: performance.now() - invoiceStartedAt,
-      signerElapsedMs,
-      sinceStartMs: performance.now() - depositFlowStartedAt,
-    });
-  } finally {
-    betState.paying = false;
-  }
-}
-
 // Cobra el pozo del ganador invitado con la extensión WebLN (LNURL-withdraw). El
 // éxito se confirma por el polling normal (payoutStatus → claimed); acá solo
 // disparamos el retiro y aceleramos la detección.
@@ -5338,45 +5170,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   if (roundChanged || roomRestarted) resetOnlineRuntimeForNextRound();
   maybeSubmitOnlineWin(protectedRoom);
   maybeCelebratePayout();
-  void maybeAutoSignBetDeposit();
   wakeIncompleteOwnDepositHandles(protectedRoom);
-}
-
-// Evita solapar intentos de auto-firma: adoptOnlineRoom corre en cada poll y
-// maybeAutoSignBetDeposit es async (puede esperar a restoreSigner ~3s por la extensión),
-// así que sin este flag se dispararían varias restauraciones/firmas concurrentes.
-let autoSignBetInFlight = false;
-
-// Auto-preparacion del deposito: si el jugador usa signer local, en cuanto Luna
-// manda el 9734 sin firmar + callback generamos el invoice en background. NIP-07/46
-// queda manual para no abrir prompts inesperados desde un poll.
-//
-// El firmante puede NO estar activo en memoria cuando llegan los handles (al entrar
-// fresco a la sala, restoreSigner del arranque corre en paralelo y quizá no resolvió
-// todavía): por eso intentamos restaurarlo acá. Si aún no hay ninguno, NO marcamos el
-// guard y reintentamos en el próximo poll (cuando el firmante ya esté disponible); sin
-// abrir el gate de login solos. Una vez que hay firmante, marcamos autoSignedBetId para
-// firmar UNA sola vez por apuesta: si la firma falla o el usuario la rechaza, el botón
-// manual queda de fallback.
-async function maybeAutoSignBetDeposit(): Promise<void> {
-  const bet = roomState.current?.bet;
-  if (!bet || bet.status !== 'pending_deposits') return;
-  if (betState.paying || autoSignBetInFlight) return;
-  if (betState.autoSignedBetId === bet.betId) return;
-  const myEntry = myBetEntry(bet);
-  if (!myEntry || myEntry.depositStatus !== 'pending') return;
-  if (myEntry.bolt11) return; // ya hay invoice emitido: no re-firmamos
-  if (!myEntry.depositZapRequest || !myEntry.depositCallback) return; // sin handles de zap todavía
-  autoSignBetInFlight = true;
-  try {
-    const signer = getActiveSigner() ?? (await restoreSigner());
-    if (!signer) return; // sin firmante todavía: reintentamos en el próximo poll
-    if (signer.method !== 'local') return; // NIP-07/46 puede abrir prompts: queda manual
-    betState.autoSignedBetId = bet.betId;
-    await signAndGenerateBetDeposit();
-  } finally {
-    autoSignBetInFlight = false;
-  }
 }
 
 // Festejo de "cobraste el pozo": solo cuando el pago realmente terminó. Un
@@ -6823,7 +6617,6 @@ function renderHardTestPanel(): string {
         ${toggle('hostDisconnect', 'host se cae', sc.hostDisconnect)}
         ${toggle('playerAbandon', 'abandono', sc.playerAbandon)}
         ${toggle('doubleKo', 'doble-KO', sc.doubleKo)}
-        ${toggle('withMockedBet', 'apuesta (mock)', hardTestConfig.withMockedBet)}
       </div>
       <div style="display:flex;gap:6px;">${runBtn}</div>
       ${statusHtml}
@@ -8408,26 +8201,6 @@ function depositStatusLabel(status: RoomBetParticipant['depositStatus']): string
   }
 }
 
-function depositPreparationLabel(): string {
-  switch (betState.paymentPhase) {
-    case 'restoring': return 'Buscando firmante...';
-    case 'signing': return 'Firmando deposito...';
-    case 'invoice': return 'Generando invoice...';
-    case 'paying': return 'Pagando...';
-    case 'claiming': return 'Cobrando...';
-    default: return 'Preparando pago...';
-  }
-}
-
-function isPreparingDepositInvoice(): boolean {
-  return betState.paying
-    && (
-      betState.paymentPhase === 'restoring'
-      || betState.paymentPhase === 'signing'
-      || betState.paymentPhase === 'invoice'
-    );
-}
-
 function betParticipantName(participant: RoomBetParticipant): string {
   const player = roomState.current?.players.find((candidate) => candidate.npub === participant.npub || candidate.id === participant.playerId);
   if (player) return player.name;
@@ -8537,29 +8310,16 @@ function renderOnlineBetPanel(host: boolean): string {
   `).join('');
 
   const myDepositPending = !!myEntry && myEntry.depositStatus === 'pending';
-  // v2 (zaps): el depósito SIEMPRE es un zap NIP-57 anclado al contrato, así que hay
-  // que FIRMARLO. Dos estados:
-  //   - Con `bolt11` ya emitido (el jugador ya firmó, acá o en un intento previo):
-  //     mostramos el QR + pago con extensión + copiar invoice. Ese invoice compromete
-  //     el zap vía description hash, así que cualquier método lo paga como zap real.
-  //   - Sin invoice todavía pero con el 9734 sin firmar (`depositZapRequest`) + su
-  //     callback: el jugador firma en el juego con un click y ahí generamos el invoice.
-  // `payUrl` (firmar y pagar en la web de Luna) queda de fallback siempre.
+  // NGE v2: el depósito llega como `bolt11` directo del escrow (get_bet). Con invoice
+  // mostramos el QR + pago con extensión + copiar; mientras el escrow lo emite, un
+  // estado de espera con refresh manual. No hay firma de zap ni LNURL del lado del
+  // jugador (murió con el corte a NGE v2).
   const myDepositBolt11 = myEntry?.bolt11 || '';
-  const myDepositZapRequest = myEntry?.depositZapRequest ?? null;
-  const myDepositCallback = myEntry?.depositCallback || '';
-  const myPayUrl = myEntry?.payUrl || '';
-  const canZapInGame = !!myDepositZapRequest && !!myDepositCallback;
-  const preparingDepositInvoice = isPreparingDepositInvoice();
-  const depositPreparationText = depositPreparationLabel();
-  const payLunaBtn = myPayUrl
-    ? `<a class="dash-action-btn accent online-bet-pay" href="${escapeHtml(myPayUrl)}" target="_blank" rel="noopener" data-ui-action="online-bet-pay">Pagar en Luna Negra</a>`
-    : '';
 
   let myDeposit = '';
   if (myDepositPending && myDepositBolt11) {
-    // Invoice de zap ya emitido: cualquier método (QR, extensión, copiar) lo paga y
-    // Luna publica el recibo 9735 del depósito al detectar el pago.
+    // Invoice del depósito: cualquier método (QR, extensión, copiar) lo paga; el escrow
+    // detecta el pago con su nodo y marca el asiento como fondeado.
     myDeposit = `
       <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>
@@ -8567,40 +8327,14 @@ function renderOnlineBetPanel(host: boolean): string {
         ${renderBetInvoiceQr(myDepositBolt11)}
         <div class="online-bet-deposit-actions">
           <button class="dash-action-btn accent online-bet-webln" type="button" data-ui-action="online-bet-webln" data-invoice="${escapeHtml(myDepositBolt11)}"${betState.paying ? ' disabled' : ''}>⚡ Pagar con extensión</button>
-          ${payLunaBtn}
           <button class="dash-copy-btn" type="button" data-ui-action="online-bet-copy" data-copy="${escapeHtml(myDepositBolt11)}">Copiar invoice</button>
         </div>
       </div>
     `;
-  } else if (myDepositPending && canZapInGame) {
-    // Falta firmar: con un click el jugador firma el 9734 con su identidad Nostr y
-    // generamos el invoice (después aparecen el QR + pago con extensión).
-    myDeposit = `
-      <div class="online-bet-deposit" data-bet-deposit>
-        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
-        <p class="online-bet-note">${preparingDepositInvoice ? 'Firma lista: estamos generando el invoice Lightning.' : 'Tu deposito es un zap anclado al contrato. Preparalo con tu identidad Nostr para generar el QR o pagar con extension.'}</p>
-        <div class="online-bet-deposit-actions">
-          <button class="dash-action-btn accent online-bet-sign-zap" type="button" data-ui-action="online-bet-sign-zap"${betState.paying ? ' disabled' : ''}>${betState.paying ? depositPreparationText : 'Preparar pago'}</button>
-          ${payLunaBtn}
-        </div>
-      </div>
-    `;
-  } else if (myDepositPending && myPayUrl) {
-    // Sin firmante Nostr en el juego (o Luna no mandó el 9734): que firme y pague su
-    // zap en la web de Luna Negra.
-    myDeposit = `
-      <div class="online-bet-deposit" data-bet-deposit>
-        <strong>Depositá tus ${bet.stakeSats} sats:</strong>
-        <p class="online-bet-note">Firmá y pagá tu depósito (zap ⚡) en Luna Negra.</p>
-        <div class="online-bet-deposit-actions">
-          ${payLunaBtn}
-        </div>
-      </div>
-    `;
   } else if (myDepositPending) {
-    // Depósito pendiente pero Luna todavía no devolvió handles (bolt11/zap/payUrl): o
-    // se está preparando, o falló con un motivo real (NWC sin permiso, relay caído).
-    // El polling reintenta solo; ofrecemos además un refresh manual.
+    // Depósito pendiente pero el escrow todavía no devolvió el bolt11: o se está
+    // emitiendo, o falló con un motivo real (NWC sin permiso, relay caído). El polling
+    // reintenta solo; ofrecemos además un refresh manual.
     myDeposit = `
       <div class="online-bet-deposit" data-bet-deposit>
         <strong>Depositá tus ${bet.stakeSats} sats:</strong>

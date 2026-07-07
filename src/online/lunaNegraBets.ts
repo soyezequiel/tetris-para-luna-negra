@@ -16,7 +16,6 @@ import type {
   RoomBetStatus,
   UnsignedZapRequestTemplate,
 } from './protocol';
-import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
 import { alertBetDepositHandlesIncomplete } from './moneyPathAlert.js';
 import {
   pubkeyFromNpub,
@@ -28,11 +27,6 @@ import {
   cancelNgeBet,
   type NgeConfig,
 } from './lunaNegraNge.js';
-
-interface LunaConfig {
-  baseUrl: string;
-  apiKey: string;
-}
 
 interface LunaEconomics {
   stakeSats?: number;
@@ -89,43 +83,22 @@ interface LunaBetCreateWithSeats extends LunaBetCreate {
 export const LUNA_NEGRA_MIN_STAKE_SATS = 1;
 export const LUNA_NEGRA_MAX_STAKE_SATS = 1_000_000;
 
-function readApiConfig(): LunaConfig {
-  // Mock dev (hard test): sentinels válidos para no exigir env de Luna real.
-  if (isLunaMockEnabled()) return { baseUrl: 'mock://luna-negra', apiKey: 'mock' };
-  const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
-  const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
-  if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
-  // Modo eventos: no se usa la API key (todo va por eventos + LNURL de la tienda). Solo
-  // hace falta la base URL para armar el LNURL-pay. En el resto de los modos, la key es
-  // obligatoria.
-  if (!apiKey && !ngeConnected()) {
-    throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
-  }
-  return { baseUrl, apiKey };
-}
-
 export function isLunaNegraApiConfigured(): boolean {
-  if (isLunaMockEnabled()) return true;
-  if (ngeConnected()) return true;
-  return Boolean(
-    (process.env.LUNA_NEGRA_BASE_URL ?? '').trim()
-    && (process.env.LUNA_NEGRA_API_KEY ?? '').trim(),
-  );
+  // NGE-only: el único gate de apuestas es la credencial del escrow.
+  return ngeConnected();
 }
 
-// Base URL pública de Luna Negra para armar links web (claim de retiro del ganador
-// invitado en v2). En mock no hay página real, así que devolvemos ''.
+// Base URL pública de Luna Negra para armar el link web de reclamo de retiro del
+// ganador invitado (v2). Deriva de LUNA_NEGRA_BASE_URL (la usa también el social).
 function publicLunaBaseUrl(): string {
-  if (isLunaMockEnabled()) return '';
   return (process.env.LUNA_NEGRA_BASE_URL ?? '').replace(/\/+$/, '');
 }
 
 /**
- * URL de reclamo del cobro para un ganador invitado en v2. El escrow por zaps paga
- * automático (`payoutStatus: paid`) al ganador con dirección Lightning; el invitado
- * sin destino queda `withdraw_pending` y reclama su parte en la página hosteada
- * `<base>/apuestas/{betId}` (con su sesión). Esa página NO viene por la API key, así
- * que la construimos acá. Devuelve null si no aplica o si no hay base URL (mock).
+ * URL de reclamo del cobro para un ganador invitado en v2. El escrow paga automático
+ * (`payoutStatus: paid`) al ganador con dirección Lightning; el invitado sin destino
+ * queda `withdraw_pending` y reclama su parte en la página hosteada
+ * `<base>/apuestas/{betId}` (con su sesión). Devuelve null si no aplica o no hay base URL.
  */
 function withdrawClaimUrl(
   betId: string,
@@ -138,68 +111,6 @@ function withdrawClaimUrl(
   if (!isWithdraw) return null;
   const base = publicLunaBaseUrl();
   return base ? `${base}/apuestas/${encodeURIComponent(betId)}` : null;
-}
-
-// Error de la API de Luna Negra que conserva el status HTTP real y el código de
-// error del proveedor, para poder clasificar fallos (transitorio vs. definitivo)
-// sin perder información al aplanar el status que ve el resto de la app.
-class LunaApiError extends OnlineRoomError {
-  constructor(
-    message: string,
-    status: number,
-    readonly httpStatus: number,
-    readonly code: string | null,
-  ) {
-    super(message, status);
-  }
-}
-
-// Traduce los códigos de error propios de la v2 (zaps) a mensajes claros para el
-// panel; el resto conserva el mensaje del proveedor. Reemplazo duro a v2: si el
-// deploy no la tiene habilitada, todas las apuestas fallan, así que el motivo tiene
-// que ser legible y no un 502 mudo.
-function messageForBetError(
-  code: string | null,
-  providerMessage: string | undefined,
-  httpStatus: number,
-): string {
-  if (code === 'BETS_V2_DISABLED') {
-    return 'Las apuestas por zaps no están habilitadas en este servidor de Luna Negra.';
-  }
-  if (code === 'ANCHOR_PUBLISH_FAILED') {
-    return 'No se pudo anclar el contrato de la apuesta en Nostr; reintentá en un momento.';
-  }
-  return providerMessage ?? `Luna Negra respondió ${httpStatus}.`;
-}
-
-async function lunaFetch<T>(
-  config: LunaConfig,
-  path: string,
-  init: { method: 'GET' | 'POST'; body?: unknown } = { method: 'GET' },
-): Promise<T> {
-  // Mock dev (hard test): el money-path corre en memoria, sin red.
-  if (isLunaMockEnabled()) return lunaMockFetch<T>(path, init);
-  const headers: Record<string, string> = {
-    authorization: `Bearer ${config.apiKey}`,
-  };
-  if (init.body !== undefined) headers['content-type'] = 'application/json';
-
-  // Los GET de apuesta vienen con `Cache-Control: no-store` desde Luna Negra, así
-  // que no hace falta cache-busting ni headers anti-caché del lado del cliente.
-  const response = await fetch(`${config.baseUrl}${path}`, {
-    method: init.method,
-    headers,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-  });
-  const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | T | null;
-  if (!response.ok) {
-    const err = payload as { error?: { code?: string; message?: string } } | null;
-    const code = err?.error?.code ?? null;
-    const message = messageForBetError(code, err?.error?.message, response.status);
-    const status = response.status === 400 || response.status === 409 ? response.status : 502;
-    throw new LunaApiError(message, status, response.status, code);
-  }
-  return payload as T;
 }
 
 function nonNegInt(value: unknown, fallback = 0): number {
@@ -359,72 +270,31 @@ function sameRoomBetForRefresh(current: RoomBet, next: RoomBet): boolean {
 }
 
 function settlementErrorMessage(error: unknown): string {
-  const code = error instanceof LunaApiError ? error.code : null;
-  const message = error instanceof Error ? error.message : 'No se pudo reportar el resultado a Luna Negra.';
-  return code ? `${code}: ${message}` : message;
-}
-
-// GET /api/v2/bets/{id} trae todo en una sola llamada: estado, economía y, por
-// participante, su depósito + los handles de pago (bolt11/lnurl/payUrl).
-async function getBetDetail(config: LunaConfig, betId: string): Promise<LunaBetDetail | null> {
-  return lunaFetch<LunaBetDetail>(
-    config,
-    `/api/v2/bets/${encodeURIComponent(betId)}`,
-  ).catch(() => null);
+  return error instanceof Error ? error.message : 'No se pudo reportar el resultado a Luna Negra.';
 }
 
 /**
- * Cancela/anula una apuesta según el modo: por NGE v2 (RPC `cancel_bet` pre-fondeo,
- * o `report_result` con ganadores vacío si ya está fondeada) o por REST legacy
- * (`POST /cancel`). Devuelve una promesa para conservar el `.catch` de los callers.
+ * Cancela/anula la apuesta en el escrow NGE v2: pre-fondeo → RPC `cancel_bet`
+ * (reembolsa a quien ya pagó); ya fondeada → `report_result` con ganadores vacío
+ * (anulación con reembolso a todos, spec §8, ya que `cancel_bet` daría NOT_CANCELLABLE).
  */
-async function cancelBetRemote(
-  config: LunaConfig | null,
-  betId: string,
-  funded = false,
-): Promise<unknown> {
-  if (ngeConnected()) {
-    // NGE v2: pre-fondeo total → cancel_bet (reembolsa a quien ya pagó). Ya fondeada
-    // → cancel_bet devolvería NOT_CANCELLABLE, así que la única salida es report_result
-    // con ganadores vacío = anulación con reembolso a todos (spec §8).
-    if (funded) await reportNgeResult(betId, []);
-    else await cancelNgeBet(betId);
-    return undefined;
-  }
-  if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
-  return lunaFetch(config, `/api/v2/bets/${encodeURIComponent(betId)}/cancel`, { method: 'POST' });
+async function cancelBetRemote(betId: string, funded = false): Promise<void> {
+  if (funded) await reportNgeResult(betId, []);
+  else await cancelNgeBet(betId);
 }
 
 /**
- * Trae el detalle de la apuesta según el modo: por NGE v2 (sintetizado desde el RPC
- * `get_bet` del escrow) o por REST legacy (GET del detalle). `npubs`/`stakeSats` solo
- * se usan en modo NGE (el REST los trae en la respuesta).
+ * Trae el detalle de la apuesta sintetizado desde el RPC `get_bet` del escrow (la
+ * fuente de verdad). `npubs`/`stakeSats` fijan el mapeo asiento→jugador y el pozo.
  */
 async function fetchDetail(
-  config: LunaConfig | null,
   betId: string,
   npubs: string[],
   stakeSats: number,
   previous?: RoomBet | null,
 ): Promise<LunaBetDetail | null> {
-  if (ngeConnected()) {
-    const ngeConfig = await fetchNgeConfig();
-    return synthesizeNgeBetDetail(betId, npubs, stakeSats, ngeConfig, previous);
-  }
-  if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
-  return getBetDetail(config, betId);
-}
-
-/**
- * Radiografía temporal del pago de una apuesta (GET /api/v2/bets/{id}/timeline):
- * timestamps crudos (creación, fondeo, liquidación; depósito y payout por
- * participante; asientos del ledger) + duraciones por fase ya calculadas por Luna.
- * La usa el reporte del botón "Reportar problema" para adjuntar el desglose y poder
- * ver EN QUÉ FASE se fue el tiempo. Best-effort: devuelve null ante cualquier fallo
- * (Luna no configurada, red, apuesta no encontrada) — el reporte se manda igual.
- */
-export async function fetchBetPaymentTimeline(_betId: string): Promise<unknown | null> {
-  return null;
+  const ngeConfig = await fetchNgeConfig();
+  return synthesizeNgeBetDetail(betId, npubs, stakeSats, ngeConfig, previous);
 }
 
 export async function createBetForRoom(
@@ -454,7 +324,7 @@ export async function createBetForRoom(
   // docs/nge-migration.md y el SDK vendorizado en src/online/nge.ts.
   if (ngeConnected() && players.every((player) => !!player.npub)) {
     const created = await createBetViaNge(room, stakeSats, input.victoryCondition);
-    return finalizeCreatedBet(store, room, null, created, gameId || 'nge', input.playerId, nowMs);
+    return finalizeCreatedBet(store, room, created, gameId || 'nge', input.playerId, nowMs);
   }
 
   throw new OnlineRoomError('El servidor usa el modo NGE que requiere que todos los jugadores tengan cuenta.', 400);
@@ -574,7 +444,6 @@ async function synthesizeNgeBetDetail(
 async function finalizeCreatedBet(
   store: RoomStore,
   room: OnlineRoom,
-  config: LunaConfig | null,
   create: LunaBetCreateWithSeats,
   gameId: string,
   createdByPlayerId: string,
@@ -592,7 +461,7 @@ async function finalizeCreatedBet(
     players.forEach((player) => playerIdByNpub.set(player.npub as string, player.id));
   }
 
-  const detail = await fetchDetail(config, create.betId, npubs, create.stakeSats ?? 0);
+  const detail = await fetchDetail(create.betId, npubs, create.stakeSats ?? 0);
   const bet = buildRoomBet(room, npubs, create, detail, null, createdByPlayerId, nowMs, playerIdByNpub);
   const updatedRoom = await setRoomBet(store, room.id, bet, nowMs);
   // Reporte de diagnóstico a Discord: si algún participante quedó sin forma de depositar
@@ -637,8 +506,7 @@ export async function syncBetParticipantsWithRoom(
     );
     if (!someoneLeft) return room;
     try {
-      const config = ngeConnected() ? null : readApiConfig();
-      await cancelBetRemote(config, bet.betId, bet.status === 'funded');
+      await cancelBetRemote(bet.betId, bet.status === 'funded');
       const refreshed = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
       if (refreshed.bet && isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
       // El GET no reflejó la cancelación: forzamos el estado terminal igual (como
@@ -661,8 +529,7 @@ export async function syncBetParticipantsWithRoom(
   if (desired.length < 2) return room;
 
   try {
-    const config = ngeConnected() ? null : readApiConfig();
-    await cancelBetRemote(config, bet.betId).catch(() => undefined);
+    await cancelBetRemote(bet.betId).catch(() => undefined);
     // Limpiamos la apuesta local antes de recrear: createBetForRoom rechaza
     // salas con una apuesta no terminal.
     await setRoomBet(store, room.id, null, nowMs);
@@ -682,11 +549,10 @@ export async function refreshRoomBet(
   nowMs = Date.now(),
   options: { reportResult?: boolean } = {},
 ): Promise<OnlineRoom> {
-  const config = ngeConnected() ? null : readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) return room;
   const npubs = room.bet.participants.map((p) => p.npub);
-  const detail = await fetchDetail(config, room.bet.betId, npubs, room.bet.stakeSats, room.bet);
+  const detail = await fetchDetail(room.bet.betId, npubs, room.bet.stakeSats, room.bet);
   if (!detail) return room;
   const bet = buildRoomBet(
     room,
@@ -714,163 +580,28 @@ export async function refreshRoomBet(
   return (await maybeReportRoomBetResult(store, updated, nowMs)) ?? updated;
 }
 
-/**
- * Emite el invoice de depósito v2 a partir del zap request 9734 ya firmado por el
- * jugador. Reenvía el 9734 al callback LNURL-pay del participante (`?amount&nostr=`)
- * y devuelve el bolt11. Ese invoice compromete el zap vía description hash, así que
- * pagarlo con extensión o escaneando el QR queda como un zap NIP-57 real: Luna Negra
- * publica el recibo 9735 al detectar el pago. Idempotente: si ya hay invoice emitido
- * lo devuelve sin re-firmar.
- */
-export async function generateBetDepositInvoice(
-  store: RoomStore,
-  roomId: string,
-  playerId: string,
-  signedZapRequest: unknown,
-  signedComment: unknown = null,
-  nowMs = Date.now(),
-): Promise<{ room: OnlineRoom; invoice: string }> {
-  let room = await loadRoom(store, roomId);
-  let bet = room.bet;
-  if (!bet) throw new OnlineRoomError('No hay apuesta activa para depositar.', 404);
-  let participant = bet.participants.find((p) => p.playerId === playerId);
-  if (!participant) throw new OnlineRoomError('No sos participante de esta apuesta.', 403);
-  if (participant.depositStatus === 'paid') {
-    throw new OnlineRoomError('Ya depositaste.', 409);
-  }
-
-  // Auto-sanado contra un RoomStore desactualizado: si el snapshot local no tiene ni
-  // invoice ni callback (p.ej. la firma anterior YA emitió el invoice en Luna pero la
-  // respuesta no alcanzó a persistirse acá, o un poll viejo dejó al asiento sin
-  // handles), refetcheamos el detalle desde Luna —la fuente de verdad— antes de tirar
-  // "no disponible". Luna suele devolver ya el `bolt11` del depósito y el flujo sigue
-  // sin re-firmar. Si Luna está caída, `refreshRoomBet` devuelve la sala sin tocar.
-  if (!participant.bolt11 && !participant.depositCallback) {
-    room = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
-    participant = room.bet?.participants.find((p) => p.playerId === playerId) ?? participant;
-    bet = room.bet ?? bet;
-  }
-
-  // Idempotencia: si ya se emitió el invoice (este intento u otro previo), reusamos
-  // el mismo en vez de pedir otro. El QR y "pagar con extensión" pagan ese bolt11.
-  if (participant.bolt11) return { room, invoice: participant.bolt11 };
-
-  const callback = participant.depositCallback;
-  if (!callback) {
-    throw new OnlineRoomError(
-      'El depósito por zap no está disponible ahora; usá «Pagar en Luna Negra».',
-      409,
-    );
-  }
-  if (!signedZapRequest || typeof signedZapRequest !== 'object') {
-    throw new OnlineRoomError('Falta el zap request firmado.', 400);
-  }
-
-  const amountMsat = bet.stakeSats * 1000;
-  const invoice = await fetchDepositInvoiceFromCallback(callback, amountMsat, signedZapRequest);
-
-  // Persistimos el invoice en la apuesta local para que el QR sobreviva a los polls
-  // (el próximo GET a Luna ya lo devuelve en `bolt11` y reconcilia). Sin esto, el
-  // panel volvería a pedir la firma en el siguiente refresh.
-  const participants = bet.participants.map((p) =>
-    p.playerId === playerId ? { ...p, bolt11: invoice } : p,
-  );
-  const updated: RoomBet = { ...bet, participants, updatedAtServerMs: nowMs };
-  const updatedRoom = await setRoomBet(store, room.id, updated, nowMs);
-  // Comentario de participacion (best-effort): no bloquea la respuesta del invoice.
-  if (signedComment && typeof signedComment === 'object' && participant.commentCallback) {
-    void postParticipationComment(participant.commentCallback, signedComment).catch(() => undefined);
-  }
-  return { room: updatedRoom, invoice };
-}
-
-// GET al callback LNURL-pay del participante con el 9734 firmado. Devuelve el bolt11
-// (`pr`) o lanza con el motivo del proveedor. El callback responde 200 incluso en
-// error (formato LNURL `{ status:"ERROR", reason }`), así que el éxito lo determina
-// la presencia de `pr`, no el status HTTP.
-async function fetchDepositInvoiceFromCallback(
-  callback: string,
-  amountMsat: number,
-  signedZapRequest: unknown,
-): Promise<string> {
-  if (isLunaMockEnabled()) {
-    // El mock auto-fondea los depósitos, así que este camino no debería ejecutarse.
-    throw new OnlineRoomError('Depósito por zap no soportado en modo mock.', 409);
-  }
-  let url: URL;
-  try {
-    url = new URL(callback);
-  } catch {
-    throw new OnlineRoomError('El callback de depósito de Luna Negra es inválido.', 502);
-  }
-  url.searchParams.set('amount', String(amountMsat));
-  url.searchParams.set('nostr', JSON.stringify(signedZapRequest));
-
-  let response: Response;
-  try {
-    response = await fetch(url.toString());
-  } catch {
-    throw new OnlineRoomError('No se pudo contactar a Luna Negra para emitir el invoice.', 502);
-  }
-  const payload = (await response.json().catch(() => null)) as
-    | { pr?: string; reason?: string }
-    | null;
-  if (!payload || typeof payload.pr !== 'string' || !payload.pr) {
-    const reason = payload?.reason ?? `Luna Negra respondió ${response.status}.`;
-    throw new OnlineRoomError(reason, 502);
-  }
-  return payload.pr;
-}
-
-// POST del comentario de participación firmado al endpoint de Luna Negra
-// (`/api/v2/bets/{id}/comment`). La FIRMA del evento es la autenticación (no hay API
-// key). Best-effort: cualquier fallo se ignora arriba — el depósito ya salió y sin
-// comentario el premio simplemente cae al post del contrato (fallback previo).
-async function postParticipationComment(callback: string, signedComment: unknown): Promise<void> {
-  if (isLunaMockEnabled()) return;
-  let url: URL;
-  try {
-    url = new URL(callback);
-  } catch {
-    return;
-  }
-  await fetch(url.toString(), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ signedComment }),
-  });
-}
-
 export async function cancelRoomBet(
   store: RoomStore,
   roomId: string,
   playerId: string,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const config = ngeConnected() ? null : readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) throw new OnlineRoomError('No hay apuesta para cancelar.', 404);
   if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede cancelar la apuesta.', 403);
   if (['settled', 'cancelled', 'expired', 'refunded'].includes(room.bet.status)) {
     return room;
   }
-  // Cancela según el modo: por NGE v2 (RPC cancel_bet pre-fondeo, o report_result con
-  // ganadores vacío si ya está fondeada), por REST legacy POST /cancel.
-  const cancelResult = await cancelBetRemote(config, room.bet.betId, room.bet.status === 'funded');
-  // El cancel ya salió. refreshRoomBet es best-effort: si el GET de detalle falla (red,
-  // 404 transitorio) devuelve la sala sin tocar el bet → la apuesta quedaría "pendiente"
-  // pese a estar cancelada, sin error visible. Forzamos el estado terminal que devolvió el
-  // propio cancel para que el host vea la cancelación igual. En NGE el cancel no devuelve
-  // `status` (es void), así que caemos al default 'cancelled'.
+  // NGE v2: cancel_bet pre-fondeo, o report_result con ganadores vacío si ya está
+  // fondeada (anulación con reembolso).
+  await cancelBetRemote(room.bet.betId, room.bet.status === 'funded');
+  // El cancel ya salió. refreshRoomBet es best-effort: si el get_bet falla (red, 404
+  // transitorio) devuelve la sala sin tocar el bet → la apuesta quedaría "pendiente"
+  // pese a estar cancelada. Forzamos el estado terminal para que el host vea la
+  // cancelación igual (el RPC de cancel no devuelve estado).
   const refreshed = await refreshRoomBet(store, roomId, nowMs);
   if (!refreshed.bet || isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
-  const reportedStatus =
-    cancelResult && typeof cancelResult === 'object'
-      ? (cancelResult as { status?: string }).status
-      : undefined;
-  const reported = asBetStatus(reportedStatus, 'cancelled');
-  const terminalStatus = isTerminalRoomBetStatus(reported) ? reported : 'cancelled';
-  const bet: RoomBet = { ...refreshed.bet, status: terminalStatus, updatedAtServerMs: nowMs };
+  const bet: RoomBet = { ...refreshed.bet, status: 'cancelled', updatedAtServerMs: nowMs };
   return setRoomBet(store, roomId, bet, nowMs);
 }
 
@@ -880,7 +611,6 @@ export async function retryRoomBetInvoiceGeneration(
   playerId: string,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  const config = ngeConnected() ? null : readApiConfig();
   const room = await loadRoom(store, roomId);
   const bet = room.bet;
   if (!bet) throw new OnlineRoomError('No hay apuesta para reintentar.', 404);
@@ -903,7 +633,7 @@ export async function retryRoomBetInvoiceGeneration(
   ));
   if (!hasInvoiceFailure) return refreshRoomBet(store, roomId, nowMs);
 
-  await cancelBetRemote(config, bet.betId).catch(() => undefined);
+  await cancelBetRemote(bet.betId).catch(() => undefined);
   await setRoomBet(store, room.id, null, nowMs);
   return createBetForRoom(store, {
     roomId: room.id,
@@ -923,7 +653,6 @@ export async function settleRoomBet(
   playerId: string,
   nowMs = Date.now(),
 ): Promise<OnlineRoom> {
-  if (!ngeConnected()) readApiConfig();
   const room = await loadRoom(store, roomId);
   if (!room.bet) throw new OnlineRoomError('No hay apuesta para liquidar.', 404);
   if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede liquidar la apuesta.', 403);
@@ -944,7 +673,6 @@ export async function maybeReportRoomBetResult(
   if (room.status !== 'finished') return null;
   if (bet.status !== 'funded') return null;
   if (!isLunaNegraApiConfigured()) return null;
-  const config = ngeConnected() ? null : readApiConfig();
   // Usamos los ganadores ya registrados en la apuesta si existen, o los calculamos y persistimos de inmediato
   let winners = bet.winnerNpubs;
   let updatedRoom = room;
@@ -957,23 +685,11 @@ export async function maybeReportRoomBetResult(
     updatedRoom = await setRoomBet(store, room.id, reportedBet, nowMs);
   }
 
-  // Dos caminos de reporte (winners vacío = empate/anulación → reembolso en todos):
-  //  - NGE v2: RPC report_result con los seatId ganadores (= npubs); el escrow liquida
-  //    y paga. La firma del request (credencial `C`) es la autenticación.
-  //  - REST legacy: mandamos { winners } y Luna firma con el oráculo que custodia.
+  // NGE v2: report_result por RPC con los seatId ganadores (= npubs que fijamos al
+  // crear la apuesta). El escrow liquida y paga; la firma del request (credencial `C`)
+  // es la autenticación. Vacío = empate/anulación → reembolso a todos.
   try {
-    if (ngeConnected()) {
-      // NGE v2: report_result por RPC. `winners` son los seatId (= npubs de los
-      // jugadores) que fijamos al crear la apuesta. Vacío = empate/anulación.
-      await reportNgeResult(bet.betId, winners);
-    } else {
-      if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
-      const body = { winners };
-      await lunaFetch(config, `/api/v2/bets/${encodeURIComponent(bet.betId)}/result`, {
-        method: 'POST',
-        body,
-      });
-    }
+    await reportNgeResult(bet.betId, winners);
   } catch (error) {
     // El reporte falló de verdad. El éxito —incluido re-reportar el mismo ganador—
     // vuelve 200 idempotente (`alreadyResolved`) y no entra acá; lo que llega son
@@ -1002,7 +718,7 @@ export async function maybeReportRoomBetResult(
     updatedAtServerMs: nowMs,
   };
   let updated = await setRoomBet(store, updatedRoom.id, reported, nowMs);
-  const detail = await fetchDetail(config, bet.betId, bet.participants.map((p) => p.npub), bet.stakeSats, updated.bet ?? bet);
+  const detail = await fetchDetail(bet.betId, bet.participants.map((p) => p.npub), bet.stakeSats, updated.bet ?? bet);
   if (detail) {
     const npubs = reported.participants.map((p) => p.npub);
     const synced = buildRoomBet(
@@ -1019,69 +735,3 @@ export async function maybeReportRoomBetResult(
   return updated;
 }
 
-// ───────────────────────── Webhook (auto-registro) ─────────────────────────
-
-interface LunaWebhookConfig {
-  url: string | null;
-  secret: string | null;
-}
-
-let cachedWebhookSecret: string | null = null;
-let webhookSetupDone = false;
-
-function webhookPath(): string {
-  return '/api/webhooks/luna-negra';
-}
-
-/**
- * Registra automáticamente la URL de webhook usando solo la API key y cachea el
- * secreto de firma. Memoizado por instancia. No requiere `LUNA_NEGRA_GAME_ID`.
- * `requestOrigin` es el origin público del deploy (ej. https://mi-tetris.vercel.app).
- */
-export async function ensureWebhookRegistered(requestOrigin: string): Promise<void> {
-  if (ngeConnected()) return;
-  if (webhookSetupDone || !isLunaNegraApiConfigured()) return;
-  webhookSetupDone = true;
-  try {
-    const config = readApiConfig();
-    const explicit = (process.env.LUNA_NEGRA_WEBHOOK_URL ?? '').trim().replace(/\/+$/, '');
-    // En previews de Vercel no pisamos la URL de producción salvo override explícito.
-    const allowFromRequest = process.env.VERCEL_ENV !== 'preview';
-    const desiredUrl = explicit || (allowFromRequest && requestOrigin ? `${requestOrigin}${webhookPath()}` : '');
-    if (!desiredUrl) return;
-
-    const current = await lunaFetch<LunaWebhookConfig>(config, '/api/v1/provider/webhook');
-    if (current.url === desiredUrl && current.secret) {
-      cachedWebhookSecret = current.secret;
-      return;
-    }
-    const updated = await lunaFetch<LunaWebhookConfig>(config, '/api/v1/provider/webhook', {
-      method: 'POST',
-      body: { url: desiredUrl },
-    });
-    cachedWebhookSecret = updated.secret;
-  } catch {
-    // Si falla el registro, el lobby igual refresca la apuesta por polling.
-    webhookSetupDone = false;
-  }
-}
-
-/**
- * Secreto para verificar la firma de los webhooks. Prioriza el override por env;
- * si no, lo obtiene/cachea desde Luna Negra con la API key (sin pegarlo a mano).
- */
-export async function getWebhookSecret(): Promise<string | null> {
-  if (ngeConnected()) return null;
-  const override = (process.env.LUNA_NEGRA_WEBHOOK_SECRET ?? '').trim();
-  if (override) return override;
-  if (cachedWebhookSecret) return cachedWebhookSecret;
-  if (!isLunaNegraApiConfigured()) return null;
-  try {
-    const config = readApiConfig();
-    const current = await lunaFetch<LunaWebhookConfig>(config, '/api/v1/provider/webhook');
-    cachedWebhookSecret = current.secret;
-    return cachedWebhookSecret;
-  } catch {
-    return null;
-  }
-}

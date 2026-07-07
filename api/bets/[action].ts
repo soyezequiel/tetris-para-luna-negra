@@ -1,13 +1,10 @@
 import type {
   CreateBetRequest,
   RoomBetActionRequest,
-  RoomBetDepositInvoiceRequest,
 } from '../../src/online/protocol.js';
 import {
   cancelRoomBet,
   createBetForRoom,
-  ensureWebhookRegistered,
-  generateBetDepositInvoice,
   refreshRoomBet,
   retryRoomBetInvoiceGeneration,
   settleRoomBet,
@@ -87,37 +84,18 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'create') {
       const body = await readJsonBody<CreateBetRequest>(request);
       alertContext = { roomId: body.roomId, playerId: body.playerId, stakeSats: body.stakeSats };
-      // El registro del webhook (round trips a Luna) no condiciona la creación de
-      // la apuesta, así que lo corremos EN PARALELO en vez de antes: en un cold
-      // start de Vercel esto solapa ~1 round trip que antes se serializaba.
-      // ensureWebhookRegistered nunca lanza (best-effort); si falla, el lobby
-      // igual refresca por polling.
-      const [room] = await Promise.all([
-        createBetForRoom(getBetRoomStore(), {
-          roomId: body.roomId,
-          playerId: body.playerId,
-          stakeSats: body.stakeSats,
-          victoryCondition: body.victoryCondition,
-        }),
-        ensureWebhookRegistered(new URL(request.url).origin),
-      ]);
+      const room = await createBetForRoom(getBetRoomStore(), {
+        roomId: body.roomId,
+        playerId: body.playerId,
+        stakeSats: body.stakeSats,
+        victoryCondition: body.victoryCondition,
+      });
       return sendJson(200, { room, serverNowMs: Date.now() });
     }
     if (action === 'refresh') {
       const body = await readJsonBody<RoomBetActionRequest>(request);
       const room = await refreshBetWithParticipantSync(body.roomId);
       return sendJson(200, { room, serverNowMs: Date.now() });
-    }
-    if (action === 'deposit-invoice') {
-      const body = await readJsonBody<RoomBetDepositInvoiceRequest>(request);
-      const { room, invoice } = await generateBetDepositInvoice(
-        getBetRoomStore(),
-        body.roomId,
-        body.playerId,
-        body.signedZapRequest,
-        body.signedComment,
-      );
-      return sendJson(200, { room, invoice, serverNowMs: Date.now() });
     }
     if (action === 'cancel') {
       const body = await readJsonBody<RoomBetActionRequest>(request);

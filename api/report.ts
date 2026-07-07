@@ -1,5 +1,4 @@
 import { handleApiError, handleNodeApi, sendJson } from '../src/online/vercelApi.js';
-import { fetchBetPaymentTimeline } from '../src/online/lunaNegraBets.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export { config } from '../src/online/vercelApi.js';
@@ -40,12 +39,6 @@ export async function POST(request: Request): Promise<Response> {
     const webhookUrl = webhookUrlForReportKind(report.kind);
     if (!webhookUrl) {
       return sendJson(503, { error: 'Reporte no configurado (falta webhook de Discord en el server).' });
-    }
-
-    const betId = typeof report.betWithdrawal?.betId === 'string' ? report.betWithdrawal.betId : null;
-    if (betId) {
-      const paymentTimeline = await fetchBetPaymentTimeline(betId).catch(() => null);
-      if (paymentTimeline) report.paymentTimeline = paymentTimeline as PaymentTimeline;
     }
 
     const content = buildDiscordSummary(report);

@@ -18,7 +18,6 @@ export interface HardTestScenarios {
 export interface HardTestConfig {
   playerCount: number;
   scenarios: HardTestScenarios;
-  withMockedBet: boolean;
   stakeSats: number;
 }
 
@@ -164,34 +163,6 @@ export function evaluateHardTest(ev: HardTestEvidence): HardTestResult {
       pass: winnerFrame >= topRivalFrame,
       detail: `ganador duró ${winnerFrame} frames vs. víctimas doble-KO ${topRivalFrame}`,
     });
-  }
-
-  // 6. Conservación del pozo (apuesta mock): payout + reembolsos cubren el pozo.
-  if (ev.config.scenarios && ev.config.withMockedBet) {
-    const bet = room?.bet ?? null;
-    if (!bet) {
-      checks.push({ name: 'betConserved', pass: false, detail: 'la apuesta mock no llegó a la sala final' });
-    } else if (bet.status === 'settled') {
-      const paidOut = bet.participants.reduce((sum, p) => sum + (p.payoutSats ?? 0), 0);
-      checks.push({
-        name: 'betConserved',
-        pass: paidOut > 0,
-        detail: `settled: pozo=${bet.potSats} sats, pagado al ganador=${paidOut} sats`,
-      });
-    } else if (bet.status === 'cancelled' || bet.status === 'refunded') {
-      const allRefunded = bet.participants.every((p) => p.depositStatus !== 'paid');
-      checks.push({
-        name: 'betConserved',
-        pass: allRefunded,
-        detail: `${bet.status}: depósitos reembolsados=${allRefunded}`,
-      });
-    } else {
-      checks.push({
-        name: 'betConserved',
-        pass: false,
-        detail: `la apuesta quedó en estado no terminal: ${bet.status}`,
-      });
-    }
   }
 
   // Errores capturados (window.onerror / unhandledrejection) hacen fallar la corrida.
