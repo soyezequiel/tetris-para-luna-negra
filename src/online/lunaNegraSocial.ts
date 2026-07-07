@@ -5,6 +5,7 @@ import type {
   LunaPresenceRequest,
   LunaLaunchRequest,
 } from './protocol';
+import { ngpEventsEnabled } from './lunaNegraNgp.js';
 
 // Capa social de Luna Negra (amigos, presencia, invitaciones).
 //
@@ -28,7 +29,10 @@ function readConfig(): LunaConfig {
   const baseUrl = (process.env.LUNA_NEGRA_BASE_URL ?? '').trim().replace(/\/+$/, '');
   const apiKey = (process.env.LUNA_NEGRA_API_KEY ?? '').trim();
   if (!baseUrl) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
-  if (!apiKey) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
+  // Modo eventos: la API key no se usa (config por terms, estado por relays); igual que
+  // lunaNegraBets.ts. Sin este bypass, todos los endpoints sociales explotan con 500
+  // cuando LUNA_NEGRA_API_KEY no está configurada (su caso normal en modo eventos).
+  if (!apiKey && !ngpEventsEnabled()) throw new OnlineRoomError('LUNA_NEGRA_API_KEY no está configurada.', 500);
   return { baseUrl, apiKey };
 }
 
