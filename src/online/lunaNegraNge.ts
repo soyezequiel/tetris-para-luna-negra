@@ -1,22 +1,22 @@
-import { getPublicKey } from 'nostr-tools/pure';
 import { nip19 } from 'nostr-tools';
-import { NGE, parseNgeUri, NgeError, type NgeBinding } from './nge.js';
+import {
+  NGE,
+  parseNgeUri,
+  NgeError,
+  type NgeBet,
+  type NgeCreateBetResult,
+  type NgeSeatInput,
+} from './nge.js';
 import { OnlineRoomError } from './roomService.js';
-import { parseBetStateEvent, type NgpBetState } from './lunaNegraEvents.js';
 
-// Núcleo NGE-backed de las apuestas de Tetris (Opción B: corte duro, sin path
-// custodial legacy). Reemplaza a lunaNegraNgp.ts + la config de lunaNegraEvents.ts:
-// una sola credencial `NGE_CONNECTION` (la "NWC del escrow") aporta la clave de
-// servicio (=oráculo), los relays, el escrow, y —vía el `bind` event— la
-// coordenada del juego, el lud16 de depósito, los límites y las comisiones.
-//
-// El SDK (`nge.ts`, vendorizado de Luna) hace la coordinación del escrow (contrato
-// 1339, resultado 1341, estado 31340). Lo que NO cubre el SDK y se queda en Tetris:
-// el 9734 de depósito con el tag `lnurl` que exige Luna (buildDepositZapRequestTemplate
-// en lunaNegraEvents.ts) y toda la plomería de sala/pozo.
+// Núcleo NGE-backed de las apuestas de Tetris — NGE v2 (RPC cifrado estilo NWC).
+// Una sola credencial `NGE_CONNECTION` (la "NWC del escrow") aporta la pubkey del
+// escrow, los relays y la clave del cliente `C`. Ya no hay contrato 1339 propio,
+// ni estado público 31340, ni 9734 de depósito: el escrow devuelve un `bolt11`
+// por asiento en `create_bet`/`get_bet`, y la config (límites/comisiones) se pide
+// por `get_info`. Ver docs/nge-migration.md y sdk NGE v2 (`nge.ts`).
 
-/** ¿Está configurada la credencial NGE? Es el ÚNICO gate (reemplaza el trío
- *  ngpBetsEnabled/ngpKeylessEnabled/ngpEventsEnabled). */
+/** ¿Está configurada la credencial NGE? Es el ÚNICO gate del modo apuestas. */
 export function ngeConnected(): boolean {
   return Boolean((process.env.NGE_CONNECTION ?? '').trim());
 }
@@ -38,99 +38,71 @@ async function withNge<T>(fn: (nge: NGE) => Promise<T>): Promise<T> {
   }
 }
 
-/** Pubkey (hex) del oráculo/servicio derivada del `secret` de NGE_CONNECTION, o null
- *  si no hay credencial. Para diagnóstico y matcheo del 1341 en relays. */
-export function ngeOraclePubkey(): string | null {
+/** Pubkey (hex) del cliente `C` derivada del `secret` de NGE_CONNECTION, o null si
+ *  no hay credencial. Para diagnóstico. */
+export function ngeClientPubkey(): string | null {
   if (!ngeConnected()) return null;
   try {
-    return getPublicKey(parseNgeUri(process.env.NGE_CONNECTION!.trim()).secretKey);
+    return parseNgeUri(process.env.NGE_CONNECTION!.trim()).clientPubkey;
   } catch {
     return null;
   }
 }
 
-// Binding cacheado por instancia serverless (coordenada/lud16/límites no cambian
-// salvo que Luna reemita la credencial o toque la economía). Reemplaza termsCache
-// de lunaNegraEvents.ts y la lectura de LUNA_NEGRA_GAME_COORD.
-let bindingCache: (NgeBinding & { escrowPubkey: string; oraclePubkey: string }) | null = null;
-
 export interface NgeConfig {
-  escrowPubkey: string;
-  oraclePubkey: string;
-  gameCoord: string;
-  lud16: string;
   minStakeSats: number;
   maxStakeSats: number;
   feePct: number;
+  devFeePct: number;
 }
 
-/** Resuelve la config del `bind` event (una lectura de relays, cacheada). Reemplaza
- *  fetchNgpConfig (REST) y fetchNgpTerms (evento terms) + LUNA_NEGRA_GAME_COORD. */
+// Config cacheada por instancia serverless (límites/comisiones no cambian salvo que
+// Luna toque la economía). Antes salía del `bind` event; ahora de `get_info`.
+let configCache: NgeConfig | null = null;
+
+/** Resuelve la config del escrow por RPC `get_info` (una llamada, cacheada). */
 export async function fetchNgeConfig(): Promise<NgeConfig> {
-  if (bindingCache) return toConfig(bindingCache);
+  if (configCache) return configCache;
   return withNge(async (nge) => {
-    const b = await nge.binding().catch((e) => {
-      const msg = e instanceof NgeError ? e.message : 'no se pudo leer el bind del escrow';
+    const info = await nge.getInfo().catch((e) => {
+      const msg = e instanceof NgeError ? e.message : 'no se pudo leer get_info del escrow';
       throw new OnlineRoomError(`NGE: ${msg}`, 502);
     });
-    if (!b.lud16) {
-      throw new OnlineRoomError('El bind del escrow no trae lud16 de depósito.', 502);
-    }
-    bindingCache = { ...b, escrowPubkey: nge.escrowPubkey, oraclePubkey: nge.oraclePubkey };
-    return toConfig(bindingCache);
+    configCache = {
+      minStakeSats: info.minStakeSats,
+      maxStakeSats: info.maxStakeSats,
+      feePct: info.feePct,
+      devFeePct: info.devFeePct,
+    };
+    return configCache;
   });
 }
 
-function toConfig(b: NgeBinding & { escrowPubkey: string; oraclePubkey: string }): NgeConfig {
-  return {
-    escrowPubkey: b.escrowPubkey,
-    oraclePubkey: b.oraclePubkey,
-    gameCoord: b.gameCoord,
-    lud16: b.lud16 as string,
-    minStakeSats: b.minStakeSats,
-    maxStakeSats: b.maxStakeSats,
-    feePct: b.feePct ?? 0,
-  };
-}
-
 export function resetNgeConfigCacheForTests(): void {
-  bindingCache = null;
-}
-
-/** LNURL-pay de la tienda derivado del lud16 del bind (`name@host` →
- *  `https://host/.well-known/lnurlp/name`). Reemplaza storeLnurlUrl(baseUrl): el
- *  riel de depósito ya no depende de LUNA_NEGRA_BASE_URL. */
-export function ngeStoreLnurlUrl(lud16: string): string {
-  const [name, host] = lud16.split('@');
-  if (!name || !host) throw new OnlineRoomError(`lud16 inválido en el bind: ${lud16}`, 502);
-  return `https://${host}/.well-known/lnurlp/${name}`;
+  configCache = null;
 }
 
 /**
- * Crea la apuesta: firma+publica el contrato 1339 con la clave de NGE_CONNECTION y
- * devuelve el id del contrato (= betId de tracking; Luna lo materializa lazy al
- * primer depósito). Reemplaza publishBareNgpContract + createBetViaEvents.
+ * Crea la apuesta por RPC `create_bet`. `seats` lleva el `seatId` estable del juego
+ * (usamos el npub del jugador) + su `pubkey`; el escrow devuelve `betId` y un
+ * `bolt11` por asiento para mostrar como QR. Reemplaza al 1339 + 9734 de v1.
  */
-export async function createNgeContract(params: {
-  participantPubkeys: string[];
+export async function createNgeBet(params: {
+  seats: NgeSeatInput[];
   stakeSats: number;
-  victoryCondition: string | undefined;
-  roomId: string;
-}): Promise<string> {
+  victoryCondition?: string;
+}): Promise<NgeCreateBetResult> {
   return withNge(async (nge) => {
     try {
-      const res = await nge.createBet({
-        seats: params.participantPubkeys,
+      return await nge.createBet({
+        seats: params.seats,
         stakeSats: params.stakeSats,
-        windowSec: 3600,
-        roomId: params.roomId,
-        memo: params.victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
+        condition: params.victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
       });
-      return res.contractId;
     } catch (e) {
       if (e instanceof NgeError) {
-        // STAKE_OUT_OF_RANGE u otros límites del bind → 400; publish → 502.
-        const status = e.code === 'STAKE_OUT_OF_RANGE' ? 400 : 502;
+        // STAKE_OUT_OF_RANGE u otros límites → 400; el resto (relay/escrow) → 502.
+        const status = e.code === 'STAKE_OUT_OF_RANGE' || e.code === 'BAD_REQUEST' ? 400 : 502;
         throw new OnlineRoomError(`NGE: ${e.message}`, status);
       }
       throw e;
@@ -138,40 +110,35 @@ export async function createNgeContract(params: {
   });
 }
 
-/** Reporta el ganador: firma+publica el 1341 con la clave de oráculo (=secret).
- *  Vacío = empate → reembolso. Reemplaza signNgpResultEvent + publishSignedEventToRelays. */
-export async function reportNgeResult(contractId: string, winnerNpubs: string[]): Promise<void> {
+/** Estado + asientos (con `bolt11`/`payout`) de la apuesta por RPC `get_bet`. Es la
+ *  fuente de verdad; se pollea. Devuelve null si el escrow no la conoce todavía. */
+export async function fetchNgeBet(betId: string): Promise<NgeBet | null> {
+  return withNge(async (nge) => nge.getBet(betId).catch(() => null));
+}
+
+/** Reporta el ganador por `seatId` (= npub del jugador). Vacío = empate/anulación →
+ *  reembolso. El escrow liquida y paga. Reemplaza al 1341 de v1. */
+export async function reportNgeResult(betId: string, winnerSeatIds: string[]): Promise<void> {
   await withNge(async (nge) => {
     try {
-      await nge.reportResult(contractId, { winners: winnerNpubs });
+      await nge.reportResult(betId, winnerSeatIds);
     } catch (e) {
-      const msg = e instanceof NgeError ? e.message : 'no se pudo publicar el resultado';
+      const msg = e instanceof NgeError ? e.message : 'no se pudo reportar el resultado';
       throw new OnlineRoomError(`NGE: ${msg}`, 502);
     }
   });
 }
 
-/** Anula la apuesta (reembolso) publicando un 1341 status=void. Con clave única
- *  (secret=oráculo=servicio) alcanza UN evento. Reemplaza publishNgpVoidEvents. */
-export async function voidNgeBet(contractId: string): Promise<void> {
+/** Cancela la apuesta PRE-fondeo por RPC `cancel_bet` (reembolsa a quien ya pagó).
+ *  Una vez fondeada, la salida es `reportNgeResult` con ganadores vacío. */
+export async function cancelNgeBet(betId: string): Promise<void> {
   await withNge(async (nge) => {
     try {
-      await nge.voidBet(contractId);
+      await nge.cancelBet(betId);
     } catch (e) {
-      const msg = e instanceof NgeError ? e.message : 'no se pudo publicar la anulación';
+      const msg = e instanceof NgeError ? e.message : 'no se pudo cancelar la apuesta';
       throw new OnlineRoomError(`NGE: ${msg}`, 502);
     }
-  });
-}
-
-/** Estado de la apuesta desde el 31340 (autor=escrow, d=contrato) leído por el SDK
- *  en los relays de la credencial. Reusa el parser puro de lunaNegraEvents. Devuelve
- *  null si Luna todavía no publicó estado. Reemplaza fetchNgpBetState. */
-export async function fetchNgeBetState(contractId: string): Promise<NgpBetState | null> {
-  return withNge(async (nge) => {
-    const s = await nge.state(contractId).catch(() => null);
-    if (!s) return null;
-    return parseBetStateEvent(s.event);
   });
 }
 

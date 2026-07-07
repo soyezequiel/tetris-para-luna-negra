@@ -19,19 +19,13 @@ import type {
 import { isLunaMockEnabled, lunaMockFetch } from './lunaNegraMock.js';
 import { alertBetDepositHandlesIncomplete } from './moneyPathAlert.js';
 import {
-  mapNgpStatusToRoomStatus,
-  buildDepositZapRequestTemplate,
-  encodeLnurl,
-} from './lunaNegraEvents.js';
-import {
   pubkeyFromNpub,
   ngeConnected,
   fetchNgeConfig,
-  fetchNgeBetState,
-  createNgeContract,
+  fetchNgeBet,
+  createNgeBet,
   reportNgeResult,
-  voidNgeBet,
-  ngeStoreLnurlUrl,
+  cancelNgeBet,
   type NgeConfig,
 } from './lunaNegraNge.js';
 
@@ -380,14 +374,21 @@ async function getBetDetail(config: LunaConfig, betId: string): Promise<LunaBetD
 }
 
 /**
- * Cancela/anula una apuesta según el modo: por EVENTOS (publica el/los 1341 `status=void`
- * que Luna necesita según el estado —void del retador pre-fondeo y/o void del oráculo ya
- * fondeada— vía `publishNgpVoidEvents`) o por REST (`POST /cancel`). `betId` en modo
- * eventos == id del 1339. Devuelve una promesa para conservar el `.catch` de los callers.
+ * Cancela/anula una apuesta según el modo: por NGE v2 (RPC `cancel_bet` pre-fondeo,
+ * o `report_result` con ganadores vacío si ya está fondeada) o por REST legacy
+ * (`POST /cancel`). Devuelve una promesa para conservar el `.catch` de los callers.
  */
-async function cancelBetRemote(config: LunaConfig | null, betId: string): Promise<unknown> {
+async function cancelBetRemote(
+  config: LunaConfig | null,
+  betId: string,
+  funded = false,
+): Promise<unknown> {
   if (ngeConnected()) {
-    await voidNgeBet(betId);
+    // NGE v2: pre-fondeo total → cancel_bet (reembolsa a quien ya pagó). Ya fondeada
+    // → cancel_bet devolvería NOT_CANCELLABLE, así que la única salida es report_result
+    // con ganadores vacío = anulación con reembolso a todos (spec §8).
+    if (funded) await reportNgeResult(betId, []);
+    else await cancelNgeBet(betId);
     return undefined;
   }
   if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
@@ -395,9 +396,9 @@ async function cancelBetRemote(config: LunaConfig | null, betId: string): Promis
 }
 
 /**
- * Trae el detalle de la apuesta según el modo: por EVENTOS (sintetizado desde el 31340
- * de relays, con handles de depósito armados localmente) o por REST (GET del detalle).
- * `npubs`/`stakeSats` solo se usan en modo eventos (el REST los trae en la respuesta).
+ * Trae el detalle de la apuesta según el modo: por NGE v2 (sintetizado desde el RPC
+ * `get_bet` del escrow) o por REST legacy (GET del detalle). `npubs`/`stakeSats` solo
+ * se usan en modo NGE (el REST los trae en la respuesta).
  */
 async function fetchDetail(
   config: LunaConfig | null,
@@ -446,14 +447,11 @@ export async function createBetForRoom(
 
   const players = room.players;
 
-  // NGP (escrow transparente): cuando está habilitado Y todos los jugadores tienen
-  // npub, el contrato se publica como evento Nostr kind:1339 firmado por Tetris y
-  // Luna lo materializa (POST /from-contract), en vez de crearlo por API. El pozo
-  // con invitados (sin npub) NO puede ir por acá —NGP puro no tiene asientos
-  // custodiados— así que cae al camino legacy. Ver docs/nostr-games-protocol-apuestas.md.
-  // NGE (corte duro, Opción B): con la credencial `NGE_CONNECTION` y todos los
-  // asientos con npub (los invitados obtienen una cuenta efímera local, Paso 3), la
-  // apuesta va 100% por eventos con el SDK NGE. Es la vía preferida sobre el NGP viejo.
+  // NGE v2 (corte duro): con la credencial `NGE_CONNECTION` y todos los asientos con
+  // npub (los invitados obtienen una cuenta efímera local, Paso 3), la apuesta va 100%
+  // por el RPC cifrado del escrow (create_bet / get_bet / report_result). El SDK NGE
+  // devuelve un bolt11 por asiento; sin credencial NGE, no hay apuestas. Ver
+  // docs/nge-migration.md y el SDK vendorizado en src/online/nge.ts.
   if (ngeConnected() && players.every((player) => !!player.npub)) {
     const created = await createBetViaNge(room, stakeSats, input.victoryCondition);
     return finalizeCreatedBet(store, room, null, created, gameId || 'nge', input.playerId, nowMs);
@@ -469,81 +467,99 @@ export async function createBetForRoom(
 
 
 /**
- * NGE: crea la apuesta publicando el 1339 con la credencial `NGE_CONNECTION`. Solo
- * se llama cuando todos los asientos tienen npub (validado por el caller; los
- * invitados obtienen una cuenta efímera local — Paso 3). Devuelve la misma forma
- * que `POST /api/v2/bets`: `betId` = id del contrato (tracking).
+ * NGE v2: crea la apuesta por RPC `create_bet`. Solo se llama cuando todos los
+ * asientos tienen npub (validado por el caller; los invitados obtienen una cuenta
+ * efímera local — Paso 3). El `seatId` estable = npub del jugador, así el mapeo
+ * asiento→jugador de v1 se conserva en `get_bet`/`report_result`. Devuelve la misma
+ * forma que `POST /api/v2/bets`: `betId` = id que asigna el escrow.
  */
 async function createBetViaNge(
   room: OnlineRoom,
   stakeSats: number,
   victoryCondition: string | undefined,
 ): Promise<LunaBetCreateWithSeats> {
-  const participantPubkeys = room.players.map((player) => pubkeyFromNpub(player.npub as string));
-  const contractId = await createNgeContract({
-    participantPubkeys,
-    stakeSats,
-    victoryCondition,
-    roomId: room.id,
-  });
-  return { betId: contractId, stakeSats };
+  const seats = room.players.map((player) => ({
+    seatId: player.npub as string,
+    // `pubkey` habilita que el escrow pueda pagar el premio a esa identidad si tiene
+    // lud16; sin destino, el ganador cobra por QR de retiro (cascada §8).
+    pubkey: pubkeyFromNpub(player.npub as string),
+  }));
+  const created = await createNgeBet({ seats, stakeSats, victoryCondition });
+  return { betId: created.betId, stakeSats };
+}
+
+/** Estado público NGE v2 → vocabulario RoomBetStatus de Tetris. `resolving` (entre
+ *  funded y settled, mientras el escrow liquida) se muestra como `funded`: sigue en
+ *  vuelo, no es terminal. */
+function mapNgeStatusToRoomStatus(status: string): RoomBetStatus {
+  switch (status) {
+    case 'funded':
+    case 'resolving':
+      return 'funded';
+    case 'settled':
+      return 'settled';
+    case 'cancelled':
+      return 'cancelled';
+    case 'expired':
+      return 'expired';
+    case 'refunded':
+      return 'refunded';
+    case 'pending_deposits':
+    default:
+      return 'pending_deposits';
+  }
 }
 
 /**
- * NGE: sintetiza el `LunaBetDetail` desde el 31340 (config del `bind`, no de
- * `terms`+baseUrl). Espejo de `synthesizeEventsBetDetail` alimentado por la
- * credencial NGE. Se borra junto con el path de eventos legacy en el Paso 5.
+ * NGE v2: sintetiza el `LunaBetDetail` desde `get_bet` (la fuente de verdad del
+ * escrow). Mapea cada asiento (seatId = npub) a su participante: el `bolt11` vigente
+ * si no pagó —el escrow lo re-emite—, el estado de depósito, y el payout
+ * (tier/sats/status) si ya se liquidó. Reemplaza a la síntesis desde el 31340 de v1.
  */
 async function synthesizeNgeBetDetail(
-  contractId: string,
+  betId: string,
   npubs: string[],
   stakeSats: number,
   config: NgeConfig,
   previous?: RoomBet | null,
 ): Promise<LunaBetDetail> {
-  const state = await fetchNgeBetState(contractId).catch(() => null);
-  const lnurl = encodeLnurl(ngeStoreLnurlUrl(config.lud16));
-  const freshTemplate = buildDepositZapRequestTemplate({
-    contractId,
-    storePubkey: config.escrowPubkey,
-    stakeSats,
-    storeLnurlBech32: lnurl,
-  });
-  const storeCallback = ngeStoreLnurlUrl(config.lud16);
-  const depositedByPubkey = new Set(state?.depositedPubkeys ?? []);
+  const bet = await fetchNgeBet(betId).catch(() => null);
+  const bySeatId = new Map((bet?.seats ?? []).map((s) => [s.seatId, s]));
   const prevByNpub = new Map((previous?.participants ?? []).map((p) => [p.npub, p]));
   const potTargetSats = stakeSats * npubs.length;
-  const potSats = stakeSats * depositedByPubkey.size;
-  const feeSats = Math.floor(potTargetSats * (config.feePct / 100));
-  const netPayoutSats = Math.max(0, potTargetSats - feeSats);
+  const feePctTotal = config.feePct + config.devFeePct;
 
   const participants = npubs.map((npub) => {
-    const pubkey = pubkeyFromNpub(npub);
-    const paid = depositedByPubkey.has(pubkey);
-    const payout = state?.payouts[pubkey];
+    const seat = bySeatId.get(npub);
     const prev = prevByNpub.get(npub);
+    const deposited = seat?.deposited ?? false;
+    const payout = seat?.payout ?? null;
     return {
       npub,
-      depositStatus: paid ? 'paid' : 'pending',
-      bolt11: paid ? null : (prev?.bolt11 ?? null),
-      depositZapRequest: paid ? null : (prev?.depositZapRequest ?? freshTemplate),
-      depositCallback: paid ? null : (prev?.depositCallback ?? storeCallback),
+      depositStatus: deposited ? 'paid' : 'pending',
+      // get_bet re-emite el bolt11 vigente para asientos sin pagar; conservamos el
+      // previo como respaldo si un poll llega sin él.
+      bolt11: deposited ? null : (seat?.bolt11 ?? prev?.bolt11 ?? null),
       payoutStatus: payout?.status ?? 'none',
       payoutSats: payout ? payout.sats : null,
-      payoutKind: payout?.kind ?? null,
+      payoutKind: payout?.tier ?? null,
     };
   });
 
+  const paidCount = participants.filter((p) => p.depositStatus === 'paid').length;
+  const potSats = bet?.potSats ?? stakeSats * paidCount;
+  const feeSats = Math.floor(potTargetSats * (feePctTotal / 100));
+
   return {
-    betId: contractId,
-    status: state ? mapNgpStatusToRoomStatus(state.status) : 'pending_deposits',
+    betId,
+    status: bet ? mapNgeStatusToRoomStatus(bet.status) : 'pending_deposits',
     stakeSats,
     potSats,
     potTargetSats,
     feeSats,
-    feePct: config.feePct,
-    netPayoutSats,
-    depositsReceived: depositedByPubkey.size,
+    feePct: feePctTotal,
+    netPayoutSats: Math.max(0, potTargetSats - feeSats),
+    depositsReceived: paidCount,
     depositsTotal: npubs.length,
     participants,
   };
@@ -622,7 +638,7 @@ export async function syncBetParticipantsWithRoom(
     if (!someoneLeft) return room;
     try {
       const config = ngeConnected() ? null : readApiConfig();
-      await cancelBetRemote(config, bet.betId);
+      await cancelBetRemote(config, bet.betId, bet.status === 'funded');
       const refreshed = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
       if (refreshed.bet && isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
       // El GET no reflejó la cancelación: forzamos el estado terminal igual (como
@@ -838,15 +854,14 @@ export async function cancelRoomBet(
   if (['settled', 'cancelled', 'expired', 'refunded'].includes(room.bet.status)) {
     return room;
   }
-  // Cancela según el modo: por EVENTOS publica un 1341 `void` firmado por el retador
-  // (Luna reembolsa), por REST hace POST /cancel. `cancelRoomBet` llamaba al REST directo,
-  // que en modo eventos (sin API key) devolvía 401 → el host nunca podía cancelar.
-  const cancelResult = await cancelBetRemote(config, room.bet.betId);
-  // El cancel ya salió (POST o 1341). refreshRoomBet es best-effort: si el GET de detalle
-  // falla (red, 404 transitorio) devuelve la sala sin tocar el bet → la apuesta quedaría
-  // "pendiente" pese a estar cancelada, sin error visible. Forzamos el estado terminal que
-  // devolvió el propio cancel para que el host vea la cancelación igual. En modo eventos el
-  // resultado es un booleano del publish (sin `status`), así que caemos al default 'cancelled'.
+  // Cancela según el modo: por NGE v2 (RPC cancel_bet pre-fondeo, o report_result con
+  // ganadores vacío si ya está fondeada), por REST legacy POST /cancel.
+  const cancelResult = await cancelBetRemote(config, room.bet.betId, room.bet.status === 'funded');
+  // El cancel ya salió. refreshRoomBet es best-effort: si el GET de detalle falla (red,
+  // 404 transitorio) devuelve la sala sin tocar el bet → la apuesta quedaría "pendiente"
+  // pese a estar cancelada, sin error visible. Forzamos el estado terminal que devolvió el
+  // propio cancel para que el host vea la cancelación igual. En NGE el cancel no devuelve
+  // `status` (es void), así que caemos al default 'cancelled'.
   const refreshed = await refreshRoomBet(store, roomId, nowMs);
   if (!refreshed.bet || isTerminalRoomBetStatus(refreshed.bet.status)) return refreshed;
   const reportedStatus =
@@ -942,15 +957,14 @@ export async function maybeReportRoomBetResult(
     updatedRoom = await setRoomBet(store, room.id, reportedBet, nowMs);
   }
 
-  // Tres caminos de reporte (winners vacío = empate/anulación → reembolso en todos):
-  //  - EVENTOS: firmamos el 1341 y lo PUBLICAMOS a relays (sin la REST). En modo eventos
-  //    `bet.betId` == id del 1339, que va como `e` para que ngp-bet-result-sync lo ubique.
-  //  - KEYLESS (BYO): firmamos el 1341 y lo mandamos como { event } al endpoint (sin API key).
-  //  - Gestionado: mandamos { winners } y Luna firma con el oráculo que custodia.
+  // Dos caminos de reporte (winners vacío = empate/anulación → reembolso en todos):
+  //  - NGE v2: RPC report_result con los seatId ganadores (= npubs); el escrow liquida
+  //    y paga. La firma del request (credencial `C`) es la autenticación.
+  //  - REST legacy: mandamos { winners } y Luna firma con el oráculo que custodia.
   try {
     if (ngeConnected()) {
-      // NGE: el SDK firma el 1341 con la clave de la credencial y lo publica; el
-      // `e`=contractId (== bet.betId) lo ubica en ngp-bet-result-sync. Vacío = empate.
+      // NGE v2: report_result por RPC. `winners` son los seatId (= npubs de los
+      // jugadores) que fijamos al crear la apuesta. Vacío = empate/anulación.
       await reportNgeResult(bet.betId, winners);
     } else {
       if (!config) throw new OnlineRoomError('LUNA_NEGRA_BASE_URL no está configurada.', 500);
