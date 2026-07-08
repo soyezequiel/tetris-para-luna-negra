@@ -6,15 +6,19 @@ import {
   type NgeBet,
   type NgeCreateBetResult,
   type NgeSeatInput,
-} from './nge.js';
+} from '../../sdk/nge.js';
 import { OnlineRoomError } from './roomService.js';
 
-// Núcleo NGE-backed de las apuestas de Tetris — NGE v2 (RPC cifrado estilo NWC).
-// Una sola credencial `NGE_CONNECTION` (la "NWC del escrow") aporta la pubkey del
-// escrow, los relays y la clave del cliente `C`. Ya no hay contrato 1339 propio,
-// ni estado público 31340, ni 9734 de depósito: el escrow devuelve un `bolt11`
-// por asiento en `create_bet`/`get_bet`, y la config (límites/comisiones) se pide
-// por `get_info`. Ver docs/nge-migration.md y sdk NGE v2 (`nge.ts`).
+// PUERTO del escrow — la frontera protocolo↔juego. Este es el ÚNICO módulo que
+// importa el SDK NGE (`sdk/nge.ts`, vendorizado de Luna Negra): acá viven la
+// credencial (env), el ciclo de vida por invocación serverless, el caché de
+// config y la traducción de NgeError → OnlineRoomError. El resto del programa
+// (lunaNegraBets, rooms, api) habla con estas funciones y no conoce el protocolo.
+//
+// NGE v2 (RPC cifrado estilo NWC): una sola credencial `NGE_CONNECTION` aporta
+// la pubkey del escrow, los relays y la clave del cliente `C`. El escrow devuelve
+// un `bolt11` por asiento en `create_bet`/`get_bet`, y la config (límites/
+// comisiones/transparencia) se pide por `get_info`. Ver docs/nge-migration.md.
 
 /** ¿Está configurada la credencial NGE? Es el ÚNICO gate del modo apuestas. */
 export function ngeConnected(): boolean {
@@ -54,6 +58,12 @@ export interface NgeConfig {
   maxStakeSats: number;
   feePct: number;
   devFeePct: number;
+  /** Capacidad declarada del escrow: "public" = liquidación auditable en Nostr
+   *  (formato NGP); "none" = solo coordinación privada. Escrows viejos no la
+   *  anuncian → null. */
+  transparency: 'public' | 'none' | null;
+  /** Modos que acepta `create_bet.visibility` (p. ej. ["public","unlisted"]). */
+  visibilityOptions: string[];
 }
 
 // Config cacheada por instancia serverless (límites/comisiones no cambian salvo que
@@ -73,6 +83,8 @@ export async function fetchNgeConfig(): Promise<NgeConfig> {
       maxStakeSats: info.maxStakeSats,
       feePct: info.feePct,
       devFeePct: info.devFeePct,
+      transparency: info.transparency ?? null,
+      visibilityOptions: info.visibilityOptions ?? [],
     };
     return configCache;
   });
@@ -87,6 +99,13 @@ export function resetNgeConfigCacheForTests(): void {
  * (usamos el npub del jugador) + su `pubkey`; el escrow devuelve `betId` y un
  * `bolt11` por asiento para mostrar como QR. Reemplaza al 1339 + 9734 de v1.
  */
+/** Visibilidad de la liquidación pública por default para las apuestas de este
+ *  juego. `NGE_BET_VISIBILITY=unlisted` omite la sombra 31340 y la nota social
+ *  (solo si el escrow lo anuncia en `visibilityOptions`); default = public. */
+function defaultVisibility(): 'unlisted' | undefined {
+  return (process.env.NGE_BET_VISIBILITY ?? '').trim() === 'unlisted' ? 'unlisted' : undefined;
+}
+
 export async function createNgeBet(params: {
   seats: NgeSeatInput[];
   stakeSats: number;
@@ -98,8 +117,9 @@ export async function createNgeBet(params: {
       return await nge.createBet({
         seats: params.seats,
         stakeSats: params.stakeSats,
-        condition: params.victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
+        condition: params.victoryCondition?.slice(0, 280) || 'El último jugador en pie se lleva el pozo.',
         roomId: params.roomId,
+        visibility: defaultVisibility(),
       });
     } catch (e) {
       if (e instanceof NgeError) {

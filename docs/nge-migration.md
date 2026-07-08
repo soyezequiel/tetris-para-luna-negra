@@ -56,13 +56,18 @@ NGE cubre **solo el escrow de apuestas**. **No toca** (siguen en REST 1.0):
 Por eso `LUNA_NEGRA_BASE_URL` / `API_KEY` / `GAME_ID` **se quedan** (los usan esas
 features). El único gate de apuestas es la existencia de `NGE_CONNECTION`.
 
-## Piezas
+## Piezas — el protocolo separado del resto del programa
 
-| Archivo | Rol |
-|---|---|
-| `src/online/nge.ts` | **SDK NGE v2 vendorizado** de Luna (`sdk/nge.ts`). Única dep: `nostr-tools`. No editar salvo re-copiar al actualizar Luna. |
-| `src/online/lunaNegraNge.ts` | Adaptador: `ngeConnected()`, `fetchNgeConfig()` (`get_info`), `createNgeBet` (`create_bet`), `fetchNgeBet` (`get_bet`), `reportNgeResult` (`report_result`), `cancelNgeBet` (`cancel_bet`). |
-| `src/online/lunaNegraBets.ts` | Orquestación de sala/pozo. Rutea NGE cuando `ngeConnected()`: `createBetViaNge` → `createNgeBet`; `synthesizeNgeBetDetail` ← `get_bet`; `cancelBetRemote` → `cancel_bet`/`report_result` vacío; `maybeReportRoomBetResult` → `report_result`. |
+Tres capas con frontera dura (espejo del layout de Luna Negra):
+
+| Capa | Archivo | Rol |
+|---|---|---|
+| **Protocolo** | `sdk/nge.ts` (raíz, fuera de `src/`) | **SDK NGE v2 vendorizado** de Luna (`sdk/nge.ts`). Única dep: `nostr-tools`. Cero imports del juego. No editar salvo re-copiar al actualizar Luna. |
+| **Puerto** | `src/online/lunaNegraNge.ts` | La frontera protocolo↔juego: el **único módulo que importa el SDK**. Credencial (env), ciclo de vida serverless, caché de config, NgeError → OnlineRoomError. API: `ngeConnected()`, `fetchNgeConfig()` (`get_info`, incl. `transparency`/`visibilityOptions`), `createNgeBet`, `fetchNgeBet`, `reportNgeResult`, `cancelNgeBet`. |
+| **Juego** | `src/online/lunaNegraBets.ts` | Orquestación de sala/pozo. No conoce el protocolo: `createBetViaNge` → `createNgeBet`; `synthesizeNgeBetDetail` ← `fetchNgeBet`; `cancelBetRemote` → `cancelNgeBet`/`reportNgeResult` vacío; `maybeReportRoomBetResult` → `reportNgeResult`. |
+
+> Regla: si un archivo fuera de `src/online/lunaNegraNge.ts` necesita algo del
+> SDK, la respuesta es agregarle una función al puerto, no importar `sdk/nge.ts`.
 
 Mapeo del rewrite v1 → v2:
 
@@ -92,6 +97,11 @@ leaderboard, invitaciones.
 
 `NGE_CONNECTION` es la credencial de apuestas (host = pubkey del escrow, `secret` =
 clave del cliente). Sin ella, no hay apuestas.
+
+`NGE_BET_VISIBILITY=unlisted` (opcional): pide al escrow omitir la sombra pública
+`31340` y la nota social de cada apuesta creada (la liquidación sigue siendo
+auditable por el ancla y los recibos). Default: public. Solo surte efecto si el
+escrow lo anuncia en `get_info.visibilityOptions`.
 
 ## Cómo obtener el `NGE_CONNECTION`
 
