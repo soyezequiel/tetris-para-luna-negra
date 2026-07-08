@@ -5171,6 +5171,19 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   maybeSubmitOnlineWin(protectedRoom);
   maybeCelebratePayout();
   wakeIncompleteOwnDepositHandles(protectedRoom);
+  maybeKickstartBetSettlement(previousRoom, protectedRoom);
+}
+
+// Arranque eager de la liquidación: apenas la sala pasa a 'finished' con la apuesta
+// fondeada, disparamos ya el refresh que reporta el ganador al escrow, sin esperar
+// el próximo tick del poll (hasta 2s de latencia gratis en el camino del cobro).
+// Es seguro que lo dispare cada cliente: el reporte es idempotente en el escrow y
+// los choques transitorios (NOT_READY/IN_PROGRESS) ya se absorben como éxito.
+function maybeKickstartBetSettlement(previous: OnlineRoom | null, room: OnlineRoom): void {
+  if (room.status !== 'finished' || previous?.status === 'finished') return;
+  const bet = room.bet;
+  if (!bet || bet.status !== 'funded' || bet.resultReported) return;
+  void refreshOnlineBet(true, { queueIfBusy: true });
 }
 
 // Festejo de "cobraste el pozo": solo cuando el pago realmente terminó. Un
@@ -5799,8 +5812,11 @@ function maybeRefreshBet(): void {
   // Igual que la pantalla de pago por QR de Luna Negra: mientras MI depósito
   // siga pendiente se pollea rápido siempre, así un pago hecho por fuera
   // (invoice copiada a otra billetera) se detecta apenas Luna lo registra.
-  const fastPoll = bet.status === 'pending_deposits'
-    && (now < betState.fastPollUntil || hasOwnPendingDeposit(bet));
+  // Y durante la liquidación (reporte + pago del escrow) también: que el
+  // "Pagando al ganador…" dure lo que tarda el escrow, no nuestro poll.
+  const fastPoll = (bet.status === 'pending_deposits'
+    && (now < betState.fastPollUntil || hasOwnPendingDeposit(bet)))
+    || isBetSettlementActive(bet);
   const pollMs = fastPoll ? ONLINE_BET_FAST_POLL_MS : ONLINE_BET_POLL_MS;
   if (betState.busy) {
     betState.refreshQueued = true;
@@ -5822,6 +5838,17 @@ function isRefreshableRoomBet(bet: RoomBet | null | undefined): bet is RoomBet {
 
 function hasOwnPendingDeposit(bet: RoomBet): boolean {
   return myBetEntry(bet)?.depositStatus === 'pending';
+}
+
+// Liquidación "en vivo": sala terminada con la apuesta fondeada (reporte del ganador
+// + pago del escrow en curso) o un zap de payout todavía 'pending'. En esos tramos el
+// que espera está mirando un spinner, así que vale pollear rápido. `withdraw_pending`
+// y `failed` quedan afuera: esperan una acción del ganador o el retry del escrow y
+// pueden durar minutos.
+function isBetSettlementActive(bet: RoomBet): boolean {
+  if (bet.status === 'funded') return roomState.current?.status === 'finished';
+  return bet.status === 'settled'
+    && bet.participants.some((participant) => participant.payoutStatus === 'pending');
 }
 
 function armOnlineBetFastPolling(): void {

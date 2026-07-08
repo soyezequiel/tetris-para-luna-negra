@@ -249,8 +249,13 @@ async function fetchDetail(
   stakeSats: number,
   previous?: RoomBet | null,
 ): Promise<LunaBetDetail | null> {
-  const ngeConfig = await fetchNgeConfig();
-  const bet = await fetchNgeBet(betId).catch(() => null);
+  // get_info y get_bet son RPCs independientes al escrow (cada uno abre su propia
+  // conexión de relays): en paralelo, el poll paga UNA latencia de relay, no dos.
+  // get_info además queda cacheado por instancia, así que solo pesa en cold start.
+  const [ngeConfig, bet] = await Promise.all([
+    fetchNgeConfig(),
+    fetchNgeBet(betId).catch(() => null),
+  ]);
   if (bet && (bet.status === 'settled' || bet.status === 'refunded')) {
     const issues = await auditNgeSettlement(bet);
     if (issues.length > 0) {
@@ -520,6 +525,20 @@ export async function refreshRoomBet(
 ): Promise<OnlineRoom> {
   const room = await loadRoom(store, roomId);
   if (!room.bet) return room;
+  // Liquidación pendiente: reportamos PRIMERO. maybeReportRoomBetResult ya hace su
+  // propio get_bet DESPUÉS de reportar para sincronizar payouts, así que el get_bet
+  // previo de este refresh sería un RPC entero de más en el camino crítico del
+  // "Pagando al ganador…". Reportar de entrada es seguro: report_result es
+  // idempotente (re-reportar lo ya liquidado devuelve 200 `alreadyResolved`).
+  if (
+    options.reportResult !== false
+    && room.status === 'finished'
+    && room.bet.status === 'funded'
+    && !room.bet.resultReported
+  ) {
+    const reported = await maybeReportRoomBetResult(store, room, nowMs);
+    if (reported) return reported;
+  }
   const npubs = room.bet.participants.map((p) => p.npub);
   const detail = await fetchDetail(room.bet.betId, npubs, room.bet.stakeSats, room.bet);
   if (!detail) return room;
@@ -626,8 +645,12 @@ export async function settleRoomBet(
   if (!room.bet) throw new OnlineRoomError('No hay apuesta para liquidar.', 404);
   if (room.hostPlayerId !== playerId) throw new OnlineRoomError('Solo el host puede liquidar la apuesta.', 403);
   if (room.status !== 'finished') throw new OnlineRoomError('La partida todavía no terminó.', 409);
-  const refreshed = await refreshRoomBet(store, roomId, nowMs, { reportResult: false });
-  return (await maybeReportRoomBetResult(store, refreshed, nowMs, { throwOnFailure: true })) ?? refreshed;
+  // Reporte directo, sin get_bet previo: maybeReportRoomBetResult sincroniza el
+  // detalle después de reportar. Si no hay nada que reportar (ya reportado, o el
+  // estado local quedó viejo), el refresh clásico sincroniza contra el escrow.
+  const reported = await maybeReportRoomBetResult(store, room, nowMs, { throwOnFailure: true });
+  if (reported) return reported;
+  return refreshRoomBet(store, roomId, nowMs, { reportResult: false });
 }
 
 /** Reporta el ganador a Luna Negra cuando la sala terminó y la apuesta está fondeada. */
@@ -686,8 +709,14 @@ export async function maybeReportRoomBetResult(
     settlementError: null,
     updatedAtServerMs: nowMs,
   };
-  let updated = await setRoomBet(store, updatedRoom.id, reported, nowMs);
-  const detail = await fetchDetail(bet.betId, bet.participants.map((p) => p.npub), bet.stakeSats, updated.bet ?? bet);
+  // La persistencia local del reporte y el get_bet post-reporte (payouts frescos)
+  // no dependen entre sí: en paralelo se paga solo la latencia del RPC. Como
+  // `previous` del detalle usamos `reported`, que es lo que se está persistiendo.
+  const [written, detail] = await Promise.all([
+    setRoomBet(store, updatedRoom.id, reported, nowMs),
+    fetchDetail(bet.betId, bet.participants.map((p) => p.npub), bet.stakeSats, reported),
+  ]);
+  let updated = written;
   if (detail) {
     const npubs = reported.participants.map((p) => p.npub);
     const synced = buildRoomBet(
