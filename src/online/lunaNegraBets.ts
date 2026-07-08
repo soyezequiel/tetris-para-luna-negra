@@ -354,7 +354,7 @@ async function createBetViaNge(
     // lud16; sin destino, el ganador cobra por QR de retiro (cascada §8).
     pubkey: pubkeyFromNpub(player.npub as string),
   }));
-  const created = await createNgeBet({ seats, stakeSats, victoryCondition });
+  const created = await createNgeBet({ seats, stakeSats, victoryCondition, roomId: room.id });
   return { betId: created.betId, stakeSats };
 }
 

@@ -259,6 +259,8 @@ export type NgeCreateBetInput = {
   /** Clave de idempotencia del juego (§6.1): reintentar con el mismo `clientRef`
    *  devuelve el MISMO betId, nunca crea otra apuesta. */
   clientRef?: string;
+  /** Sala/partida del juego (correlación y display en el escrow). Opaco. */
+  roomId?: string;
 };
 
 export type NgeDeposit = {
@@ -466,6 +468,7 @@ export class NGE {
       ...(input.condition ? { condition: input.condition } : {}),
       ...(input.deadlineSec ? { deadlineSec: input.deadlineSec } : {}),
       ...(input.clientRef ? { clientRef: input.clientRef } : {}),
+      ...(input.roomId ? { roomId: input.roomId } : {}),
     });
   }
 

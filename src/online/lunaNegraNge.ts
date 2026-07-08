@@ -91,6 +91,7 @@ export async function createNgeBet(params: {
   seats: NgeSeatInput[];
   stakeSats: number;
   victoryCondition?: string;
+  roomId?: string;
 }): Promise<NgeCreateBetResult> {
   return withNge(async (nge) => {
     try {
@@ -98,6 +99,7 @@ export async function createNgeBet(params: {
         seats: params.seats,
         stakeSats: params.stakeSats,
         condition: params.victoryCondition?.slice(0, 280) || 'Último jugador en pie gana el pozo.',
+        roomId: params.roomId,
       });
     } catch (e) {
       if (e instanceof NgeError) {
