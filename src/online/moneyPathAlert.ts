@@ -63,6 +63,30 @@ function tick(ok: boolean): string {
 }
 
 /**
+ * Bloque "Para Claude Code": prompt auto-contenido y copy-pasteable para que el
+ * operador lo pegue en Claude Code y éste diagnostique/arregle. Política del
+ * canal: todo lo que llega a Discord debe traer una acción posible.
+ */
+function claudeCodeBlock(summary: string, context: Record<string, unknown>): string {
+  const ctx = Object.entries(context)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${k}=${String(v).slice(0, 60)}`)
+    .join(', ');
+  const text =
+    `En el repo Tetris (F:\\proyectos\\tetris): ${summary}.` +
+    (ctx ? ` Contexto: ${ctx}.` : '') +
+    ' Encontrá la causa raíz y arreglala.';
+  return `📋 Para Claude Code:\n\`\`\`\n${text.slice(0, 700)}\n\`\`\``;
+}
+
+// Discord corta el content en 2000 chars: recorta las líneas del cuerpo lo
+// necesario para que el bloque de prompt SIEMPRE entre completo al final.
+function composeWithPrompt(lines: string[], promptBlock: string): string {
+  const budget = 1990 - promptBlock.length - 1;
+  return `${lines.join('\n').slice(0, Math.max(0, budget))}\n${promptBlock}`;
+}
+
+/**
  * Líneas de diagnóstico para la alerta: un snapshot de config (qué store se está
  * usando y qué env vars faltan) y, cuando el fallo es un 404 de "sala no encontrada",
  * una pista de la causa raíz más probable (mismatch de transporte / env vars ausentes
@@ -150,11 +174,15 @@ export async function alertMoneyPathError(
       ...diagnosticLines(info, readMoneyPathConfig()),
       `🕒 ${new Date(nowMs).toISOString()}`,
     ].filter((line): line is string => line !== null);
+    const prompt = claudeCodeBlock(
+      `falló el flujo de apuestas "${flow}" — ${info.code ? `${info.code}: ` : ''}${info.message.slice(0, 200)}`,
+      context,
+    );
 
     await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: lines.join('\n').slice(0, 1990) }),
+      body: JSON.stringify({ content: composeWithPrompt(lines, prompt) }),
     });
   } catch {
     // Best-effort: un fallo al alertar nunca debe tapar/alterar el error original.
@@ -241,11 +269,15 @@ export async function alertBetDepositHandlesIncomplete(
       '💡 Sin `bolt11` ni (`zapReq`+`callback`) el panel cae a "Pagar en Luna Negra" (payUrl): no hay QR/zap en el juego. Causas típicas: Luna no devolvió el 9734 (tienda sin identidad Nostr o `depositZapRequest` ausente en su respuesta) o la función corre código viejo (build cache de Vercel).',
       `🕒 ${new Date(nowMs).toISOString()}`,
     ].filter((line): line is string => line !== null);
+    const prompt = claudeCodeBlock(
+      `una apuesta recién creada quedó sin handles de depósito (${incomplete.length}/${bet.participants.length} asientos sin bolt11 ni 9734+callback)`,
+      { betId: bet.betId, stakeSats: bet.stakeSats, ...context },
+    );
 
     await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: lines.join('\n').slice(0, 1990) }),
+      body: JSON.stringify({ content: composeWithPrompt(lines, prompt) }),
     });
   } catch {
     // Best-effort: el reporte nunca debe afectar la creación de la apuesta.
