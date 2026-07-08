@@ -352,7 +352,7 @@ export class GameEngine {
       if (this.collides(this.active)) {
         this.status = 'gameover';
         this.gameOverFrame = this.frame;
-        this.gameOverReason = 'holdBlockOut';
+        this.gameOverReason = 'blockOut';
         // Misma razón que en spawn(): la pieza intercambiada no entró, así que no
         // debe quedar dibujada superpuesta sobre la pila al congelar el tablero.
         this.active = null;
@@ -603,7 +603,7 @@ export class GameEngine {
       if (result.toppedOut) {
         this.status = 'gameover';
         this.gameOverFrame = frame;
-        this.gameOverReason = 'garbageTopOut';
+        this.gameOverReason = 'topOut';
         this.active = null;
         break;
       }
@@ -619,7 +619,7 @@ export class GameEngine {
       } else {
         this.status = 'gameover';
         this.gameOverFrame = frame;
-        this.gameOverReason = 'garbageCollision';
+        this.gameOverReason = 'topOut';
         this.active = null;
       }
     }

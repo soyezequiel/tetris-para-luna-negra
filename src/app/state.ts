@@ -98,14 +98,8 @@ export function gameOverReasonMessage(reason: GameOverReason | null | undefined)
       return 'La pieza no pudo aparecer — la pila llegó al tope.';
     case 'lockOut':
       return 'La pieza se trabó por encima del área visible.';
-    case 'garbageTopOut':
-      return 'Las líneas de basura empujaron tus bloques más allá del tope.';
-    case 'garbageCollision':
-      return 'Las líneas de basura aplastaron tu pieza activa.';
-    case 'holdBlockOut':
-      return 'La pieza del hold no pudo aparecer — no hay espacio.';
-    case 'topOutTimer':
-      return 'La pila quedó por encima del mapa demasiado tiempo.';
+    case 'topOut':
+      return 'Las líneas de basura te empujaron más allá del tope.';
     default:
       return 'La pila superó el tope.';
   }

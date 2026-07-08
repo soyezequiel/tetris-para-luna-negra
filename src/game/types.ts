@@ -10,13 +10,14 @@ export type GravityCurve = 'linear' | 'guideline';
 
 export type SpinType = 'none' | 'mini' | 'full';
 
+// Las tres derrotas del guideline (tetr.io): la pieza no entra al aparecer
+// (block out, incluye el intercambio de hold), la pieza se traba enteramente
+// por encima del área visible (lock out), o la basura empuja la pila/pieza
+// fuera del buffer (top out).
 export type GameOverReason =
   | 'blockOut'
   | 'lockOut'
-  | 'garbageTopOut'
-  | 'garbageCollision'
-  | 'holdBlockOut'
-  | 'topOutTimer';
+  | 'topOut';
 
 export interface Vec2 {
   x: number;
