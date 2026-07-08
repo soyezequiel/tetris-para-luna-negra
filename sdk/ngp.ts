@@ -1,14 +1,18 @@
-// CAPA PROTOCOLO NGP (Nostr Games Protocol) — la gramática de eventos que TETRA
-// habla con Luna Negra y con cualquier cliente Nostr: reto 1v1 por NIP-17
-// (gift-wrap), presencia NIP-38 (kind:30315), marcador kind:31337 y la
-// coordenada de juego NIP-23 como ancla.
+// CAPA PROTOCOLO NGP (Nostr Games Protocol) — la punta del JUEGO.
+//
+// La gramática del wire (kinds, templates sin firmar, parsers) vive en
+// `sdk/ngp-core.ts`, copia byte-idéntica del núcleo canónico de Luna Negra
+// (se sincroniza con scripts/sync-nge-core.mjs de aquel repo). Acá queda lo que
+// solo el juego necesita: la interfaz de firma `NgpSigner` (estructuralmente
+// compatible con `LunaSigner`), los wrappers que firman los templates del core
+// (presencia NIP-38, marcador 31337) y el reto 1v1 por NIP-17 (gift-wrap),
+// que es juego↔juego y no lo habla la tienda.
 //
 // Este directorio (`sdk/`) es protocolo y NADA más: cero imports del juego, cero
 // `import.meta.env`, cero relays/pools. Todo lo contextual entra por parámetro
-// (la coordenada del juego, el mensaje de presencia, el TTL) y la firma entra por
-// la interfaz `NgpSigner` (estructuralmente compatible con `LunaSigner`). Los
-// únicos módulos del juego que importan de acá son los puertos
-// `src/online/nostr*.ts`; el resto del programa habla con esos puertos.
+// (la coordenada del juego, el mensaje de presencia, el TTL). Los únicos módulos
+// del juego que importan de acá son los puertos `src/online/nostr*.ts`; el resto
+// del programa habla con esos puertos.
 //
 // Spec: skill `integrar-luna-negra` (interfaz 2.0) y, del lado tienda,
 // docs/nostr-games-protocol.md de Luna Negra.
@@ -23,16 +27,15 @@ import {
   type Event,
   type EventTemplate,
 } from 'nostr-tools';
+import {
+  NGP_KIND,
+  buildPresenceTemplate,
+  buildPresenceClearTemplate,
+  buildScoreTemplate,
+} from './ngp-core.js';
 
-/** Kinds NGP/NIPs que habla esta capa. */
-export const NGP_KIND = {
-  rumor: 14, // NIP-17: el reto en claro (sin firmar, por NIP-59)
-  seal: 13, // NIP-59: rumor cifrado, firmado por el remitente
-  giftWrap: 1059, // NIP-59: seal cifrado con clave efímera
-  dmInboxRelays: 10050, // NIP-17: lista de relays de DM del destinatario
-  presence: 30315, // NIP-38: user status ("Jugando X")
-  score: 31337, // NGP: puntaje addressable firmado por el jugador
-} as const;
+// Re-exporta el núcleo entero: los consumidores siguen importando todo de acá.
+export * from './ngp-core.js';
 
 /**
  * Firmante mínimo que requiere el protocolo. `LunaSigner` (NIP-07 extensión /
@@ -262,33 +265,19 @@ export function dmRelaysFromInboxEvent(ev: Event | null | undefined): string[] {
   return relays;
 }
 
-// ── Presencia NIP-38 (kind:30315) ────────────────────────────────────────────
-
-// `d`="general" es el estado de actividad (el otro valor reservado por la NIP es
-// "music", que no usamos).
-const PRESENCE_D_TAG = 'general';
+// ── Presencia NIP-38 (kind:30315) — firma sobre el template del core ────────
 
 /**
- * Firma el evento de presencia NIP-38 (kind:30315). Lo ancla al juego con el tag
- * `a`=gameCoord (Luna Negra filtra por ESE coord exacto para derivar "Jugando X").
- * `message` es la copy visible ("Jugando TETRA") — la decide el juego, no el
- * protocolo. No publica: sólo firma.
+ * Firma el evento de presencia NIP-38 (kind:30315). El formato (ancla `a`,
+ * `d`="general", expiración NIP-40) vive en el core; `message` es la copy
+ * visible ("Jugando TETRA") — la decide el juego, no el protocolo. No publica:
+ * sólo firma.
  */
 export async function buildPresenceEvent(
   signer: NgpSigner,
   p: { gameCoord: string; message: string; ttlSec: number },
 ): Promise<Event> {
-  const nowSec = Math.floor(Date.now() / 1000);
-  return signer.signEvent({
-    kind: NGP_KIND.presence,
-    created_at: nowSec,
-    tags: [
-      ['d', PRESENCE_D_TAG],
-      ['a', p.gameCoord],
-      ['expiration', String(nowSec + p.ttlSec)],
-    ],
-    content: p.message,
-  });
+  return signer.signEvent(buildPresenceTemplate(p));
 }
 
 /**
@@ -296,56 +285,21 @@ export async function buildPresenceEvent(
  * inmediata), para que "Jugando X" desaparezca ya al cerrar sesión.
  */
 export async function buildPresenceClearEvent(signer: NgpSigner): Promise<Event> {
-  const nowSec = Math.floor(Date.now() / 1000);
-  return signer.signEvent({
-    kind: NGP_KIND.presence,
-    created_at: nowSec,
-    tags: [
-      ['d', PRESENCE_D_TAG],
-      ['expiration', String(nowSec + 1)],
-    ],
-    content: '',
-  });
+  return signer.signEvent(buildPresenceClearTemplate());
 }
 
-// ── Marcador NGP (kind:31337) ────────────────────────────────────────────────
-
-// Tope que acepta Luna Negra para el puntaje (entero 0…1e9).
-const MAX_SCORE = 1_000_000_000;
-
-// Nombre de tabla válido según la spec: ^[a-z0-9][a-z0-9_-]{0,63}$ (no empieza
-// con `_`/`-`). Se valida acá para no publicar un `d`-tag que la tienda descarte.
-const BOARD_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+// ── Marcador NGP (kind:31337) — firma sobre el template del core ─────────────
 
 /**
- * Firma el evento de puntaje NGP (kind:31337). `a`=gameCoord ancla al juego;
- * `d`=`<coord>:<board>` hace que sea el único récord del jugador en esa tabla
- * (se auto-reemplaza al mejorar). ⚠️ Lo firma el CLIENTE del jugador: es
- * falsificable — sirve para rankings sociales, nunca para repartir dinero.
- * No publica: sólo firma. Lanza si el board o el puntaje son inválidos.
+ * Firma el evento de puntaje NGP (kind:31337). El formato (ancla `a`, `d` por
+ * tabla, clamp del puntaje, gramática del board) vive en el core. ⚠️ Lo firma el
+ * CLIENTE del jugador: es falsificable — sirve para rankings sociales, nunca
+ * para repartir dinero. No publica: sólo firma. Lanza si el board o el puntaje
+ * son inválidos.
  */
 export async function buildScoreEvent(
   signer: NgpSigner,
   p: { gameCoord: string; board: string; score: number; client?: string },
 ): Promise<Event> {
-  if (!BOARD_RE.test(p.board)) {
-    throw new Error(`Nombre de tabla inválido: ${p.board}`);
-  }
-  const value = Math.floor(p.score);
-  if (!Number.isFinite(value) || value < 0) {
-    throw new Error(`Puntaje inválido: ${p.score}`);
-  }
-  const clamped = Math.min(value, MAX_SCORE);
-  return signer.signEvent({
-    kind: NGP_KIND.score,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ['a', p.gameCoord], // ancla al juego (30023:<tienda>:<slug>)
-      ['d', `${p.gameCoord}:${p.board}`], // 1 récord por jugador y tabla
-      ['board', p.board],
-      ['score', String(clamped)],
-      ...(p.client ? [['client', p.client]] : []),
-    ],
-    content: '',
-  });
+  return signer.signEvent(buildScoreTemplate(p));
 }
