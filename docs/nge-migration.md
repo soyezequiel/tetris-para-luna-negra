@@ -16,24 +16,32 @@ de la tienda para obtener el invoice. En v2 nada de eso existe:
   verdad vive en el escrow y se consulta con `get_bet` (polling).
 - **El depósito llega como `bolt11` por asiento** directo de `create_bet`/`get_bet`.
   El jugador paga ese invoice (QR o extensión). **Ya no se firma ningún `9734`** en
-  el navegador ni se pega a un callback LNURL.
+  el navegador ni se pega a un callback LNURL — es un bolt11 **plano** del nodo del escrow.
 - **La config** (límites, comisiones) se pide por `get_info`, no por el `bind` event.
 - **El resultado** se reporta con `report_result` (los `seatId` ganadores); la firma
-  del request (credencial `C`) es la autenticación. No hay `1341` firmado.
+  del request (credencial `C`) es la autenticación. `IN_PROGRESS` (otra invocación ya
+  disparó la liquidación) se trata como **éxito**, no como error (el polling confirma
+  `settled`).
+- **`roomId`** viaja en `create_bet` (`room.id`) → la tienda lo muestra como "Sala".
 
-## Invitados con cuenta efímera
+## Identidad del jugador y cobro
 
-Sigue vigente: todo asiento necesita un npub, así que **el jugador anónimo recibe
-una cuenta Nostr efímera local** al participar (`generateLocalSigner()`). Ese npub
-es el `seatId` estable de su asiento en `create_bet`. Como Tetris no conoce la
-dirección Lightning de sus jugadores, no manda `payoutAddress`: el ganador cobra por
-**QR de retiro** en `<base>/apuestas/{betId}` (cascada de payout §8 de la spec). Un
-jugador con billetera propia puede reclamarlo ahí con su sesión.
+Tetris manda el asiento como `{ seatId: player.npub, pubkey: <hex del npub> }`. El
+escrow **upsertea la cuenta real** por esa pubkey, así que:
 
-**Caveat browser-held:** la clave efímera vive en el navegador (login `local`). Si
-se pierde antes de fondear, no puede pagar; si se pierde tras ganar, el premio queda
-en `withdraw_pending` hasta que se reclame o expire. Trade-off de una cuenta
-descartable.
+- **Jugador logueado con su identidad Nostr** (con `lud16` en su perfil kind:0) → la
+  apuesta le **pertenece** (aparece en su perfil / `luna.fit/bets`) y el premio le llega
+  **automático** como **zap social** a su lud16. No reclama nada.
+- **Jugador anónimo** (cuenta Nostr efímera local, `generateLocalSigner()`, sin `lud16`)
+  → el escrow no le encuentra destino → cobra por **QR de retiro** en `<base>/apuestas/{betId}`.
+
+**Caveat browser-held:** la clave efímera del anónimo vive en el navegador (login
+`local`). Si se pierde tras ganar, el premio queda en `withdraw_pending` hasta que se
+reclame o expire. Trade-off de una cuenta descartable — no aplica al jugador logueado.
+
+> **Requisito del lado Luna:** el proveedor del juego debe tener **oráculo gestionado**
+> (Luna firma el `kind:1341` del resultado). La emisión de la credencial NGE lo garantiza
+> (`ensureManagedOracle`); un proveedor BYO/self-signed no puede liquidar (`SELF_SIGNED_ORACLE`).
 
 ## Alcance — qué es NGE y qué NO
 
@@ -68,13 +76,13 @@ Mapeo del rewrite v1 → v2:
 | `buildDepositZapRequestTemplate` + LNURL (9734) | — (el escrow devuelve `bolt11` directo) |
 | `lunaNegraEvents.ts` (parseo 31340, LNURL, 9734) | **eliminado** |
 
-## Depósito en la UI (sin cambios de firma)
+## Depósito en la UI
 
-El panel de `main.ts` ya renderiza `participant.bolt11` como QR y paga con WebLN. En
-v2 el `bolt11` viene siempre poblado desde `get_bet`, y `depositZapRequest`/
-`depositCallback` quedan `null`, así que el flujo de firma de `9734` del jugador
-(`signAndGenerateBetDeposit`, `maybeAutoSignBetDeposit`) **nunca se activa** — código
-inerte, candidato a limpieza futura, pero inocuo.
+El panel de `main.ts` renderiza `participant.bolt11` (que viene poblado desde
+`get_bet`) como QR y paga con WebLN. El jugador **no firma nada**. El viejo flujo de
+firma de `9734` (`signAndGenerateBetDeposit`, `maybeAutoSignBetDeposit`, el endpoint
+`deposit-invoice`, el mock v1) **ya fue borrado** en la limpieza post-migración — ver
+§Estado.
 
 ## Env vars
 
@@ -91,13 +99,20 @@ Panel de proveedor de Luna Negra → juego → tab Integración → **Generar cr
 NGE** → copiar el string `nostr+nge://…` → pegarlo en el env de Tetris como
 `NGE_CONNECTION`.
 
-## Pendiente (limpieza opcional, no bloquea)
+## Estado
 
-- Borrar el path REST-legacy de apuestas de `lunaNegraBets.ts` (`generateBetDepositInvoice`,
-  `fetchDepositInvoiceFromCallback`, `deposit-invoice` en `api/bets/[action].ts`) y el
-  mock v1 (`lunaNegraMock.ts` + sus consumidores) — quedaron inertes con el corte a NGE.
-- Adaptar los tests del mock money-path (`hardTestScenarios.test.ts`) y los de
-  `engine.test.ts` que dependían del path REST: hoy fallan porque `createBetForRoom`
-  exige `NGE_CONNECTION` (breakage previo al v2, del corte duro Opción B).
-- Smoke test real: sala 1v1 (uno real + uno efímero) contra un escrow v2 vivo;
-  verificar `create_bet` → depósito bolt11 → `get_bet` funded → `report_result` → payout.
+- ✅ **Migración v2 completa** (SDK vendorizado + adaptador + orquestación de sala).
+- ✅ **Limpieza post-migración hecha**: borrados el path REST-legacy
+  (`generateBetDepositInvoice`, `fetchDepositInvoiceFromCallback`, acción
+  `deposit-invoice`), el webhook, y el mock v1 (`lunaNegraMock.ts` + `dev-api/hard-test`)
+  con sus tests. El flujo de firma de `9734` en `main.ts` se removió.
+- ✅ **Smoke test real verde** (1v1 contra el escrow v2 de prod): `create_bet` → depósito
+  bolt11 → `funded` → `report_result` → **pago automático al ganador** (zap social a su
+  lud16, visible en su perfil) → apuesta reflejada en `luna.fit/bets`.
+
+### Cobertura de tests
+Los 8 tests de apuestas de `engine.test.ts` que ejercitaban el data-path REST se
+**borraron** (probaban implementación muerta). La lógica de orquestación viva
+(seat mapping, carry-forward, reembolsos) quedó **sin cobertura unitaria** en Tetris;
+recuperarla implicaría mockear `lunaNegraNge` (createNgeBet/fetchNgeBet/reportNgeResult)
+en vez de stubear `fetch`. Pendiente opcional.
