@@ -123,6 +123,11 @@ export async function reportNgeResult(betId: string, winnerSeatIds: string[]): P
     try {
       await nge.reportResult(betId, winnerSeatIds);
     } catch (e) {
+      // IN_PROGRESS no es un fallo: otra invocación ya disparó la liquidación (el
+      // reporte al terminar la sala, el polling de refresh y el settle manual
+      // compiten). El escrow está pagando; `get_bet` va a confirmar `settled` en el
+      // próximo poll. Tratarlo como éxito evita el falso "⚠️ rechazó el cobro".
+      if (e instanceof NgeError && e.code === 'IN_PROGRESS') return;
       const msg = e instanceof NgeError ? e.message : 'no se pudo reportar el resultado';
       throw new OnlineRoomError(`NGE: ${msg}`, 502);
     }
