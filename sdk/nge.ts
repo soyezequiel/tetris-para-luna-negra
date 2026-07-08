@@ -1,11 +1,3 @@
-// ⚠️ VENDORIZADO desde Luna Negra (`sdk/nge.ts`). Fuente canónica; no editar acá
-//    salvo para adaptar imports. Al actualizar Luna, re-copiar este archivo.
-//
-// CAPA PROTOCOLO. Este directorio (`sdk/`) es la implementación del protocolo NGE
-// y NADA más: cero imports del juego, cero process.env fuera de `fromEnv`. El
-// único módulo del juego que puede importar de acá es el puerto
-// `src/online/lunaNegraNge.ts`; el resto del programa habla con ese puerto.
-//
 // SDK NGE v2 (Nostr Game Escrow) — la "NWC del escrow".
 //
 // Protocolo request/response (RPC) calcado de NWC/NIP-47: el juego (cliente `C`,
@@ -38,8 +30,10 @@ import { SimplePool, nip19, nip44, type Filter } from "nostr-tools";
 
 /** Kinds efímeros del RPC (espejo de NWC 23194/23195/23196, rango 20000–29999). */
 export const NGE_KIND = { request: 24940, response: 24941, notification: 24942 } as const;
-/** Versión de la spec que habla este SDK (la anuncia el escrow en `get_info`). */
-export const NGE_VERSION = "1.0";
+/** Versión de la spec que habla este SDK (la anuncia el escrow en `get_info`).
+ *  v1.1 es aditiva: create_bet devuelve el detalle completo, push 24942
+ *  (`bet_updated`), RATE_LIMITED + limits, ventana de disputa (settleAt). */
+export const NGE_VERSION = "1.1";
 
 export class NgeError extends Error {
   constructor(
@@ -216,6 +210,37 @@ export function responseTemplate(
   };
 }
 
+/** Payload descifrado de una notification kind:24942 (spec §9, v1.1). */
+export type NgeNotificationPayload = {
+  notification_type: "bet_updated";
+  notification: {
+    betId: string;
+    /** Estado público al momento del push. NO autoritativo: confirmar con get_bet. */
+    status: string;
+    /** seatIds con depósito acreditado al momento del push. */
+    deposited?: string[];
+  };
+};
+
+/** Template SIN firmar de una notification kind:24942 (la firma `S`; la usa el
+ *  escrow). Sin tag `e`: no responde a ningún request (spec §9). */
+export function notificationTemplate(
+  payload: NgeNotificationPayload,
+  cfg: {
+    clientPubkey: string;
+    secretKey: Uint8Array;
+    createdAt?: number;
+    nonce?: Uint8Array;
+  },
+): EventTemplate {
+  return {
+    kind: NGE_KIND.notification,
+    created_at: cfg.createdAt ?? now(),
+    tags: [["p", cfg.clientPubkey]],
+    content: encryptPayload(payload, cfg.secretKey, cfg.clientPubkey, cfg.nonce),
+  };
+}
+
 // ── Transporte de relays (inyectable → testeable sin red) ───────────────────
 
 export interface NgeTransport {
@@ -229,11 +254,25 @@ export interface NgeTransport {
 export function poolTransport(relays: string[]): NgeTransport {
   const pool = new SimplePool();
   return {
-    async publish(ev) {
-      const results = await Promise.allSettled(pool.publish(relays, ev));
-      if (!results.some((r) => r.status === "fulfilled")) {
-        throw new NgeError("PUBLISH_FAILED", "ningún relay aceptó el evento");
-      }
+    // First-ack: con que UN relay acepte, el evento viaja — esperar a todos
+    // hace que el más lento mande la latencia del RPC. El resto sigue en
+    // background. Falla solo si NINGUNO aceptó.
+    publish(ev) {
+      const pubs = pool.publish(relays, ev).map((p) => p.then(() => true, () => false));
+      return new Promise<void>((resolve, reject) => {
+        let pending = pubs.length;
+        if (pending === 0) {
+          return reject(new NgeError("PUBLISH_FAILED", "ningún relay aceptó el evento"));
+        }
+        for (const p of pubs) {
+          void p.then((ok) => {
+            if (ok) resolve();
+            if (--pending === 0) {
+              reject(new NgeError("PUBLISH_FAILED", "ningún relay aceptó el evento"));
+            }
+          });
+        }
+      });
     },
     subscribe(filter, onEvent) {
       const sub = pool.subscribeMany(relays, filter, { onevent: onEvent });
@@ -303,6 +342,16 @@ export type NgeInfo = {
   transparency?: "public" | "none";
   /** Modos de visibilidad por-apuesta que acepta `create_bet.visibility`. */
   visibilityOptions?: string[];
+  /** Piso de comisión en sats (v1.1; para que `auditSettlement` no adivine). */
+  feeMinSats?: number;
+  /** Tipos de notification 24942 que emite el escrow (v1.1). Ausente = solo polling. */
+  notifications?: string[];
+  /** Límites de uso por credencial (v1.1); excederlos → error RATE_LIMITED. */
+  limits?: { createBetPerMin?: number; maxPendingBets?: number };
+  /** Ventana de disputa (v1.1, spec §7.1): con pozo ≥ `settleDelayMinPotSats`,
+   *  el payout se difiere `settleDelaySec` tras report_result. 0/ausente = inmediato. */
+  settleDelaySec?: number;
+  settleDelayMinPotSats?: number;
 };
 
 export type NgePayout = {
@@ -340,9 +389,14 @@ export type NgeBet = {
   result?: { winners: string[] } | null;
 };
 
-export type NgeCreateBetResult = {
-  betId: string;
-  status: NgeBetStatus;
+/**
+ * Respuesta de `create_bet` (v1.1): el detalle COMPLETO de la apuesta (mismo
+ * shape que `get_bet`) más los handles de depósito. Un solo RPC deja al juego
+ * con los QR y el estado inicial — no hace falta un `get_bet` post-creación.
+ * (Contra un escrow v1.0 los campos del detalle llegan undefined; `deposits`
+ * existe en ambas versiones.)
+ */
+export type NgeCreateBetResult = NgeBet & {
   deposits: NgeDeposit[];
 };
 
@@ -501,8 +555,13 @@ export class NGE {
     return this.rpc<NgeBet>("get_bet", { betId });
   }
 
-  /** Reporta ganadores por seatId (el cliente ES el oráculo). Vacío = empate/anulación. */
-  async reportResult(betId: string, winners: string[]): Promise<{ ok: boolean; status: NgeBetStatus }> {
+  /** Reporta ganadores por seatId (el cliente ES el oráculo). Vacío = empate/anulación.
+   *  Con ventana de disputa (spec §7.1) devuelve `settleAt`: el resultado quedó fijo
+   *  pero el payout se ejecuta recién a esa hora (unix). */
+  async reportResult(
+    betId: string,
+    winners: string[],
+  ): Promise<{ ok: boolean; status: NgeBetStatus; settleAt?: number }> {
     if (!Array.isArray(winners) || winners.some((w) => typeof w !== "string")) {
       throw new NgeError("BAD_WINNERS", "winners debe ser un array de seatIds");
     }
@@ -516,8 +575,8 @@ export class NGE {
 
   /**
    * Polling con azúcar: consulta `get_bet` cada `intervalMs` y notifica SOLO las
-   * transiciones de estado. Devuelve `stop`. (El push por notification 24942 es
-   * futuro; el polling es la v1 del protocolo, §9.)
+   * transiciones de estado. Devuelve `stop`. Para clientes sin proceso persistente
+   * (serverless); con listener vivo conviene `watchBet` (push + respaldo).
    */
   pollBet(
     betId: string,
@@ -547,8 +606,131 @@ export class NGE {
     };
   }
 
+  /**
+   * Suscripción a las notifications 24942 del escrow (spec §9, v1.1). Verifica
+   * autor+firma y descifra; entrega solo payloads `bet_updated` bien formados.
+   * El contenido NO es autoritativo: confirmar con `get_bet`. Devuelve `stop`.
+   */
+  subscribeNotifications(cb: (n: NgeNotificationPayload) => void): () => void {
+    return this.transport.subscribe(
+      { kinds: [NGE_KIND.notification], authors: [this.escrowPubkey], "#p": [this.clientPubkey] },
+      (ev) => {
+        if (ev.pubkey !== this.escrowPubkey || !verifyEvent(ev)) return;
+        let payload: NgeNotificationPayload;
+        try {
+          payload = decryptPayload(ev.content, this.sk, this.escrowPubkey) as NgeNotificationPayload;
+        } catch {
+          return;
+        }
+        if (payload?.notification_type !== "bet_updated") return;
+        if (typeof payload.notification?.betId !== "string") return;
+        cb(payload);
+      },
+    );
+  }
+
+  /**
+   * Seguimiento con push + respaldo (spec §9, v1.1): se suscribe a `bet_updated`
+   * y ante cada aviso de ESTA apuesta confirma con `get_bet` (la fuente de
+   * verdad); un polling lento de respaldo (default 15 s) cubre pushes perdidos
+   * (relay caído, cliente offline al publicarse). Notifica solo transiciones.
+   * En serverless usá `pollBet`. Devuelve `stop`.
+   */
+  watchBet(
+    betId: string,
+    cb: (bet: NgeBet) => void,
+    fallbackIntervalMs = 15_000,
+  ): () => void {
+    let last = "";
+    let stopped = false;
+    let inFlight = false;
+    const confirm = async () => {
+      if (stopped || inFlight) return;
+      inFlight = true;
+      try {
+        const bet = await this.getBet(betId);
+        const key = `${bet.status}:${bet.seats.map((s) => (s.deposited ? 1 : 0)).join("")}`;
+        if (!stopped && key !== last) {
+          last = key;
+          cb(bet);
+        }
+      } catch {
+        /* transitorio: el próximo aviso o tick de respaldo reintenta */
+      } finally {
+        inFlight = false;
+      }
+    };
+    const unsubscribe = this.subscribeNotifications((n) => {
+      if (n.notification.betId === betId) void confirm();
+    });
+    void confirm();
+    const timer = setInterval(() => void confirm(), fallbackIntervalMs);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      unsubscribe();
+    };
+  }
+
   /** Cierra el transporte (sockets). */
   close(): void {
     this.transport.close();
   }
+}
+
+// ── Auditoría de liquidación (cliente) ───────────────────────────────────────
+
+/**
+ * Verificación del lado cliente (v1.1): cruza la liquidación que reporta
+ * `get_bet` contra los fees que el escrow declaró en `get_info`. Devuelve una
+ * lista de anomalías (vacía = todo consistente). Es un AUDIT, no un veto: los
+ * umbrales son tolerantes (piso de comisión, recargo de routing por fallback
+ * ~1,1 %, redondeos a sat), así que una anomalía amerita registrarse/alertarse,
+ * no abortar el flujo.
+ */
+export function auditSettlement(bet: NgeBet, info: NgeInfo): string[] {
+  const issues: string[] = [];
+  if (bet.status !== "settled" && bet.status !== "refunded") return issues;
+
+  const payoutSats = (s: NgeSeat) => s.payout?.sats ?? 0;
+  const totalPaid = bet.seats.reduce((acc, s) => acc + payoutSats(s), 0);
+  if (totalPaid > bet.potSats) {
+    issues.push(`el escrow reporta pagos por ${totalPaid} sats > pozo de ${bet.potSats}`);
+  }
+
+  const winners = bet.result?.winners ?? [];
+  if (bet.status === "settled" && winners.length > 0) {
+    const winnerSeats = bet.seats.filter((s) => winners.includes(s.seatId));
+    const missing = winners.filter(
+      (w) => !bet.seats.some((s) => s.seatId === w && s.payout != null),
+    );
+    if (missing.length > 0) {
+      issues.push(`ganadores sin payout reportado: ${missing.join(", ")}`);
+    }
+    const paidWinners = winnerSeats.reduce((acc, s) => acc + payoutSats(s), 0);
+    // Fee máxima esperable: % declarado (casa+dev) con su piso, más el recargo
+    // de routing del fallback (~1,1 %) y un margen de redondeo por ganador.
+    const pctFee = Math.ceil((bet.potSats * (info.feePct + info.devFeePct)) / 100);
+    const maxFee =
+      Math.max(info.feeMinSats ?? 0, pctFee) +
+      Math.ceil(bet.potSats * 0.011) +
+      winners.length;
+    if (paidWinners > 0 && paidWinners < bet.potSats - maxFee) {
+      issues.push(
+        `los ganadores cobraron ${paidWinners} sats; con pozo ${bet.potSats} y fees declaradas (${info.feePct}+${info.devFeePct}% / piso ${info.feeMinSats ?? 0}) se esperaba al menos ${bet.potSats - maxFee}`,
+      );
+    }
+  }
+
+  if (bet.status === "refunded") {
+    // Empate/anulación: cada asiento que depositó recupera su stake (sin fee).
+    for (const s of bet.seats) {
+      if (s.deposited && s.payout != null && payoutSats(s) < bet.stakeSats) {
+        issues.push(
+          `reembolso de ${s.seatId} por ${payoutSats(s)} sats < stake de ${bet.stakeSats}`,
+        );
+      }
+    }
+  }
+  return issues;
 }

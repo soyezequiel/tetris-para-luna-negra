@@ -3,8 +3,10 @@ import {
   NGE,
   parseNgeUri,
   NgeError,
+  auditSettlement,
   type NgeBet,
   type NgeCreateBetResult,
+  type NgeInfo,
   type NgeSeatInput,
 } from '../../sdk/nge.js';
 import { OnlineRoomError } from './roomService.js';
@@ -68,7 +70,9 @@ export interface NgeConfig {
 
 // Config cacheada por instancia serverless (límites/comisiones no cambian salvo que
 // Luna toque la economía). Antes salía del `bind` event; ahora de `get_info`.
+// `infoCache` guarda además el get_info CRUDO para la auditoría de liquidación.
 let configCache: NgeConfig | null = null;
+let infoCache: NgeInfo | null = null;
 
 /** Resuelve la config del escrow por RPC `get_info` (una llamada, cacheada). */
 export async function fetchNgeConfig(): Promise<NgeConfig> {
@@ -78,6 +82,7 @@ export async function fetchNgeConfig(): Promise<NgeConfig> {
       const msg = e instanceof NgeError ? e.message : 'no se pudo leer get_info del escrow';
       throw new OnlineRoomError(`NGE: ${msg}`, 502);
     });
+    infoCache = info;
     configCache = {
       minStakeSats: info.minStakeSats,
       maxStakeSats: info.maxStakeSats,
@@ -92,6 +97,24 @@ export async function fetchNgeConfig(): Promise<NgeConfig> {
 
 export function resetNgeConfigCacheForTests(): void {
   configCache = null;
+  infoCache = null;
+}
+
+/**
+ * Auditoría de la liquidación (SDK v1.1, `auditSettlement`): cruza los payouts que
+ * reporta `get_bet` contra los fees que el escrow declaró en `get_info`. Devuelve
+ * las anomalías (vacío = consistente, o apuesta no terminal). "Transparente" solo
+ * sirve si alguien mira: esto es el cliente auditando al escrow. Nunca lanza.
+ */
+export async function auditNgeSettlement(bet: NgeBet): Promise<string[]> {
+  if (bet.status !== 'settled' && bet.status !== 'refunded') return [];
+  try {
+    if (!infoCache) await fetchNgeConfig();
+    if (!infoCache) return [];
+    return auditSettlement(bet, infoCache);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -167,6 +190,30 @@ export async function cancelNgeBet(betId: string): Promise<void> {
       throw new OnlineRoomError(`NGE: ${msg}`, 502);
     }
   });
+}
+
+/**
+ * Normaliza la respuesta de `create_bet` a un NgeBet (v1.1 ya ES el detalle
+ * completo — mismo shape que `get_bet` — así que la creación no necesita RPCs
+ * extra). Contra un escrow v1.0 el detalle no viene: se sintetiza el estado
+ * inicial desde `deposits` (nadie depositó, sin resultado).
+ */
+export function betFromCreateResult(created: NgeCreateBetResult, stakeSats: number): NgeBet {
+  if (Array.isArray(created.seats) && created.seats.length > 0) return created;
+  return {
+    betId: created.betId,
+    status: created.status ?? 'pending_deposits',
+    stakeSats: created.stakeSats ?? stakeSats,
+    potSats: created.potSats ?? 0,
+    deadlineSec: created.deadlineSec ?? created.deposits[0]?.expiresAt ?? null,
+    seats: created.deposits.map((d) => ({
+      seatId: d.seatId,
+      deposited: false,
+      bolt11: d.bolt11,
+      payout: null,
+    })),
+    result: null,
+  };
 }
 
 export function pubkeyFromNpub(npub: string): string {
