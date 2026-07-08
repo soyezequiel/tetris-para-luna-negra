@@ -1,0 +1,504 @@
+{
+  "version": "1.1",
+  "note": "NGE v2 (RPC cifrado estilo NWC), spec v1.1: create_bet devuelve el detalle completo, push 24942 bet_updated, RATE_LIMITED + limits, ventana de disputa. Claves y nonce NIP-44 fijos → content e id deterministas; las firmas se verifican, no se comparan. Regenera con `node docs/nge/gen-vectors.js`.",
+  "kinds": {
+    "request": 24940,
+    "response": 24941,
+    "notification": 24942
+  },
+  "keys": {
+    "escrow": {
+      "sk": "1111111111111111111111111111111111111111111111111111111111111111",
+      "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+      "npub": "npub1fu64hh9hes90w2808n8tjc2ajp5yhddjef0ctx4s7zmsgp6cwx4qgy4eg9"
+    },
+    "client": {
+      "sk": "2222222222222222222222222222222222222222222222222222222222222222",
+      "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+      "nsec": "nsec1yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qxh9tww"
+    },
+    "attacker": {
+      "sk": "6666666666666666666666666666666666666666666666666666666666666666",
+      "pubkey": "5ab4689e400a4a160cf01cd44730845a54768df8547dcdf073d964f109f18c30"
+    }
+  },
+  "uri": "nostr+nge://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa?relay=wss%3A%2F%2Frelay.luna.fit&secret=nsec1yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qxh9tww",
+  "parsed": {
+    "escrowPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    "relays": [
+      "wss://relay.luna.fit"
+    ],
+    "clientPubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+  },
+  "crypto": {
+    "conversationKey": "2cbdf074f601178c24da3f829b504507a1f550f97d472af0f3f2cc59ab7757d1",
+    "nonce": "abababababababababababababababababababababababababababababababab"
+  },
+  "canonical": [
+    {
+      "method": "get_info",
+      "requestPayload": {
+        "method": "get_info",
+        "params": {}
+      },
+      "request": {
+        "kind": 24940,
+        "created_at": 1751760000,
+        "tags": [
+          [
+            "p",
+            "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPVLESCMSs2A6WBeHYl6dBCm9busZSxjh/8wpd6grYzEVa2qFcIpgzTDLgrCxWX8wDcbspvrrg8picFRupS5NRyFMilkmGmq3yG9nHiYcv1vbGK0yxsDMUNu2GKppxxh8Jn0=",
+        "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+        "id": "1da3ef05b3865cae145feb8aeb79913f6d0728a398be7166d564c90c4a670714",
+        "sig": "15ae2789c284fe4258e6a3b1519cd056204c8336b2bb36dcc5b3442b92456cf566859792f389832d710213bf0ba183a6038c504e36c6d8cd0083fb2846e5f4f8"
+      },
+      "responsePayload": {
+        "result_type": "get_info",
+        "result": {
+          "methods": [
+            "get_info",
+            "create_bet",
+            "get_bet",
+            "report_result",
+            "cancel_bet"
+          ],
+          "version": "1.1",
+          "currency": "sat",
+          "minStakeSats": 100,
+          "maxStakeSats": 500000,
+          "feePct": 2,
+          "devFeePct": 1,
+          "feeMinSats": 10,
+          "transparency": "public",
+          "visibilityOptions": [
+            "public",
+            "unlisted"
+          ],
+          "notifications": [
+            "bet_updated"
+          ],
+          "limits": {
+            "createBetPerMin": 30,
+            "maxPendingBets": 50
+          },
+          "settleDelaySec": 0,
+          "settleDelayMinPotSats": 0
+        }
+      },
+      "response": {
+        "kind": 24941,
+        "created_at": 1751760001,
+        "tags": [
+          [
+            "p",
+            "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+          ],
+          [
+            "e",
+            "1da3ef05b3865cae145feb8aeb79913f6d0728a398be7166d564c90c4a670714"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPNXESDwStH05SGrJOUmdUkz2Z+gCNl2t6cJ5OucqJHgbemOnSvFCoFW/6t/VKl0KVuSLw4606qQEH3ZCh00/IkA4o5dcn6pJNKTB9IXt0gQjOPJ26R8w3BCKyj8sw9vuWNoHUA++nFMkHVT3PO7S9t3jogcInhdkKi2G8Jlqr7l5Eu//mMi6p5jR2y9GvAHPBn+UdmXJdlXmNj+jGsZ2mmDk38Kkj1J/5P7QNvmCcnxuqrT0U3srtd5OK0chHKgUowvyIAu/kvDJUqUCNpBI8wOx06CerEEesUWlsNPQtYrfOUv0291ZGIG7MCz9x1iChYJMGLSeyJgbD/yO49wdliAL1bNoYvlbTuUPl92wInKM6rtzvFz+jX8ciLGv1amGMUk/ijv3V85t0HvrNc24hlPm+29vYWzD3ylah5pUYvZHqS6mWXULSGMIoxZhq5t/F8dJtlZU2g3d2CtEzrDO7kWaHkrnSeDZnmSAiXnGbRJ5wnszt5lmxzSPtfRYeJtyfS8xcCSaTQpL6SAdcRxW2I6DIsqc7KlrOy6YiTdu63Xr3IVvGko7E82tEnBRv7WceS+7l5gXPJwQjYZhuBusmYR8K3Vw7AOs4r7B/KdbwHLGvZ4UrUURYwgum0SnfwAdZH8=",
+        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "id": "7b3e2116fafc53c6f858462bcd9b3366bdcb264a27359715981c7a0ad7cf87d8",
+        "sig": "1dc857eb71934d1ca0e70e9299a64ac77ce6bb7db2328a32d3b9d43fd37fc6b2272b434124b139f0e6e718103cf78efa5dd6b9fd903be9e14fb901c9b68b19a6"
+      }
+    },
+    {
+      "method": "create_bet",
+      "requestPayload": {
+        "method": "create_bet",
+        "params": {
+          "seats": [
+            {
+              "seatId": "alice",
+              "pubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+              "payoutAddress": "alice@getalby.com"
+            },
+            {
+              "seatId": "bob"
+            }
+          ],
+          "stakeSats": 1000,
+          "condition": "Mejor de 3 en Pac-Toshi",
+          "clientRef": "match-42",
+          "roomId": "SALA-P7Q2"
+        }
+      },
+      "request": {
+        "kind": 24940,
+        "created_at": 1751760000,
+        "tags": [
+          [
+            "p",
+            "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPFDESCMSs2A6WBeHYlqKFRegZdIUDEDho48rd7c5LHhMLGynA+8BuUPpuOvKewxVbLKlwtjRoasOGTcLhwJvN1Qura1H2ORJK+WRo5DW1ANjfLoyq0Mh1VvK830qiZrmG55OS16+wQh3EDzwbqqTzcmg5QZC2Ec6cjyE5MomrK5mBe+9iIu9+NmE22UFtg/OUBLSf37CVlKlZ3iRF9tm3RqyiobpwV1nss7LOrCaDWY4qvOvEgJ/p9RcZQolW7AZ7F2jblj41cfNUJBFafEbtxGnwO/TpEASiEWkjZCe5OWAYhSq2c1OWdzoJSOv8leC0fQZSayCiNhQD7LLpMQAtywPnuUje+FgXflLzIHhLGqlp6Rrl1S11H9j64iAlJDCFB551RvbdaACpBKNXK7Z8jqJlRxNWzfhvUwu2O8kBpczzLQZ6YDE8iu2U4VAegNQMPRzio5oGaSLvnB30t1A7eYv",
+        "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+        "id": "fd877715569fe0b2951c05f87928b77609199687dc822ca0b097bf1da5021614",
+        "sig": "c30ee2428d52ad538140c403427906b25804116f4f0330be0d545803af4bc36854390b16df36f4af808e7ccfc51d4e327f92599db4bc0e605cd5c8119d64c530"
+      },
+      "responsePayload": {
+        "result_type": "create_bet",
+        "result": {
+          "betId": "clbet0000000000000000000n",
+          "status": "pending_deposits",
+          "stakeSats": 1000,
+          "potSats": 0,
+          "deadlineSec": 1751763600,
+          "seats": [
+            {
+              "seatId": "alice",
+              "deposited": false,
+              "bolt11": "lnbc10u1p...alice",
+              "payout": null
+            },
+            {
+              "seatId": "bob",
+              "deposited": false,
+              "bolt11": "lnbc10u1p...bob",
+              "payout": null
+            }
+          ],
+          "result": null,
+          "deposits": [
+            {
+              "seatId": "alice",
+              "bolt11": "lnbc10u1p...alice",
+              "amountSats": 1000,
+              "expiresAt": 1751763600
+            },
+            {
+              "seatId": "bob",
+              "bolt11": "lnbc10u1p...bob",
+              "amountSats": 1000,
+              "expiresAt": 1751763600
+            }
+          ]
+        }
+      },
+      "response": {
+        "kind": 24941,
+        "created_at": 1751760001,
+        "tags": [
+          [
+            "p",
+            "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+          ],
+          [
+            "e",
+            "fd877715569fe0b2951c05f87928b77609199687dc822ca0b097bf1da5021614"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urP3/ESDwStH05SGrJOUmdUkz2Y/8TCECm0M8+Yud0Y3kLZWLpBKhathKp58T4PV0KL6WAxJ+fs/pSQGRelR59dxF89vgOyu5bKOiEvdPBxAAjb612oVgw1gya/CMu78rnXJdYGxis0BxjAn/0Mv+jyoWy9lhL3U47aC3MvdwX/+8mEra6xpi7rJrMlXwKqjPeR3GMKjuSFBaxbmzAS54nyz+0m4Gql2Rlvt7BNuauRT8g+/eiDyh+p8JcYwA3Fr4ttBq0OAP10fjfQc9FMa9H8xC6wLaepkoZnx37loPU6IbLaRexmswJVc24ITTg10LDxs4DVqiWho9QH7vDteMQx3NL3rBjNKw2WvQWl8CqdC2z6vFgv1zki3ESyKutzfHEZxZ5xAi5FpEy0SP9coD3kFXrtzBvK1aY0jla+tVKc/tfsReoJitMV38JvkAo59RoWYgZt1JQ0DzR2AgDhqbcohTFTA6CD6+CxFWJjn7KIVkZxWAs4ZJi1XOB++lfb94ubVokMmvNfwNBqH8PcRxE0JWCINuL6LF5YFnA11cxswTv0IYkUh81L7mPKEFmioSrTxyNp6hqEOcy/uMAzFLIu75eHsCfolJ5TCH/k3PnRg5+6PBP0FwcmCTx0eFsieZGd7QXkvRjifrdqm3Ocegp8SevaaJPqlwz6m3bj1x9B+M51ElpBMb3CdmtdayvjhObMVEzEhhx04j7I25FEU0dIoRe8PXR7IljMNPn/MkB5szquWDhnJgcN0hGontuwgScmDTM3n0XCKt4jn2QKiWdYiy+xHYS0ottKxPT/DOA0qOyMYK1wlOh4oyhS98SLInbAIqKz9+n4nkBpidJNcl52p1eJ0jBGwJL+ytkuwW5WlAxyqrGZ4M91gTTbAWDK1mUb20=",
+        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "id": "dea53620896394deff262d52b84ebdf557039540bb972a72a8774cbd1a71ae93",
+        "sig": "ceb80a5b3e1653cc446994b15280acb42e6109d07454da02b6f0425aaa54a52c3e39d2a4b10f5945b0d876aef9d0c2b04db25afba13f3b135b5b2af132048410"
+      }
+    },
+    {
+      "method": "get_bet",
+      "requestPayload": {
+        "method": "get_bet",
+        "params": {
+          "betId": "clbet0000000000000000000n"
+        }
+      },
+      "request": {
+        "kind": 24940,
+        "created_at": 1751760000,
+        "tags": [
+          [
+            "p",
+            "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPTDESCMSs2A6WBeHYl6dBCm2ZflURRaz7t86e7Z6e3BMdHLxOe5C9xKo7tLULU8APfbclsrbs/pSQGRelR59dxEi5LVD+t5rGIamkfGysGFXGt5Um3pAs2L+lU1JsK6CLPgcqJhhuFLADp2pUJhPPIL5F16xbgDWUMUPMEVn14UMjA==",
+        "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+        "id": "3b60ff32eb0375229be0e68889cfff0b6fcd82925c9f01975bcca4ea4311da13",
+        "sig": "e4146ec7a13c9f53be896cf6746b2b065f35b03c529919c1d31b6cf6656d3a78ff501fb04423b2653ec73bf4e7b49e469eddd8a10b41589c7bcd24e7b3f4f469"
+      },
+      "responsePayload": {
+        "result_type": "get_bet",
+        "result": {
+          "betId": "clbet0000000000000000000n",
+          "status": "funded",
+          "stakeSats": 1000,
+          "potSats": 2000,
+          "deadlineSec": 1751763600,
+          "seats": [
+            {
+              "seatId": "alice",
+              "deposited": true,
+              "payout": null
+            },
+            {
+              "seatId": "bob",
+              "deposited": true,
+              "payout": null
+            }
+          ],
+          "result": null
+        }
+      },
+      "response": {
+        "kind": 24941,
+        "created_at": 1751760001,
+        "tags": [
+          [
+            "p",
+            "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+          ],
+          [
+            "e",
+            "3b60ff32eb0375229be0e68889cfff0b6fcd82925c9f01975bcca4ea4311da13"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPH7ESDwStH05SGrJOUmdUkz2Z+gCNlam+493NLc9Mn4CYjW/C6gCqESC5pKLexxcb6OYlsrbs/pSQGRelR59dxF89vgOyrBJNKTV5ZDGxRJ1IPwy7hQk1gbcuW86xM/pSatKBh/9yAFxQTu5e+qf36KgoBFY10w7dD+Q8Mwh//85WeLvud+868GZziBV+FaIEmOGNy7UQEDzLnjKIMknyz+0m7vsjwU8/cHNNPfFDT9+vOahFSJv4IpcPRE1DKho4g+xY1bmxLaWSpYLP70H/AP4h+3Ig0BZxg6pjNCG6oqBbQu3isBfHIvqejn911PN3tAXQ6ue3tZIAqvOrdcpyWsb2ax0evQ2BP8TlN++fUjXyMsG3jCX7l0wqsTBucD1RSxbqGbbdaACpBKNXK7Z8jqJlRxNWzfhvUwu2O8kBpczzK60l7+JAZdoO5L/F5XWHuwSbbO53/lfHvXFSHwUDEK1",
+        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "id": "8238ce22f9f0f018023e9459351bb8f9011f13e28a106b85ca761cde88824f1d",
+        "sig": "68e46e667aaa96ba50daf4fd1bf44f43bbcb71ec2cf9c79a79ab1b238467420e2313acc7346b0e7a6210c403d28141560d51bb17f9527af273eceff910d9837a"
+      }
+    },
+    {
+      "method": "report_result",
+      "requestPayload": {
+        "method": "report_result",
+        "params": {
+          "betId": "clbet0000000000000000000n",
+          "winners": [
+            "alice"
+          ]
+        }
+      },
+      "request": {
+        "kind": 24940,
+        "created_at": 1751760000,
+        "tags": [
+          [
+            "p",
+            "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPS7ESCMSs2A6WBeHYkudABmmdNIEDEe249l5OucoIHkPe2SnSvFCr1W/y9STY11TYaSJ0srbs/pSQGRelR59dxF89vgOyu4FOqqE5pjc3gQlafxuwFgh3wud8G8UzdOCLPhmZ6PMwnUHb8hfOiiCbNy5UpyURzVZkUTsWCWNsnENgA==",
+        "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+        "id": "0a49342ea242568b1b4896def6b24b5eed6e4382e3d79c02d8741bfb56bbb698",
+        "sig": "bd087dcaf3d16896deff0aa89499a9e7e14f7f7b64f9190963e98e8bee7343707f3029a3cfb0cc731a003ddabf4c994f32607eb667ed57e4df98ee2163871e8a"
+      },
+      "responsePayload": {
+        "result_type": "report_result",
+        "result": {
+          "ok": true,
+          "status": "settled"
+        }
+      },
+      "response": {
+        "kind": 24941,
+        "created_at": 1751760001,
+        "tags": [
+          [
+            "p",
+            "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+          ],
+          [
+            "e",
+            "0a49342ea242568b1b4896def6b24b5eed6e4382e3d79c02d8741bfb56bbb698"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPTTESDwStH05SGrJOUmdUkz2cugGBka30N8+ZbA0NSlCNGXgA/8MuRLx+ZLeMl0KebSZw9bJ8L4DBCEdhxRvNEQ4sqRbnvwWZYamkfGysGFXGt5Um3pAs2L+lU1JsK6CLPhpIAYTAb++lzSRSditac2j+DCc7hy2S/NedhmYgIqR/g==",
+        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "id": "83ba4ea47a13422d8c033b682552501e44f2cc2a7151121eb66647a89c48c645",
+        "sig": "7344b39d77a20c63bd6c0ac16a7c295316fb23fd406bfa5e0e1319004cc34de04157e186496338303b9c77ffe2d34739d133b4a83b5b656a3e49d9ead90c364c"
+      }
+    }
+  ],
+  "notifications": [
+    {
+      "name": "bet_updated (segundo depósito acreditado → funded)",
+      "payload": {
+        "notification_type": "bet_updated",
+        "notification": {
+          "betId": "clbet0000000000000000000n",
+          "status": "funded",
+          "deposited": [
+            "alice",
+            "bob"
+          ]
+        }
+      },
+      "event": {
+        "kind": 24942,
+        "created_at": 1751760002,
+        "tags": [
+          [
+            "p",
+            "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPfXESCAYs2EzVVbcNFCXHimgef0TSw7h7cgvSbAoJWoac3OnXKgOokSi5NnSOAtZYqjOnIHJ4a8WOTBMnwwuK0MpsvgOyu5bKLaWocGCgFFnKu5kq0oukU7c5jkoxNvxDsIJFBmxllUlUye3Pf+AxIKooAcez0RQZm7Qu8shvLd3UuPoyOeitPuo+RVkz2C7JFO2GwynJSGHXVrwe7IFuFrVf6OFW8/Te9qXwxL5aJT5tqprY817J2vzMDGgKkCzVQI=",
+        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "id": "2f16153fc98b310f7c40849a9d08888373a6aa47a55401357f3ba482a9bade5a",
+        "sig": "40c311ee33b29c41f865411e8259b8d31419007f71935ba4efab008205fcfb5f7c7edb0b1fed98c2924b6b26809e1b140b95e77406a7bd5a51131188d228b79f"
+      }
+    }
+  ],
+  "adversarial": [
+    {
+      "name": "cliente sin credencial",
+      "request": {
+        "kind": 24940,
+        "created_at": 1751760000,
+        "tags": [
+          [
+            "p",
+            "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur33fe5P8jBhzribydwGJKf94uLQS9kqBNjHr81pk+0QFpIk6wRmo0jSAuFI3TbPVOMn2CsBwV2QephSKyWOlXzcmfRMF99xQG5IZjUFSit1UaJEN3cG4fgadtq0nS6e1tZ8U=",
+        "pubkey": "5ab4689e400a4a160cf01cd44730845a54768df8547dcdf073d964f109f18c30",
+        "id": "e6b24288ded1501bd6253b4344c7dacc4c02f5f94e8b6218e7d3e1b71c1498d6",
+        "sig": "6d0502b88539bf7be737c70c714383d0c3b4ab4e01254673ec9b6bdbd0d9239ae4f97eb92fe414e7224b00120e326659b8542f0dd5bfb77ba755a4e07b8a57d8"
+      },
+      "expect": {
+        "error": {
+          "code": "UNAUTHORIZED"
+        }
+      },
+      "why": "El request está bien firmado y descifra, pero la pubkey no tiene credencial emitida (§6). El escrow no atiende clientes desconocidos."
+    },
+    {
+      "name": "request fuera de la ventana de frescura",
+      "request": {
+        "kind": 24940,
+        "created_at": 1751756000,
+        "tags": [
+          [
+            "p",
+            "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+          ]
+        ],
+        "content": "Aqurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urPVLESCMSs2A6WBeHYl6dBCm9busZSxjh/8wpd6grYzEVa2qFcIpgzTDLgrCxWX8wDcbspvrrg8picFRupS5NRyFMilkmGmq3yG9nHiYcv1vbGK0yxsDMUNu2GKppxxh8Jn0=",
+        "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+        "id": "81430d235a69355771447e69e9a9b34082b54456588d5a5cb7a4aa7f8f0ebee1",
+        "sig": "f55c10c2f2bf71d5e79996f27365168127f00e651b060662b5b8e27e860bdd485e8843d46930c3250614f499f6e6c3a6523732157305b1c6ba47c7b9bd63041e"
+      },
+      "expect": {
+        "error": {
+          "code": "EXPIRED_REQUEST"
+        }
+      },
+      "why": "created_at está a >5 min del ahora del escrow (§6). Anti-replay: se rechaza aunque venga de una `C` válida."
+    },
+    {
+      "name": "stake fuera de rango",
+      "method": "create_bet",
+      "params": {
+        "seats": [
+          {
+            "seatId": "alice",
+            "pubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+            "payoutAddress": "alice@getalby.com"
+          },
+          {
+            "seatId": "bob"
+          }
+        ],
+        "stakeSats": 5
+      },
+      "expect": {
+        "error": {
+          "code": "STAKE_OUT_OF_RANGE"
+        }
+      },
+      "why": "stakeSats por debajo de minStakeSats de get_info. El escrow valida contra sus propios límites, no confía en el cliente."
+    },
+    {
+      "name": "ganador no fondeado",
+      "method": "report_result",
+      "params": {
+        "betId": "clbet0000000000000000000n",
+        "winners": [
+          "carol"
+        ]
+      },
+      "expect": {
+        "error": {
+          "code": "BAD_WINNER"
+        }
+      },
+      "why": "El seatId ganador no existe / no está fondeado (§7). winners debe ser subconjunto de asientos pagados."
+    },
+    {
+      "name": "reporte sobre apuesta no fondeada",
+      "method": "report_result",
+      "params": {
+        "betId": "clbet0000000000000000000n",
+        "winners": [
+          "alice"
+        ]
+      },
+      "expect": {
+        "error": {
+          "code": "NOT_FUNDED"
+        }
+      },
+      "why": "report_result solo vale con status=funded (§7). En pending_deposits se rechaza."
+    },
+    {
+      "name": "resultado ya liquidado con otro ganador",
+      "method": "report_result",
+      "params": {
+        "betId": "clbet0000000000000000000n",
+        "winners": [
+          "bob"
+        ]
+      },
+      "expect": {
+        "error": {
+          "code": "ALREADY_SETTLED"
+        }
+      },
+      "why": "Finalidad (§7): una vez settled, el resultado no se reescribe. Un reintento IDÉNTICO devolvería ok; uno distinto es error."
+    },
+    {
+      "name": "cancelar apuesta ya fondeada",
+      "method": "cancel_bet",
+      "params": {
+        "betId": "clbet0000000000000000000n"
+      },
+      "expect": {
+        "error": {
+          "code": "NOT_CANCELLABLE"
+        }
+      },
+      "why": "cancel_bet solo pre-fondeo total (§8). Fondeada, la única salida es report_result (winners vacío = anular)."
+    },
+    {
+      "name": "credencial que excede el límite de creación",
+      "method": "create_bet",
+      "params": {
+        "seats": [
+          {
+            "seatId": "alice",
+            "pubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+            "payoutAddress": "alice@getalby.com"
+          },
+          {
+            "seatId": "bob"
+          }
+        ],
+        "stakeSats": 1000
+      },
+      "expect": {
+        "error": {
+          "code": "RATE_LIMITED"
+        }
+      },
+      "why": "v1.1 (§7): el escrow limita create_bet por credencial (get_info.limits: createBetPerMin, maxPendingBets). Excederlo devuelve RATE_LIMITED; el cliente reintenta con backoff. Los reintentos del MISMO evento no cuentan (dedup por id)."
+    }
+  ]
+}
