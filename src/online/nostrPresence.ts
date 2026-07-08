@@ -9,15 +9,16 @@
 // jugador tiene UN estado que se auto-reemplaza. Un `expiration` tag lo hace caducar
 // solo si dejamos de latir (igual que el TTL de la presencia REST), así "Jugando"
 // desaparece cuando el jugador cierra o cambia de app.
+// PUERTO de presencia — el formato del evento vive en la capa protocolo
+// (`sdk/ngp.ts`); acá quedan la copy del estado, el TTL del juego y los relays.
 import type { Event } from 'nostr-tools';
 import type { LunaSigner } from './nostrSigner';
 import { PUBLIC_WRITE_RELAYS, getPool } from './nostrRelays';
 import { TETRA_GAME_COORD } from './nostrChallenge';
-
-// kind:30315 = live status NIP-38. `d`="general" es el estado de actividad (el otro
-// valor reservado por la NIP es "music", que no usamos).
-const PRESENCE_KIND = 30315;
-const PRESENCE_D_TAG = 'general';
+import {
+  buildPresenceEvent as ngpBuildPresenceEvent,
+  buildPresenceClearEvent,
+} from '../../sdk/ngp.js';
 
 // Vida del estado sin re-latir. El heartbeat re-publica antes de que expire; si el
 // jugador se va (cierra/minimiza/logout) dejamos de latir y a los ~4 min Nostr lo
@@ -45,16 +46,10 @@ export async function buildPresenceEvent(
   signer: LunaSigner,
   status: PresenceStatus,
 ): Promise<Event> {
-  const nowSec = Math.floor(Date.now() / 1000);
-  return signer.signEvent({
-    kind: PRESENCE_KIND,
-    created_at: nowSec,
-    tags: [
-      ['d', PRESENCE_D_TAG],
-      ['a', TETRA_GAME_COORD],
-      ['expiration', String(nowSec + PRESENCE_TTL_SEC)],
-    ],
-    content: statusMessage(status),
+  return ngpBuildPresenceEvent(signer, {
+    gameCoord: TETRA_GAME_COORD,
+    message: statusMessage(status),
+    ttlSec: PRESENCE_TTL_SEC,
   });
 }
 
@@ -82,16 +77,7 @@ export async function publishPresence(
  */
 export async function clearPresenceEvent(signer: LunaSigner): Promise<boolean> {
   try {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const evt = await signer.signEvent({
-      kind: PRESENCE_KIND,
-      created_at: nowSec,
-      tags: [
-        ['d', PRESENCE_D_TAG],
-        ['expiration', String(nowSec + 1)],
-      ],
-      content: '',
-    });
+    const evt = await buildPresenceClearEvent(signer);
     await Promise.any(getPool().publish(PUBLIC_WRITE_RELAYS, evt));
     return true;
   } catch {

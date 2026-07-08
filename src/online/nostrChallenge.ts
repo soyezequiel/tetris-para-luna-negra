@@ -1,24 +1,23 @@
-// Reto/invitación 1v1 por NIP-17 (gift-wrap). En la 2.0 de Luna Negra la
-// invitación a jugar ES el reto: un DM cifrado de extremo a extremo que apunta a
-// una sala de TETRA (por su link `?join=`), sin token de acceso ni paso por la
-// tienda. Ver la skill `integrar-luna-negra` §5 / interfaz 2.0.
-//
-// Construimos los tres sobres NIP-17 (rumor kind:14 → seal kind:13 → gift-wrap
-// kind:1059) A MANO sobre la abstracción `LunaSigner`, porque los helpers
-// `nip17`/`nip59` de nostr-tools exigen la clave privada cruda y nuestro firmante
-// (NIP-07 extensión / NIP-46 bunker) no la expone. El firmante sí ofrece
-// nip44Encrypt/Decrypt + signEvent; la capa externa del gift-wrap usa una clave
-// EFÍMERA local (así el server no puede correlacionar quién le escribe a quién).
-import {
-  finalizeEvent,
-  generateSecretKey,
-  getEventHash,
-  nip19,
-  nip44,
-  type Event,
-} from 'nostr-tools';
+// PUERTO del reto 1v1 NIP-17 — la frontera protocolo↔juego. La gramática de los
+// sobres (rumor kind:14 → seal kind:13 → gift-wrap kind:1059) vive en la capa
+// protocolo `sdk/ngp.ts`; acá quedan las cosas del PROGRAMA: la coordenada real
+// del juego (env), el pool de relays y la publicación/descubrimiento de inboxes.
+// El resto del juego (main, inbox, presencia, marcador) importa de ACÁ, nunca del
+// SDK. Ver la skill `integrar-luna-negra` §5 / interfaz 2.0.
+import type { Event } from 'nostr-tools';
 import type { LunaSigner } from './nostrSigner';
-import { DM_RELAYS, getPool, randomizedTimestamp } from './nostrRelays';
+import { DM_RELAYS, getPool } from './nostrRelays';
+import {
+  buildChallengeGiftWraps as ngpBuildChallengeGiftWraps,
+  parseChallengeGiftWrap as ngpParseChallengeGiftWrap,
+  dmRelaysFromInboxEvent,
+  NGP_KIND,
+  type ChallengeInput,
+  type ParsedChallenge,
+  type ParseChallengeOptions,
+} from '../../sdk/ngp.js';
+
+export type { ChallengeInput, ParsedChallenge };
 
 // Coordenada real del juego en Luna Negra: `30023:<tienda-pubkey>:<slug>`, la
 // dirección del listado kind:30023 que publica la tienda (verificado en relays:
@@ -35,118 +34,20 @@ export const TETRA_GAME_COORD: string =
   ((import.meta as unknown as { env?: Record<string, string | undefined> }).env
     ?.VITE_TETRA_GAME_COORD ?? '').trim() || TETRA_GAME_COORD_FALLBACK;
 
-const RUMOR_KIND = 14;
-const SEAL_KIND = 13;
-const GIFT_WRAP_KIND = 1059;
-const DEFAULT_TTL_SEC = 60 * 60; // 1h
-
-export interface ChallengeInput {
-  /** pubkey (hex) del amigo al que retás. */
-  toPubkey: string;
-  /** id de la sala online de TETRA donde se juega. */
-  roomId: string;
-  /** link `?join=<sala>` con el que el amigo entra a la sala. */
-  joinUrl: string;
-  /** texto del reto (aparece en el DM / toast). */
-  message: string;
-  /** vencimiento del reto en segundos (default 1h). */
-  ttlSec?: number;
-}
-
-export interface ParsedChallenge {
-  fromPubkey: string;
-  fromNpub: string;
-  roomId: string | null;
-  joinUrl: string;
-  game: string | null;
-  message: string;
-  createdAt: number | null;
-  expiresAt: number | null;
-  giftWrapId: string;
-  rumorId: string | null;
-}
-
 /**
- * Sella un rumor hacia `sealTo` (cifrado NIP-44, firmado por MI clave) y lo envuelve
- * en un gift-wrap kind:1059 con clave EFÍMERA hacia `wrapTo`. Para el destinatario,
- * `sealTo` = `wrapTo` = él; para la auto-copia del emisor, ambos = yo.
- */
-async function sealAndWrap(
-  signer: LunaSigner,
-  rumor: unknown,
-  sealTo: string,
-  wrapTo: string,
-): Promise<Event> {
-  // seal kind:13: cifra el rumor hacia `sealTo` y lo firma MI clave.
-  const sealContent = await signer.nip44Encrypt!(sealTo, JSON.stringify(rumor));
-  const seal = await signer.signEvent({
-    kind: SEAL_KIND,
-    created_at: randomizedTimestamp(),
-    tags: [],
-    content: sealContent,
-  });
-
-  // gift-wrap kind:1059: cifra el seal con una clave efímera hacia `wrapTo`.
-  const ephemeralSk = generateSecretKey();
-  const wrapContent = nip44.encrypt(
-    JSON.stringify(seal),
-    nip44.getConversationKey(ephemeralSk, wrapTo),
-  );
-  return finalizeEvent(
-    {
-      kind: GIFT_WRAP_KIND,
-      created_at: randomizedTimestamp(),
-      tags: [['p', wrapTo]],
-      content: wrapContent,
-    },
-    ephemeralSk,
-  );
-}
-
-/**
- * Arma los DOS gift-wrap NIP-17 de un reto: el del `recipient` (destinatario) y la
- * `selfCopy` (auto-copia para MI propio historial, para poder ver en Luna / otros
- * clientes el reto que mandé). Ambos envuelven el MISMO rumor kind:14. Lanza si el
- * firmante no soporta NIP-44.
+ * Arma los DOS gift-wrap NIP-17 de un reto (destinatario + auto-copia del emisor),
+ * anclados a la coordenada de TETRA. Lanza si el firmante no soporta NIP-44.
  */
 export async function buildChallengeGiftWraps(
   signer: LunaSigner,
   input: ChallengeInput,
 ): Promise<{ recipient: Event; selfCopy: Event }> {
-  if (!signer.nip44Encrypt) {
-    throw new Error('Tu firmante no soporta NIP-44 (necesario para retos cifrados).');
-  }
-  const myPubkey = (await signer.getPublicKey()).trim().toLowerCase();
-  const toPubkey = input.toPubkey.trim().toLowerCase();
-  const nowSec = Math.floor(Date.now() / 1000);
-  const expiresAt = nowSec + (input.ttlSec ?? DEFAULT_TTL_SEC);
-
-  // rumor kind:14 (sin firmar; lleva id pero no sig, por NIP-59). Uno solo para
-  // ambas copias, así el reto que ve el destinatario y el que veo yo son el mismo.
-  const rumorBase = {
-    kind: RUMOR_KIND,
-    pubkey: myPubkey,
-    created_at: nowSec,
-    tags: [
-      ['p', toPubkey],
-      ['game', TETRA_GAME_COORD],
-      ['room', input.roomId],
-      ['url', input.joinUrl],
-      ['expiration', String(expiresAt)],
-    ],
-    content: input.message,
-  };
-  const rumor = { ...rumorBase, id: getEventHash(rumorBase) };
-
-  const recipient = await sealAndWrap(signer, rumor, toPubkey, toPubkey);
-  const selfCopy = await sealAndWrap(signer, rumor, myPubkey, myPubkey);
-  return { recipient, selfCopy };
+  return ngpBuildChallengeGiftWraps(signer, TETRA_GAME_COORD, input);
 }
 
 /**
- * Arma el gift-wrap NIP-17 (kind:1059) del destinatario, listo para publicar. Lanza
- * si el firmante no soporta NIP-44. (Para incluir la auto-copia del emisor, usá
- * `buildChallengeGiftWraps`.)
+ * Arma el gift-wrap NIP-17 (kind:1059) del destinatario, listo para publicar.
+ * (Para incluir la auto-copia del emisor, usá `buildChallengeGiftWraps`.)
  */
 export async function buildChallengeGiftWrap(
   signer: LunaSigner,
@@ -155,88 +56,16 @@ export async function buildChallengeGiftWrap(
   return (await buildChallengeGiftWraps(signer, input)).recipient;
 }
 
-interface ParseOptions {
-  /**
-   * Si se pasa, se exige que el `url` del reto sea del mismo origin (seguridad:
-   * no navegamos a orígenes ajenos). En el navegador pasá `window.location.origin`.
-   */
-  origin?: string | null;
-}
-
 /**
  * Desarma un gift-wrap NIP-17 entrante y devuelve el reto, o `null` si no es un
- * reto válido/para nosotros/vigente. Best-effort: nunca lanza.
+ * reto válido/para nosotros/vigente/de TETRA. Best-effort: nunca lanza.
  */
 export async function parseChallengeGiftWrap(
   signer: LunaSigner,
   giftWrap: Event,
-  options: ParseOptions = {},
+  options: ParseChallengeOptions = {},
 ): Promise<ParsedChallenge | null> {
-  try {
-    if (giftWrap.kind !== GIFT_WRAP_KIND || !signer.nip44Decrypt) return null;
-
-    // Capa externa: conversación entre mi clave y la efímera (giftWrap.pubkey).
-    const seal = JSON.parse(
-      await signer.nip44Decrypt(giftWrap.pubkey, giftWrap.content),
-    ) as Event;
-    if (!seal || seal.kind !== SEAL_KIND || typeof seal.pubkey !== 'string') {
-      return null;
-    }
-
-    // Capa interna: el seal lo firmó el remitente; su content cifra el rumor.
-    const rumor = JSON.parse(
-      await signer.nip44Decrypt(seal.pubkey, seal.content),
-    ) as Event & { id?: string };
-    if (!rumor || rumor.kind !== RUMOR_KIND) return null;
-
-    // Chequeo de seguridad NIP-59: el autor del rumor DEBE ser quien firmó el seal
-    // (si no, alguien podría suplantar el remitente).
-    if (rumor.pubkey !== seal.pubkey) return null;
-
-    const tags = Array.isArray(rumor.tags) ? (rumor.tags as string[][]) : [];
-    const tag = (k: string): string | null =>
-      tags.find((t) => t[0] === k)?.[1] ?? null;
-
-    const joinUrl = tag('url');
-    if (!joinUrl) return null;
-    const game = tag('game');
-    if (game && game !== TETRA_GAME_COORD) return null;
-
-    const expStr = tag('expiration');
-    const expiresAt = expStr ? Number(expStr) : null;
-    if (
-      expiresAt !== null &&
-      Number.isFinite(expiresAt) &&
-      expiresAt * 1000 <= Date.now()
-    ) {
-      return null; // reto vencido
-    }
-
-    if (options.origin && !isSameOrigin(joinUrl, options.origin)) return null;
-
-    return {
-      fromPubkey: seal.pubkey,
-      fromNpub: nip19.npubEncode(seal.pubkey),
-      roomId: tag('room'),
-      joinUrl,
-      game,
-      message: typeof rumor.content === 'string' ? rumor.content : '',
-      createdAt: typeof rumor.created_at === 'number' ? rumor.created_at : null,
-      expiresAt: expiresAt !== null && Number.isFinite(expiresAt) ? expiresAt : null,
-      giftWrapId: giftWrap.id,
-      rumorId: typeof rumor.id === 'string' ? rumor.id : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function isSameOrigin(url: string, origin: string): boolean {
-  try {
-    return new URL(url).origin === origin;
-  } catch {
-    return false;
-  }
+  return ngpParseChallengeGiftWrap(signer, TETRA_GAME_COORD, giftWrap, options);
 }
 
 /**
@@ -267,14 +96,12 @@ export async function resolveDmInboxRelays(pubkey: string): Promise<string[]> {
   const relays = new Set(DM_RELAYS);
   try {
     const evs = await getPool().querySync(DM_RELAYS, {
-      kinds: [10050],
+      kinds: [NGP_KIND.dmInboxRelays],
       authors: [pubkey.trim().toLowerCase()],
     });
     if (evs.length > 0) {
       const newest = evs.reduce((a, b) => (b.created_at > a.created_at ? b : a));
-      for (const t of newest.tags) {
-        if (t[0] === 'relay' && typeof t[1] === 'string') relays.add(t[1]);
-      }
+      for (const r of dmRelaysFromInboxEvent(newest)) relays.add(r);
     }
   } catch {
     /* sin lista propia: usamos solo el fallback */

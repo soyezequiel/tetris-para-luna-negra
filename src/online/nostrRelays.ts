@@ -40,12 +40,4 @@ export function getPool(): SimplePool {
   return pool;
 }
 
-// NIP-59: los sobres (seal kind:13 y gift-wrap kind:1059) deben llevar un
-// `created_at` aleatorizado hacia atrás (hasta 2 días) para no filtrar el momento
-// real en que se armó el reto.
-const TWO_DAYS_SECONDS = 2 * 24 * 60 * 60;
-
-export function randomizedTimestamp(): number {
-  const nowSec = Math.floor(Date.now() / 1000);
-  return nowSec - Math.floor(Math.random() * TWO_DAYS_SECONDS);
-}
+// `randomizedTimestamp` (NIP-59) se mudó a la capa protocolo: sdk/ngp.ts.
