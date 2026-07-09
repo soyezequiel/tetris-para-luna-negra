@@ -6,10 +6,12 @@
 // mapeo sala→ganador y la publicación a relays.
 //
 // Certifica SOLO lo que el servidor presenció: el ganador de un versus arbitrado
-// por la sala autoritativa (room.winnerPlayerId). Dos disparadores:
-//   - apuesta: en el settle NGE, con ref = betId (lunaNegraBets).
-//   - versus sin apuesta: al terminar la partida, con ref = matchResultId, leyendo
-//     la sala AUTORITATIVA del DO por el bridge (attestFinishedRoomWinner).
+// por la sala autoritativa (room.winnerPlayerId). Disparadores:
+//   - apuesta: en el settle NGE, con ref = betId (lunaNegraBets). ← el único vivo hoy.
+//   - PENDIENTE, versus sin apuesta: al terminar la partida, con ref = matchResultId,
+//     leyendo la sala AUTORITATIVA del DO por el bridge (attestFinishedRoomWinner).
+//     `buildRoomWinnerAttestation` ya toma un `ref` genérico para soportarlo; falta
+//     la función que lea el RoomStore y la enganche al fin de partida.
 // Nunca un score de cliente ni el modo 1 jugador (no hay validación server-side
 // del puntaje: firmarlo sería teatro de seguridad).
 //
@@ -32,7 +34,6 @@ import { buildAttestationEvent, type NgpSigner } from 'nostr-game-protocol/ngp';
 // lo cubre tests/apiEsmImports.test.ts.
 import { PUBLIC_WRITE_RELAYS } from './nostrRelays.js';
 import type { OnlineRoom } from './protocol';
-import type { RoomStore } from './roomService';
 
 /** Corte total de la publicación: en serverless no podemos colgar el settle. */
 const PUBLISH_TIMEOUT_MS = 5_000;
