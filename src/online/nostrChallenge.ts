@@ -28,9 +28,10 @@ export type { ChallengeInput, ParsedChallenge };
 // filtra por ESE coord exacto: si no coincide, no detecta nada (ni "Jugando TETRA" ni
 // los puntajes) — 0 matches, sin error.
 //
-// ÚNICA fuente de la verdad: la env `VITE_gameCoord` (inyectada por Vite en build).
-// No hay fallback hardcodeado. Setearla en `.env` con el coord real
-// `30023:<tienda-pubkey>:<slug>` (p. ej. tetris-beta → pubkey ed13c4…cc4d3).
+// ÚNICA fuente de la verdad: la env `gameCoord` (inyectada por Vite en build; el
+// prefijo `gameCoord` está habilitado en `envPrefix` de vite.config.ts). No hay
+// fallback hardcodeado. Setearla en `.env` y en Vercel con el coord real
+// `30023:<tienda-pubkey>:<slug>` (p. ej. tetris-beta → pubkey 7c45df…7df4).
 //
 // Si falta NO tiramos error en la carga del módulo: eso caería TODA la app (pantalla
 // negra) por un coord que sólo usa la capa online (presencia/marcador/reto). Avisamos
@@ -38,20 +39,20 @@ export type { ChallengeInput, ParsedChallenge };
 // `requireGameCoord()` para fallar en el punto de uso, sin voltear el juego.
 export const TETRA_GAME_COORD: string = (
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env
-    ?.VITE_gameCoord ?? ''
+    ?.gameCoord ?? ''
 ).trim();
 if (!TETRA_GAME_COORD) {
   console.error(
-    '[nostr] Falta VITE_gameCoord: la coordenada del juego (30023:<tienda-pubkey>:<slug>) no está seteada. ' +
+    '[nostr] Falta gameCoord: la coordenada del juego (30023:<tienda-pubkey>:<slug>) no está seteada. ' +
       'Presencia, marcador y retos NGP quedan deshabilitados hasta configurarla.',
   );
 }
 
-/** Devuelve la coordenada del juego o lanza si `VITE_gameCoord` no está configurada. */
+/** Devuelve la coordenada del juego o lanza si `gameCoord` no está configurada. */
 export function requireGameCoord(): string {
   if (!TETRA_GAME_COORD) {
     throw new Error(
-      'Falta VITE_gameCoord: seteá la coordenada del juego (30023:<tienda-pubkey>:<slug>) en el entorno.',
+      'Falta gameCoord: seteá la coordenada del juego (30023:<tienda-pubkey>:<slug>) en el entorno.',
     );
   }
   return TETRA_GAME_COORD;

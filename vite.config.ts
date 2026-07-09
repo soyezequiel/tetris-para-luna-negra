@@ -76,6 +76,11 @@ export default defineConfig(({ mode }) => {
     if (process.env[key] === undefined) process.env[key] = value;
   }
   return {
+  // Por defecto Vite solo inyecta al cliente las env con prefijo `VITE_`. Agregamos
+  // `gameCoord` para poder nombrar así la coordenada del juego (import.meta.env.gameCoord)
+  // tanto en `.env` como en Vercel. El match es por prefijo, así que NO expone otras
+  // env (solo las que empiezan con `VITE_` o `gameCoord`).
+  envPrefix: ['VITE_', 'gameCoord'],
   server: {
     port: 5173,
   },
