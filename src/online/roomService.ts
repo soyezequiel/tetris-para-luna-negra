@@ -105,6 +105,10 @@ export class OnlineRoomError extends Error {
   constructor(
     message: string,
     readonly status = 400,
+    // Código de máquina del proveedor cuando existe (p. ej. el `NgeError.code` del
+    // escrow: UNAUTHORIZED, TIMEOUT, STAKE_OUT_OF_RANGE…). Se propaga para que las
+    // alertas del money-path puedan clasificar la causa raíz sin parsear el mensaje.
+    readonly code: string | null = null,
   ) {
     super(message);
   }

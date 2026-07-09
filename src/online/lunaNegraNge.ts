@@ -80,7 +80,7 @@ export async function fetchNgeConfig(): Promise<NgeConfig> {
   return withNge(async (nge) => {
     const info = await nge.getInfo().catch((e) => {
       const msg = e instanceof NgeError ? e.message : 'no se pudo leer get_info del escrow';
-      throw new OnlineRoomError(`NGE: ${msg}`, 502);
+      throw new OnlineRoomError(`NGE: ${msg}`, 502, e instanceof NgeError ? e.code : null);
     });
     infoCache = info;
     configCache = {
@@ -129,30 +129,61 @@ function defaultVisibility(): 'unlisted' | undefined {
   return (process.env.NGE_BET_VISIBILITY ?? '').trim() === 'unlisted' ? 'unlisted' : undefined;
 }
 
+// Códigos de NgeError que NO tiene sentido reintentar: son rechazos deterministas
+// del request (límites, forma). El resto —el escrow no contestó a tiempo, ningún
+// relay aceptó, o rechazó la credencial estando reiniciándose— puede recuperarse
+// solo, así que la creación reintenta UNA vez con backoff corto. El reintento es
+// seguro porque va con `clientRef` (idempotencia §6.1): si la primera llamada llegó
+// a crear la apuesta, el escrow devuelve el MISMO betId en vez de duplicarla.
+const NON_RETRYABLE_NGE_CODES = new Set(['STAKE_OUT_OF_RANGE', 'BAD_REQUEST', 'BAD_SEATS', 'BAD_STAKE']);
+const CREATE_RETRY_BACKOFF_MS = 1_500;
+
+function isRetryableNgeError(e: unknown): e is NgeError {
+  return e instanceof NgeError && !NON_RETRYABLE_NGE_CODES.has(e.code);
+}
+
 export async function createNgeBet(params: {
   seats: NgeSeatInput[];
   stakeSats: number;
   victoryCondition?: string;
   roomId?: string;
+  // Clave de idempotencia estable para ESTE intento de creación (misma en el
+  // reintento). Sin ella el reintento de un TIMEOUT podría duplicar la apuesta.
+  clientRef?: string;
 }): Promise<NgeCreateBetResult> {
-  return withNge(async (nge) => {
-    try {
-      return await nge.createBet({
-        seats: params.seats,
-        stakeSats: params.stakeSats,
-        condition: params.victoryCondition?.slice(0, 280) || 'El último jugador en pie se lleva el pozo.',
-        roomId: params.roomId,
-        visibility: defaultVisibility(),
-      });
-    } catch (e) {
-      if (e instanceof NgeError) {
-        // STAKE_OUT_OF_RANGE u otros límites → 400; el resto (relay/escrow) → 502.
-        const status = e.code === 'STAKE_OUT_OF_RANGE' || e.code === 'BAD_REQUEST' ? 400 : 502;
-        throw new OnlineRoomError(`NGE: ${e.message}`, status);
+  const run = (): Promise<NgeCreateBetResult> =>
+    withNge(async (nge) => {
+      try {
+        return await nge.createBet({
+          seats: params.seats,
+          stakeSats: params.stakeSats,
+          condition: params.victoryCondition?.slice(0, 280) || 'El último jugador en pie se lleva el pozo.',
+          roomId: params.roomId,
+          clientRef: params.clientRef,
+          visibility: defaultVisibility(),
+        });
+      } catch (e) {
+        if (e instanceof NgeError) {
+          // STAKE_OUT_OF_RANGE u otros límites → 400; el resto (relay/escrow) → 502.
+          const status = e.code === 'STAKE_OUT_OF_RANGE' || e.code === 'BAD_REQUEST' ? 400 : 502;
+          throw new OnlineRoomError(`NGE: ${e.message}`, status, e.code);
+        }
+        throw e;
       }
-      throw e;
-    }
-  });
+    });
+
+  try {
+    return await run();
+  } catch (first) {
+    // Solo reintentamos fallas transitorias del escrow/relay (incluye UNAUTHORIZED,
+    // que aparece cuando el escrow todavía no cargó su registro de credenciales tras
+    // reiniciar). Los rechazos deterministas fallan de una.
+    const cause = first instanceof OnlineRoomError ? first : null;
+    const retryable = cause ? cause.code !== null && !NON_RETRYABLE_NGE_CODES.has(cause.code) : isRetryableNgeError(first);
+    if (!retryable) throw first;
+    await new Promise((resolve) => setTimeout(resolve, CREATE_RETRY_BACKOFF_MS));
+    return await run();
+  }
 }
 
 /** Estado + asientos (con `bolt11`/`payout`) de la apuesta por RPC `get_bet`. Es la
@@ -174,7 +205,7 @@ export async function reportNgeResult(betId: string, winnerSeatIds: string[]): P
       // próximo poll. Tratarlo como éxito evita el falso "⚠️ rechazó el cobro".
       if (e instanceof NgeError && e.code === 'IN_PROGRESS') return;
       const msg = e instanceof NgeError ? e.message : 'no se pudo reportar el resultado';
-      throw new OnlineRoomError(`NGE: ${msg}`, 502);
+      throw new OnlineRoomError(`NGE: ${msg}`, 502, e instanceof NgeError ? e.code : null);
     }
   });
 }
@@ -187,7 +218,7 @@ export async function cancelNgeBet(betId: string): Promise<void> {
       await nge.cancelBet(betId);
     } catch (e) {
       const msg = e instanceof NgeError ? e.message : 'no se pudo cancelar la apuesta';
-      throw new OnlineRoomError(`NGE: ${msg}`, 502);
+      throw new OnlineRoomError(`NGE: ${msg}`, 502, e instanceof NgeError ? e.code : null);
     }
   });
 }

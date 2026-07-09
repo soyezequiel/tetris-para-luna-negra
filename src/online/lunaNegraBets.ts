@@ -295,7 +295,7 @@ export async function createBetForRoom(
   // devuelve un bolt11 por asiento; sin credencial NGE, no hay apuestas. Ver
   // docs/nge-migration.md y el SDK vendorizado en src/online/nge.ts.
   if (ngeConnected() && players.every((player) => !!player.npub)) {
-    const created = await createBetViaNge(room, stakeSats, input.victoryCondition);
+    const created = await createBetViaNge(room, stakeSats, input.victoryCondition, nowMs);
     return finalizeCreatedBet(store, room, created, stakeSats, gameId || 'nge', input.playerId, nowMs);
   }
 
@@ -319,6 +319,7 @@ async function createBetViaNge(
   room: OnlineRoom,
   stakeSats: number,
   victoryCondition: string | undefined,
+  nowMs: number,
 ): Promise<NgeCreateBetResult> {
   const seats = room.players.map((player) => ({
     seatId: player.npub as string,
@@ -326,7 +327,12 @@ async function createBetViaNge(
     // lud16; sin destino, el ganador cobra por QR de retiro (cascada §8).
     pubkey: pubkeyFromNpub(player.npub as string),
   }));
-  return createNgeBet({ seats, stakeSats, victoryCondition, roomId: room.id });
+  // Idempotencia (§6.1): estable para ESTE intento de creación (mismo `nowMs` en el
+  // reintento interno de createNgeBet), pero distinto si el host recrea la apuesta
+  // más tarde (cancelar→recrear en el mismo lobby). Así un reintento tras un blip del
+  // escrow devuelve el MISMO betId en vez de abrir un pozo duplicado.
+  const clientRef = `${room.id}:${stakeSats}:${nowMs}`;
+  return createNgeBet({ seats, stakeSats, victoryCondition, roomId: room.id, clientRef });
 }
 
 /** Estado público NGE v2 → vocabulario RoomBetStatus de Tetris. `resolving` (entre

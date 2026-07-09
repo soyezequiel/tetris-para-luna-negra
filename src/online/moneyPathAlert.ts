@@ -1,4 +1,5 @@
 import { OnlineRoomError } from './roomService.js';
+import { ngeConnected, ngeClientPubkey } from './lunaNegraNge.js';
 import type { RoomBet, RoomBetParticipant } from './protocol';
 
 // Alerta a Discord cuando un flujo de plata (apuestas) falla en el server. El URL del
@@ -34,9 +35,11 @@ interface ErrorInfo {
 // producción pero no en el deploy preview).
 interface MoneyPathConfig {
   betStore: 'partyserver' | 'upstash' | 'memory';
-  hasApiKey: boolean;
+  // Gate REAL de apuestas en NGE v2: la credencial del escrow. Las viejas env vars
+  // REST 1.0 (LUNA_NEGRA_API_KEY/GAME_ID) ya NO gatean el flujo de plata.
+  hasNgeConnection: boolean;
+  ngeClientPubkey: string | null;
   hasBaseUrl: boolean;
-  hasGameId: boolean;
   hasPartyBridgeToken: boolean;
   hasUpstash: boolean;
 }
@@ -50,9 +53,10 @@ function readMoneyPathConfig(): MoneyPathConfig {
   return {
     // Mismo orden de resolución que getBetRoomStore(): partyserver > upstash > memoria.
     betStore: hasPartyBridgeToken ? 'partyserver' : (hasUpstash ? 'upstash' : 'memory'),
-    hasApiKey: Boolean((process.env.LUNA_NEGRA_API_KEY ?? '').trim()),
+    hasNgeConnection: ngeConnected(),
+    ngeClientPubkey: ngeClientPubkey(),
+    // BASE_URL sigue viva: arma el link web de reclamo de retiro del ganador invitado.
     hasBaseUrl: Boolean((process.env.LUNA_NEGRA_BASE_URL ?? '').trim()),
-    hasGameId: Boolean((process.env.LUNA_NEGRA_GAME_ID ?? '').trim()),
     hasPartyBridgeToken,
     hasUpstash,
   };
@@ -94,10 +98,44 @@ function composeWithPrompt(lines: string[], promptBlock: string): string {
  * sin ir a leer el código.
  */
 function diagnosticLines(info: ErrorInfo, cfg: MoneyPathConfig): string[] {
+  const shortPk = cfg.ngeClientPubkey
+    ? `${cfg.ngeClientPubkey.slice(0, 8)}…${cfg.ngeClientPubkey.slice(-4)}`
+    : '—';
   const lines: string[] = [
-    `🔧 store apuestas=\`${cfg.betStore}\` · API_KEY ${tick(cfg.hasApiKey)}`
-    + ` · BASE_URL ${tick(cfg.hasBaseUrl)} · GAME_ID ${tick(cfg.hasGameId)}`,
+    `🔧 store apuestas=\`${cfg.betStore}\` · NGE_CONNECTION ${tick(cfg.hasNgeConnection)}`
+    + ` · cliente=\`${shortPk}\` · BASE_URL ${tick(cfg.hasBaseUrl)}`,
   ];
+
+  // Credencial rechazada por el escrow (§6): el request se firmó y descifró bien, pero
+  // la pubkey del cliente no tiene credencial emitida. Suele ser (a) credencial rotada/
+  // borrada del lado Luna, o (b) el escrow reinició y todavía no cargó su registro
+  // (transitorio: el reintento con backoff de createNgeBet ya suele resolverlo).
+  const unauthorized = info.code === 'UNAUTHORIZED' || /no autorizado|credencial rotada/i.test(info.message);
+  if (unauthorized) {
+    lines.push(
+      `💡 El escrow NGE rechazó la credencial del cliente (\`${shortPk}\`). Si es intermitente,`
+      + ' el escrow estaba reiniciando (transitorio). Si persiste, la credencial fue rotada'
+      + ' o borrada del lado Luna Negra: re-emitíla y actualizá `NGE_CONNECTION` en Vercel'
+      + ' (tetris) con la nueva URI. No dependas de `LUNA_NEGRA_API_KEY/GAME_ID`: son REST 1.0'
+      + ' y ya no gatean apuestas.',
+    );
+  }
+
+  const escrowSilent = info.code === 'TIMEOUT' || /no respondió|no se pudo leer get_info/i.test(info.message);
+  if (escrowSilent && !unauthorized) {
+    lines.push(
+      '💡 El escrow NGE no respondió por los relays a tiempo. Probablemente esté caído o'
+      + ' inalcanzable (Luna Negra corre en la laptop por SSH): verificá que el proceso del'
+      + ' escrow esté vivo y que los relays de `NGE_CONNECTION` sean alcanzables.',
+    );
+  }
+
+  if (!cfg.hasNgeConnection) {
+    lines.push(
+      '⚠ Falta `NGE_CONNECTION` en este entorno: sin la credencial del escrow no hay apuestas'
+      + ' (modo NGE v2). Seteala en Vercel para ESTE deploy.',
+    );
+  }
 
   const roomNotFound = info.status === 404
     || /room not found|sala no encontrada/i.test(info.message);
@@ -117,14 +155,6 @@ function diagnosticLines(info: ErrorInfo, cfg: MoneyPathConfig): string[] {
         + ' si usás partyserver, que `PARTY_BRIDGE_URL` sea el mismo host en ambos.',
       );
     }
-  }
-
-  const missing: string[] = [];
-  if (!cfg.hasApiKey) missing.push('`LUNA_NEGRA_API_KEY`');
-  if (!cfg.hasBaseUrl) missing.push('`LUNA_NEGRA_BASE_URL`');
-  if (!cfg.hasGameId) missing.push('`LUNA_NEGRA_GAME_ID`');
-  if (missing.length) {
-    lines.push(`⚠ Faltan env vars de escrow en este entorno: ${missing.join(', ')}.`);
   }
   return lines;
 }
@@ -265,7 +295,7 @@ export async function alertBetDepositHandlesIncomplete(
       ctxLine ? `📎 ${ctxLine}` : null,
       '👥 Participantes:',
       ...partLines,
-      `🔧 store=\`${cfg.betStore}\` · API_KEY ${tick(cfg.hasApiKey)} · BASE_URL ${tick(cfg.hasBaseUrl)} · GAME_ID ${tick(cfg.hasGameId)}`,
+      `🔧 store=\`${cfg.betStore}\` · NGE_CONNECTION ${tick(cfg.hasNgeConnection)} · BASE_URL ${tick(cfg.hasBaseUrl)}`,
       '💡 Sin `bolt11` ni (`zapReq`+`callback`) el panel cae a "Pagar en Luna Negra" (payUrl): no hay QR/zap en el juego. Causas típicas: Luna no devolvió el 9734 (tienda sin identidad Nostr o `depositZapRequest` ausente en su respuesta) o la función corre código viejo (build cache de Vercel).',
       `🕒 ${new Date(nowMs).toISOString()}`,
     ].filter((line): line is string => line !== null);
