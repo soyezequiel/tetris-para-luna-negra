@@ -9,6 +9,7 @@ import type { LunaSigner } from './nostrSigner';
 import { DM_RELAYS, getPool } from './nostrRelays';
 import {
   buildChallengeGiftWraps as ngpBuildChallengeGiftWraps,
+  buildChallengeGiftWrap as ngpBuildChallengeGiftWrap,
   parseChallengeGiftWrap as ngpParseChallengeGiftWrap,
   dmRelaysFromInboxEvent,
   NGP_KIND,
@@ -70,14 +71,16 @@ export async function buildChallengeGiftWraps(
 }
 
 /**
- * Arma el gift-wrap NIP-17 (kind:1059) del destinatario, listo para publicar.
- * (Para incluir la auto-copia del emisor, usá `buildChallengeGiftWraps`.)
+ * Arma SOLO el gift-wrap NIP-17 (kind:1059) del destinatario, con UNA sola firma
+ * (sin la auto-copia del emisor). Es el camino de mínima fricción para retar: con
+ * firmantes NIP-07 encadenar la 2ª firma de la copia puede colgar el envío y dejar
+ * al rival sin recibir nada. Lanza si el firmante no soporta NIP-44.
  */
 export async function buildChallengeGiftWrap(
   signer: LunaSigner,
   input: ChallengeInput,
 ): Promise<Event> {
-  return (await buildChallengeGiftWraps(signer, input)).recipient;
+  return ngpBuildChallengeGiftWrap(signer, TETRA_GAME_COORD, input);
 }
 
 /**

@@ -121,7 +121,7 @@ import {
   type UnsignedEvent,
 } from './online/nostrSigner';
 import { loginWithSigner } from './online/nostrLogin';
-import { buildChallengeGiftWraps, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
+import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
 import { clearPresenceEvent, publishPresence, type PresenceStatus } from './online/nostrPresence';
 import {
@@ -3464,7 +3464,11 @@ async function sendNostrChallenge(pubkey: string): Promise<void> {
     }
     const roomId = roomState.current.id;
     const friend = lunaState.challenge.friends.find((candidate) => candidate.pubkey === toPubkey);
-    const { recipient, selfCopy } = await buildChallengeGiftWraps(signer, {
+    // El reto ES un DM NIP-17 con el room link abierto (`?lnRoom=`): quien lo reciba
+    // entra a la sala con su identidad actual. Mandamos UN solo sobre (el del rival) con
+    // una única firma; antes se firmaba también una auto-copia de historial, y con
+    // firmantes NIP-07 esa 2ª firma colgaba el envío y el rival no recibía nada.
+    const recipient = await buildChallengeGiftWrap(signer, {
       toPubkey,
       roomId,
       joinUrl: buildRoomInviteLink(roomId),
@@ -3472,10 +3476,6 @@ async function sendNostrChallenge(pubkey: string): Promise<void> {
     });
     const published = await publishChallenge(recipient, toPubkey);
     if (!published) throw new Error('No se pudo publicar el reto en los relays Nostr.');
-    // Auto-copia NIP-17 hacia mi propia bandeja: así el reto que mandé aparece en MI
-    // historial (Luna Negra / otros clientes). Best-effort: si falla, el reto ya salió.
-    const myPubkey = (await signer.getPublicKey()).trim().toLowerCase();
-    void publishChallenge(selfCopy, myPubkey);
     lunaState.challenge.pickerOpen = false;
     lunaState.challenge.query = '';
     lunaState.inviteNotice = `Reto enviado a ${friend?.name ?? shortNpub(nip19.npubEncode(toPubkey))}.`;
