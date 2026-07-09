@@ -24,8 +24,30 @@ export interface OnlineNetState {
   rulesSyncTimer: ReturnType<typeof setTimeout> | null;
 }
 
+// Listener del error online: se dispara cada vez que se ASIGNA un error no vacío a
+// onlineNetState.error, desde cualquiera de los ~40 sitios que lo setean. Lo usa
+// main.ts para mostrar un popup persistente en vez del aviso inline, que parpadeaba:
+// el polling de salas (~750ms) reasigna `error = null` al empezar cada acción y
+// borraba el mensaje antes de que se alcanzara a leer. El popup vive en su propia
+// capa DOM y sobrevive a esos clears (se cierra solo/por el usuario, no por el poll).
+let onlineErrorListener: ((message: string) => void) | null = null;
+export function setOnlineErrorListener(fn: (message: string) => void): void {
+  onlineErrorListener = fn;
+}
+
+// Backing del accesor `error`: un getter/setter en el objeto intercepta todas las
+// asignaciones. Solo notifica cuando el valor es no vacío (los `= null` de limpieza
+// no disparan popup).
+let onlineErrorValue: string | null = null;
+
 export const onlineNetState: OnlineNetState = {
-  error: null,
+  get error(): string | null {
+    return onlineErrorValue;
+  },
+  set error(value: string | null) {
+    onlineErrorValue = value;
+    if (value) onlineErrorListener?.(value);
+  },
   busy: false,
   pollInFlight: false,
   progressInFlight: false,

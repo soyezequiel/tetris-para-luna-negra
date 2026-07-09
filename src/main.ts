@@ -16,7 +16,7 @@ import { betState, DEFAULT_ONLINE_BET_STAKE_SATS } from './state/betState';
 import { lunaState, type NostrChallengeFriend, type NostrLoginTab, type PendingLunaLaunchRequest } from './state/lunaState';
 import { spectatorState } from './state/spectatorState';
 import { replayState, multiReplayState, type MultiReplayCard } from './state/replayState';
-import { onlineNetState, onlineClockState, onlineFailoverState } from './state/onlineNetState';
+import { onlineNetState, onlineClockState, onlineFailoverState, setOnlineErrorListener } from './state/onlineNetState';
 import { hostAuthorityState } from './state/hostAuthorityState';
 import { roundState } from './state/roundState';
 import { attackState } from './state/attackState';
@@ -207,6 +207,14 @@ const signToastElement = document.createElement('div');
 signToastElement.className = 'sign-toast-stack';
 (overlay.parentElement ?? document.body).appendChild(signToastElement);
 setSignEventNotifier(notifySignEvent);
+// Capa propia para el popup de error online. Vive fuera del overlay general (que se
+// reescribe por frame y cuyo estado `onlineNetState.error` se limpia en cada poll):
+// así el mensaje persiste hasta que el usuario lo cierra en vez de parpadear. Se
+// dispara desde el setter de onlineNetState.error (setOnlineErrorListener).
+const errorPopupElement = document.createElement('div');
+(overlay.parentElement ?? document.body).appendChild(errorPopupElement);
+errorPopupElement.addEventListener('click', handleErrorPopupClick);
+setOnlineErrorListener(showErrorPopup);
 const VOLUME_WHEEL_STEP = 0.05;
 // Tope de cambio de volumen por evento de rueda: una muesca de mouse puede
 // reportar deltaY enorme; sin tope, un solo notch saltaría medio volumen.
@@ -3586,7 +3594,8 @@ async function enterNostrChallengeRoom(challenge: ParsedChallenge): Promise<void
       onlineNetState.error = 'El reto apunta a otro origen y fue bloqueado.';
       return;
     }
-    roomId = normalizeRoomId(url.searchParams.get('join') ?? roomId);
+    // Aceptar ambos formatos: el estándar `?lnRoom=` (actual) y `?join=` (links viejos).
+    roomId = normalizeRoomId(url.searchParams.get('lnRoom') ?? url.searchParams.get('join') ?? roomId);
   } catch {
     onlineNetState.error = 'El reto trae un link de sala inválido.';
     return;
@@ -4931,14 +4940,17 @@ function openLightningWallet(lightningPayload: string): void {
   window.location.href = `lightning:${normalized.toUpperCase()}`;
 }
 
-// Link de invitación universal: cualquiera que lo abra cae en ?join=<sala> y
-// bootstrapJoinLink lo mete directo a la sala (sirve para públicas y privadas,
-// mientras estén en lobby). Limpiamos query/hash para no arrastrar tokens previos.
+// Link de invitación universal: usa el formato ESTÁNDAR de Luna Negra `?lnRoom=<sala>`
+// (mismo que emite la ficha de Luna) para ser consistente en todo el ecosistema.
+// bootstrapLunaRoomLink lo mete directo a la sala PartyKit (la misma que maneja
+// `?join=`), sirve para públicas y privadas mientras estén en lobby. Los links viejos
+// con `?join=` siguen funcionando (bootstrapOnlineStartup despacha ambos). Limpiamos
+// query/hash para no arrastrar tokens previos.
 function buildRoomInviteLink(roomId: string): string {
   const url = new URL(window.location.href);
   url.search = '';
   url.hash = '';
-  url.searchParams.set('join', roomId);
+  url.searchParams.set('lnRoom', roomId);
   return url.toString();
 }
 
@@ -8193,6 +8205,52 @@ function showGamepadToast(message: string, change: 'connected' | 'disconnected')
     gamepadToastElement.innerHTML = '';
     gamepadToastTimer = null;
   }, 3200);
+}
+
+// ── Popup de error online ────────────────────────────────────────────────────
+// Ventana amplia para leerlo: el error de un flujo de plata (crear/cobrar apuesta)
+// tiene que quedarse en pantalla. Se cierra igual con la ✕ o tocando fuera.
+const ERROR_POPUP_MS = 9000;
+let errorPopupTimer: ReturnType<typeof setTimeout> | null = null;
+let errorPopupMessage: string | null = null;
+
+// Muestra (o refresca) el popup de error. Dispara desde el setter de
+// onlineNetState.error, así centraliza los ~40 sitios que reportan errores online.
+// Dedupe: si ya está el MISMO mensaje visible, solo reinicia el timer (el polling
+// puede reasignar el mismo error cada segundo y no queremos que se reinstancie).
+function showErrorPopup(message: string): void {
+  const text = message.trim();
+  if (!text) return;
+  if (text !== errorPopupMessage) {
+    errorPopupMessage = text;
+    errorPopupElement.innerHTML = `
+      <div class="error-popup" role="alert" aria-live="assertive">
+        <span class="error-popup-icon" aria-hidden="true">⚠️</span>
+        <span class="error-popup-text">${escapeHtml(text)}</span>
+        <button class="error-popup-close" type="button" data-ui-action="error-popup-dismiss" aria-label="Cerrar">✕</button>
+      </div>
+    `;
+  }
+  if (errorPopupTimer) clearTimeout(errorPopupTimer);
+  errorPopupTimer = setTimeout(dismissErrorPopup, ERROR_POPUP_MS);
+}
+
+function dismissErrorPopup(): void {
+  if (errorPopupTimer) {
+    clearTimeout(errorPopupTimer);
+    errorPopupTimer = null;
+  }
+  errorPopupMessage = null;
+  errorPopupElement.innerHTML = '';
+}
+
+// Cierre manual: la ✕ o un click en el backdrop (fuera de la tarjeta) descartan.
+function handleErrorPopupClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.closest('[data-ui-action="error-popup-dismiss"]') || !target.closest('.error-popup')) {
+    dismissErrorPopup();
+  }
 }
 
 // El id del Gamepad API es ruidoso ("Xbox 360 Controller (XInput STANDARD GAMEPAD)",

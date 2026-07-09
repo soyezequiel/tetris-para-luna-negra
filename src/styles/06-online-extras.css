@@ -506,6 +506,71 @@
   font-size: 14px;
 }
 
+/* Popup de error online: arriba-centro, prominente y persistente (se queda hasta
+   que el usuario lo cierra o pasan ~9s), a diferencia del aviso inline que se
+   limpiaba en cada poll y parpadeaba. El contenedor NO roba clicks (pointer-events
+   none): solo la tarjeta y su ✕ son interactivas, el resto pasa al juego. */
+.error-popup {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 120;
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  max-width: min(460px, 92vw);
+  padding: 11px 12px 11px 16px;
+  border: 1px solid rgba(248, 113, 113, 0.6);
+  border-radius: 14px;
+  background: rgba(28, 10, 12, 0.96);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 22px rgba(248, 113, 113, 0.25);
+  pointer-events: auto;
+  animation: error-popup-in 0.22s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+
+.error-popup-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.error-popup-text {
+  color: #ffe4e4;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.error-popup-close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffd9d9;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.error-popup-close:hover {
+  background: rgba(248, 113, 113, 0.22);
+  border-color: rgba(248, 113, 113, 0.6);
+}
+
+@keyframes error-popup-in {
+  0% { transform: translate(-50%, -14px); opacity: 0; }
+  100% { transform: translate(-50%, 0); opacity: 1; }
+}
+
 .leaderboard-time {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
