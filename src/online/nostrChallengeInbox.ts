@@ -67,8 +67,15 @@ export function startChallengeInbox(
   const onevent = (event: Event) => {
     if (closed || seen.has(event.id)) return;
     void (async () => {
+      // [DEBUG reto] — diagnóstico temporal de recepción. Quitar al confirmar.
+      console.info('[reto] gift-wrap 1059 recibido', event.id, 'para', event.tags.find((t) => t[0] === 'p')?.[1]);
       const challenge = await parseChallengeGiftWrap(signer, event, { origin });
-      if (closed || !challenge) return;
+      if (!challenge) {
+        console.warn('[reto] descartado: parse devolvió null (no era para mí / coord distinta / origin distinto / vencido / no pude descifrar NIP-44)', event.id);
+        return;
+      }
+      if (closed) return;
+      console.info('[reto] parse OK, de', challenge.fromPubkey, 'sala', challenge.roomId, 'url', challenge.joinUrl);
       // Ignoramos la auto-copia (el reto que YO mandé se publica también a mi propia
       // bandeja para el historial en otros clientes): no debo retarme a mí mismo.
       if (challenge.fromPubkey.trim().toLowerCase() === me) return;
@@ -92,6 +99,8 @@ export function startChallengeInbox(
   void resolveDmInboxRelays(me)
     .then((relays) => {
       if (closed) return;
+      // [DEBUG reto] — diagnóstico temporal de recepción. Quitar al confirmar.
+      console.info('[reto] bandeja suscrita para', me, 'en', relays.length, 'relays:', relays);
       sub = getPool().subscribeMany(
         relays,
         {

@@ -3504,7 +3504,12 @@ async function ensureNostrChallengeInbox(): Promise<void> {
   try {
     let signer = getActiveSigner();
     if (!signer) signer = await restoreSigner();
-    if (!signer?.nip44Decrypt) return;
+    // [DEBUG reto] — diagnóstico temporal de recepción. Quitar al confirmar.
+    console.info('[reto] arrancando bandeja; método firmante:', signer?.method, '· nip44Decrypt:', Boolean(signer?.nip44Decrypt));
+    if (!signer?.nip44Decrypt) {
+      console.warn('[reto] NO arranca la bandeja: el firmante no expone nip44Decrypt (login sin NIP-44).');
+      return;
+    }
     const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
     if (signerPubkey !== identityPubkey) return;
     startChallengeInbox(signer, signerPubkey, handleIncomingNostrChallenge);
