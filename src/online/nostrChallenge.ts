@@ -20,16 +20,20 @@ import {
 export type { ChallengeInput, ParsedChallenge };
 
 // Coordenada real del juego en Luna Negra: `30023:<tienda-pubkey>:<slug>`, la
-// dirección del listado kind:30023 que publica la tienda (verificado en relays:
-// #d="tetra-tetris-copia" → pubkey ed13c4…cc4d3, título "Tetra (Pre-alfa)").
+// dirección del listado kind:30023 que publica la tienda (verificado en relays y en
+// la DB de prod: #d="tetris-beta" → pubkey ed13c4…cc4d3).
 //
-// El reto (§5) sólo la usa de ETIQUETA (lo accionable es el `url`), pero la
-// presencia NIP-38 (§3 2.0) la pone en el tag `a` y Luna Negra filtra los
-// kind:30315 por ESE coord exacto: si no coincide, no detecta "Jugando TETRA".
-// Por eso el fallback debe ser el coord real, no un placeholder. Override por env
-// (VITE_TETRA_GAME_COORD) para self-hosts o si se re-publica bajo otra tienda.
+// El reto (§5) sólo la usa de ETIQUETA (lo accionable es el `url`), pero la presencia
+// NIP-38 (§3 2.0) y el marcador (kind:31337) la ponen en el tag `a`, y Luna Negra
+// filtra por ESE coord exacto: si no coincide, no detecta nada (ni "Jugando TETRA" ni
+// los puntajes) — 0 matches, sin error. Por eso el fallback debe ser el coord real, no
+// un placeholder ni un slug viejo. Override por env (VITE_TETRA_GAME_COORD) para
+// self-hosts o si se re-publica bajo otra tienda/slug.
+//
+// ⚠️ Si la tienda re-publica el juego con otro slug, ESTE valor queda viejo y Luna deja
+// de detectar la actividad 2.0 (pasó con el slug anterior `tetra-tetris-copia`).
 const TETRA_GAME_COORD_FALLBACK =
-  '30023:ed13c471be6bff9195a6261d8cbd6c7ab6efe79a7947b208d2b6f066b99cc4d3:tetra-tetris-copia';
+  '30023:ed13c471be6bff9195a6261d8cbd6c7ab6efe79a7947b208d2b6f066b99cc4d3:tetris-beta';
 export const TETRA_GAME_COORD: string =
   ((import.meta as unknown as { env?: Record<string, string | undefined> }).env
     ?.VITE_TETRA_GAME_COORD ?? '').trim() || TETRA_GAME_COORD_FALLBACK;
