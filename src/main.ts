@@ -542,13 +542,80 @@ try { autoPlayState.accessGranted = localStorage.getItem(AUTO_PLAY_ACCESS_STORAG
   console.log('autoplay unlocked');
 };
 
-// Scheduler del bucle principal. Por defecto se ancla a requestAnimationFrame,
-// pero es intercambiable: en DEV (stack40.useTimerLoop) se cambia a un timer para
-// poder correr/observar el flujo —incluido el multijugador vs bot— en una pestaña
-// en segundo plano o headless, donde el navegador congela rAF.
+// Scheduler del bucle principal. Es intercambiable (en DEV stack40.useTimerLoop lo
+// reemplaza por un setTimeout para correr headless), pero por defecto usa DOS fuentes
+// de reloj según la visibilidad de la pestaña:
+//
+//  - VISIBLE  → requestAnimationFrame: suave y alineado a vsync.
+//  - OCULTA   → los ticks de un Web Worker con setInterval. El navegador CONGELA rAF y
+//    limita los timers del hilo principal a ~1 vez/seg cuando la pestaña pasa a segundo
+//    plano, pero los timers DENTRO de un worker siguen corriendo casi sin throttling.
+//    Así el motor sigue procesando (gravedad, garbage, muerte, sync online) aunque el
+//    jugador cambie de pestaña, en vez de congelarse y reanclarse el reloj.
+//
+// Un token de generación (frameGen) evita frames duplicados en las transiciones: si un
+// rAF congelado se descongela al volver al frente DESPUÉS de que el worker ya reanimó el
+// bucle, su callback trae un token viejo y dispatchPendingFrame lo descarta.
+let pendingFrameCb: FrameRequestCallback | null = null;
+let frameGen = 0;
+let bgClockWorker: Worker | null = null;
+
+function dispatchPendingFrame(gen: number): void {
+  if (gen !== frameGen) return; // superado por otra fuente / transición de visibilidad
+  const cb = pendingFrameCb;
+  if (cb === null) return;
+  pendingFrameCb = null;
+  cb(performance.now());
+}
+
+function ensureBgClockWorker(): Worker | null {
+  if (bgClockWorker !== null) return bgClockWorker;
+  try {
+    // Worker mínimo: arranca/detiene un setInterval (~60fps) y postea un tick por vuelta.
+    // 1 = arrancar, 0 = detener. Sirve de fuente de reloj cuando rAF está congelado.
+    const src = 'let i=null;onmessage=e=>{if(e.data===1){if(i===null)i=setInterval(()=>postMessage(0),16);}else if(i!==null){clearInterval(i);i=null;}};';
+    const blob = new Blob([src], { type: 'application/javascript' });
+    const url = URL.createObjectURL(blob);
+    bgClockWorker = new Worker(url);
+    URL.revokeObjectURL(url);
+    bgClockWorker.onmessage = () => {
+      // Sólo mientras la pestaña está oculta; los ticks residuales que lleguen tras
+      // volver al frente se ignoran (rAF retoma el control del ritmo).
+      if (typeof document !== 'undefined' && !document.hidden) return;
+      dispatchPendingFrame(frameGen);
+    };
+  } catch {
+    bgClockWorker = null; // entorno sin Worker/Blob: caemos a rAF y ya.
+  }
+  return bgClockWorker;
+}
+
 let scheduleNextFrame: (cb: FrameRequestCallback) => void = (cb) => {
-  requestAnimationFrame(cb);
+  pendingFrameCb = cb;
+  const gen = ++frameGen;
+  if (typeof document !== 'undefined' && document.hidden && ensureBgClockWorker()) {
+    bgClockWorker!.postMessage(1); // asegura encendido el interval de fondo
+    return; // el worker disparará dispatchPendingFrame en su próximo tick
+  }
+  requestAnimationFrame(() => dispatchPendingFrame(gen));
 };
+
+// Cambia la fuente de reloj en cada transición de visibilidad y reanima el bucle si el
+// frame pendiente quedó atrapado en una fuente que ya no dispara: rAF se congela al
+// ocultar la pestaña, y el interval del worker se apaga al volver al frente (ahorra CPU).
+function handleFrameSourceVisibility(): void {
+  const worker = ensureBgClockWorker();
+  if (typeof document !== 'undefined' && document.hidden) worker?.postMessage(1);
+  else worker?.postMessage(0);
+  if (pendingFrameCb !== null) {
+    const cb = pendingFrameCb;
+    pendingFrameCb = null;
+    scheduleNextFrame(cb); // re-agenda con la fuente correcta para el nuevo estado
+  }
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', handleFrameSourceVisibility);
+}
 
 // Probe de performance: cada ~1s loguea en la consola del navegador FPS real, frames de
 // motor por segundo, y el costo en ms del frame completo y del render. Pero el promedio de
@@ -1183,9 +1250,12 @@ function loopBody(): void {
     return;
   }
   // La música sólo suena en partida/repetición; los menús (incluido el principal)
-  // quedan en silencio. setMusicAllowed es idempotente, así que llamarlo cada frame
-  // sólo dispara play/pause en la transición real de modo.
-  sound.setMusicAllowed(shouldPlayMusic(appMode));
+  // quedan en silencio. Y con la pestaña en segundo plano se silencia siempre (estilo
+  // TETR.IO): ahora el bucle SIGUE corriendo oculto (worker), así que sin este gate
+  // `!document.hidden` la música se reactivaría cada frame estando en otra pestaña.
+  // setMusicAllowed es idempotente, así que llamarlo cada frame sólo dispara play/pause
+  // en la transición real.
+  sound.setMusicAllowed(!document.hidden && shouldPlayMusic(appMode));
   const beforeState = engine.getState();
   // Un espectador de la ronda no tiene tablero propio: aunque el motor heredado
   // quede en 'playing', no debe avanzar (solo mira a los rivales).
@@ -6613,6 +6683,11 @@ function syncOnlineVisibilityChange(): void {
   // El bucle rAF se congela al ocultarse, así que loopBody() no llega a aplicar el
   // gate: lo hacemos acá explícitamente. Al volver, el primer frame lo restaura.
   sound.setMusicAllowed(!document.hidden && shouldPlayMusic(appMode));
+  // Los EFECTOS también se callan en segundo plano: el bucle ahora sigue procesando
+  // oculto (worker de reloj), así que sin esto se oirían locks/line-clears/latido de
+  // peligro desde otra pestaña. Suspensión transitoria, sin tocar los mutes guardados.
+  sound.setSfxSuspended(document.hidden);
+  for (const layer of juiceLayers) layer.setSuspended(document.hidden);
   if (document.hidden) {
     syncOnlineBackground();
     return;

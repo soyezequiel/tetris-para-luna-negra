@@ -60,6 +60,10 @@ export class SoundEngine {
   // se conserva mientras el canal está silenciado.
   private sfxMuted: boolean;
   private musicMuted: boolean;
+  // Silencio TRANSITORIO de efectos con la pestaña en segundo plano. Es independiente
+  // del mute persistido (`sfxMuted`): el bucle ahora sigue corriendo oculto (worker),
+  // así que sin esto se oirían locks/line-clears desde otra pestaña. No se guarda.
+  private sfxSuspended = false;
   private sfxVolume: number;
   private musicVolume: number;
   private currentMusicTrackIndex = 0;
@@ -164,6 +168,14 @@ export class SoundEngine {
 
   toggleSfxMuted(): boolean {
     return this.setSfxMuted(!this.sfxMuted);
+  }
+
+  // Suspende/reanuda los efectos sin tocar la preferencia persistida. Lo usa el gate
+  // de visibilidad para callar los SFX cuando la pestaña está en segundo plano.
+  setSfxSuspended(suspended: boolean): void {
+    if (this.sfxSuspended === suspended) return;
+    this.sfxSuspended = suspended;
+    this.syncSfx();
   }
 
   setMusicMuted(muted: boolean): boolean {
@@ -302,14 +314,14 @@ export class SoundEngine {
   // gate de mute/volumen se mantiene aquí y se refleja en `neo` con syncSfx().
   // `gain` escala el volumen de esta emisión (1 = normal; <1 atenúa, >1 refuerza).
   play(cue: SoundCue, pan = 0, gain = 1): void {
-    if (this.muted || this.sfxMuted || this.sfxVolume === 0) return;
+    if (this.muted || this.sfxMuted || this.sfxSuspended || this.sfxVolume === 0) return;
     this.neo.play(cue, pan, gain);
   }
 
   // Refleja el estado de mute (maestro o de canal SFX) y el volumen SFX en el
   // motor Neo. Llamar tras cualquier cambio de muted/sfxMuted/sfxVolume.
   private syncSfx(): void {
-    this.neo.setMuted(this.muted || this.sfxMuted);
+    this.neo.setMuted(this.muted || this.sfxMuted || this.sfxSuspended);
     this.neo.setSfxVolume(this.sfxVolume);
   }
 

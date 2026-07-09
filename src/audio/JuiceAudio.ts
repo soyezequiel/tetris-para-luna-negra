@@ -25,6 +25,11 @@ export class JuiceAudio {
 
   private muted: boolean;
 
+  // Silencio TRANSITORIO con la pestaña en segundo plano (ver SoundEngine.sfxSuspended).
+  // Independiente del mute persistido: el bucle sigue corriendo oculto, así que sin esto
+  // se oirían line-clears/combos/latido de peligro desde otra pestaña. No se guarda.
+  private suspended = false;
+
   // latido de peligro
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatId = 0;
@@ -40,10 +45,24 @@ export class JuiceAudio {
   }
 
   // ---------- control externo (sincronizar con SoundEngine) ----------
-  setMuted(muted: boolean): void {
-    this.muted = muted;
+  private effectiveMuted(): boolean {
+    return this.muted || this.suspended;
+  }
+  private applyMute(): void {
+    const muted = this.effectiveMuted();
     this.neo.setMuted(muted);
     if (muted) this.stopHeartbeat();
+  }
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    this.applyMute();
+  }
+  // Suspende/reanuda todos los efectos sin tocar la preferencia persistida. Lo usa el
+  // gate de visibilidad para callar la capa "feel" con la pestaña en segundo plano.
+  setSuspended(suspended: boolean): void {
+    if (this.suspended === suspended) return;
+    this.suspended = suspended;
+    this.applyMute();
   }
   setSfxVolume(volume: number): void {
     this.neo.setSfxVolume(volume);
@@ -115,16 +134,16 @@ export class JuiceAudio {
   setDanger(level: number, critical = false, pan = 0): void {
     this.dangerLevel = clamp01(level);
     this.dangerPan = pan;
-    if (critical && !this.dangerCritical && !this.muted) this.neo.alarm(this.dangerPan);
+    if (critical && !this.dangerCritical && !this.effectiveMuted()) this.neo.alarm(this.dangerPan);
     this.dangerCritical = critical;
-    if (this.dangerLevel > 0.02 && !this.muted) this.startHeartbeat();
+    if (this.dangerLevel > 0.02 && !this.effectiveMuted()) this.startHeartbeat();
     else this.stopHeartbeat();
   }
   private startHeartbeat(): void {
     if (this.heartbeatTimer) return;
     const id = (this.heartbeatId += 1);
     const tick = () => {
-      if (this.heartbeatId !== id || this.dangerLevel <= 0.02 || this.muted) {
+      if (this.heartbeatId !== id || this.dangerLevel <= 0.02 || this.effectiveMuted()) {
         this.heartbeatTimer = null;
         return;
       }
