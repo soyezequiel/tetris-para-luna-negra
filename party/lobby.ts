@@ -13,8 +13,12 @@ const PENDING_STORAGE_KEY = 'pending';
  * Cada cuánto el lobby re-verifica que sus salas listadas siguen vivas (RPC a cada
  * RoomParty). Mantiene el listado auto-sanado sin que nadie recargue: un menú
  * abierto recibe por push la lista corregida en el siguiente tick.
+ *
+ * OJO con bajarlo: cada tick despierta a ESTE DO y, por RPC, a CADA sala listada.
+ * A 10s el lobby y las salas no dormían nunca (~8.640 despertares/día) y eso solo
+ * fundía la cuota diaria de duración del free tier de Durable Objects.
  */
-const VERIFY_INTERVAL_MS = 10_000;
+const VERIFY_INTERVAL_MS = 60_000;
 
 /**
  * Gracia antes de sacar del listado una sala que la verificación dio por muerta
@@ -43,6 +47,14 @@ const VERIFY_REMOVAL_GRACE_MS = 15_000;
  * cada RoomParty si sigue viva y arma/cancela su remoción en consecuencia.
  */
 export class LobbyServer extends Server<Env> {
+  /**
+   * Hibernación de WebSockets: los navegadores dejan el menú abierto por horas y
+   * sin esto cada socket ancla el DO en RAM facturando duración 24/7. Con
+   * hibernación el DO se descarga entre mensajes; onStart() rehidrata rooms y
+   * pendientes desde el storage durable al despertar.
+   */
+  static options = { hibernate: true };
+
   private readonly rooms = new Map<string, OnlineRoomSummary>();
   /** roomId → instante (ms) en que debe removerse del listado si nadie reconecta. */
   private readonly pendingRemoval = new Map<string, number>();

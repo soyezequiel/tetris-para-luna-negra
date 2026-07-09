@@ -66,6 +66,16 @@ const DEFAULT_PAYOUT_ABANDON_GRACE_MS = 10 * 60_000;
  * próxima entre {abandono, countdown, failover}.
  */
 export class RoomServer extends Server<Env> {
+  /**
+   * Hibernación de WebSockets: sin esto, cada socket abierto ancla el DO en RAM y
+   * factura duración todo el tiempo que dure la conexión (una pestaña olvidada
+   * quema sola la cuota diaria del free tier). Con hibernación el socket queda
+   * abierto pero el DO se descarga entre mensajes; partyserver espera a onStart()
+   * (que rehidrata la sala desde el storage durable) antes de despachar cualquier
+   * handler al despertar.
+   */
+  static options = { hibernate: true };
+
   private readonly store = new MemoryRoomStore();
   /** Última clave enviada al lobby; dedup para no reavisar lo mismo (ej. cada ataque en 'playing'). */
   private lastLobbyKey: string | null = null;
