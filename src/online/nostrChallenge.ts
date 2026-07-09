@@ -29,20 +29,33 @@ export type { ChallengeInput, ParsedChallenge };
 // los puntajes) — 0 matches, sin error.
 //
 // ÚNICA fuente de la verdad: la env `VITE_gameCoord` (inyectada por Vite en build).
-// No hay fallback hardcodeado: si falta o queda vacía, tiramos error en la carga del
-// módulo para que la mala config falle FUERTE en vez de emitir eventos con un coord
-// vacío/viejo que Luna descarta en silencio. Setearla en `.env` con el coord real
+// No hay fallback hardcodeado. Setearla en `.env` con el coord real
 // `30023:<tienda-pubkey>:<slug>` (p. ej. tetris-beta → pubkey ed13c4…cc4d3).
-const rawGameCoord = (
+//
+// Si falta NO tiramos error en la carga del módulo: eso caería TODA la app (pantalla
+// negra) por un coord que sólo usa la capa online (presencia/marcador/reto). Avisamos
+// fuerte por consola y dejamos el coord vacío; las funciones que emiten eventos usan
+// `requireGameCoord()` para fallar en el punto de uso, sin voltear el juego.
+export const TETRA_GAME_COORD: string = (
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env
     ?.VITE_gameCoord ?? ''
 ).trim();
-if (!rawGameCoord) {
-  throw new Error(
-    'Falta VITE_gameCoord: seteá la coordenada del juego (30023:<tienda-pubkey>:<slug>) en el entorno.',
+if (!TETRA_GAME_COORD) {
+  console.error(
+    '[nostr] Falta VITE_gameCoord: la coordenada del juego (30023:<tienda-pubkey>:<slug>) no está seteada. ' +
+      'Presencia, marcador y retos NGP quedan deshabilitados hasta configurarla.',
   );
 }
-export const TETRA_GAME_COORD: string = rawGameCoord;
+
+/** Devuelve la coordenada del juego o lanza si `VITE_gameCoord` no está configurada. */
+export function requireGameCoord(): string {
+  if (!TETRA_GAME_COORD) {
+    throw new Error(
+      'Falta VITE_gameCoord: seteá la coordenada del juego (30023:<tienda-pubkey>:<slug>) en el entorno.',
+    );
+  }
+  return TETRA_GAME_COORD;
+}
 
 /**
  * Arma los DOS gift-wrap NIP-17 de un reto (destinatario + auto-copia del emisor),
