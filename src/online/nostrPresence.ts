@@ -10,7 +10,7 @@
 // solo si dejamos de latir (igual que el TTL de la presencia REST), así "Jugando"
 // desaparece cuando el jugador cierra o cambia de app.
 // PUERTO de presencia — el formato del evento vive en la capa protocolo
-// (`sdk/ngp.ts`); acá quedan la copy del estado, el TTL del juego y los relays.
+// (`nostr-game-protocol/ngp`); acá quedan la copy del estado, el TTL del juego y los relays.
 import type { Event } from 'nostr-tools';
 import type { LunaSigner } from './nostrSigner';
 import { PUBLIC_WRITE_RELAYS, getPool } from './nostrRelays';
@@ -18,7 +18,7 @@ import { TETRA_GAME_COORD } from './nostrChallenge';
 import {
   buildPresenceEvent as ngpBuildPresenceEvent,
   buildPresenceClearEvent,
-} from '../../sdk/ngp.js';
+} from 'nostr-game-protocol/ngp';
 
 // Vida del estado sin re-latir. El heartbeat re-publica antes de que expire; si el
 // jugador se va (cierra/minimiza/logout) dejamos de latir y a los ~4 min Nostr lo

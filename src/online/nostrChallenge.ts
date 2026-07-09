@@ -1,6 +1,6 @@
 // PUERTO del reto 1v1 NIP-17 — la frontera protocolo↔juego. La gramática de los
 // sobres (rumor kind:14 → seal kind:13 → gift-wrap kind:1059) vive en la capa
-// protocolo `sdk/ngp.ts`; acá quedan las cosas del PROGRAMA: la coordenada real
+// protocolo `nostr-game-protocol/ngp`; acá quedan las cosas del PROGRAMA: la coordenada real
 // del juego (env), el pool de relays y la publicación/descubrimiento de inboxes.
 // El resto del juego (main, inbox, presencia, marcador) importa de ACÁ, nunca del
 // SDK. Ver la skill `integrar-luna-negra` §5 / interfaz 2.0.
@@ -15,7 +15,7 @@ import {
   type ChallengeInput,
   type ParsedChallenge,
   type ParseChallengeOptions,
-} from '../../sdk/ngp.js';
+} from 'nostr-game-protocol/ngp';
 
 export type { ChallengeInput, ParsedChallenge };
 

@@ -28,7 +28,7 @@ import {
   betFromCreateResult,
   type NgeConfig,
 } from './lunaNegraNge.js';
-import type { NgeBet, NgeCreateBetResult } from '../../sdk/nge.js';
+import type { NgeBet, NgeCreateBetResult } from 'nostr-game-protocol/nge';
 
 interface LunaEconomics {
   stakeSats?: number;

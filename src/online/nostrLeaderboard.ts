@@ -14,7 +14,7 @@
 // rankings, nunca para repartir dinero (el resultado de una apuesta viene del game
 // server por /bets/{id}/result). Ver Reglas de oro de la skill.
 // PUERTO del marcador — el formato del evento (kind:31337, validación de board y
-// clamp del puntaje) vive en la capa protocolo (`sdk/ngp.ts`); acá quedan los
+// clamp del puntaje) vive en la capa protocolo (`nostr-game-protocol/ngp`); acá quedan los
 // nombres de tabla del juego, la coordenada y los relays.
 import { nip19, verifyEvent, type Event } from 'nostr-tools';
 import type { LunaSigner } from './nostrSigner';
@@ -24,7 +24,7 @@ import {
   NGP_KIND,
   buildScoreEvent as ngpBuildScoreEvent,
   parseScoreEvent,
-} from '../../sdk/ngp.js';
+} from 'nostr-game-protocol/ngp';
 
 // Nombres de tabla: DEBEN coincidir con los del camino REST (lunaNegraLeaderboard.ts)
 // para que ambos alimenten el mismo ranking. `victorias` = victorias multijugador,
@@ -72,7 +72,7 @@ export async function publishScore(
 
 // ─────────────────────────── Lectura del marcador ───────────────────────────
 
-// kind:31337 (evento de puntaje). Frozen en la capa protocolo (sdk/ngp-core.ts).
+// kind:31337 (evento de puntaje). Frozen en la capa protocolo (nostr-game-protocol/ngp-core).
 const SCORE_KIND = NGP_KIND.score;
 
 // Cota de espera al leer de relays: sin `maxWait`, querySync espera el EOSE de TODOS

@@ -8,11 +8,11 @@ import {
   type NgeCreateBetResult,
   type NgeInfo,
   type NgeSeatInput,
-} from '../../sdk/nge.js';
+} from 'nostr-game-protocol/nge';
 import { OnlineRoomError } from './roomService.js';
 
 // PUERTO del escrow — la frontera protocolo↔juego. Este es el ÚNICO módulo que
-// importa el SDK NGE (`sdk/nge.ts`, vendorizado de Luna Negra): acá viven la
+// importa el SDK NGE (paquete `nostr-game-protocol/nge`): acá viven la
 // credencial (env), el ciclo de vida por invocación serverless, el caché de
 // config y la traducción de NgeError → OnlineRoomError. El resto del programa
 // (lunaNegraBets, rooms, api) habla con estas funciones y no conoce el protocolo.

@@ -11,7 +11,7 @@ import {
   type NgeConfig,
 } from './lunaNegraNge.js';
 import { alertMoneyPathError } from './moneyPathAlert.js';
-import type { NgeBet, NgeSeat } from '../../sdk/nge.js';
+import type { NgeBet, NgeSeat } from 'nostr-game-protocol/nge';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // APUESTA LOCAL ANÓNIMA (Duelo Local / Bitconf)

@@ -62,23 +62,23 @@ Tres capas con frontera dura (espejo del layout de Luna Negra):
 
 | Capa | Archivo | Rol |
 |---|---|---|
-| **Protocolo (núcleo)** | `sdk/nge-core.ts` (raíz, fuera de `src/`) | Wire NGE PURO: kinds, parseo de URI, cifrado NIP-44, templates de eventos. **Es la ÚNICA pieza compartida con Luna: se SINCRONIZA desde ahí, no se edita a mano.** Actualizar: `node scripts/sync-nge-core.mjs` en el repo de Luna. Única dep: `nostr-tools`. |
-| **Protocolo (cliente)** | `sdk/nge-client.ts` (raíz, fuera de `src/`) | Ergonomía del cliente: clase `NGE`, tipos de la API, transporte, `auditSettlement`. **Vive acá, en Tetris** (no se sincroniza). Cero imports del juego. |
-| **Protocolo (barrel)** | `sdk/nge.ts` | Re-exporta core + cliente. Es lo que importa el puerto. |
+| **Protocolo (núcleo)** | `nostr-game-protocol/nge-core` (paquete, dependencia git) | Wire NGE PURO: kinds, parseo de URI, cifrado NIP-44, templates de eventos. Compartido con Luna: ambos consumen el MISMO paquete ([Nostr-Game-Protocol](https://github.com/soyezequiel/Nostr-Game-Protocol)). Única dep: `nostr-tools`. |
+| **Protocolo (cliente)** | `nostr-game-protocol/nge-client` (mismo paquete) | Ergonomía del cliente: clase `NGE`, tipos de la API, transporte, `auditSettlement`. Cero imports del juego. |
+| **Protocolo (barrel)** | `nostr-game-protocol/nge` | Re-exporta core + cliente. Es lo que importa el puerto. |
 | **Puerto** | `src/online/lunaNegraNge.ts` | La frontera protocolo↔juego: el **único módulo que importa el SDK**. Credencial (env), ciclo de vida serverless, caché de config, NgeError → OnlineRoomError. API: `ngeConnected()`, `fetchNgeConfig()` (`get_info`, incl. `transparency`/`visibilityOptions`), `createNgeBet`, `fetchNgeBet`, `reportNgeResult`, `cancelNgeBet`. |
 | **Juego** | `src/online/lunaNegraBets.ts` | Orquestación de sala/pozo. No conoce el protocolo: `createBetViaNge` → `createNgeBet`; `synthesizeNgeBetDetail` ← `fetchNgeBet`; `cancelBetRemote` → `cancelNgeBet`/`reportNgeResult` vacío; `maybeReportRoomBetResult` → `reportNgeResult`. |
 
 > Regla: si un archivo fuera de `src/online/lunaNegraNge.ts` necesita algo del
 > SDK, la respuesta es agregarle una función al puerto, no importar el SDK.
 >
-> Sync: `nge-core.ts` y `sdk/nge-test-vectors.json` son la fuente de verdad del
-> **repo de Luna** (Luna es el escrow; posee el wire y los vectores). Tras tocarlos
-> allá, corré `node scripts/sync-nge-core.mjs` (o `--check` en CI) para refrescar
-> las copias de Tetris. `nge-client.ts` es de Tetris: editalo libremente.
+> Fuente de verdad: el repo
+> [Nostr-Game-Protocol](https://github.com/soyezequiel/Nostr-Game-Protocol)
+> (SDK canónico). Ya no hay copias vendorizadas ni script de sync: Luna y Tetris
+> instalan el paquete como dependencia git. Tras tocar el wire allá, `npm update
+> nostr-game-protocol` en cada consumidor.
 >
-> Conformance: `tests/nge-client.test.ts` valida el SDK completo (core + cliente)
-> contra los vectores. Re-verifica el core además del cliente, así un sync corrupto
-> se detecta acá y no solo en Luna.
+> Conformance: los tests del SDK (`tests/nge-client.test.ts` en ese repo) validan
+> core + cliente contra los vectores firmados (`vectors/nge-test-vectors.json`).
 
 Mapeo del rewrite v1 → v2:
 

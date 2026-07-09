@@ -40,4 +40,4 @@ export function getPool(): SimplePool {
   return pool;
 }
 
-// `randomizedTimestamp` (NIP-59) se mudó a la capa protocolo: sdk/ngp.ts.
+// `randomizedTimestamp` (NIP-59) se mudó a la capa protocolo: nostr-game-protocol/ngp.
