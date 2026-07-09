@@ -7,7 +7,7 @@
 //
 // El <reto> lo muestra la card "Oráculo de atestaciones" del panel de proveedor
 // de Luna Negra (formato `luna-negra:attestation-oracle:claim:<gameId>`). El
-// script firma un evento con ese content usando LUNA_NEGRA_NGP_NSEC del .env —
+// script firma un evento con ese content usando NGP_ATTESTATION_ORACLE_NSEC del .env —
 // la MISMA clave con la que el server firma los 31338 — e imprime el JSON para
 // pegar en la card. La clave nunca sale de esta máquina: solo viaja la firma.
 //
@@ -31,11 +31,11 @@ function readEnvVar(name) {
 function decodeSecret(raw) {
   if (raw.startsWith('nsec')) {
     const d = nip19.decode(raw);
-    if (d.type !== 'nsec') throw new Error('LUNA_NEGRA_NGP_NSEC no es un nsec válido');
+    if (d.type !== 'nsec') throw new Error('NGP_ATTESTATION_ORACLE_NSEC no es un nsec válido');
     return d.data;
   }
   if (/^[0-9a-f]{64}$/i.test(raw)) return Uint8Array.from(Buffer.from(raw, 'hex'));
-  throw new Error('LUNA_NEGRA_NGP_NSEC debe ser un nsec bech32 o 32 bytes hex');
+  throw new Error('NGP_ATTESTATION_ORACLE_NSEC debe ser un nsec bech32 o 32 bytes hex');
 }
 
 const challenge = (process.argv[2] ?? '').trim();
@@ -46,9 +46,9 @@ if (!challenge.startsWith('luna-negra:attestation-oracle:claim:')) {
   process.exit(1);
 }
 
-const raw = readEnvVar('LUNA_NEGRA_NGP_NSEC');
+const raw = readEnvVar('NGP_ATTESTATION_ORACLE_NSEC');
 if (!raw) {
-  console.error('Falta LUNA_NEGRA_NGP_NSEC (en el entorno o en .env/.env.local).');
+  console.error('Falta NGP_ATTESTATION_ORACLE_NSEC (en el entorno o en .env/.env.local).');
   process.exit(1);
 }
 

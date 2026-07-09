@@ -27,13 +27,13 @@ const BET_ID = 'bet_123';
 
 const savedEnv: Record<string, string | undefined> = {};
 beforeEach(() => {
-  savedEnv.LUNA_NEGRA_NGP_NSEC = process.env.LUNA_NEGRA_NGP_NSEC;
+  savedEnv.NGP_ATTESTATION_ORACLE_NSEC = process.env.NGP_ATTESTATION_ORACLE_NSEC;
   savedEnv.gameCoord = process.env.gameCoord;
-  process.env.LUNA_NEGRA_NGP_NSEC = nip19.nsecEncode(ORACLE_SK);
+  process.env.NGP_ATTESTATION_ORACLE_NSEC = nip19.nsecEncode(ORACLE_SK);
   process.env.gameCoord = COORD;
 });
 afterEach(() => {
-  process.env.LUNA_NEGRA_NGP_NSEC = savedEnv.LUNA_NEGRA_NGP_NSEC;
+  process.env.NGP_ATTESTATION_ORACLE_NSEC = savedEnv.NGP_ATTESTATION_ORACLE_NSEC;
   process.env.gameCoord = savedEnv.gameCoord;
 });
 
@@ -83,11 +83,11 @@ describe('buildRoomWinnerAttestation', () => {
 
   it('sin nsec o sin gameCoord no atesta (gate de configuración)', async () => {
     const room = await finishedRoom(WINNER_NPUB);
-    delete process.env.LUNA_NEGRA_NGP_NSEC;
+    delete process.env.NGP_ATTESTATION_ORACLE_NSEC;
     expect(attestationConfigured()).toBe(false);
     expect(await buildRoomWinnerAttestation(room, BET_ID)).toBeNull();
 
-    process.env.LUNA_NEGRA_NGP_NSEC = nip19.nsecEncode(ORACLE_SK);
+    process.env.NGP_ATTESTATION_ORACLE_NSEC = nip19.nsecEncode(ORACLE_SK);
     delete process.env.gameCoord;
     expect(attestationConfigured()).toBe(false);
     expect(await buildRoomWinnerAttestation(room, BET_ID)).toBeNull();
@@ -109,7 +109,7 @@ describe('buildRoomWinnerAttestation', () => {
   });
 
   it('nsec en hex crudo también configura el oráculo', async () => {
-    process.env.LUNA_NEGRA_NGP_NSEC = Buffer.from(ORACLE_SK).toString('hex');
+    process.env.NGP_ATTESTATION_ORACLE_NSEC = Buffer.from(ORACLE_SK).toString('hex');
     const room = await finishedRoom(WINNER_NPUB);
     const ev = await buildRoomWinnerAttestation(room, BET_ID);
     expect(ev?.pubkey).toBe(ORACLE_PK);

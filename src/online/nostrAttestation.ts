@@ -9,7 +9,7 @@
 // por la sala autoritativa (room.winnerPlayerId), en el momento en que ese mismo
 // resultado mueve el dinero del escrow (settle NGE). Nunca un score de cliente.
 //
-// Cadena de confianza (delegación): la pubkey de LUNA_NEGRA_NGP_NSEC está
+// Cadena de confianza (delegación): la pubkey de NGP_ATTESTATION_ORACLE_NSEC está
 // declarada como oráculo del juego en su listado 30023 de Luna Negra (tag
 // ["oracle", pk], POST /api/provider/games/{id}/attestation-oracle con prueba de
 // posesión). Un verificador cruza el firmante del 31338 contra esa delegación
@@ -28,7 +28,7 @@ const PUBLISH_TIMEOUT_MS = 5_000;
 
 /** Clave del oráculo (nsec bech32 o hex de 64) desde el env, o null. */
 function attestationSecretKey(): Uint8Array | null {
-  const raw = (process.env.LUNA_NEGRA_NGP_NSEC ?? '').trim();
+  const raw = (process.env.NGP_ATTESTATION_ORACLE_NSEC ?? '').trim();
   if (!raw) return null;
   try {
     if (raw.startsWith('nsec')) {
