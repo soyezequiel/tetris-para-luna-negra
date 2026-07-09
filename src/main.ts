@@ -736,6 +736,11 @@ const INCOMPLETE_DEPOSIT_WAKE_MS = 1500;
 let lastIncompleteDepositWakeKey: string | null = null;
 let lastIncompleteDepositWakeAt = 0;
 
+// Umbral para reportar un depósito confirmado a Discord: solo mandamos el diagnóstico si el
+// depósito tardó AL MENOS esto en verse 'paid'. El caso feliz (pago rápido) no genera ruido.
+// La medición incluye el tiempo humano de pagar la invoice, por eso el umbral es holgado.
+const SLOW_DEPOSIT_REPORT_MS = 30_000;
+
 function recordBetLifecycle(room: OnlineRoom | null): void {
   const bet = room?.bet;
   if (!bet?.betId) return;
@@ -758,11 +763,19 @@ function recordBetLifecycle(room: OnlineRoom | null): void {
   const entry = roomBetEntryForLocalPlayer(room);
   if (m.myDepositPaidSeenAt === null && entry?.depositStatus === 'paid') {
     m.myDepositPaidSeenAt = now;
-    void sendBetPaymentDiagnosticReport('deposit-paid-seen', {
-      reason: 'local-player-deposit-status-paid',
-      sinceCreatedMs: typeof m.createdSeenAt === 'number' ? now - m.createdSeenAt : null,
-      sinceInvoiceMs: invoiceIssuedAtByBetId.has(m.betId) ? now - invoiceIssuedAtByBetId.get(m.betId)! : null,
-    });
+    const sinceCreatedMs = typeof m.createdSeenAt === 'number' ? now - m.createdSeenAt : null;
+    const sinceInvoiceMs = invoiceIssuedAtByBetId.has(m.betId) ? now - invoiceIssuedAtByBetId.get(m.betId)! : null;
+    // Solo reportamos si el depósito TARDÓ: el caso feliz (pago rápido) no manda nada a Discord.
+    // Medimos desde la emisión de la invoice si la tenemos (latencia real del depósito); si no,
+    // desde que vimos la apuesta por primera vez.
+    const elapsedMs = sinceInvoiceMs ?? sinceCreatedMs;
+    if (elapsedMs !== null && elapsedMs >= SLOW_DEPOSIT_REPORT_MS) {
+      void sendBetPaymentDiagnosticReport('deposit-paid-seen', {
+        reason: 'local-player-deposit-slow',
+        sinceCreatedMs,
+        sinceInvoiceMs,
+      });
+    }
   }
   if (
     m.myPayoutPaidSeenAt === null &&
