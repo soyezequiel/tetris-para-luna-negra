@@ -1518,6 +1518,35 @@
   gap: 14px;
 }
 
+/* La tarjeta de cobro no debe leerse como un aviso pegado aparte, sino como una
+   fila más del stack de resultados: mismo ancho, mismo radio y la superficie de
+   vidrio de las filas. El color (ámbar/verde) baja a un acento en degradé que
+   rima con la fila del ganador, en vez del recuadro plano que la separaba. */
+.online-results .bet-settle {
+  width: 100%;
+  margin-top: 0;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border-color: rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(90deg, rgba(247, 200, 80, 0.12), rgba(247, 200, 80, 0.02)),
+    rgba(255, 255, 255, 0.04);
+}
+
+.online-results .bet-settle--paid {
+  border-color: rgba(57, 212, 154, 0.32);
+  background:
+    linear-gradient(90deg, rgba(57, 212, 154, 0.16), rgba(57, 212, 154, 0.03)),
+    rgba(255, 255, 255, 0.04);
+}
+
+/* Los estados "muted" (reembolso, apuesta pagada a otro) también entran al flujo:
+   un pie de nota a lo ancho, sin recuadro, alineado con el resto. */
+.online-results .bet-settle-muted {
+  width: 100%;
+  text-align: center;
+}
+
 .online-results-row {
   display: flex;
   align-items: center;
