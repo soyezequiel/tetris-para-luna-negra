@@ -3536,10 +3536,17 @@ function handleIncomingNostrChallenge(challenge: ParsedChallenge): void {
     challengeFriendAffinitiesFor = ownerPubkey;
     lunaState.challenge.friends = sortChallengeFriends(lunaState.challenge.friends, ownerPubkey);
   }
+  // Si el remitente ya está en tu lista de amigos (cargada de caché al loguear),
+  // usamos su nombre/foto AL INSTANTE en vez de mostrar el npub crudo y esperar el
+  // fetch de perfil por relays. Como retás a un contacto, es el caso común: el toast
+  // sale completo de entrada. El enrich sigue detrás como refresco/fallback (no-follows
+  // o perfiles que cambiaron).
+  const fromPk = challenge.fromPubkey.trim().toLowerCase();
+  const known = lunaState.challenge.friends.find((f) => f.pubkey === fromPk);
   const incoming = {
     ...challenge,
-    fromName: shortNpub(challenge.fromNpub),
-    fromAvatarUrl: null,
+    fromName: known?.name || shortNpub(challenge.fromNpub),
+    fromAvatarUrl: known?.avatarUrl ?? null,
   };
   lunaState.challenge.incoming = prependUniqueChallenges(
     lunaState.challenge.incoming,
