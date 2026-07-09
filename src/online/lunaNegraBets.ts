@@ -16,6 +16,7 @@ import type {
   RoomBetStatus,
 } from './protocol';
 import { alertBetDepositHandlesIncomplete, alertMoneyPathError } from './moneyPathAlert.js';
+import { attestRoomWinner } from './nostrAttestation.js';
 import {
   pubkeyFromNpub,
   ngeConnected,
@@ -718,9 +719,14 @@ export async function maybeReportRoomBetResult(
   // La persistencia local del reporte y el get_bet post-reporte (payouts frescos)
   // no dependen entre sí: en paralelo se paga solo la latencia del RPC. Como
   // `previous` del detalle usamos `reported`, que es lo que se está persistiendo.
+  // La atestación pública 31338 (oráculo NGP) viaja en el MISMO paralelo: certifica
+  // el resultado que acaba de mover el dinero, sin agregar latencia y sin poder
+  // romper el settle (best-effort, nunca lanza). Sin ganadores (empate/reembolso)
+  // no hay nada que atestar.
   const [written, detail] = await Promise.all([
     setRoomBet(store, updatedRoom.id, reported, nowMs),
     fetchDetail(bet.betId, bet.participants.map((p) => p.npub), bet.stakeSats, reported),
+    winners.length > 0 ? attestRoomWinner(updatedRoom, bet.betId) : Promise.resolve(),
   ]);
   let updated = written;
   if (detail) {
