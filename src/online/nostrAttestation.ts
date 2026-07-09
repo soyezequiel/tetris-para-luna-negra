@@ -6,8 +6,12 @@
 // mapeo sala→ganador y la publicación a relays.
 //
 // Certifica SOLO lo que el servidor presenció: el ganador de un versus arbitrado
-// por la sala autoritativa (room.winnerPlayerId), en el momento en que ese mismo
-// resultado mueve el dinero del escrow (settle NGE). Nunca un score de cliente.
+// por la sala autoritativa (room.winnerPlayerId). Dos disparadores:
+//   - apuesta: en el settle NGE, con ref = betId (lunaNegraBets).
+//   - versus sin apuesta: al terminar la partida, con ref = matchResultId, leyendo
+//     la sala AUTORITATIVA del DO por el bridge (attestFinishedRoomWinner).
+// Nunca un score de cliente ni el modo 1 jugador (no hay validación server-side
+// del puntaje: firmarlo sería teatro de seguridad).
 //
 // Cadena de confianza (delegación): la pubkey de NGP_ATTESTATION_ORACLE_NSEC está
 // declarada como oráculo del juego en su listado 30023 de Luna Negra (tag
@@ -28,6 +32,7 @@ import { buildAttestationEvent, type NgpSigner } from 'nostr-game-protocol/ngp';
 // lo cubre tests/apiEsmImports.test.ts.
 import { PUBLIC_WRITE_RELAYS } from './nostrRelays.js';
 import type { OnlineRoom } from './protocol';
+import type { RoomStore } from './roomService';
 
 /** Corte total de la publicación: en serverless no podemos colgar el settle. */
 const PUBLISH_TIMEOUT_MS = 5_000;
@@ -85,12 +90,12 @@ function winnerPubkeyFromRoom(room: OnlineRoom): string | null {
 /**
  * Arma y FIRMA la atestación del ganador del versus (kind:31338), o null si no
  * aplica: oráculo sin configurar, sala sin ganador, o ganador sin identidad
- * Nostr. `ref` = betId (id único de la partida apostada; el 31340/1341 públicos
- * de esa apuesta ya llevan la sala). No publica: sólo firma.
+ * Nostr. `ref` = id único de la partida (betId en apuestas; matchResultId en un
+ * versus sin apuesta). No publica: sólo firma.
  */
 export async function buildRoomWinnerAttestation(
   room: OnlineRoom,
-  betId: string,
+  ref: string,
 ): Promise<Event | null> {
   const sk = attestationSecretKey();
   const gameCoord = serverGameCoord();
@@ -100,7 +105,7 @@ export async function buildRoomWinnerAttestation(
   try {
     return await buildAttestationEvent(localSigner(sk), {
       gameCoord,
-      ref: betId,
+      ref,
       playerPubkey,
       status: 'verified',
     });
