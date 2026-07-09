@@ -20,7 +20,13 @@
 import { SimplePool, nip19, finalizeEvent, getPublicKey } from 'nostr-tools';
 import type { Event, EventTemplate } from 'nostr-tools';
 import { buildAttestationEvent, type NgpSigner } from 'nostr-game-protocol/ngp';
-import { PUBLIC_WRITE_RELAYS } from './nostrRelays';
+// OJO: la extensión `.js` es OBLIGATORIA. A este módulo lo alcanza `api/bets/*`, que
+// Vercel corre como ESM de Node SIN empaquetar: un specifier relativo sin extensión
+// tira ERR_MODULE_NOT_FOUND al importar y voltea la función ENTERA (500
+// FUNCTION_INVOCATION_FAILED en todas sus rutas, incluso las que no tocan apuestas).
+// Vite sí resuelve sin extensión, así que ni el build ni los tests lo detectan solos:
+// lo cubre tests/apiEsmImports.test.ts.
+import { PUBLIC_WRITE_RELAYS } from './nostrRelays.js';
 import type { OnlineRoom } from './protocol';
 
 /** Corte total de la publicación: en serverless no podemos colgar el settle. */
