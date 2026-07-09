@@ -124,7 +124,12 @@ import { loginWithSigner } from './online/nostrLogin';
 import { buildChallengeGiftWraps, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
 import { clearPresenceEvent, publishPresence, type PresenceStatus } from './online/nostrPresence';
-import { NOSTR_BOARD_SURVIVAL, NOSTR_BOARD_WINS, publishScore } from './online/nostrLeaderboard';
+import {
+  NOSTR_BOARD_SURVIVAL,
+  NOSTR_BOARD_WINS,
+  fetchNostrLeaderboard,
+  publishScore,
+} from './online/nostrLeaderboard';
 import { fetchContacts } from './online/nostrContacts';
 import { fetchProfiles, profileName } from './online/nostrProfile';
 import {
@@ -4363,6 +4368,38 @@ function refreshActiveLeaderboard(): Promise<void> {
   return leaderboardState.tab === 'survival' ? refreshSurvivalTop() : refreshLeaderboard();
 }
 
+// Fallback Nostr del marcador: si el PartyServer no responde, reconstruimos el ranking
+// LEYENDO los kind:31337 en relays (marcador autónomo, ver nostrLeaderboard.ts).
+// Resolvemos nombre/avatar por perfil Nostr (kind:0) y marcamos "vos" cruzando el npub
+// de la sesión. Devuelve null si no hay ni un puntaje en relays (el llamador deja el
+// error del server). `score` son victorias o ms según la tabla.
+async function loadNostrScoreRows(board: string): Promise<Array<{
+  playerId: string;
+  npub: string;
+  name: string;
+  avatarUrl: string | null;
+  score: number;
+  createdAtServerMs: number;
+}> | null> {
+  const scores = await fetchNostrLeaderboard(board, 50);
+  if (scores.length === 0) return null;
+  const profiles = await fetchProfiles(scores.map((s) => s.pubkey));
+  const myNpub = lunaState.identity?.npub ?? null;
+  return scores.map((s) => {
+    const profile = profiles.get(s.pubkey) ?? null;
+    return {
+      // El resaltado "vos" de la fila cruza playerId con el id local; para las filas
+      // ajenas (que no lo tienen) usamos la pubkey como id estable de la fila.
+      playerId: myNpub !== null && s.npub === myNpub ? identityState.player.id : s.pubkey,
+      npub: s.npub,
+      name: (profileName(profile) ?? shortNpub(s.npub)).slice(0, 32),
+      avatarUrl: profile?.picture ?? null,
+      score: s.score,
+      createdAtServerMs: s.createdAt * 1000,
+    };
+  });
+}
+
 async function refreshLeaderboard(): Promise<void> {
   if (leaderboardState.loading) return;
   leaderboardState.loading = true;
@@ -4371,7 +4408,21 @@ async function refreshLeaderboard(): Promise<void> {
     const response = await onlineClient.getLeaderboard(50);
     leaderboardState.entries = response.entries;
   } catch (error) {
-    leaderboardState.error = onlineErrorText(error);
+    // PartyServer caído: reconstruimos el top de victorias desde Nostr.
+    const rows = await loadNostrScoreRows(NOSTR_BOARD_WINS);
+    if (rows) {
+      leaderboardState.entries = rows.map((r) => ({
+        playerId: r.playerId,
+        npub: r.npub,
+        name: r.name,
+        avatarUrl: r.avatarUrl,
+        wins: r.score,
+        createdAtServerMs: r.createdAtServerMs,
+      }));
+      leaderboardState.error = null;
+    } else {
+      leaderboardState.error = onlineErrorText(error);
+    }
   } finally {
     leaderboardState.loading = false;
   }
@@ -4380,6 +4431,7 @@ async function refreshLeaderboard(): Promise<void> {
 // Suma una victoria multijugador del jugador al ranking mundial.
 // Best-effort: el tablero global es secundario, nunca corta el juego local.
 async function submitLeaderboardWin(): Promise<void> {
+  let wins: number | null = null;
   try {
     const response = await onlineClient.submitScore({
       playerId: identityState.player.id,
@@ -4387,16 +4439,20 @@ async function submitLeaderboardWin(): Promise<void> {
       avatarUrl: identityState.player.avatarUrl,
       npub: lunaState.identity?.npub ?? null,
     });
-    // Marcador 2.0 (Nostr, §6): el jugador firma su TOTAL de victorias como kind:31337
-    // y lo publica a los relays. Complementa el espejo REST 1.0 (server-side) — mismo
-    // board 'victorias', mismo ranking. Solo si hay sesión Nostr 2.0 (firmante activo);
-    // best-effort, no bloquea.
-    const mine = response.entries.find((entry) => entry.playerId === identityState.player.id);
-    const signer = getActiveSigner();
-    if (mine && signer) void publishScore(signer, NOSTR_BOARD_WINS, mine.wins);
+    wins = response.entries.find((entry) => entry.playerId === identityState.player.id)?.wins ?? null;
   } catch {
-    // Silencioso: un fallo del ranking no debe afectar la partida.
+    // El ranking del PartyServer es best-effort; seguimos igual para publicar en Nostr.
   }
+  // Si el server no respondió, usamos el último total conocido del estado local.
+  if (wins === null) {
+    wins = leaderboardState.entries.find((entry) => entry.playerId === identityState.player.id)?.wins ?? null;
+  }
+  // Marcador 2.0 (Nostr, §6): el jugador firma su TOTAL de victorias como kind:31337 y
+  // lo publica a los relays, INDEPENDIENTE de que el PartyServer haya respondido — así
+  // el marcador Nostr se puebla aunque el servidor esté caído. Mismo board 'victorias',
+  // mismo ranking. Requiere un firmante activo (no se puede firmar sin clave).
+  const signer = getActiveSigner();
+  if (signer && wins !== null) void publishScore(signer, NOSTR_BOARD_WINS, wins);
 }
 
 // ─────────────────────── Top de supervivencia (por tiempo) ───────────────────────
@@ -4409,7 +4465,21 @@ async function refreshSurvivalTop(): Promise<void> {
     const response = await onlineClient.getSurvivalLeaderboard(50);
     leaderboardState.survivalEntries = response.entries;
   } catch (error) {
-    leaderboardState.survivalError = onlineErrorText(error);
+    // PartyServer caído: reconstruimos el top de supervivencia desde Nostr.
+    const rows = await loadNostrScoreRows(NOSTR_BOARD_SURVIVAL);
+    if (rows) {
+      leaderboardState.survivalEntries = rows.map((r) => ({
+        playerId: r.playerId,
+        npub: r.npub,
+        name: r.name,
+        avatarUrl: r.avatarUrl,
+        bestMs: r.score,
+        createdAtServerMs: r.createdAtServerMs,
+      }));
+      leaderboardState.survivalError = null;
+    } else {
+      leaderboardState.survivalError = onlineErrorText(error);
+    }
   } finally {
     leaderboardState.survivalLoading = false;
   }
@@ -4429,6 +4499,9 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
   }
   leaderboardState.survivalRunRank = { status: 'loading' };
   const FETCH_LIMIT = 200;
+  // Fuera del try para poder publicar en Nostr aunque el PartyServer falle: sin lectura
+  // previa, el mejor conocido es el tiempo de ESTA partida.
+  let previousBestMs: number | null = null;
   try {
     // Una sola lectura alcanza: leemos el top ACTUAL antes de registrar. Nos da (a) mi
     // récord previo, para comparar, y (b) las marcas de los demás, para proyectar dónde
@@ -4438,7 +4511,7 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
     leaderboardState.survivalEntries = snapshot.entries;
     const myId = identityState.player.id;
     const mine = snapshot.entries.find((entry) => entry.playerId === myId);
-    const previousBestMs = mine ? mine.bestMs : null;
+    previousBestMs = mine ? mine.bestMs : null;
 
     // Puesto proyectado de ESTA partida: contra las marcas de los demás (excluyo mi
     // entrada vieja para no contarme dos veces). Empate = no superás, quedás detrás.
@@ -4467,18 +4540,18 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
       npub,
       durationMs,
     });
-
-    // Marcador 2.0 (Nostr, §6): el jugador firma su MEJOR tiempo (ms) como kind:31337
-    // y lo publica a los relays. Complementa el espejo REST 1.0 — mismo board
-    // 'supervivencia', mismas unidades (ms), mismo ranking. Solo si hay sesión Nostr
-    // 2.0 (firmante activo); best-effort, no bloquea.
-    const bestMs = Math.max(previousBestMs ?? 0, durationMs);
-    const signer = getActiveSigner();
-    if (signer) void publishScore(signer, NOSTR_BOARD_SURVIVAL, bestMs);
   } catch {
     // Silencioso: un fallo del ranking no debe afectar la partida.
     leaderboardState.survivalRunRank = { status: 'error' };
   }
+
+  // Marcador 2.0 (Nostr, §6): el jugador firma su MEJOR tiempo (ms) como kind:31337 y lo
+  // publica a los relays, FUERA del try — así se publica aunque el PartyServer no haya
+  // respondido (marcador autónomo). Mismo board 'supervivencia', mismas unidades (ms),
+  // mismo ranking. Requiere un firmante activo; best-effort, no bloquea.
+  const bestMs = Math.max(previousBestMs ?? 0, durationMs);
+  const signer = getActiveSigner();
+  if (signer) void publishScore(signer, NOSTR_BOARD_SURVIVAL, bestMs);
 }
 
 // Cuando la sala termina conmigo coronado ganador, sumo una victoria al ranking
