@@ -3510,10 +3510,13 @@ async function ensureNostrChallengeInbox(): Promise<void> {
       console.warn('[reto] NO arranca la bandeja: el firmante no expone nip44Decrypt (login sin NIP-44).');
       return;
     }
-    const signerPubkey = (await signer.getPublicKey()).trim().toLowerCase();
-    if (signerPubkey !== identityPubkey) return;
-    startChallengeInbox(signer, signerPubkey, handleIncomingNostrChallenge);
-    challengeInboxPubkey = signerPubkey;
+    // Usamos `identityPubkey` (ya conocido del login) en vez de re-preguntarle al
+    // firmante con getPublicKey(): con nos2x esa llamada extra abre un prompt y, si el
+    // usuario lo rechaza/cierra, la extensión ignora las llamadas siguientes y la
+    // suscripción queda sin abrir (sin reintento). La identidad ya salió de este mismo
+    // firmante al loguear, así que confiamos en ese pubkey.
+    startChallengeInbox(signer, identityPubkey, handleIncomingNostrChallenge);
+    challengeInboxPubkey = identityPubkey;
   } catch {
     // Recibir retos es best-effort.
   } finally {
