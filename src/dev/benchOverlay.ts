@@ -12,6 +12,7 @@
 //   >100  total de gaps >100ms de la sesión (tirón grosero)
 
 import { autoPlayState } from '../state/autoPlayState';
+import { benchReset, benchSnapshot } from './benchCounters';
 
 interface BenchDeps {
   startNewRun: () => void;
@@ -61,6 +62,10 @@ export function installBenchMode(deps: BenchDeps): void {
   let over100 = 0;
   let lastPaint = 0;
   const t0 = last;
+  // Los contadores se reinician al entrar en juego real: la carga del módulo, el primer
+  // layout y la cuenta regresiva tienen un perfil distinto y ensuciarían la media.
+  let counterStart = last;
+  let countersArmed = false;
   function tick(now: number): void {
     const gap = now - last;
     last = now;
@@ -68,6 +73,11 @@ export function installBenchMode(deps: BenchDeps): void {
     if (gaps.length > 240) gaps.shift();
     if (gap > 33) over33 += 1;
     if (gap > 100) over100 += 1;
+    if (!countersArmed && deps.getAppMode() === 'playing' && now - t0 > 4000) {
+      countersArmed = true;
+      counterStart = now;
+      benchReset();
+    }
     if (now - lastPaint > 250 && gaps.length >= 3) {
       lastPaint = now;
       const sorted = [...gaps].sort((a, b) => a - b);
@@ -75,9 +85,15 @@ export function installBenchMode(deps: BenchDeps): void {
       const fps = Math.round(1000 / (sum / sorted.length));
       const p95 = sorted[Math.floor(sorted.length * 0.95)];
       const max = sorted[sorted.length - 1];
+      // Tabla de costo por sección: ms de main thread por SEGUNDO (avgMs × llamadas/s).
+      // Es la métrica que compara navegadores sin depender del vsync del monitor.
+      const rows = benchSnapshot(now - counterStart)
+        .map((r) => `  ${r.label.padEnd(20)} ${r.msPerSec.toFixed(1).padStart(6)} ms/s  (${r.avgMs.toFixed(2)}ms × ${r.perSec.toFixed(0)}/s)`)
+        .join('\n');
       el.textContent = `BENCH ${deps.getAppMode()}  t=${Math.round((now - t0) / 1000)}s`
         + `\nFPS ${fps}   p95 ${p95.toFixed(1)}ms   max ${max.toFixed(1)}ms`
-        + `\n>33ms ${over33}   >100ms ${over100}`;
+        + `\n>33ms ${over33}   >100ms ${over100}`
+        + (rows ? `\n${rows}` : '');
     }
     requestAnimationFrame(tick);
   }

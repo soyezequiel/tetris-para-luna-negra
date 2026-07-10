@@ -12,6 +12,8 @@
 //
 // Integración: ver PixiGameRenderer (construir, render -> setSeed, destroy).
 
+import { benchTime } from '../dev/benchCounters';
+
 export type BgStyle = 'aurora' | 'bruma' | 'marea';
 
 const STYLES: BgStyle[] = ['aurora', 'bruma', 'marea'];
@@ -21,8 +23,15 @@ interface Blob {
   color: [number, number, number];
   x: number; y: number; r: number;
   sx: number; sy: number; px: number; py: number;
+  sprite: HTMLCanvasElement;
 }
+interface Halo { x: number; y: number; sprite: HTMLCanvasElement; }
 interface Particle { x: number; y: number; r: number; speed: number; tw: number; }
+
+// r,g,b, alpha del centro, x, y (fracciones del viewport) de los halos del estilo "bruma".
+const HALO_SPECS: [number, number, number, number, number, number][] = [
+  [60, 150, 160, 0.16, 0.3, 0.35], [110, 90, 160, 0.14, 0.72, 0.6],
+];
 
 export class BackgroundFX {
   private readonly canvas: HTMLCanvasElement;
@@ -44,23 +53,31 @@ export class BackgroundFX {
   private motion = true;
   private reducedMotion = false;
   // El fondo es difuso y "relax": no necesita 60fps. Limitarlo a ~30fps libera el
-  // main thread para el loop de Pixi del juego (clave en Firefox, cuyo Canvas2D con
-  // gradientes radiales + composición 'screen' es mucho más caro que en Chrome).
+  // main thread para el loop de Pixi del juego.
   private readonly drawInterval = 1000 / 30;
-  // Gradientes que solo dependen del tamaño del viewport: se construyen una vez por
-  // resize en lugar de recrearse cada frame (crear un CanvasGradient no es gratis).
-  private baseGrad: CanvasGradient | null = null;
-  private vignette: CanvasGradient | null = null;
+  // Capas HORNEADAS. Rasterizar un gradiente es caro en Firefox (lo hace en CPU, mientras
+  // que Chrome lo resuelve en GPU): medido, un draw() con gradientes en vivo costaba ~6ms de
+  // main thread en Firefox contra ~0.05ms en Chrome, y 6ms > el frame entero de un monitor
+  // de 180Hz. La solución es rasterizar CADA gradiente UNA vez (a un canvas offscreen) y
+  // luego solo blittear esas imágenes con drawImage, que sí es rápido en ambos.
+  //   - baseLayer/vignetteLayer: dependen solo del tamaño → se rehornean por resize.
+  //   - blobSprites/haloSprites/particleSprite: dependen solo del color → se hornean una vez
+  //     y se estiran con drawImage (son manchas difusas: el escalado no se nota).
+  private baseLayer: HTMLCanvasElement | null = null;
+  private vignetteLayer: HTMLCanvasElement | null = null;
+  private particleSprite: HTMLCanvasElement | null = null;
+  private readonly mareaGrads = new Map<string, CanvasGradient>();
+  // Alpha del crossfade en curso: los sprites que además modulan su propio alpha (partículas)
+  // deben multiplicarlo, porque drawImage no compone dos globalAlpha.
+  private layerAlpha = 1;
   // Repintar solo cuando el cuadro cambia de verdad. Con el movimiento apagado y sin
-  // peligro/transición el fondo es estático: repintar gradientes radiales a pantalla
-  // completa con composición 'screen' 30×/s sería costo puro tirado (caro en Firefox).
+  // peligro/transición el fondo es estático: repintarlo 30×/s sería costo puro tirado.
   // Eventos puntuales (resize, semilla nueva, (re)activar) marcan dirty para un repinte.
   private dirty = true;
 
   private blobs: Blob[] = [];
+  private halos: Halo[] = [];
   private particles: Particle[] = [];
-  private noScreen = false;   // BISECT TEMP
-  private noParticles = false; // BISECT TEMP
 
   // Peligro (0..1): oscurece el fondo de la página conforme sube la pila. Se
   // suaviza hacia el objetivo para que el cambio sea gradual, no un parpadeo.
@@ -89,14 +106,6 @@ export class BackgroundFX {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     this.reducedMotion = mq.matches;
     mq.addEventListener?.('change', (e) => { this.reducedMotion = e.matches; });
-
-    // BISECT TEMP
-    try {
-      const q = new URLSearchParams(location.search);
-      if (q.get('nobg') === '1') { this.enabled = false; this.canvas.style.display = 'none'; }
-      if (q.get('noscreen') === '1') this.noScreen = true;
-      if (q.get('noparticles') === '1') this.noParticles = true;
-    } catch { /* noop */ }
 
     this.initScene();
     window.addEventListener('resize', this.onResize);
@@ -167,6 +176,8 @@ export class BackgroundFX {
     this.canvas.remove();
   }
 
+  // Escena + sprites. Cada mancha se rasteriza UNA vez a una textura; el bucle de dibujo solo
+  // hace drawImage, que es lo que mantiene barato el fondo (ver comentario de baseLayer).
   private initScene(): void {
     const blobCols: [number, number, number][] = [
       [46, 150, 150], [60, 110, 180], [86, 80, 170], [120, 90, 165], [40, 120, 140],
@@ -176,7 +187,23 @@ export class BackgroundFX {
       x: 0.18 + i * 0.17, y: 0.22 + (i % 3) * 0.26,
       r: 0.42 + (i % 3) * 0.12,
       sx: 0.05 + i * 0.013, sy: 0.04 + i * 0.011, px: i * 1.7, py: i * 2.3,
+      sprite: radialSprite([
+        [0, `rgba(${c[0]},${c[1]},${c[2]},0.20)`],
+        [0.5, `rgba(${c[0]},${c[1]},${c[2]},0.08)`],
+        [1, `rgba(${c[0]},${c[1]},${c[2]},0)`],
+      ]),
     }));
+    this.halos = HALO_SPECS.map(([cr, cg, cb, a, x, y]) => ({
+      x, y,
+      sprite: radialSprite([
+        [0, `rgba(${cr},${cg},${cb},${a})`],
+        [1, `rgba(${cr},${cg},${cb},0)`],
+      ]),
+    }));
+    this.particleSprite = radialSprite([
+      [0, 'rgba(170,210,220,1)'],
+      [1, 'rgba(170,210,220,0)'],
+    ]);
     this.particles = Array.from({ length: 30 }, (_, i) => ({
       x: (i * 0.137 + 0.05) % 1, y: (i * 0.211) % 1,
       r: 1.6 + (i % 4) * 1.4, speed: 0.012 + (i % 5) * 0.004, tw: i * 0.9,
@@ -189,24 +216,45 @@ export class BackgroundFX {
     // costo de pintado, que es lo que ahoga a Firefox.
     const dpr = Math.min(window.devicePixelRatio || 1, 1.25) * 0.75;
     const w = window.innerWidth, h = window.innerHeight;
+    const pxW = Math.max(1, Math.round(w * dpr));
+    const pxH = Math.max(1, Math.round(h * dpr));
+    // Rehornear las capas aloca dos canvas del tamaño del viewport, y `resize` llega en ráfaga
+    // mientras se arrastra el borde de la ventana: sólo rehorneamos si el tamaño en píxeles
+    // del canvas cambió de verdad (asignar canvas.width lo limpia aunque el valor sea el mismo).
+    const sameSize = pxW === this.canvas.width && pxH === this.canvas.height && this.baseLayer !== null;
     this.width = w; this.height = h;
-    this.canvas.width = Math.max(1, Math.round(w * dpr));
-    this.canvas.height = Math.max(1, Math.round(h * dpr));
+    if (sameSize) return;
+    this.canvas.width = pxW;
+    this.canvas.height = pxH;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.buildGradients();
     this.dirty = true;
   }
 
-  // Gradientes dependientes solo del tamaño: se cachean por resize.
+  // Capas de fondo/viñeta: dependen solo del tamaño, así que se rasterizan una vez por resize
+  // a un canvas offscreen y después se blittean. Se hornean a la resolución REAL del canvas
+  // (device px) para que el blit sea 1:1 y no reescale.
   private buildGradients(): void {
-    const ctx = this.ctx, { width: W, height: H } = this;
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#080d16'); g.addColorStop(0.55, '#0a111c'); g.addColorStop(1, '#05090f');
-    this.baseGrad = g;
-    const v = ctx.createRadialGradient(W / 2, H * 0.46, Math.min(W, H) * 0.18, W / 2, H * 0.5, Math.max(W, H) * 0.72);
-    v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(2,4,8,0.62)');
-    this.vignette = v;
+    const { width: W, height: H } = this;
+    this.mareaGrads.clear(); // dependen del alto del viewport
+    const scaleX = this.canvas.width / Math.max(1, W);
+    const scaleY = this.canvas.height / Math.max(1, H);
+
+    this.baseLayer = bakeLayer(this.canvas.width, this.canvas.height, (c) => {
+      c.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+      const g = c.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#080d16'); g.addColorStop(0.55, '#0a111c'); g.addColorStop(1, '#05090f');
+      c.fillStyle = g; c.fillRect(0, 0, W, H);
+    });
+
+    this.vignetteLayer = bakeLayer(this.canvas.width, this.canvas.height, (c) => {
+      c.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+      const v = c.createRadialGradient(W / 2, H * 0.46, Math.min(W, H) * 0.18, W / 2, H * 0.5, Math.max(W, H) * 0.72);
+      v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(2,4,8,0.62)');
+      c.fillStyle = v; c.fillRect(0, 0, W, H);
+    });
   }
+
 
   private loop(): void {
     const now = performance.now();
@@ -230,8 +278,8 @@ export class BackgroundFX {
     //  - motion: el fondo se está animando (this.t avanzó).
     //  - transStyle: crossfade entre estilos en curso.
     //  - danger asentándose, o latido crítico (que usa this.t, solo vivo con motion).
-    // Con el movimiento apagado y sin peligro el fondo es estático: repintar gradientes
-    // radiales a pantalla completa 30×/s sería costo puro tirado (caro en Firefox).
+    // Con el movimiento apagado y sin peligro el fondo es estático: repintarlo a pantalla
+    // completa 30×/s sería costo puro tirado.
     const dangerLive = Math.abs(this.dangerTarget - this.danger) > 0.002
       || (this.danger > 0.01 && this.dangerCritical && motionLive);
     const animating = motionLive || this.transStyle !== null || dangerLive;
@@ -240,17 +288,17 @@ export class BackgroundFX {
     if (this.enabled && (this.dirty || animating) && now - this.lastDraw >= this.drawInterval - 4) {
       this.lastDraw = now;
       this.dirty = false;
-      this.draw();
+      benchTime('bg:draw', () => this.draw());
     }
     this.rafId = requestAnimationFrame(() => this.loop());
   }
 
   private draw(): void {
     const ctx = this.ctx, { width: W, height: H } = this;
-    if (!this.baseGrad || !this.vignette) this.buildGradients();
-    ctx.fillStyle = this.baseGrad!; ctx.fillRect(0, 0, W, H);
+    if (!this.baseLayer || !this.vignetteLayer) this.buildGradients();
+    ctx.drawImage(this.baseLayer!, 0, 0, W, H);
 
-    if (!this.noScreen) ctx.globalCompositeOperation = 'screen'; // BISECT TEMP
+    ctx.globalCompositeOperation = 'screen';
     if (this.transStyle) {
       const f = Math.min(1, this.transP);
       this.runBg(this.curStyle, 1 - f);
@@ -260,8 +308,8 @@ export class BackgroundFX {
     }
     ctx.globalCompositeOperation = 'source-over';
 
-    // Viñeta: concentra la mirada en el tablero (gradiente cacheado).
-    ctx.fillStyle = this.vignette!; ctx.fillRect(0, 0, W, H);
+    // Viñeta: concentra la mirada en el tablero (capa horneada).
+    ctx.drawImage(this.vignetteLayer!, 0, 0, W, H);
 
     // Peligro: oscurece el fondo de la página (no el tablero, que lo tapa Pixi por
     // encima). Casi negro con un punto de rojo para dar clima; en crítico late suave.
@@ -277,11 +325,13 @@ export class BackgroundFX {
   private runBg(style: BgStyle, a: number): void {
     if (a <= 0) return;
     const ctx = this.ctx;
+    this.layerAlpha = a;
     ctx.globalAlpha = a;
     if (style === 'aurora') this.bgAurora();
     else if (style === 'bruma') this.bgBruma();
     else this.bgMarea();
     ctx.globalAlpha = 1;
+    this.layerAlpha = 1;
   }
 
   private bgAurora(): void {
@@ -290,46 +340,31 @@ export class BackgroundFX {
       const x = b.x * W + Math.sin(t * b.sx * 6.28 + b.px) * W * 0.13;
       const y = b.y * H + Math.cos(t * b.sy * 6.28 + b.py) * H * 0.11;
       const r = b.r * m * (0.92 + 0.08 * Math.sin(t * 0.4 + b.px));
-      const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
-      const [cr, cg, cb] = b.color;
-      rg.addColorStop(0, `rgba(${cr},${cg},${cb},0.20)`);
-      rg.addColorStop(0.5, `rgba(${cr},${cg},${cb},0.08)`);
-      rg.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-      // El gradiente es 0 fuera del radio: rellenar solo su bounding box en vez de
-      // toda la pantalla recorta drásticamente el área pintada (clave en Firefox).
-      ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      ctx.drawImage(b.sprite, x - r, y - r, r * 2, r * 2);
     }
   }
 
   private bgBruma(): void {
     const ctx = this.ctx, { width: W, height: H, t } = this;
-    const halos: [number, number, number, number, number, number][] = [
-      [60, 150, 160, 0.16, 0.3, 0.35], [110, 90, 160, 0.14, 0.72, 0.6],
-    ];
-    for (const [cr, cg, cb, a, hx, hy] of halos) {
-      const x = hx * W + Math.sin(t * 0.12 + hx * 4) * W * 0.05, y = hy * H, r = Math.min(W, H) * 0.6;
-      const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
-      rg.addColorStop(0, `rgba(${cr},${cg},${cb},${a})`); rg.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-      ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    for (const h of this.halos) {
+      const x = h.x * W + Math.sin(t * 0.12 + h.x * 4) * W * 0.05, y = h.y * H, r = Math.min(W, H) * 0.6;
+      ctx.drawImage(h.sprite, x - r, y - r, r * 2, r * 2);
     }
-    if (!this.noParticles) { // BISECT TEMP
-      for (const p of this.particles) {
-        const py = (((p.y - t * p.speed) % 1) + 1) % 1, x = p.x * W, y = py * H;
-        const tw = 0.5 + 0.5 * Math.sin(t * 0.8 + p.tw), a = 0.05 + 0.07 * tw, r = p.r * (1 + 0.2 * tw);
-        const rg = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
-        rg.addColorStop(0, `rgba(170,210,220,${a})`); rg.addColorStop(1, 'rgba(170,210,220,0)');
-        ctx.fillStyle = rg; ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
-      }
+    // Las partículas comparten un único sprite (mismo color); su alpha variable se aplica con
+    // globalAlpha, multiplicado por el del crossfade en curso.
+    const glow = this.particleSprite!;
+    for (const p of this.particles) {
+      const py = (((p.y - t * p.speed) % 1) + 1) % 1, x = p.x * W, y = py * H;
+      const tw = 0.5 + 0.5 * Math.sin(t * 0.8 + p.tw), a = 0.05 + 0.07 * tw, r = p.r * (1 + 0.2 * tw);
+      ctx.globalAlpha = a * this.layerAlpha;
+      ctx.drawImage(glow, x - r * 4, y - r * 4, r * 8, r * 8);
     }
+    ctx.globalAlpha = this.layerAlpha;
   }
 
   private bgMarea(): void {
     const ctx = this.ctx, { width: W, height: H, t } = this;
-    const bands: [number, number, number, number, number, number][] = [
-      [50, 150, 142, 0.30, 0.05, 1.0], [90, 84, 168, 0.38, 0.10, 0.8],
-      [126, 88, 158, 0.55, 0.07, 1.3], [44, 118, 134, 0.72, 0.06, 0.65],
-    ];
-    for (const [cr, cg, cb, baseY, amp, spd] of bands) {
+    for (const [cr, cg, cb, baseY, amp, spd] of MAREA_BANDS) {
       const by = baseY * H, a = amp * H;
       ctx.beginPath(); ctx.moveTo(0, H);
       for (let x = 0; x <= W; x += 14) {
@@ -337,11 +372,47 @@ export class BackgroundFX {
         ctx.lineTo(x, y);
       }
       ctx.lineTo(W, H); ctx.closePath();
-      const lg = ctx.createLinearGradient(0, by - a, 0, H);
-      lg.addColorStop(0, `rgba(${cr},${cg},${cb},0.16)`); lg.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+      // La onda cambia cada frame, pero su gradiente vertical no: se cachea por banda+alto.
+      const key = `marea:${cr},${cg},${cb}:${by.toFixed(0)}:${a.toFixed(0)}:${H.toFixed(0)}`;
+      let lg = this.mareaGrads.get(key);
+      if (!lg) {
+        lg = ctx.createLinearGradient(0, by - a, 0, H);
+        lg.addColorStop(0, `rgba(${cr},${cg},${cb},0.16)`); lg.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+        this.mareaGrads.set(key, lg);
+      }
       ctx.fillStyle = lg; ctx.fill();
     }
   }
+}
+
+// Lado en píxeles de los sprites horneados. Son manchas difusas: 256 alcanza de sobra aunque
+// se estiren a media pantalla, y mantiene la textura chica (rápida de subir a GPU).
+const SPRITE_PX = 256;
+
+const MAREA_BANDS: [number, number, number, number, number, number][] = [
+  [50, 150, 142, 0.30, 0.05, 1.0], [90, 84, 168, 0.38, 0.10, 0.8],
+  [126, 88, 158, 0.55, 0.07, 1.3], [44, 118, 134, 0.72, 0.06, 0.65],
+];
+
+// Rasteriza `paint` una vez a un canvas offscreen reutilizable.
+function bakeLayer(w: number, h: number, paint: (ctx: CanvasRenderingContext2D) => void): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(w));
+  canvas.height = Math.max(1, Math.round(h));
+  paint(canvas.getContext('2d')!);
+  return canvas;
+}
+
+// Mancha circular con un gradiente radial horneado. Se dibuja centrada en una textura cuadrada
+// de SPRITE_PX y después se estira al radio que toque: como es una mancha difusa de alpha bajo,
+// el reescalado no se nota (verificado contra el render con gradientes en vivo).
+function radialSprite(stops: [number, string][]): HTMLCanvasElement {
+  return bakeLayer(SPRITE_PX, SPRITE_PX, (c) => {
+    const r = SPRITE_PX / 2;
+    const g = c.createRadialGradient(r, r, 0, r, r, r);
+    for (const [offset, color] of stops) g.addColorStop(offset, color);
+    c.fillStyle = g; c.fillRect(0, 0, SPRITE_PX, SPRITE_PX);
+  });
 }
 
 // PRNG determinista pequeño (mismo número => misma secuencia en todo cliente).

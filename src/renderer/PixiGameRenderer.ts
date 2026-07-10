@@ -2,6 +2,7 @@ import { Application } from '@pixi/app';
 import { Container } from '@pixi/display';
 import { Graphics } from '@pixi/graphics';
 import { Text, TextStyle } from '@pixi/text';
+import { benchCountersOn, benchTime } from '../dev/benchCounters';
 import { JuiceFX, type BoardGeometry } from './JuiceFX';
 import { BackgroundFX } from './BackgroundFX';
 import { cellsFor, PIECE_COLORS, PIECE_COLORS_COLORBLIND } from '../game/pieces';
@@ -17,12 +18,6 @@ import type { GameState, PieceType } from '../game/types';
 const COARSE_POINTER = ((): boolean => {
   try { return window.matchMedia?.('(pointer: coarse)').matches ?? false; } catch { return false; }
 })();
-
-// BISECT TEMP
-const Q = ((): URLSearchParams => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(); } })();
-const NO_AA = Q.get('noaa') === '1';
-const NO_JUICE = Q.get('nojuice') === '1';
-const RES1 = Q.get('res1') === '1';
 
 const GRID_LINE = 0x2f3338;
 const GHOST_FILL = 0x07090b;
@@ -142,11 +137,19 @@ export class PixiGameRenderer {
       // Móvil: sin MSAA (caro en GPUs móviles a pantalla completa; los bloques de neón son
       // rects alineados al eje, así que el costo visual es mínimo) y techo de resolución más
       // bajo (1.5 vs 2) para pintar ~44% menos píxeles por frame en un dpr3.
-      antialias: !COARSE_POINTER && !NO_AA,
-      resolution: RES1 ? 1 : Math.min(devicePixelRatio, COARSE_POINTER ? 1.5 : 2),
+      antialias: !COARSE_POINTER,
+      resolution: Math.min(devicePixelRatio, COARSE_POINTER ? 1.5 : 2),
       autoDensity: true,
       powerPreference: 'high-performance',
     });
+    // BENCH: el submit de WebGL de Pixi (lo que cuesta subir la geometría y emitir los draw
+    // calls) ocurre en el ticker propio de Pixi, fuera de nuestro render(). Lo cronometramos
+    // envolviendo renderer.render para que aparezca en la tabla del bench.
+    if (benchCountersOn()) {
+      const pixiRenderer = this.app.renderer as unknown as { render: (...a: unknown[]) => unknown };
+      const original = pixiRenderer.render.bind(pixiRenderer);
+      pixiRenderer.render = (...a: unknown[]) => benchTime('pixi:glSubmit', () => original(...a));
+    }
     root.appendChild(this.app.view as HTMLCanvasElement);
     const view = this.app.view as HTMLCanvasElement;
     view.style.position = 'relative';
@@ -272,7 +275,7 @@ export class PixiGameRenderer {
 
     // Juice + shake: SIEMPRE, cada rAF (las partículas/popups se animan independientes
     // del tick del motor; el shake debe ser suave a la tasa de refresco).
-    if (!NO_JUICE) this.juice.update(this.boardGeometry()); // partículas, overlays, popups // BISECT TEMP
+    benchTime('juice:update', () => this.juice.update(this.boardGeometry())); // partículas, overlays, popups
     // El shake legacy se conserva SOLO para playDeathAnimation(); el de gameplay
     // fluye por JuiceFX.
     const legacy = this.shakeFrames > 0 ? Math.sin(this.shakeFrames * 2.3) * 5 : 0;
@@ -291,16 +294,16 @@ export class PixiGameRenderer {
     if (!changed && this.deathFrame < 0 && !this.layoutDirty) return;
     this.layoutDirty = false;
 
-    this.layout(state);
-    this.drawBackground();
-    this.drawPanels();
+    benchTime('pixi:layout', () => this.layout(state));
+    benchTime('pixi:drawBackground', () => this.drawBackground());
+    benchTime('pixi:drawPanels', () => this.drawPanels());
     if (this.deathFrame >= 0) {
       this.drawDeathBoard(state);
     } else {
-      this.drawBoard(state);
+      benchTime('pixi:drawBoard', () => this.drawBoard(state));
     }
-    this.drawSidePieces(state);
-    this.drawHud(state);
+    benchTime('pixi:drawSidePieces', () => this.drawSidePieces(state));
+    benchTime('pixi:drawHud', () => this.drawHud(state));
   }
 
   // Pila gris que colapsa de arriba hacia abajo: cada fila se desvanece y cae con
