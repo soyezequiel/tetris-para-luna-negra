@@ -24,6 +24,8 @@ export interface LocalRecord {
   // Movimiento del fondo dinámico (Aurora/Bruma/Marea). Si está off, el fondo queda
   // estático. Independiente de "reducir movimiento" del sistema, que solo lo ralentiza.
   backgroundMotion: boolean;
+  // Contador de FPS en pantalla (abajo a la izquierda). Apagado por defecto.
+  showFps: boolean;
 }
 
 const KEY = 'stack40.records';
@@ -107,6 +109,12 @@ export function saveBackgroundMotion(backgroundMotion: boolean): LocalRecord {
   return record;
 }
 
+export function saveShowFps(showFps: boolean): LocalRecord {
+  const record = { ...loadRecord(), showFps };
+  localStorage.setItem(KEY, JSON.stringify(record));
+  return record;
+}
+
 function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
   return {
     soundMuted: record.soundMuted ?? false,
@@ -123,6 +131,7 @@ function normalizeRecord(record: Partial<LocalRecord>): LocalRecord {
     positionalAudio: record.positionalAudio ?? true,
     royaltyFreeOnly: record.royaltyFreeOnly ?? false,
     backgroundMotion: record.backgroundMotion ?? true,
+    showFps: record.showFps ?? false,
   };
 }
 

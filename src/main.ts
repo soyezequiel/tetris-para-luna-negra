@@ -149,7 +149,8 @@ import { drawBoardToCanvas, sizeBoardCanvas } from './renderer/boardCanvas';
 import { hasUnresolvedRoomBetPayout, normalizeRoomId, rankPlayers, ROOM_ID_MIN_LENGTH, ROOM_ID_MAX_LENGTH, TARGETING_MODES } from './online/roomService';
 import { selectAttackTarget as selectTargetForAttack } from './online/targeting';
 import type { AttackRequest, LunaIdentity, LunaLaunchRequest, OnlineAttack, OnlineErrorResponse, OnlineGameSnapshot, OnlineMatchType, OnlinePlayer, OnlineRoom, OnlineRoomMode, OnlineRoomResponse, OnlineRuleset, ProgressRequest, PublicRoomsFilters, RoomBet, RoomBetParticipant, RoomVisibility, TargetingMode } from './online/protocol';
-import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveSoundMuted, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
+import { loadRecord, saveAudioMutes, saveAudioVolumes, saveBackgroundMotion, saveMusicReverb, savePositionalAudio, saveRoyaltyFreeOnly, saveShowFps, saveSoundMuted, saveTouchScheme, saveTouchHaptics, type TouchScheme } from './storage';
+import { FpsMeter } from './ui/fpsMeter';
 import { isPositionalAudio, panForPlayerBoard, panForScreenX, setPositionalAudio } from './audio/spatial';
 import { PixiGameRenderer } from './renderer/PixiGameRenderer';
 import { JuiceAudio } from './audio/JuiceAudio';
@@ -304,6 +305,10 @@ const gamepad = new GamepadController(input, {
 const renderer = new PixiGameRenderer(root);
 renderer.setColorBlind(customSettings.colorBlindMode);
 renderer.setBackgroundMotion(loadRecord().backgroundMotion);
+// Contador de FPS: nodo propio pegado a <body>, apagado salvo que el jugador lo prenda en
+// Configuración → Rendimiento. Apagado no corre ningún rAF (ver src/ui/fpsMeter.ts).
+const fpsMeter = new FpsMeter();
+fpsMeter.setEnabled(loadRecord().showFps);
 const sound = new SoundEngine(
   loadRecord().soundMuted,
   musicTracksFor(loadRecord().royaltyFreeOnly),
@@ -2207,6 +2212,10 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'toggle-bg-motion') {
     best = saveBackgroundMotion(!loadRecord().backgroundMotion);
     renderer.setBackgroundMotion(best.backgroundMotion);
+  }
+  if (action === 'toggle-fps') {
+    best = saveShowFps(!loadRecord().showFps);
+    fpsMeter.setEnabled(best.showFps);
   }
   if (action === 'capture-binding') {
     const controlAction = parseControlAction(control.dataset.controlAction);
@@ -9793,6 +9802,9 @@ function renderSettingsPanelContent(): string {
         ${renderCustomSection('Accesibilidad', [
           renderCustomToggle('Modo daltónico', 'colorBlindMode'),
         ])}
+        ${renderCustomSection('Rendimiento', [
+          renderShowFpsToggleRow(),
+        ])}
         <section class="custom-section settings-audio" aria-label="Audio">
           <h2>Audio</h2>
           <div class="custom-rows">
@@ -10850,6 +10862,19 @@ function renderVolumeSettingRow(channel: VolumeChannel): string {
 // Fila de ajuste "sólo música libre de derechos" (temas cuyo archivo empieza con
 // 'ncc'). Siempre visible para que se pueda encontrar; si no hay ninguno cargado,
 // el título avisa que activarlo deja la música en silencio.
+// Contador de FPS (abajo a la izquierda). Muestra el promedio del último segundo, el tiempo
+// medio por frame y el PICO de esa ventana: el pico es lo que delata los tirones, que un
+// promedio alto esconde. Se pinta de ámbar/rojo cuando el pico se despega del promedio.
+function renderShowFpsToggleRow(): string {
+  const on = loadRecord().showFps;
+  const hint = 'Muestra FPS, tiempo por frame y el peor frame del último segundo, abajo a la izquierda.';
+  return renderCustomRow('Contador de FPS', `
+    <button class="custom-toggle ${on ? 'custom-toggle-on' : 'custom-toggle-off'}" type="button" role="switch" aria-checked="${on}" aria-label="Contador de FPS" title="${hint}" data-ui-action="toggle-fps">
+      <span class="custom-toggle-knob"></span>
+    </button>
+  `);
+}
+
 function renderRoyaltyFreeToggleRow(): string {
   const on = loadRecord().royaltyFreeOnly;
   const hint = HAS_ROYALTY_FREE_TRACKS

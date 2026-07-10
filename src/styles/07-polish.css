@@ -391,3 +391,29 @@
   .dash-history .dash-history-title { font-size: 24px; }
   .dash-history-import-extra { display: none; }
 }
+
+/* Contador de FPS opcional (Configuración → Rendimiento). Vive pegado a <body>, fuera del
+   overlay del HUD, así que se posiciona solo. Ver src/ui/fpsMeter.ts. */
+#fps-meter {
+  position: fixed;
+  left: 12px;
+  bottom: calc(12px + var(--touch-inset, 0px));
+  z-index: 60;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(6, 8, 15, 0.78);
+  color: #35d6c6;
+  font-family: Consolas, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+#fps-meter[hidden] { display: none; }
+#fps-meter[data-health='warn'] { color: #ffc046; }
+#fps-meter[data-health='bad'] { color: #ff6b6e; }
