@@ -312,12 +312,14 @@ export class BackgroundFX {
       rg.addColorStop(0, `rgba(${cr},${cg},${cb},${a})`); rg.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
       ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
-    for (const p of this.particles) {
-      const py = (((p.y - t * p.speed) % 1) + 1) % 1, x = p.x * W, y = py * H;
-      const tw = 0.5 + 0.5 * Math.sin(t * 0.8 + p.tw), a = 0.05 + 0.07 * tw, r = p.r * (1 + 0.2 * tw);
-      const rg = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
-      rg.addColorStop(0, `rgba(170,210,220,${a})`); rg.addColorStop(1, 'rgba(170,210,220,0)');
-      ctx.fillStyle = rg; ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
+    if (!this.noParticles) { // BISECT TEMP
+      for (const p of this.particles) {
+        const py = (((p.y - t * p.speed) % 1) + 1) % 1, x = p.x * W, y = py * H;
+        const tw = 0.5 + 0.5 * Math.sin(t * 0.8 + p.tw), a = 0.05 + 0.07 * tw, r = p.r * (1 + 0.2 * tw);
+        const rg = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
+        rg.addColorStop(0, `rgba(170,210,220,${a})`); rg.addColorStop(1, 'rgba(170,210,220,0)');
+        ctx.fillStyle = rg; ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
+      }
     }
   }
 
