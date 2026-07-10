@@ -6,16 +6,18 @@ import {
   isAuthorizedAttestation,
 } from 'nostr-game-protocol/ngp-core';
 import { MemoryRoomStore, createRoom, joinRoom } from '../src/online/roomService';
-import type { OnlineRoom } from '../src/online/protocol';
+import type { OnlineRoom, RoomBet } from '../src/online/protocol';
 import {
   attestationConfigured,
   buildRoomWinnerAttestation,
+  buildFinishedRoomAttestation,
 } from '../src/online/nostrAttestation';
 
 // Oráculo de atestaciones (NGP kind:31338): el server firma "en la sala X ganó Y"
-// con la clave del env, en el settle de la apuesta. Acá se testea el BUILDER puro
-// (gates de config, mapeo sala→ganador, forma y firma del evento); la publicación
-// a relays es best-effort y no se testea contra la red.
+// con la clave del env. Dos caminos: el settle de la apuesta (ref = betId) y el
+// versus SIN apuesta (ref = matchResultId, leyendo la sala autoritativa). Acá se
+// testea el BUILDER puro (gates, mapeo sala→ganador, forma y firma del evento);
+// la publicación a relays es best-effort y no se testea contra la red.
 
 const COORD = '30023:' + 'a'.repeat(64) + ':tetra';
 const ORACLE_SK = generateSecretKey();
@@ -113,5 +115,62 @@ describe('buildRoomWinnerAttestation', () => {
     const room = await finishedRoom(WINNER_NPUB);
     const ev = await buildRoomWinnerAttestation(room, BET_ID);
     expect(ev?.pubkey).toBe(ORACLE_PK);
+  });
+});
+
+// Versus SIN apuesta: el server lee la sala AUTORITATIVA del store y atesta con
+// ref = matchResultId. El cliente solo aporta el roomId.
+describe('buildFinishedRoomAttestation (versus sin apuesta)', () => {
+  const MATCH_ID = 'ABCD:12345:1700000000';
+
+  /** Guarda una sala terminada en el store y devuelve {store, roomId}. */
+  async function storeWith(overrides: Partial<OnlineRoom>): Promise<{ store: MemoryRoomStore; roomId: string }> {
+    const store = new MemoryRoomStore();
+    const base = await finishedRoom(WINNER_NPUB);
+    await store.saveRoom({ ...base, matchResultId: MATCH_ID, ...overrides, version: 0 });
+    return { store, roomId: base.id };
+  }
+
+  it('atesta al ganador que dicta el SERVIDOR, con ref = matchResultId', async () => {
+    const { store, roomId } = await storeWith({});
+    const ev = await buildFinishedRoomAttestation(store, roomId);
+    expect(ev).not.toBeNull();
+    expect(ev!.pubkey).toBe(ORACLE_PK);
+    expect(verifyEvent(ev!)).toBe(true);
+    expect(ev!.tags).toContainEqual(['ref', MATCH_ID]);
+    expect(ev!.tags).toContainEqual(['d', `${COORD}:${MATCH_ID}`]); // permanente por partida
+    expect(ev!.tags).toContainEqual(['p', WINNER_PK]); // el ganador de la sala, no uno del cliente
+    const parsed = parseAttestationEvent(ev!);
+    expect(isAuthorizedAttestation(parsed!, ORACLE_PK)).toBe(true);
+  });
+
+  it('sala CON apuesta → null (la atesta el settle con ref = betId, sin duplicar)', async () => {
+    const { store, roomId } = await storeWith({ bet: { betId: BET_ID } as unknown as RoomBet });
+    expect(await buildFinishedRoomAttestation(store, roomId)).toBeNull();
+  });
+
+  it('sala que todavía no terminó → null', async () => {
+    const { store, roomId } = await storeWith({ status: 'playing' });
+    expect(await buildFinishedRoomAttestation(store, roomId)).toBeNull();
+  });
+
+  it('sin matchResultId (partida no sellada) → null', async () => {
+    const { store, roomId } = await storeWith({ matchResultId: null });
+    expect(await buildFinishedRoomAttestation(store, roomId)).toBeNull();
+  });
+
+  it('sala inexistente → null (no inventa nada)', async () => {
+    const { store } = await storeWith({});
+    expect(await buildFinishedRoomAttestation(store, 'ZZZZ')).toBeNull();
+  });
+
+  it('sin ganador (empate) o ganador sin npub → null', async () => {
+    const sinGanador = await storeWith({ winnerPlayerId: null });
+    expect(await buildFinishedRoomAttestation(sinGanador.store, sinGanador.roomId)).toBeNull();
+
+    const store = new MemoryRoomStore();
+    const invitado = await finishedRoom(null); // ganador sin identidad Nostr
+    await store.saveRoom({ ...invitado, matchResultId: MATCH_ID, version: 0 });
+    expect(await buildFinishedRoomAttestation(store, invitado.id)).toBeNull();
   });
 });

@@ -17,9 +17,10 @@
 //
 // Cadena de confianza (delegación): la pubkey de NGP_ATTESTATION_ORACLE_NSEC está
 // declarada como oráculo del juego en su listado 30023 de Luna Negra (tag
-// ["oracle", pk], POST /api/provider/games/{id}/attestation-oracle con prueba de
-// posesión). Un verificador cruza el firmante del 31338 contra esa delegación
-// (oraclePubkeyFromListing + isAuthorizedAttestation del SDK).
+// ["oracle", pk]; se declara en el panel de proveedor, POST
+// /api/provider/games/{id}/attestation-oracle). Un verificador cruza el firmante
+// del 31338 contra esa delegación (oraclePubkeyFromListing +
+// isAuthorizedAttestation del SDK).
 //
 // Corre en Node serverless (Vercel), NUNCA en el navegador: la nsec vive solo en
 // el env del server. Best-effort: la atestación jamás bloquea ni rompe el settle.
@@ -34,6 +35,7 @@ import { buildAttestationEvent, type NgpSigner } from 'nostr-game-protocol/ngp';
 // lo cubre tests/apiEsmImports.test.ts.
 import { PUBLIC_WRITE_RELAYS } from './nostrRelays.js';
 import type { OnlineRoom } from './protocol';
+import type { RoomStore } from './roomService.js';
 
 /** Corte total de la publicación: en serverless no podemos colgar el settle. */
 const PUBLISH_TIMEOUT_MS = 5_000;
@@ -135,19 +137,63 @@ async function publishFirstAck(ev: Event): Promise<boolean> {
 
 /**
  * Atesta al ganador del versus de `room` (best-effort, NUNCA lanza): firma el
- * 31338 con la clave del oráculo y lo publica. Pensada para correr EN PARALELO
- * con la persistencia del settle (mismo Promise.all): no agrega latencia y
- * termina antes de que la invocación serverless retorne.
+ * 31338 con la clave del oráculo y lo publica. En el settle de apuesta corre EN
+ * PARALELO con la persistencia (mismo Promise.all): no agrega latencia y termina
+ * antes de que la invocación serverless retorne.
  */
-export async function attestRoomWinner(room: OnlineRoom, betId: string): Promise<void> {
+export async function attestRoomWinner(room: OnlineRoom, ref: string): Promise<void> {
   try {
-    const ev = await buildRoomWinnerAttestation(room, betId);
+    const ev = await buildRoomWinnerAttestation(room, ref);
     if (!ev) return;
     const ok = await publishFirstAck(ev);
     if (!ok) {
-      console.warn(`[attestation] ningún relay aceptó el 31338 de la apuesta ${betId}`);
+      console.warn(`[attestation] ningún relay aceptó el 31338 de la partida ${ref}`);
     }
   } catch (error) {
-    console.warn(`[attestation] falló la atestación de la apuesta ${betId}:`, error);
+    console.warn(`[attestation] falló la atestación de la partida ${ref}:`, error);
+  }
+}
+
+/**
+ * Resuelve y FIRMA la atestación de un versus SIN apuesta leyendo la sala
+ * AUTORITATIVA del store (el bridge al Durable Object): el cliente solo aporta el
+ * `roomId`, el ganador lo dicta el SERVIDOR — un cliente no puede certificar a
+ * quien no ganó. `ref` = `matchResultId` (único por partida, se limpia en el
+ * rematch), así cada partida deja su propio registro permanente.
+ *
+ * Devuelve null (sin atestar) si: la sala no existe, no terminó, TIENE apuesta
+ * (la atesta el settle con ref = betId; duplicarlo publicaría dos eventos de la
+ * misma partida), no tiene `matchResultId`, o el ganador no tiene npub real.
+ * No publica: sólo firma.
+ */
+export async function buildFinishedRoomAttestation(
+  store: RoomStore,
+  roomId: string,
+): Promise<Event | null> {
+  const room = await store.getRoom(roomId);
+  if (!room) return null;
+  if (room.status !== 'finished') return null; // la partida todavía no se selló
+  if (room.bet) return null; // la atesta el settle de la apuesta, con ref = betId
+  if (!room.matchResultId) return null; // sin id de partida no hay registro estable
+  return buildRoomWinnerAttestation(room, room.matchResultId);
+}
+
+/**
+ * Atesta al ganador de un versus SIN apuesta (best-effort, NUNCA lanza).
+ * Idempotente: re-disparar publica el MISMO evento addressable
+ * (`d` = coord:matchResultId), que el relay reemplaza sin duplicar — por eso es
+ * seguro que lo dispare cada cliente al terminar la partida.
+ */
+export async function attestFinishedRoomWinner(
+  store: RoomStore,
+  roomId: string,
+): Promise<void> {
+  try {
+    const ev = await buildFinishedRoomAttestation(store, roomId);
+    if (!ev) return;
+    const ok = await publishFirstAck(ev);
+    if (!ok) console.warn(`[attestation] ningún relay aceptó el 31338 de la sala ${roomId}`);
+  } catch (error) {
+    console.warn(`[attestation] falló la atestación de la sala ${roomId}:`, error);
   }
 }

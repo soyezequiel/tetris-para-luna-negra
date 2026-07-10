@@ -53,6 +53,8 @@ export interface OnlineClientApi {
   retryBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
   cancelBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
   settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse>;
+  /** Atestación NGP 31338 del ganador de un versus SIN apuesta (best-effort). */
+  attestWinner(request: { roomId: string }): Promise<{ ok: boolean }>;
   setReady(request: ReadyRequest): Promise<OnlineRoomResponse>;
   startRoom(request: StartRoomRequest): Promise<OnlineRoomResponse>;
   restartRoom(request: RestartRoomRequest): Promise<OnlineRoomResponse>;
@@ -114,6 +116,11 @@ export class OnlineClient implements OnlineClientApi {
 
   settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
     return this.post('/api/bets/settle', request);
+  }
+
+  /** El server lee el ganador de la sala autoritativa y firma el 31338. */
+  attestWinner(request: { roomId: string }): Promise<{ ok: boolean }> {
+    return this.post('/api/rooms/attest', request);
   }
 
   setReady(request: ReadyRequest): Promise<OnlineRoomResponse> {

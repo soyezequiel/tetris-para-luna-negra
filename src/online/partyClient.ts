@@ -104,6 +104,12 @@ export class PartyOnlineClient implements OnlineClientApi {
   settleBet(request: RoomBetActionRequest): Promise<OnlineRoomResponse> {
     return this.http.settleBet(request);
   }
+  // La atestación firma y publica en Nostr: eso corre en Node (Vercel), no en el
+  // Durable Object. Va por HTTP aunque la sala viva en el DO — el server lee el
+  // ganador autoritativo por el bridge.
+  attestWinner(request: { roomId: string }): Promise<{ ok: boolean }> {
+    return this.http.attestWinner(request);
+  }
   getLeaderboard(limit?: number): Promise<LeaderboardResponse> {
     return this.http.getLeaderboard(limit);
   }

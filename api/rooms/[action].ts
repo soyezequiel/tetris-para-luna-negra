@@ -39,6 +39,7 @@ import {
   updateProgress,
 } from '../../src/online/roomService.js';
 import { maybeReportRoomBetResult, syncBetParticipantsWithRoom } from '../../src/online/lunaNegraBets.js';
+import { attestFinishedRoomWinner } from '../../src/online/nostrAttestation.js';
 import { alertMoneyPathError } from '../../src/online/moneyPathAlert.js';
 import { getBetRoomStore, getRoomStore, handleApiError, handleNodeApi, queryParam, readJsonBody, sendJson, sendMethodNotAllowed } from '../../src/online/vercelApi.js';
 import type { OnlineRoom } from '../../src/online/protocol.js';
@@ -74,6 +75,14 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'attack') {
       const room = await addAttack(getRoomStore(), await readJsonBody<AttackRequest>(request));
       return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'attest') {
+      // Atestación NGP 31338 del ganador de un versus SIN apuesta. El cliente solo
+      // pasa el roomId: el ganador sale de la sala AUTORITATIVA (bridge al DO), así
+      // un cliente no puede certificar a quien no ganó. Best-effort: siempre 200.
+      const { roomId } = await readJsonBody<{ roomId: string }>(request);
+      await attestFinishedRoomWinner(getBetRoomStore(), roomId);
+      return sendJson(200, { ok: true });
     }
     if (action === 'create') {
       const room = await createRoom(getRoomStore(), await readJsonBody<CreateRoomRequest>(request));

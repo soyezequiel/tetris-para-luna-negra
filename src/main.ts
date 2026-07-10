@@ -5355,6 +5355,7 @@ function adoptOnlineRoom(room: OnlineRoom, source: 'room-action' | 'room-poll' |
   maybeCelebratePayout();
   wakeIncompleteOwnDepositHandles(protectedRoom);
   maybeKickstartBetSettlement(previousRoom, protectedRoom);
+  maybeAttestWinner(previousRoom, protectedRoom);
 }
 
 // Arranque eager de la liquidación: apenas la sala pasa a 'finished' con la apuesta
@@ -5367,6 +5368,20 @@ function maybeKickstartBetSettlement(previous: OnlineRoom | null, room: OnlineRo
   const bet = room.bet;
   if (!bet || bet.status !== 'funded' || bet.resultReported) return;
   void refreshOnlineBet(true, { queueIfBusy: true });
+}
+
+// Atestación NGP 31338 del ganador de un versus SIN apuesta: al sellarse la partida
+// pedimos al server que firme "en la sala X ganó Y" con la clave del oráculo. Las
+// salas CON apuesta ya se atestan en el settle (ref = betId), así que se saltean.
+// Solo mandamos el roomId: el ganador lo lee el server de la sala autoritativa, así
+// que un cliente no puede certificar a quien no ganó. Best-effort y seguro de
+// disparar desde cada cliente: la atestación es un evento addressable por partida
+// (d = coord:matchResultId), y republicarla la reemplaza sin duplicar.
+function maybeAttestWinner(previous: OnlineRoom | null, room: OnlineRoom): void {
+  if (room.status !== 'finished' || previous?.status === 'finished') return;
+  if (room.bet) return;
+  if (!room.winnerPlayerId || !room.matchResultId) return;
+  void onlineClient.attestWinner({ roomId: room.id }).catch(() => undefined);
 }
 
 // Festejo de "cobraste el pozo": solo cuando el pago realmente terminó. Un
