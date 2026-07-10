@@ -33,8 +33,10 @@ const QR_TIMEOUT_MS = 5 * 60_000;
 
 // Kinds que la app llega a firmar: 1=reseñas/comentarios, 3=contactos NIP-02,
 // 4=DM NIP-04, 13=seal NIP-17, 27235=login, 30315=presencia NIP-38,
-// 31337=marcador. Refleja las features 2.0 previstas.
-const NIP46_SIGN_KINDS = [1, 3, 4, 13, 27235, 30315, 31337];
+// 31339=marcador. Refleja las features 2.0 previstas. El 31337 es el kind
+// LEGACY del marcador (renumeración 31337 → 31339): se pre-autoriza mientras
+// dure la transición por si el paquete instalado todavía lo emite.
+const NIP46_SIGN_KINDS = [1, 3, 4, 13, 27235, 30315, 31339, 31337];
 
 // Permisos que pre-solicitamos al firmante en el URI nostrconnect://. Clave para
 // firmantes con confianza "media" (Primal): solo pre-autorizan EXACTAMENTE lo

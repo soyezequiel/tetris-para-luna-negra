@@ -25,7 +25,9 @@ const MAX_MATCH_IDS_PER_FRIEND = 24;
 const ACTIVITY_BATCH_SIZE = 200;
 const ACTIVITY_MAX_WAIT_MS = 3000;
 const PRESENCE_KIND = 30315;
-const LEADERBOARD_KIND = 31337;
+// Doble lectura de la renumeración del marcador (31337 → 31339): los récords
+// viejos siguen contando como actividad del amigo hasta cerrar la transición.
+const LEADERBOARD_KINDS = [31339, 31337];
 const PUBKEY_RE = /^[0-9a-f]{64}$/;
 
 function browserStorage(): FriendPriorityStorage | null {
@@ -180,7 +182,7 @@ export async function fetchKnownTetraPlayers(pubkeys: string[]): Promise<Set<str
   await Promise.all(batches.map(async (authors) => {
     try {
       const events = await getPool().querySync(PROFILE_RELAYS, {
-        kinds: [PRESENCE_KIND, LEADERBOARD_KIND],
+        kinds: [PRESENCE_KIND, ...LEADERBOARD_KINDS],
         authors,
         '#a': [TETRA_GAME_COORD],
       }, { maxWait: ACTIVITY_MAX_WAIT_MS });

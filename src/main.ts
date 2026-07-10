@@ -4476,7 +4476,7 @@ function refreshActiveLeaderboard(): Promise<void> {
 }
 
 // Fallback Nostr del marcador: si el PartyServer no responde, reconstruimos el ranking
-// LEYENDO los kind:31337 en relays (marcador autónomo, ver nostrLeaderboard.ts).
+// LEYENDO los kind:31339 en relays (marcador autónomo, ver nostrLeaderboard.ts).
 // Resolvemos nombre/avatar por perfil Nostr (kind:0) y marcamos "vos" cruzando el npub
 // de la sesión. Devuelve null si no hay ni un puntaje en relays (el llamador deja el
 // error del server). `score` son victorias o ms según la tabla.
@@ -4554,7 +4554,7 @@ async function submitLeaderboardWin(): Promise<void> {
   if (wins === null) {
     wins = leaderboardState.entries.find((entry) => entry.playerId === identityState.player.id)?.wins ?? null;
   }
-  // Marcador 2.0 (Nostr, §6): el jugador firma su TOTAL de victorias como kind:31337 y
+  // Marcador 2.0 (Nostr, §6): el jugador firma su TOTAL de victorias como kind:31339 y
   // lo publica a los relays, INDEPENDIENTE de que el PartyServer haya respondido — así
   // el marcador Nostr se puebla aunque el servidor esté caído. Mismo board 'victorias',
   // mismo ranking. Requiere un firmante activo (no se puede firmar sin clave).
@@ -4652,7 +4652,7 @@ async function submitSurvivalTime(durationMs: number): Promise<void> {
     leaderboardState.survivalRunRank = { status: 'error' };
   }
 
-  // Marcador 2.0 (Nostr, §6): el jugador firma su MEJOR tiempo (ms) como kind:31337 y lo
+  // Marcador 2.0 (Nostr, §6): el jugador firma su MEJOR tiempo (ms) como kind:31339 y lo
   // publica a los relays, FUERA del try — así se publica aunque el PartyServer no haya
   // respondido (marcador autónomo). Mismo board 'supervivencia', mismas unidades (ms),
   // mismo ranking. Requiere un firmante activo; best-effort, no bloquea.
@@ -8179,7 +8179,8 @@ function markPresenceNoticeShown(): void {
 // Texto amable por tipo de evento. Devuelve null para kinds que no queremos anunciar.
 function describeSignEvent(kind: number): { icon: string; text: string } | null {
   switch (kind) {
-    case 31337: // marcador (score addressable)
+    case 31339: // marcador (score addressable)
+    case 31337: // marcador legacy (renumeración 31337 → 31339)
       return { icon: '🏆', text: 'Firmando tu puntaje para el marcador (Nostr).' };
     case 30315: // presencia NIP-38
       return { icon: '🎮', text: 'Firmando tu presencia «Jugando TETRA» (Nostr).' };

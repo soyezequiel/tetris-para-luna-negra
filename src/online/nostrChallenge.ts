@@ -25,7 +25,7 @@ export type { ChallengeInput, ParsedChallenge };
 // la DB de prod: #d="tetris-beta" → pubkey ed13c4…cc4d3).
 //
 // El reto (§5) sólo la usa de ETIQUETA (lo accionable es el `url`), pero la presencia
-// NIP-38 (§3 2.0) y el marcador (kind:31337) la ponen en el tag `a`, y Luna Negra
+// NIP-38 (§3 2.0) y el marcador (kind:31339) la ponen en el tag `a`, y Luna Negra
 // filtra por ESE coord exacto: si no coincide, no detecta nada (ni "Jugando TETRA" ni
 // los puntajes) — 0 matches, sin error.
 //

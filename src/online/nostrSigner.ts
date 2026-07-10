@@ -6,7 +6,7 @@
  *  - "local": clave en este navegador (generada o nsec importado).
  *
  * El login 2.0 produce la identidad a partir del signer (pubkey → npub) y deja el
- * signer en memoria para futuras features Nostr (firmar marcador kind:31337, retos
+ * signer en memoria para futuras features Nostr (firmar marcador kind:31339, retos
  * NIP-17, etc.). Persistimos el método elegido para rehidratar la sesión al recargar.
  */
 

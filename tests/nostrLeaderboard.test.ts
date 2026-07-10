@@ -15,6 +15,7 @@ import {
   NOSTR_BOARD_WINS,
 } from '../src/online/nostrLeaderboard';
 import { TETRA_GAME_COORD } from '../src/online/nostrChallenge';
+import { NGP_KIND } from 'nostr-game-protocol/ngp-core';
 
 function makeSigner() {
   const sk = generateSecretKey();
@@ -32,6 +33,8 @@ function signScore(
   const coord = opts.coord ?? TETRA_GAME_COORD;
   return finalizeEvent(
     {
+      // Kind LEGACY a propósito (renumeración 31337 → 31339): estos fixtures
+      // ejercitan la doble lectura de rankNostrScores vía parseScoreEvent.
       kind: 31337,
       created_at: opts.createdAt,
       tags: [
@@ -46,12 +49,12 @@ function signScore(
   );
 }
 
-describe('marcador 2.0 · evento de puntaje kind:31337', () => {
+describe('marcador 2.0 · evento de puntaje kind:31339', () => {
   it('firma un puntaje anclado al juego y auto-reemplazable por tabla', async () => {
     const { signer, pubkey } = makeSigner();
     const evt = await buildScoreEvent(signer, NOSTR_BOARD_WINS, 7);
 
-    expect(evt.kind).toBe(31337);
+    expect(evt.kind).toBe(NGP_KIND.score); // 31339 (independiente de la versión instalada)
     expect(evt.pubkey).toBe(pubkey);
     expect(verifyEvent(evt)).toBe(true);
     // Ancla al juego (a) + un único récord por jugador y tabla (d = coord:board).

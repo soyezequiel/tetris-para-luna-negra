@@ -23,7 +23,7 @@ export const DM_RELAYS = [
 ];
 
 // Relays donde PUBLICAMOS metadata pública firmada por el propio usuario (presencia
-// NIP-38 kind:30315; a futuro el marcador kind:31337). Es el subconjunto escribible
+// NIP-38 kind:30315; a futuro el marcador kind:31339). Es el subconjunto escribible
 // de PROFILE_RELAYS: quitamos relay.nostr.band (indexador de solo lectura que rechaza
 // escrituras) para no perder un slot de publicación en un relay que igual reindexa.
 export const PUBLIC_WRITE_RELAYS = [

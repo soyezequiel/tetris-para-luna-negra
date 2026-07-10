@@ -1,4 +1,4 @@
-// Marcador Nostr 2.0 (kind:31337, evento de puntaje addressable). A diferencia del
+// Marcador Nostr 2.0 (kind:31339, evento de puntaje addressable). A diferencia del
 // marcador 1.0 (REST → POST /api/v1/leaderboards/{name}/scores, donde el ranking lo
 // custodia Luna Negra), acá el PROPIO jugador firma su mejor puntaje y lo publica a
 // los relays. Ventaja: el marcador vive en Nostr, lo lee cualquier cliente y
@@ -13,7 +13,7 @@
 // ⚠️ El puntaje lo firma el cliente del jugador y es FALSIFICABLE: sirve para MOSTRAR
 // rankings, nunca para repartir dinero (el resultado de una apuesta viene del game
 // server por /bets/{id}/result). Ver Reglas de oro de la skill.
-// PUERTO del marcador — el formato del evento (kind:31337, validación de board y
+// PUERTO del marcador — el formato del evento (kind:31339, validación de board y
 // clamp del puntaje) vive en la capa protocolo (`nostr-game-protocol/ngp`); acá quedan los
 // nombres de tabla del juego, la coordenada y los relays.
 import { nip19, verifyEvent, type Event } from 'nostr-tools';
@@ -33,7 +33,7 @@ export const NOSTR_BOARD_WINS = 'victorias';
 export const NOSTR_BOARD_SURVIVAL = 'supervivencia';
 
 /**
- * Firma el evento de puntaje Nostr (kind:31337) para `board`. Lo ancla al juego con
+ * Firma el evento de puntaje Nostr (kind:31339) para `board`. Lo ancla al juego con
  * `a`=gameCoord y usa `d`=`<coord>:<board>` para que sea el único récord del jugador
  * en esa tabla (se auto-reemplaza al mejorar). No publica: sólo firma (útil para
  * testear el round-trip). Lanza si el board o el puntaje son inválidos.
@@ -72,8 +72,11 @@ export async function publishScore(
 
 // ─────────────────────────── Lectura del marcador ───────────────────────────
 
-// kind:31337 (evento de puntaje). Frozen en la capa protocolo (nostr-game-protocol/ngp-core).
-const SCORE_KIND = NGP_KIND.score;
+// kind:31339 (evento de puntaje). Frozen en la capa protocolo (nostr-game-protocol/ngp-core).
+// La LECTURA incluye el kind legacy 31337 (renumeración 31337 → 31339) hasta
+// cerrar la transición; parseScoreEvent ya acepta ambos. El Set absorbe el caso
+// paquete-sin-actualizar (ambos iguales).
+const SCORE_READ_KINDS = [...new Set([NGP_KIND.score, 31337])];
 
 // Cota de espera al leer de relays: sin `maxWait`, querySync espera el EOSE de TODOS
 // los relays (un solo relay lento demora todo). Igual criterio que fetchProfiles.
@@ -92,7 +95,7 @@ export interface NostrScoreEntry {
 }
 
 /**
- * Reconstruye el ranking de `board` LEYENDO los kind:31337 directo de relays, sin
+ * Reconstruye el ranking de `board` LEYENDO los kind:31339 directo de relays, sin
  * pasar por Luna Negra ni por el PartyServer propio. Es la contraparte de
  * `publishScore`: cierra el marcador Nostr autónomo (el juego firma su puntaje y
  * también arma la tabla desde Nostr, así sobrevive aunque caiga cualquier servidor).
@@ -114,7 +117,7 @@ export async function fetchNostrLeaderboard(
   try {
     events = await getPool().querySync(
       PROFILE_RELAYS,
-      { kinds: [SCORE_KIND], '#a': [TETRA_GAME_COORD] },
+      { kinds: SCORE_READ_KINDS, '#a': [TETRA_GAME_COORD] },
       { maxWait: READ_MAX_WAIT_MS },
     );
   } catch {
@@ -125,12 +128,12 @@ export async function fetchNostrLeaderboard(
 
 /**
  * Proyecta eventos crudos de puntaje al ranking de una tabla: descarta lo que no
- * sea un kind:31337 válido de ESTE juego y esta tabla, verifica la firma (anti-forja),
+ * sea un kind:31339 válido de ESTE juego y esta tabla, verifica la firma (anti-forja),
  * se queda con el mejor récord por jugador y ordena el top. Puro (sin red) para poder
  * testearlo; `fetchNostrLeaderboard` le pasa lo que devuelven los relays.
  *
  * Keep-best por jugador: mayor score; a igualdad, el récord más viejo (llegó primero).
- * Nota: kind:31337 es addressable (un evento por jugador/tabla), pero distintos relays
+ * Nota: kind:31339 es addressable (un evento por jugador/tabla), pero distintos relays
  * pueden servir versiones distintas del mismo `d`; por eso deduplicamos por pubkey.
  */
 export function rankNostrScores(
