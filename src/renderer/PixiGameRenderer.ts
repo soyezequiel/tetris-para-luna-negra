@@ -18,6 +18,12 @@ const COARSE_POINTER = ((): boolean => {
   try { return window.matchMedia?.('(pointer: coarse)').matches ?? false; } catch { return false; }
 })();
 
+// BISECT TEMP
+const Q = ((): URLSearchParams => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(); } })();
+const NO_AA = Q.get('noaa') === '1';
+const NO_JUICE = Q.get('nojuice') === '1';
+const RES1 = Q.get('res1') === '1';
+
 const GRID_LINE = 0x2f3338;
 const GHOST_FILL = 0x07090b;
 const GHOST_LINE = 0x525a60;
@@ -136,8 +142,8 @@ export class PixiGameRenderer {
       // Móvil: sin MSAA (caro en GPUs móviles a pantalla completa; los bloques de neón son
       // rects alineados al eje, así que el costo visual es mínimo) y techo de resolución más
       // bajo (1.5 vs 2) para pintar ~44% menos píxeles por frame en un dpr3.
-      antialias: !COARSE_POINTER,
-      resolution: Math.min(devicePixelRatio, COARSE_POINTER ? 1.5 : 2),
+      antialias: !COARSE_POINTER && !NO_AA,
+      resolution: RES1 ? 1 : Math.min(devicePixelRatio, COARSE_POINTER ? 1.5 : 2),
       autoDensity: true,
       powerPreference: 'high-performance',
     });
@@ -266,7 +272,7 @@ export class PixiGameRenderer {
 
     // Juice + shake: SIEMPRE, cada rAF (las partículas/popups se animan independientes
     // del tick del motor; el shake debe ser suave a la tasa de refresco).
-    this.juice.update(this.boardGeometry()); // partículas, overlays, popups
+    if (!NO_JUICE) this.juice.update(this.boardGeometry()); // partículas, overlays, popups // BISECT TEMP
     // El shake legacy se conserva SOLO para playDeathAnimation(); el de gameplay
     // fluye por JuiceFX.
     const legacy = this.shakeFrames > 0 ? Math.sin(this.shakeFrames * 2.3) * 5 : 0;

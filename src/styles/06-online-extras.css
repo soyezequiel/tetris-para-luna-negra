@@ -287,10 +287,10 @@
   .sign-toast { animation-timing-function: linear; }
 }
 
-/* Invitación de Luna durante una partida: toast no invasivo en la esquina
-   superior derecha. El contenedor no roba clicks; solo los botones son
-   interactivos. El teclado sigue siendo del juego (aceptar/ignorar es con
-   mouse/touch) y queda visible hasta que el jugador decida o termine. */
+/* Invitación de Luna: toast no invasivo en la esquina superior derecha, tanto en
+   menús como con el juego corriendo. El contenedor no roba clicks; solo los
+   botones son interactivos. El teclado sigue siendo del juego (aceptar/ignorar
+   es con mouse/touch) y queda visible hasta que el jugador decida o termine. */
 .luna-invite-toast {
   position: fixed;
   top: 14px;

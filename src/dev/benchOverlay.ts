@@ -45,9 +45,12 @@ export function installBenchMode(deps: BenchDeps): void {
   document.body.appendChild(el);
 
   // Arranque y re-arranque: si la partida termina (top out del autoplay), reinicia.
+  // Ojo: la cuenta regresiva ('soloCountdown') YA es una partida en curso — reiniciar
+  // ahí la relanzaría en bucle y nunca se llegaría a jugar.
+  const LIVE_MODES = new Set(['playing', 'soloCountdown', 'paused']);
   window.setTimeout(() => { try { deps.startNewRun(); } catch { /* menú raro: reintenta el watchdog */ } }, 800);
   window.setInterval(() => {
-    try { if (deps.getAppMode() !== 'playing') deps.startNewRun(); } catch { /* noop */ }
+    try { if (!LIVE_MODES.has(deps.getAppMode())) deps.startNewRun(); } catch { /* noop */ }
   }, 3000);
 
   // Medidor de cadencia de rAF, independiente del loop del juego (mide lo que el
@@ -65,7 +68,7 @@ export function installBenchMode(deps: BenchDeps): void {
     if (gaps.length > 240) gaps.shift();
     if (gap > 33) over33 += 1;
     if (gap > 100) over100 += 1;
-    if (now - lastPaint > 250 && gaps.length > 10) {
+    if (now - lastPaint > 250 && gaps.length >= 3) {
       lastPaint = now;
       const sorted = [...gaps].sort((a, b) => a - b);
       const sum = sorted.reduce((a, b) => a + b, 0);

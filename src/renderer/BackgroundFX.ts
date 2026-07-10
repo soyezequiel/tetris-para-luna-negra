@@ -59,6 +59,8 @@ export class BackgroundFX {
 
   private blobs: Blob[] = [];
   private particles: Particle[] = [];
+  private noScreen = false;   // BISECT TEMP
+  private noParticles = false; // BISECT TEMP
 
   // Peligro (0..1): oscurece el fondo de la página conforme sube la pila. Se
   // suaviza hacia el objetivo para que el cambio sea gradual, no un parpadeo.
@@ -87,6 +89,14 @@ export class BackgroundFX {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     this.reducedMotion = mq.matches;
     mq.addEventListener?.('change', (e) => { this.reducedMotion = e.matches; });
+
+    // BISECT TEMP
+    try {
+      const q = new URLSearchParams(location.search);
+      if (q.get('nobg') === '1') { this.enabled = false; this.canvas.style.display = 'none'; }
+      if (q.get('noscreen') === '1') this.noScreen = true;
+      if (q.get('noparticles') === '1') this.noParticles = true;
+    } catch { /* noop */ }
 
     this.initScene();
     window.addEventListener('resize', this.onResize);
@@ -240,7 +250,7 @@ export class BackgroundFX {
     if (!this.baseGrad || !this.vignette) this.buildGradients();
     ctx.fillStyle = this.baseGrad!; ctx.fillRect(0, 0, W, H);
 
-    ctx.globalCompositeOperation = 'screen';
+    if (!this.noScreen) ctx.globalCompositeOperation = 'screen'; // BISECT TEMP
     if (this.transStyle) {
       const f = Math.min(1, this.transP);
       this.runBg(this.curStyle, 1 - f);

@@ -1616,6 +1616,21 @@ Object.assign(window, {
     importReplayText,
     ...(import.meta.env.DEV ? { // BOT DEV
       getDevBot: () => devBotMatch,
+      // Simula la invitación de Luna (la que llega por DM Nostr o por launch-request)
+      // sin necesitar la tienda ni un segundo jugador: muestra el toast igual que
+      // el camino real. `tetra.simulateLunaInvite('UJDQ')` desde la consola.
+      simulateLunaInvite: (roomId = 'UJDQ') => {
+        void handleLunaLaunchRequest({
+          id: `dev-invite-${roomId}`,
+          roomId,
+          inviteToken: '',
+          kind: 'room-link',
+          slug: '',
+          title: 'TETRA',
+          gameUrl: `${window.location.origin}/?lnRoom=${roomId}`,
+        });
+        return `invitación simulada a ${roomId}`;
+      },
       // Cambia el bucle a un timer en vez de requestAnimationFrame para poder correr
       // y observar el flujo (incluido el multijugador vs bot) en una pestaña en
       // segundo plano/headless, donde el navegador congela rAF. Arranca un frame
@@ -1741,8 +1756,7 @@ function advanceGameToFrame(targetFrame: number, finalFrameInputs: GameInput[]):
 
 function handleGlobalKeyDown(event: KeyboardEvent): void {
   if (hasBlockingModal() && event.code === 'Escape') {
-    if (lunaState.pendingLaunchRequest) cancelPendingLunaLaunchRequest();
-    else cancelPendingConfirmation();
+    cancelPendingConfirmation();
     event.preventDefault();
     event.stopImmediatePropagation();
     return;
@@ -3148,9 +3162,6 @@ async function handleLunaLaunchRequest(request: LunaLaunchRequest): Promise<void
   const pending = { ...request, normalizedRoomId };
   lunaState.pendingLaunchRequest = pending;
   bindingCapture = null;
-  // En partida la invitación es un toast: no soltamos los inputs ni robamos el
-  // control. Solo el modal (en menús) limpia el estado de teclado.
-  if (!lunaInviteShowsAsToast()) input.releaseAll();
 }
 
 async function acceptPendingLunaLaunchRequest(): Promise<void> {
@@ -3173,15 +3184,9 @@ async function acceptPendingLunaLaunchRequest(): Promise<void> {
 
 function cancelPendingLunaLaunchRequest(): void {
   const request = lunaState.pendingLaunchRequest;
-  const wasToast = request !== null && lunaInviteShowsAsToast();
   if (request) lunaState.ignoredLaunchRequestIds.add(request.id);
   lunaState.pendingLaunchRequest = null;
   bindingCapture = null;
-  // Si era toast, el juego nunca se pausó: no hay que resincronizar el reloj ni
-  // soltar las teclas que el jugador tiene apretadas.
-  if (wasToast) return;
-  if (canAdvanceGame(appMode, engine.getState().status)) syncGameplayClockToCurrentFrame();
-  input.releaseAll();
 }
 
 async function openLunaInviteWindow(): Promise<void> {
@@ -7077,7 +7082,6 @@ function restoreOverlayScroll(snapshot: Map<string, number>): void {
 
 function renderScreenOverlay(state: GameState): string {
   if (shouldShowLoginGate()) return renderLoginGateOverlay();
-  if (lunaState.pendingLaunchRequest && !lunaInviteShowsAsToast()) return renderLunaLaunchRequestOverlay(lunaState.pendingLaunchRequest);
   if (pendingConfirmAction) return renderConfirmOverlay(pendingConfirmAction);
   if (appMode === 'replayPlayback') return renderReplayOverlayShell();
   // El visor multi-tablero vive en su capa propia (multiReplayOverlayElement),
@@ -7397,46 +7401,10 @@ function renderConfirmOverlay(action: DestructiveRunAction): string {
   `;
 }
 
-function renderLunaLaunchRequestOverlay(request: PendingLunaLaunchRequest): string {
-  let description = '';
-  if (roomState.current) {
-    description = `Para unirte vas a salir de la sala ${escapeHtml(roomState.current.id)} en este dispositivo.`;
-  } else if (appMode === 'playing' || appMode === 'soloCountdown' || appMode === 'paused') {
-    description = 'Para unirte vas a abandonar tu partida actual.';
-  } else {
-    description = '¿Querés unirte a la sala?';
-  }
-  return `
-    <div class="menu-scrim confirm-scrim">
-      <section class="menu-panel confirm-panel" aria-label="Invitacion de Luna Negra">
-        <div class="panel-eyebrow">LUNA NEGRA</div>
-        <h1>Te invitaron a ${escapeHtml(request.normalizedRoomId)}</h1>
-        <p>${description} La invitacion queda pendiente mientras TETRA esta abierto.</p>
-        <div class="panel-actions confirm-actions">
-          <button class="dash-action-btn" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="luna-launch-cancel">Quedarme</button>
-          <button class="dash-action-btn danger" style="width: auto; padding: 10px 20px;" type="button" data-ui-action="luna-launch-accept">Unirme</button>
-        </div>
-      </section>
-    </div>
-  `;
-}
-
 function hasBlockingModal(): boolean {
-  // La invitación de Luna durante una partida NO bloquea: se muestra como toast
-  // clicable (ver renderLunaInviteToast) y el juego sigue corriendo.
-  return pendingConfirmAction !== null
-    || lunaState.challenge.pickerOpen
-    || (lunaState.pendingLaunchRequest !== null && !lunaInviteShowsAsToast());
-}
-
-// Con el juego corriendo (o pausado), la invitación se presenta como toast no
-// invasivo en vez del modal de pantalla completa. En menús se mantiene el modal.
-function lunaInviteShowsAsToast(): boolean {
-  return appMode === 'playing'
-    || appMode === 'soloCountdown'
-    || appMode === 'paused'
-    || appMode === 'onlinePlaying'
-    || appMode === 'onlineCountdown';
+  // La invitación de Luna NUNCA bloquea: siempre se muestra como toast clicable
+  // (ver renderLunaInviteToast), tanto en menús como con el juego corriendo.
+  return pendingConfirmAction !== null || lunaState.challenge.pickerOpen;
 }
 
 function renderLunaInviteToast(request: PendingLunaLaunchRequest): string {
@@ -7458,9 +7426,7 @@ function renderInviteOverlayHtml(): string {
   if (lunaState.challenge.pickerOpen) return renderNostrChallengePicker();
   const incoming = lunaState.challenge.incoming[0];
   if (incoming) return renderNostrChallengeToast(incoming);
-  if (lunaState.pendingLaunchRequest && lunaInviteShowsAsToast()) {
-    return renderLunaInviteToast(lunaState.pendingLaunchRequest);
-  }
+  if (lunaState.pendingLaunchRequest) return renderLunaInviteToast(lunaState.pendingLaunchRequest);
   return '';
 }
 
