@@ -80,7 +80,9 @@ export default defineConfig(({ mode }) => {
   // env (solo las que empiezan con `VITE_` o `gameCoord`).
   envPrefix: ['VITE_', 'gameCoord'],
   server: {
-    port: 5173,
+    // PORT permite que un supervisor (p. ej. el panel de previsualización) asigne el puerto
+    // y evite chocar con otro dev server ya levantado. Sin PORT, el de siempre.
+    port: Number(process.env.PORT) || 5173,
   },
   plugins: [{
     name: 'stack40-local-api',
