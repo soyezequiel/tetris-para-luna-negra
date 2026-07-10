@@ -882,6 +882,27 @@
   text-align: left;
 }
 
+/* Enlace nostrconnect:// completo, seleccionable — respaldo cuando el clipboard
+   está bloqueado o el usuario quiere verificar que copió todo. */
+.nostr-login-linkfield {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--cs2-line);
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(247, 247, 242, 0.85);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.nostr-login-linkfield:focus {
+  outline: none;
+  border-color: rgba(157, 140, 255, 0.7);
+}
+
 .nostr-login-authlink,
 .nostr-login-waiting {
   font-size: 12px;

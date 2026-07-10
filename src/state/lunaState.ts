@@ -21,6 +21,8 @@ export interface NostrLoginState {
   qrUri: string | null;
   qrDataUrl: string | null;
   authUrl: string | null;
+  // Momento en que se copió el enlace nostrconnect:// (feedback efímero en el botón).
+  qrLinkCopiedAt: number;
   // Inputs editables.
   bunkerInput: string;
   nsecInput: string;
@@ -97,6 +99,7 @@ export const lunaState: LunaState = {
     qrUri: null,
     qrDataUrl: null,
     authUrl: null,
+    qrLinkCopiedAt: 0,
     bunkerInput: '',
     nsecInput: '',
     generatedNsec: null,

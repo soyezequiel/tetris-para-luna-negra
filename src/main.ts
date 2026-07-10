@@ -2116,7 +2116,11 @@ function handleOverlayClick(event: MouseEvent): void {
   if (action === 'nostr-generate-key') generateNostrLocalKey();
   if (action === 'nostr-login-generated') void loginWithGeneratedNostrKey();
   if (action === 'nostr-login-import') void loginWithImportedNostrKey();
-  if (action === 'nostr-copy-qr') copyToClipboard(lunaState.nostrLogin.qrUri ?? '');
+  if (action === 'nostr-copy-qr') {
+    void copyToClipboard(lunaState.nostrLogin.qrUri ?? '');
+    lunaState.nostrLogin.qrLinkCopiedAt = Date.now();
+  }
+  if (action === 'nostr-select-qr' && control instanceof HTMLInputElement) control.select();
   if (action === 'nostr-copy-nsec') copyToClipboard(lunaState.nostrLogin.generatedNsec ?? '');
   if (action === 'online-copy-code') {
     copyToClipboard(control.dataset.code ?? '');
@@ -4993,6 +4997,10 @@ function roomInviteLinkRecentlyCopied(): boolean {
   return Date.now() - lunaState.roomInviteLinkCopiedAt < 2200;
 }
 
+function nostrQrLinkRecentlyCopied(): boolean {
+  return Date.now() - lunaState.nostrLogin.qrLinkCopiedAt < 2200;
+}
+
 // Copia el link de invitación de la sala activa al portapapeles. Sin diálogo de
 // "compartir" del sistema: copia directo y muestra el feedback en el botón.
 function shareRoomInviteLink(): void {
@@ -7593,10 +7601,16 @@ function renderNostrLoginPanel(): string {
     const qr = s.qrDataUrl
       ? `<img class="nostr-login-qr" src="${escapeHtml(s.qrDataUrl)}" alt="Código QR de Nostr Connect" width="240" height="240" />`
       : `<div class="nostr-login-qr nostr-login-qr-empty">${s.qrUri ? 'Este navegador bloquea el QR. Copiá el enlace y pegalo en tu firmante.' : 'Generando QR…'}</div>`;
+    const copyLabel = nostrQrLinkRecentlyCopied() ? '¡Enlace copiado!' : 'Copiar enlace nostrconnect://';
+    const linkBlock = s.qrUri
+      ? `
+      <input class="nostr-login-linkfield" type="text" readonly value="${escapeHtml(s.qrUri)}" aria-label="Enlace nostrconnect completo" data-ui-action="nostr-select-qr" />
+      <button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="nostr-copy-qr">${copyLabel}</button>`
+      : '';
     return `
-      <p class="nostr-login-hint">Escaneá con <strong>Amber</strong> o <strong>nsec.app</strong> y aprobá la conexión.</p>
+      <p class="nostr-login-hint">Escaneá con <strong>Amber</strong> o <strong>nsec.app</strong> y aprobá la conexión, o copiá el enlace y pegalo en tu firmante.</p>
       ${qr}
-      ${s.qrUri ? `<button class="cs2-btn cs2-btn-ghost cs2-btn-sm" type="button" data-ui-action="nostr-copy-qr">Copiar enlace nostrconnect://</button>` : ''}
+      ${linkBlock}
       ${s.authUrl ? `<a class="nostr-login-authlink" href="${escapeHtml(s.authUrl)}" target="_blank" rel="noopener noreferrer">Tu firmante pide autorización: abrir enlace ↗</a>` : ''}
       <p class="nostr-login-waiting">Esperando conexión…</p>
     `;
