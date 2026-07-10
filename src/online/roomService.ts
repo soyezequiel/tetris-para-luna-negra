@@ -5,7 +5,6 @@ import type {
   JoinRoomRequest,
   KickPlayerRequest,
   LeaveRoomRequest,
-  LunaFriend,
   LunaNegraPlayer,
   OnlineAttack,
   OnlineMatchType,
@@ -577,25 +576,6 @@ async function removeRoomEverywhere(store: RoomStore, roomId: string): Promise<v
   if (publicIds.includes(roomId)) {
     await store.savePublicRoomIds(publicIds.filter((id) => id !== roomId), ROOM_TTL_SECONDS);
   }
-}
-
-// ──────────────────────────── Amigos de Luna Negra ──────────────────────────
-
-/** Ordena por uso de TETRA: activos, quienes ya lo abrieron antes y finalmente el resto. */
-export function sortLunaFriends(friends: LunaFriend[]): LunaFriend[] {
-  const rank: Record<LunaFriend['presence'], number> = { 'in-game': 0, online: 1, offline: 2 };
-  return [...friends].sort((a, b) => {
-    if (rank[a.presence] !== rank[b.presence]) return rank[a.presence] - rank[b.presence];
-    if (a.presence === 'offline' && b.presence === 'offline') {
-      const usedTetraA = a.lastSeenMs !== null;
-      const usedTetraB = b.lastSeenMs !== null;
-      if (usedTetraA !== usedTetraB) return usedTetraA ? -1 : 1;
-      if (usedTetraA && usedTetraB && a.lastSeenMs !== b.lastSeenMs) {
-        return (b.lastSeenMs ?? 0) - (a.lastSeenMs ?? 0);
-      }
-    }
-    return a.name.localeCompare(b.name);
-  });
 }
 
 async function setPlayerTargetingOnce(

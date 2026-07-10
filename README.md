@@ -115,20 +115,19 @@ del archivo sin extensión como clave):
 
 ## Configuración del backend (Luna Negra)
 
-Variables de entorno (en Vercel) para habilitar las apuestas:
+Variables de entorno (en Vercel):
 
 | Variable | Para qué |
 | --- | --- |
-| `LUNA_NEGRA_BASE_URL` | URL del deploy de Luna Negra (también valida invites). |
-| `LUNA_NEGRA_API_KEY` | API key del proveedor (`ln_sk_…`). Única credencial requerida: crea/lee/cancela apuestas, reporta al ganador y registra el webhook. |
+| `NGE_CONNECTION` | Credencial NGE del proveedor. **Único gate de las apuestas**: sin ella no hay escrow. |
+| `LUNA_NEGRA_BASE_URL` | URL del deploy de Luna Negra: valida invites de sala, espeja el marcador y arma el link de reclamo del pozo. |
+| `LUNA_NEGRA_API_KEY` | API key del proveedor (`ln_sk_…`). Hoy solo la usan el espejo del marcador y los launch requests. |
 | `LUNA_NEGRA_GAME_SLUG` | (Opcional) Slug de TETRA en Luna Negra para el botón de login. Por defecto `tetris-beta`. |
 | `LUNA_NEGRA_GAME_ID` | (Opcional) Fallback del `gameId`; normalmente no hace falta (se toma del `inviteToken`). |
-| `LUNA_NEGRA_WEBHOOK_URL` | (Opcional) Fuerza la URL de webhook a registrar; si no, se deriva del dominio del deploy. |
-| `LUNA_NEGRA_WEBHOOK_SECRET` | (Opcional) Override del secreto de firma; normalmente no hace falta (se obtiene solo). |
-| `PARTY_BRIDGE_TOKEN` | Token compartido entre Vercel y el Worker de salas para que apuestas, webhooks e invites lean/escriban la sala WebSocket autoritativa. |
+| `PARTY_BRIDGE_TOKEN` | Token compartido entre Vercel y el Worker de salas para que apuestas e invites lean/escriban la sala WebSocket autoritativa. |
 | `PARTY_BRIDGE_URL` | (Opcional) URL del Worker de salas. Por defecto `https://tetra.naranjas.workers.dev`. |
 
-El juego **no toca Nostr** directamente: el ganador se reporta con la API key y Luna
-Negra firma el resultado con su oráculo. El **webhook se registra solo** al crear la
-primera apuesta (cachea el secreto de firma), así que no hace falta configurarlo a
-mano. Sin webhooks igual funciona: el lobby refresca el estado por polling.
+Las apuestas ya **no** van por REST: el juego habla NGE (Nostr) contra el escrow de
+Luna Negra, que firma el resultado con su oráculo gestionado. Ver
+[docs/nge-migration.md](docs/nge-migration.md). El lobby refresca el estado del pozo
+por polling.

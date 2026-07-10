@@ -1,14 +1,13 @@
-// Presencia Nostr 2.0 (NIP-38, kind:30315 "User Statuses"). A diferencia de la
-// presencia 1.0 (REST → POST /api/v1/presence, la firma Luna Negra), acá el PROPIO
-// jugador firma su estado "Jugando TETRA" y lo publica a los relays. Ventaja: la
-// presencia vive en Nostr, la lee cualquier cliente y sobrevive aunque Luna Negra
-// caiga; el juego no depende de la API para esto. Ver la skill `integrar-luna-negra`
-// (interfaz 2.0 · Presencia NIP-38).
+// Presencia Nostr (NIP-38, kind:30315 "User Statuses"). El PROPIO jugador firma su
+// estado "Jugando TETRA" y lo publica a los relays. Ventaja: la presencia vive en
+// Nostr, la lee cualquier cliente y sobrevive aunque Luna Negra caiga; el juego no
+// depende de la API para esto. Es la única presencia que publica el juego. Ver la
+// skill `integrar-luna-negra` (interfaz 2.0 · Presencia NIP-38).
 //
 // El evento es addressable/replaceable (kind 30000-39999) con `d`="general": cada
 // jugador tiene UN estado que se auto-reemplaza. Un `expiration` tag lo hace caducar
-// solo si dejamos de latir (igual que el TTL de la presencia REST), así "Jugando"
-// desaparece cuando el jugador cierra o cambia de app.
+// solo si dejamos de latir, así "Jugando" desaparece cuando el jugador cierra o
+// cambia de app.
 // PUERTO de presencia — el formato del evento vive en la capa protocolo
 // (`nostr-game-protocol/ngp`); acá quedan la copy del estado, el TTL del juego y los relays.
 import type { Event } from 'nostr-tools';

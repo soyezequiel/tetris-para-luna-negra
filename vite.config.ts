@@ -18,12 +18,9 @@ type LocalApiModule = Partial<Record<'GET' | 'POST', LocalApiHandler>>;
 
 const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/health', health],
-  ['/api/luna-negra/friends', lunaNegraAction],
   ['/api/luna-negra/game-info', lunaNegraAction],
-  ['/api/luna-negra/invite', lunaNegraAction],
   ['/api/luna-negra/invite-window', lunaNegraAction],
   ['/api/luna-negra/launch-request', lunaNegraAction],
-  ['/api/luna-negra/presence', lunaNegraAction],
   ['/api/luna-negra/verify-room-invite', lunaNegraAction],
 
   ['/api/rooms/attack', roomsAction],

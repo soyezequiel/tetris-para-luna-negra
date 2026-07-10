@@ -1,19 +1,29 @@
 # Integración social con Luna Negra (amigos / presencia / login SSO / invitaciones)
 
-> **Estado: IMPLEMENTADO y en uso.** Los 4 endpoints sociales están live en Luna
-> Negra (CORS abierto) y devuelven el **objeto crudo** (`apiOk` de `src/lib/api.ts`,
-> sin envelope `{ data }`). El juego los consume directo en
-> `src/online/lunaNegraSocial.ts` y canjea el `lnToken` una sola vez al cargar
-> (persistiendo la **identidad**, no el token, porque el entitlement expira a ~5 min).
-> No hay modo "mock": Tetris y Luna Negra se despliegan juntos, así que la API
-> siempre está configurada; sin `LUNA_NEGRA_BASE_URL`/`API_KEY` las funciones
-> sociales fallan con un error claro (`source` es siempre `"luna-negra"`).
+> **Estado: HISTÓRICO — TETRA ya no consume esta capa.** El juego migró a Nostr:
+> login con firmante NIP-07/46 (`src/online/nostrLogin.ts`), presencia NIP-38
+> (`nostrPresence.ts`), amigos por contactos kind:3 (`nostrContacts.ts`) e
+> invitaciones/retos por NIP-17 (`nostrChallenge.ts`); el escrow de apuestas pasó a
+> NGE (ver [nge-migration.md](nge-migration.md)). Los endpoints siguen live del lado
+> de Luna Negra y este documento queda como referencia del contrato, pero **no hay
+> código en TETRA que los llame**.
+>
+> Lo único que TETRA sigue consumiendo de la 1.0:
+>
+> | Qué | Endpoint | Dónde |
+> |---|---|---|
+> | Launch request ("jugar" desde la tienda) | `GET /api/v1/invites?npub=` | `lunaNegraSocial.ts` |
+> | Verificación de invite de sala (Room Link) | `GET /.well-known/jwks.json` (offline) | `lunaNegraRoomInvite.ts` |
+> | Entrar a sala con `inviteToken` | `GET /api/v1/rooms/verify` | `api/rooms/luna-negra/enter.ts` |
+> | Espejo del marcador a la tienda | `POST /api/v1/leaderboards/{board}/scores` | `lunaNegraLeaderboard.ts` |
 
+Lo que sigue describe el contrato original de la capa social 1.0, tal como quedó
+implementado del lado de Luna Negra.
 
-TETRA integra a Luna Negra como **escrow de apuestas** (`/api/v1/bets/*`),
+TETRA integraba a Luna Negra como **escrow de apuestas** (`/api/v1/bets/*`, hoy NGE),
 verificación de invites de sala (`/api/v1/rooms/verify`) y webhooks
-(`/api/v1/provider/webhook`). Para la pantalla de salas estilo Counter‑Strike 2
-usa además la **capa social** de Luna Negra:
+(`/api/v1/provider/webhook`, hoy eliminados). Para la pantalla de salas estilo
+Counter‑Strike 2 usaba además la **capa social** de Luna Negra:
 
 1. **Login SSO**: que al abrir el juego desde Luna Negra el jugador quede logueado
    automáticamente con su cuenta (npub).
@@ -22,8 +32,8 @@ usa además la **capa social** de Luna Negra:
 4. **Invitaciones**: notificar a un amigo para que se una a una sala.
 
 > El game server tiene `LUNA_NEGRA_BASE_URL` + `LUNA_NEGRA_API_KEY`. La capa
-> social usa esas mismas credenciales del lado servidor (`src/online/lunaNegraSocial.ts`),
-> nunca expone la API key al browser.
+> social usaba esas mismas credenciales del lado servidor, nunca exponía la API key
+> al browser.
 
 ---
 

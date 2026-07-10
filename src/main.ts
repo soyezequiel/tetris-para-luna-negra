@@ -465,21 +465,15 @@ let lunaBootstrapDone = false;
 // cierra. Es estado efímero de UI; el loop lo refleja en el próximo frame.
 let userMenuOpen = false;
 lunaState.trustedOrigin = loadTrustedLunaOrigin();
-// La presencia caduca a los 20s sin heartbeat (ver docs/luna-negra-social-spec.md).
-// Latimos cada 10s (la mitad del TTL) para que un jugador activo nunca expire,
-// pero SOLO mientras la pestaña está visible: si el jugador cambia de app, minimiza
-// o cierra el juego dejamos de latir y a los ~20s deja de figurar "jugando".
-const LUNA_PRESENCE_TTL_MS = 20000;
-const LUNA_PRESENCE_HEARTBEAT_MS = LUNA_PRESENCE_TTL_MS / 2;
+// Cada cuánto miramos si hay que republicar la presencia, y SOLO mientras la
+// pestaña está visible: si el jugador cambia de app, minimiza o cierra el juego
+// dejamos de latir y el evento caduca solo.
+const PRESENCE_TICK_MS = 10_000;
 const LUNA_LAUNCH_POLL_MS = 2_000;
-// Presencia 1.0 (REST → Luna Negra firma el kind:30315). Apagada para probar la
-// 2.0 (Nostr firmado por el jugador) en aislamiento: con las dos prendidas Luna
-// Negra recibe ambas y no se ve cuál manda. Poné en `true` para reactivar la REST.
-const LUNA_REST_PRESENCE_ENABLED = false;
-// Presencia Nostr 2.0 (NIP-38): cada latido es una FIRMA (con un bunker NIP-46
-// puede ser un prompt), así que la re-publicamos mucho más espaciada que la REST.
-// Igual se dispara al toque cuando cambia el estado (online↔in-game). El evento
-// caduca a los PRESENCE_TTL_SEC (240s) si dejamos de latir.
+// Presencia Nostr (NIP-38): cada latido es una FIRMA (con un bunker NIP-46 puede
+// ser un prompt), así que la re-publicamos bien espaciada. Igual se dispara al
+// toque cuando cambia el estado (online↔in-game). El evento caduca a los
+// PRESENCE_TTL_SEC (240s) si dejamos de latir.
 const NOSTR_PRESENCE_REPUBLISH_MS = 120_000;
 let nostrPresenceLastStatus: PresenceStatus | null = null;
 let nostrPresenceLastPublishAt = 0;
@@ -518,8 +512,8 @@ window.addEventListener('message', handleLunaNegraWindowMessage);
 window.addEventListener('beforeunload', handleBeforeUnload);
 window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
-  if (lunaState.identity && isPlayerActivelyPresent()) void syncLunaPresence();
-}, LUNA_PRESENCE_HEARTBEAT_MS);
+  if (lunaState.identity && isPlayerActivelyPresent()) void syncNostrPresence();
+}, PRESENCE_TICK_MS);
 window.setInterval(() => {
   if (shouldAutoRefreshPublicRooms()) void refreshPublicRooms({ silent: true });
 }, ONLINE_ROOMS_AUTO_REFRESH_MS);
@@ -2615,7 +2609,7 @@ async function enterLunaNegraRoomFromInvite(
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
     if (options.cleanUrl) removeLunaNegraTokenFromUrl();
-    void syncLunaPresence();
+    void syncNostrPresence();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
   } finally {
@@ -2684,7 +2678,7 @@ async function restoreLunaIdentity(): Promise<void> {
   // La identidad Nostr no trae gameId: completarlo para que invitar/apostar no
   // queden gateados. Best-effort, no bloquea presencia.
   void ensureLunaGameId();
-  await syncLunaPresence();
+  await syncNostrPresence();
 }
 
 function applyLunaIdentity(identity: LunaIdentity): void {
@@ -2821,7 +2815,7 @@ async function joinLunaRoomLink(roomId: string): Promise<void> {
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
-    void syncLunaPresence();
+    void syncNostrPresence();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
   } finally {
@@ -2866,7 +2860,7 @@ async function restoreOnlineRoomSession(): Promise<boolean> {
       return false;
     }
     enterOnlineRoom(response.room, 'roomLobby');
-    void syncLunaPresence();
+    void syncNostrPresence();
     return true;
   } catch {
     return false;
@@ -3085,33 +3079,10 @@ function isHttpOrigin(origin: string): boolean {
 
 // El jugador "está jugando" solo si tiene el juego visible en primer plano. Si
 // minimiza, cambia de pestaña/app o cierra el juego dejamos de latir, y al
-// caducar el heartbeat (20s) Luna Negra lo deja de mostrar como jugando. Esto
-// evita los falsos positivos de "Jugando Tetris" con el juego abierto de fondo.
+// caducar el evento se lo deja de mostrar como jugando. Esto evita los falsos
+// positivos de "Jugando Tetris" con el juego abierto de fondo.
 function isPlayerActivelyPresent(): boolean {
   return document.visibilityState === 'visible';
-}
-
-// Reporta que este jugador tiene el juego abierto (online) o está en una sala
-// (in-game). Alimenta el orden del panel de amigos de los demás.
-async function syncLunaPresence(): Promise<void> {
-  if (!lunaState.identity || !isPlayerActivelyPresent()) return;
-  if (LUNA_REST_PRESENCE_ENABLED) {
-    try {
-      await lunaSocialClient.heartbeat({
-        npub: lunaState.identity.npub,
-        name: identityState.player.name,
-        avatarUrl: identityState.player.avatarUrl,
-        status: roomState.current ? 'in-game' : 'online',
-        roomId: roomState.current?.id ?? null,
-      });
-    } catch {
-      // La presencia es best-effort.
-    }
-  }
-  // Presencia 2.0 firmada por el jugador (NIP-38). Se cuelga del mismo latido que
-  // la REST, pero con su propio throttle (no re-firma en cada llamada). Independiente:
-  // si la REST falló, igual queremos publicar el estado en Nostr.
-  void syncNostrPresence();
 }
 
 // Publica la presencia NIP-38 (kind:30315) firmada por el propio jugador, si hay
@@ -3654,7 +3625,7 @@ async function ensureEphemeralNostrIdentity(nameHint?: string): Promise<boolean>
     saveStoredLunaIdentity(identity);
     resetNostrLoginFlow();
     void ensureLunaGameId();
-    void syncLunaPresence();
+    void syncNostrPresence();
     return true;
   } catch (error) {
     lunaState.nostrLogin.error = error instanceof Error ? error.message : 'No se pudo crear la cuenta local';
@@ -3707,7 +3678,7 @@ async function finishNostrLogin(signer: LunaSigner, stored: StoredSigner): Promi
     saveStoredLunaIdentity(identity);
     resetNostrLoginFlow();
     void ensureLunaGameId();
-    void syncLunaPresence();
+    void syncNostrPresence();
   } catch (error) {
     lunaState.nostrLogin.error = error instanceof Error ? error.message : 'Error de login';
   } finally {
@@ -4133,7 +4104,7 @@ async function createOnlineRoom(
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
-    void syncLunaPresence();
+    void syncNostrPresence();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
   } finally {
@@ -4357,7 +4328,7 @@ async function joinOnlineRoom(roomId: string): Promise<void> {
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
-    void syncLunaPresence();
+    void syncNostrPresence();
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
     // La sala ya no existe (murió entre que se listó y el clic): la sacamos del
@@ -5078,7 +5049,7 @@ function leaveOnlineRoom(): void {
   }
   resetOnlineRoomState();
   goToMenu();
-  void syncLunaPresence();
+  void syncNostrPresence();
 }
 
 // Sale de la sala actual (si hay) antes de crear/unirse a otra, para que una
@@ -5934,7 +5905,7 @@ async function pollOnlineRoom(): Promise<void> {
       resetOnlineRoomState();
       goToMenu();
       onlineNetState.error = 'Te sacaron de la sala.';
-      void syncLunaPresence();
+      void syncNostrPresence();
       return;
     }
     // Procesamiento sincrónico de la respuesta del poll: corre fuera del loop()/rAF (post-await),
@@ -5989,7 +5960,7 @@ async function pollOnlineRoom(): Promise<void> {
         resetOnlineRoomState();
         goToMenu();
         onlineNetState.error = 'La sala ya no existe en el servidor.';
-        void syncLunaPresence();
+        void syncNostrPresence();
       }
     } else {
       roundState.roomGonePolls = 0;
@@ -6736,7 +6707,7 @@ function syncOnlineVisibilityChange(): void {
   }
   // Al volver al juego reanunciamos presencia de inmediato (sin esperar el
   // intervalo) para reaparecer como "jugando" apenas el jugador regresa.
-  if (lunaState.identity) void syncLunaPresence();
+  if (lunaState.identity) void syncNostrPresence();
   if (!roomState.current) return;
   eagerRefreshBetIfPending();
   syncOnline();
@@ -8830,24 +8801,55 @@ function renderOnlineBetWithdrawLink(entry: RoomBetParticipant, bet: RoomBet): s
   `;
 }
 
-// Card de liquidación: dos pasos (reportar → liquidar) con el activo animado y el
-// hecho tildado, más una expectativa de tiempo. El pago Lightning puede tardar y
-// el card lo comunica para que "esto sigue andando", no "se colgó".
-function renderBetSettlementCard(reportDone: boolean, errorHtml: string): string {
-  const step = (done: boolean, active: boolean, label: string) => {
-    const cls = done ? 'is-done' : active ? 'is-active' : 'is-todo';
-    const mark = done ? '✓' : active ? BET_SPINNER : '';
-    return `<li class="bet-settle-step ${cls}"><span class="bet-settle-dot">${mark}</span><span>${label}</span></li>`;
-  };
+// Card de liquidación: una línea de tiempo de dos pasos (reportar → liquidar) con
+// UN solo indicador animado, el que está en curso. Cada paso lleva una nota que
+// dice qué está pasando ahí, y la barra de arriba da el avance de un vistazo. El
+// pago Lightning puede tardar y el card lo comunica para que se lea "esto sigue
+// andando", no "se colgó". El monto y las acciones viven dentro de la tarjeta.
+type BetStepState = 'done' | 'active' | 'todo';
+
+function renderBetSettlementStep(state: BetStepState, label: string, note: string): string {
   return `
-    <div class="bet-settle">
-      <div class="bet-settle-title">${BET_SPINNER}<span>Pagando al ganador…</span></div>
-      <ol class="bet-settle-steps">
-        ${step(reportDone, !reportDone, 'Reportando el resultado')}
-        ${step(false, reportDone, 'Liquidando el pago Lightning')}
-      </ol>
-      <p class="bet-settle-hint">El pago se completa solo. Por la red Lightning puede tardar hasta ~1 minuto.</p>
+    <li class="bet-settle-step is-${state}">
+      <span class="bet-settle-dot" aria-hidden="true">${state === 'done' ? '✓' : ''}</span>
+      <span class="bet-settle-step-body">
+        <span class="bet-settle-step-label">${label}</span>
+        <small class="bet-settle-step-note">${note}</small>
+      </span>
+    </li>
+  `;
+}
+
+function renderBetSettlementCard(
+  reportDone: boolean,
+  errorHtml: string,
+  winnerHtml: string,
+  actionHtml: string,
+): string {
+  // La barra no llega nunca al 100%: el último tramo lo cierra el `settled`.
+  const progress = reportDone ? 82 : 34;
+  const steps = reportDone
+    ? renderBetSettlementStep('done', 'Resultado reportado', 'Luna Negra ya tiene al ganador')
+      + renderBetSettlementStep('active', 'Liquidando el pago Lightning', 'Esperando la confirmación de la red')
+    : renderBetSettlementStep('active', 'Reportando el resultado', 'Enviando al ganador a Luna Negra')
+      + renderBetSettlementStep('todo', 'Liquidando el pago Lightning', 'Arranca apenas se confirme el resultado');
+  return `
+    <div class="bet-settle bet-settle--progress" role="status" aria-live="polite">
+      <div class="bet-settle-head">
+        <span class="bet-settle-badge" aria-hidden="true">⚡</span>
+        <span class="bet-settle-headline">
+          <span class="bet-settle-title">Pagando al ganador…</span>
+          <small class="bet-settle-phase">Paso ${reportDone ? 2 : 1} de 2 · hasta ~1 min</small>
+        </span>
+      </div>
+      <div class="bet-settle-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
+        <span style="width:${progress}%"></span>
+      </div>
+      <ol class="bet-settle-steps">${steps}</ol>
+      ${winnerHtml}
+      <p class="bet-settle-hint">El pago se completa solo: no hace falta que esperes en esta pantalla.</p>
       ${errorHtml}
+      ${actionHtml}
     </div>
   `;
 }
@@ -8941,12 +8943,12 @@ function renderOnlineBetResult(): string {
       : '';
     // El host tiene un empujón manual por si el reporte automático no progresa.
     const settleAction = isHost
-      ? `<div class="online-bet-deposit-actions"><button type="button" data-ui-action="online-bet-settle"${betState.busy ? ' disabled' : ''}>Reintentar cobro</button></div>`
+      ? `<div class="online-bet-deposit-actions bet-settle-actions"><button class="dash-copy-btn" type="button" data-ui-action="online-bet-settle"${betState.busy ? ' disabled' : ''}>Reintentar cobro</button></div>`
       : '';
     const winnerBadge = amIWinner
       ? `<div class="bet-settle-amount bet-settle-amount--pending">Ganás +${bet.netPayoutSats.toLocaleString('es-AR')} <small>sats</small></div>`
       : '';
-    return `${renderBetSettlementCard(!!bet.resultReported, errorHtml)}${winnerBadge}${settleAction}`;
+    return renderBetSettlementCard(!!bet.resultReported, errorHtml, winnerBadge, settleAction);
   }
 
   return `<div class="panel-note">Apuesta: ${escapeHtml(betStatusLabel(bet.status).toLowerCase())} · pozo ${bet.potSats} sats.</div>`;

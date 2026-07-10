@@ -421,12 +421,9 @@ export interface LeaveRoomResponse {
   serverNowMs: number;
 }
 
-// ───────────────────── Identidad / amigos de Luna Negra ─────────────────────
+// ─────────────────────────── Identidad de Luna Negra ────────────────────────
 
-/** Presencia de un amigo respecto a ESTE juego. */
-export type LunaPresenceState = 'in-game' | 'online' | 'offline';
-
-/** Identidad resuelta de Luna Negra (login SSO al abrir el juego desde Luna Negra). */
+/** Identidad resuelta de Luna Negra (la produce el login Nostr; ver nostrLogin.ts). */
 export interface LunaIdentity {
   npub: string;
   pubkey: string | null;
@@ -436,59 +433,6 @@ export interface LunaIdentity {
   gameId: string | null;
 }
 
-export interface LunaFriend {
-  npub: string;
-  name: string;
-  avatarUrl: string | null;
-  presence: LunaPresenceState;
-  /** Sala actual del amigo dentro de este juego, si está in-game. */
-  roomId: string | null;
-  /** Última vez que se lo vio con el juego abierto (ms epoch) o null. */
-  lastSeenMs: number | null;
-}
-
-export interface LunaFriendsResponse {
-  friends: LunaFriend[];
-  serverNowMs: number;
-  source: 'luna-negra';
-}
-
-/** Heartbeat de presencia: avisa que este npub tiene el juego abierto / está en sala. */
-export interface LunaPresenceRequest {
-  npub: string;
-  name: string;
-  avatarUrl?: string | null;
-  /** 'in-game' si está dentro de una sala; 'online' si solo tiene el juego abierto. */
-  status: 'in-game' | 'online';
-  roomId?: string | null;
-}
-
-export interface LunaPresenceResponse {
-  ok: boolean;
-  serverNowMs: number;
-  source: 'luna-negra';
-}
-
-export interface LunaInviteRequest {
-  /** Sala a la que se invita. */
-  roomId: string;
-  /** Host/jugador que invita. */
-  playerId: string;
-  /** npub del amigo invitado. */
-  friendNpub: string;
-  /** gameId de Luna Negra usado para mintear launch requests del invitado. */
-  gameId?: string | null;
-}
-
-export interface LunaInviteResponse {
-  ok: boolean;
-  /** true si Luna Negra confirmó que notificó al amigo. */
-  delivered: boolean;
-  /** Link de unión para copiar/compartir como fallback. */
-  inviteUrl: string;
-  serverNowMs: number;
-  source: 'luna-negra';
-}
 
 export interface LunaInviteWindowResponse {
   /** URL first-party de Luna Negra que renderiza el selector de amigos. */

@@ -52,7 +52,6 @@ import {
   updateRoomSettings,
   updateProgress,
 } from '../src/online/roomService';
-import { listLunaFriends } from '../src/online/lunaNegraSocial';
 import { POST as enterLunaNegraRoomApi } from '../api/rooms/luna-negra/enter';
 import { GET as lunaNegraApiGet, POST as lunaNegraApiPost } from '../api/luna-negra/[action]';
 import { decidePeerKoAction } from '../src/online/peerKoAuthority';
@@ -1543,38 +1542,6 @@ describe('core stacker engine', () => {
 
     const kicked = await kickPlayer(store, { roomId: room.id, playerId: 'host-player-k', targetPlayerId: 'guest-player-k' }, 1030);
     expect(kicked.players.map((player) => player.id)).toEqual(['host-player-k']);
-  });
-
-  it('parses the Luna Negra friends response and reports source luna-negra', async () => {
-    const previousBaseUrl = process.env.LUNA_NEGRA_BASE_URL;
-    const previousApiKey = process.env.LUNA_NEGRA_API_KEY;
-    process.env.LUNA_NEGRA_BASE_URL = 'https://luna.example';
-    process.env.LUNA_NEGRA_API_KEY = 'ln_sk_test';
-    // apiOk devuelve el objeto crudo (sin envelope { data }).
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
-      friends: [
-        { npub: 'npub-online', displayName: 'Online', presence: 'online', roomId: null },
-        { npub: 'npub-ingame', displayName: 'InGame', presence: 'in-game', roomId: 'AB12' },
-        { npub: 'npub-new', displayName: 'Ana', presence: 'offline', roomId: null, lastSeenMs: null },
-        { npub: 'npub-returning', displayName: 'Zoe', presence: 'offline', roomId: null, lastSeenMs: 1733600000000 },
-      ],
-    })));
-
-    const { friends, source } = await listLunaFriends('npub-self');
-
-    expect(source).toBe('luna-negra');
-    expect(friends.map((friend) => [friend.npub, friend.presence])).toEqual([
-      ['npub-ingame', 'in-game'],
-      ['npub-online', 'online'],
-      ['npub-returning', 'offline'],
-      ['npub-new', 'offline'],
-    ]);
-
-    vi.unstubAllGlobals();
-    if (previousBaseUrl === undefined) delete process.env.LUNA_NEGRA_BASE_URL;
-    else process.env.LUNA_NEGRA_BASE_URL = previousBaseUrl;
-    if (previousApiKey === undefined) delete process.env.LUNA_NEGRA_API_KEY;
-    else process.env.LUNA_NEGRA_API_KEY = previousApiKey;
   });
 
   it('returns clear Luna Negra API errors for missing config and invalid tokens', async () => {

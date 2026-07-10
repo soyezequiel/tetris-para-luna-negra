@@ -45,16 +45,23 @@ reclame o expire. Trade-off de una cuenta descartable — no aplica al jugador l
 
 ## Alcance — qué es NGE y qué NO
 
-NGE cubre **solo el escrow de apuestas**. **No toca** (siguen en REST 1.0):
+NGE cubre **solo el escrow de apuestas**. Lo único que sigue en REST 1.0:
 
 | Sigue en REST 1.0 (NO migra) | Archivo |
 |---|---|
-| Social (presencia, amigos, actividad) | `lunaNegraSocial.ts` |
-| Leaderboard | `lunaNegraLeaderboard.ts` |
+| Leaderboard (espejo a la tienda) | `lunaNegraLeaderboard.ts` |
 | Invitaciones / entrar a sala | `lunaNegraRoomInvite.ts`, `api/rooms/luna-negra/enter.ts` |
+| Launch requests (jugar desde la tienda) | `lunaNegraSocial.ts` |
 
 Por eso `LUNA_NEGRA_BASE_URL` / `API_KEY` / `GAME_ID` **se quedan** (los usan esas
 features). El único gate de apuestas es la existencia de `NGE_CONNECTION`.
+
+El resto de la 1.0 **ya no existe en el juego**: presencia (`POST /api/v1/presence`),
+amigos (`GET /api/v1/friends`), invitaciones salientes (`POST /api/v1/invites`),
+login SSO (`lnToken`), apuestas REST (`/api/v1/bets/*`) y el webhook del proveedor
+(`/api/v1/provider/webhook`). Los reemplazaron NIP-38, los contactos kind:3, NIP-17,
+el login Nostr y NGE respectivamente. Si volvés a necesitar alguno está en el
+historial de git; no lo revivas en paralelo al camino Nostr.
 
 ## Piezas — el protocolo separado del resto del programa
 

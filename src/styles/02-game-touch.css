@@ -60,6 +60,10 @@
   text-align: left;
 }
 
+.bet-settle--progress {
+  gap: 12px;
+}
+
 .bet-settle--paid {
   border-color: rgba(57, 212, 154, 0.34);
   background: rgba(57, 212, 154, 0.08);
@@ -73,6 +77,84 @@
   font-size: 13px;
   font-weight: 900;
   letter-spacing: 0.3px;
+}
+
+/* Encabezado de la liquidación: un ícono con halo que late (única señal de
+   "vivo" arriba), el título y el paso en curso. */
+.bet-settle-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.bet-settle-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid rgba(247, 200, 80, 0.3);
+  background: rgba(247, 200, 80, 0.14);
+  font-size: 14px;
+  animation: bet-settle-pulse 2s ease-out infinite;
+}
+
+@keyframes bet-settle-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(247, 200, 80, 0.3); }
+  70% { box-shadow: 0 0 0 9px rgba(247, 200, 80, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(247, 200, 80, 0); }
+}
+
+.bet-settle-headline {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bet-settle-head .bet-settle-title {
+  display: block;
+}
+
+.bet-settle-phase {
+  color: var(--dash-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+/* Barra de avance: determinada por el paso (34% → 82%) y con un barrido que
+   la mantiene "viva" mientras el escrow tarda. Nunca llega a 100%: ese último
+   tramo lo cierra el estado `settled`, no una animación optimista. */
+.bet-settle-bar {
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.bet-settle-bar > span {
+  position: relative;
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  overflow: hidden;
+  background: linear-gradient(90deg, #f7c850, #39d49a);
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bet-settle-bar > span::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  transform: translateX(-100%);
+  animation: bet-settle-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes bet-settle-sweep {
+  to { transform: translateX(100%); }
 }
 
 .bet-settle-title--win {
@@ -99,32 +181,74 @@
   font-size: 18px;
 }
 
+/* Línea de tiempo: los pasos cuelgan de un rail que los une, así se leen como una
+   secuencia y no como dos avisos sueltos. El rail lo dibuja cada paso hacia
+   arriba (::before), de modo que su color cuenta si el paso anterior ya cerró. */
 .bet-settle-steps {
   margin: 0;
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 7px;
+  gap: 13px;
 }
 
 .bet-settle-step {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 12.5px;
-  font-weight: 800;
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.bet-settle-step + .bet-settle-step::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: -14px;
+  width: 2px;
+  height: 15px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Un paso activo o hecho siempre viene después de uno hecho: rail en verde. */
+.bet-settle-step.is-active::before,
+.bet-settle-step.is-done::before {
+  background: rgba(57, 212, 154, 0.45);
 }
 
 .bet-settle-dot {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
+  margin-top: 1px;
   border-radius: 50%;
+  box-sizing: border-box;
   font-size: 11px;
   font-weight: 900;
+  line-height: 1;
+}
+
+.bet-settle-step-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bet-settle-step-label {
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.bet-settle-step-note {
+  color: var(--dash-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .bet-settle-step.is-done {
@@ -132,12 +256,27 @@
 }
 
 .bet-settle-step.is-done .bet-settle-dot {
+  border: 1px solid rgba(57, 212, 154, 0.4);
   background: rgba(57, 212, 154, 0.18);
   color: var(--dash-success);
+  animation: bet-settle-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes bet-settle-pop {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 .bet-settle-step.is-active {
   color: var(--dash-text);
+}
+
+/* El dot ES el spinner: un solo elemento girando, centrado con el resto de los
+   pasos. Antes el spinner iba dentro del dot y desalineaba la fila. */
+.bet-settle-step.is-active .bet-settle-dot {
+  border: 2px solid rgba(247, 200, 80, 0.25);
+  border-top-color: #f7c850;
+  animation: bet-spin 0.8s linear infinite;
 }
 
 .bet-settle-step.is-todo {
@@ -146,6 +285,30 @@
 
 .bet-settle-step.is-todo .bet-settle-dot {
   border: 1.5px dashed rgba(255, 255, 255, 0.22);
+}
+
+/* La acción del host y el monto entran al card, no colgados abajo. El gap del
+   grid ya los separa: el margen suelto del monto sobra acá. */
+.bet-settle-actions {
+  margin-top: 2px;
+}
+
+.bet-settle--progress .bet-settle-amount--pending {
+  margin-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bet-spinner,
+  .bet-settle-badge,
+  .bet-settle-bar > span::after,
+  .bet-settle-step.is-active .bet-settle-dot,
+  .bet-settle-step.is-done .bet-settle-dot {
+    animation: none;
+  }
+
+  .bet-settle-step.is-active .bet-settle-dot {
+    border-color: #f7c850;
+  }
 }
 
 .bet-settle-hint {
