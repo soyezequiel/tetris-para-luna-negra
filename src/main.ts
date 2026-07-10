@@ -45,6 +45,7 @@ import {
 } from './app/runHistory';
 import { soundCueForRunProgress } from './app/runEffects';
 import { nextAutoPlayInput } from './app/autoPlay'; // TRUCO AUTOPLAY
+import { installBenchMode } from './dev/benchOverlay';
 import { createRunSummary, RunSplitTracker, type RunSummary } from './app/runStats';
 import { canAdvanceGame, canCommitLocalOnlineTerminal, gameOverReasonMessage, requiresRunConfirmation, shouldPlayMusic, terminalLabel, togglePauseMode, type AppMode, type DestructiveRunAction } from './app/state';
 import {
@@ -123,6 +124,7 @@ import {
 import { loginWithSigner } from './online/nostrLogin';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
+import { startRoomLinkInviteInbox, stopRoomLinkInviteInbox, type RoomLinkInvite } from './online/nostrRoomLinkInbox';
 import { clearPresenceEvent, publishPresence, type PresenceStatus } from './online/nostrPresence';
 import {
   NOSTR_BOARD_SURVIVAL,
@@ -1539,6 +1541,10 @@ function applyGraphicsQualityClass(): void {
 installErrorCapture();
 installLongTaskObserver();
 loop();
+
+// Bench sin manos (?bench=1): autoplay + marcador gigante de FPS/jank para medir en
+// navegadores donde no se puede interactuar (ver src/dev/benchOverlay.ts).
+installBenchMode({ startNewRun: () => startNewRun(), getAppMode: () => appMode });
 
 Object.assign(window, {
   stack40: {
@@ -2991,6 +2997,7 @@ function clearLunaIdentity(): void {
   challengeInboxPubkey = null;
   challengeInboxStarting = false;
   stopChallengeInbox();
+  stopRoomLinkInviteInbox();
   // Limpia la presencia NIP-38 mientras el firmante sigue activo (clearActiveSigner
   // lo cierra a continuación), para no quedar "Jugando TETRA" hasta que caduque.
   clearNostrPresence();
@@ -3462,13 +3469,17 @@ async function sendNostrChallenge(pubkey: string): Promise<void> {
 async function ensureNostrChallengeInbox(): Promise<void> {
   const identityPubkey = lunaState.identity?.pubkey?.trim().toLowerCase() ?? '';
   if (!identityPubkey) {
-    if (challengeInboxPubkey) stopChallengeInbox();
+    if (challengeInboxPubkey) {
+      stopChallengeInbox();
+      stopRoomLinkInviteInbox();
+    }
     challengeInboxPubkey = null;
     return;
   }
   if (challengeInboxPubkey === identityPubkey || challengeInboxStarting) return;
   if (challengeInboxPubkey && challengeInboxPubkey !== identityPubkey) {
     stopChallengeInbox();
+    stopRoomLinkInviteInbox();
     challengeInboxPubkey = null;
   }
   challengeInboxStarting = true;
@@ -3477,7 +3488,11 @@ async function ensureNostrChallengeInbox(): Promise<void> {
     if (!signer) signer = await restoreSigner();
     // [DEBUG reto] — diagnóstico temporal de recepción. Quitar al confirmar.
     console.info('[reto] arrancando bandeja; método firmante:', signer?.method, '· nip44Decrypt:', Boolean(signer?.nip44Decrypt));
-    if (!signer?.nip44Decrypt) {
+    if (!signer) return;
+    // La invitación room-link de Luna llega como DM NIP-04 (kind:4), que todo
+    // firmante expone: arranca aunque no haya NIP-44 (sin retos, con invitaciones).
+    startRoomLinkInviteInbox(signer, identityPubkey, handleIncomingRoomLinkInvite);
+    if (!signer.nip44Decrypt) {
       console.warn('[reto] NO arranca la bandeja: el firmante no expone nip44Decrypt (login sin NIP-44).');
       return;
     }
@@ -3493,6 +3508,26 @@ async function ensureNostrChallengeInbox(): Promise<void> {
   } finally {
     challengeInboxStarting = false;
   }
+}
+
+// Invitación "Luna Room Link" llegada por DM Nostr (kind:4) — el mismo DM que el
+// cliente de Luna detecta para su popup. Se presenta con el MISMO popup/toast que
+// el poll REST de launch-requests; el id del DM funciona como id estable para que
+// "Quedarme" la ignore de forma persistente (ignoredLaunchRequestIds).
+function handleIncomingRoomLinkInvite(invite: RoomLinkInvite): void {
+  if (lunaState.ignoredLaunchRequestIds.has(invite.eventId)) return;
+  // Ya hay una invitación en pantalla: no la pisamos (el DM ya quedó marcado como
+  // visto; si el jugador quiere entrar igual, tiene el enlace en el chat de Luna).
+  if (lunaState.pendingLaunchRequest) return;
+  void handleLunaLaunchRequest({
+    id: invite.eventId,
+    roomId: invite.roomId,
+    inviteToken: '',
+    kind: 'room-link',
+    slug: '',
+    title: invite.title ?? 'TETRA',
+    gameUrl: invite.url,
+  });
 }
 
 function handleIncomingNostrChallenge(challenge: ParsedChallenge): void {
