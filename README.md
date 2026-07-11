@@ -131,3 +131,4 @@ Las apuestas ya **no** van por REST: el juego habla NGE (Nostr) contra el escrow
 Luna Negra, que firma el resultado con su oráculo gestionado. Ver
 [docs/nge-migration.md](docs/nge-migration.md). El lobby refresca el estado del pozo
 por polling.
+ 
