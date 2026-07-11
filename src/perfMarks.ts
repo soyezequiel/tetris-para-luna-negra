@@ -55,7 +55,7 @@ export function recordPeerMessage(type: string, ms: number, bytes: number): void
 }
 
 // Snapshot JSON-able para incrustar en el reporte de performance.
-export function getPerfMarks(): Record<string, unknown> {
+export function getPerfMarkss(): Record<string, unknown> {
   return {
     tasksByLabel: [...taskByLabel.values()].map((s) => ({
       label: s.label,
