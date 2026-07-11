@@ -119,10 +119,29 @@ export class OnlineRoomError extends Error {
  * (releen la sala) para no perder actualizaciones concurrentes — sin esto, un
  * `progress` en vuelo podía pisar una eliminación o el final de la partida.
  */
+/**
+ * Mensaje canónico del conflicto de versión. Se exporta para que los stores que
+ * cruzan un límite de proceso (p. ej. el bridge HTTP al Durable Object, ver
+ * PartyBridgeRoomStore) puedan RECONOCER el conflicto en la respuesta y volver a
+ * lanzar un `RoomVersionConflictError` propio: al viajar por la red se pierde la
+ * identidad de clase, y sin ella `withRoomConflictRetry` no reintentaría.
+ */
+export const ROOM_VERSION_CONFLICT_MESSAGE = 'Room was modified concurrently.';
+
 export class RoomVersionConflictError extends OnlineRoomError {
   constructor() {
-    super('Room was modified concurrently.', 409);
+    super(ROOM_VERSION_CONFLICT_MESSAGE, 409);
   }
+}
+
+/**
+ * ¿Esta respuesta de error (status + mensaje) corresponde a un conflicto de
+ * versión de sala? Robusto al status: el bridge mapea el error por `.status`
+ * (409), pero comparamos también el mensaje por si algún intermediario lo
+ * reenvía con otro código (p. ej. 500).
+ */
+export function isRoomVersionConflict(status: number | null | undefined, message: string | null | undefined): boolean {
+  return status === 409 || message === ROOM_VERSION_CONFLICT_MESSAGE;
 }
 
 const ROOM_MUTATION_ATTEMPTS = 6;

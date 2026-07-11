@@ -1,4 +1,4 @@
-import { MemoryRoomStore, normalizeRoomId, OnlineRoomError, RoomVersionConflictError, type RoomStore } from './roomService.js';
+import { isRoomVersionConflict, MemoryRoomStore, normalizeRoomId, OnlineRoomError, RoomVersionConflictError, type RoomStore } from './roomService.js';
 import { LEADERBOARD_MAX_ENTRIES, MemoryLeaderboardStore, type LeaderboardStore, type LeaderboardWinMeta } from './leaderboard.js';
 import { MemorySurvivalLeaderboardStore, type SurvivalLeaderboardStore, type SurvivalTimeMeta } from './survivalLeaderboard.js';
 import type { LeaderboardEntry, OnlineRoom, SurvivalEntry } from './protocol.js';
@@ -87,7 +87,7 @@ class UpstashRoomStore implements RoomStore {
   }
 }
 
-class PartyBridgeRoomStore implements RoomStore {
+export class PartyBridgeRoomStore implements RoomStore {
   private readonly baseUrl: string;
 
   constructor(
@@ -131,7 +131,14 @@ class PartyBridgeRoomStore implements RoomStore {
     });
     const payload = await response.json().catch(() => null) as PartyBridgeResponse | null;
     if (!response.ok) {
-      throw new OnlineRoomError(payload?.error ?? 'Room bridge request failed.', response.status);
+      const message = payload?.error ?? 'Room bridge request failed.';
+      // El DO valida la versión de la sala (MemoryRoomStore) y responde el conflicto
+      // por el bridge. Al cruzar la red se pierde la clase `RoomVersionConflictError`,
+      // así que la reconstruimos: sin esto, `withRoomConflictRetry` no reconocería el
+      // conflicto (solo cachea instancias de esa clase) y una escritura concurrente
+      // durante `bet:create` fallaba en el primer intento en vez de reintentar.
+      if (isRoomVersionConflict(response.status, message)) throw new RoomVersionConflictError();
+      throw new OnlineRoomError(message, response.status);
     }
     return payload ?? {};
   }
