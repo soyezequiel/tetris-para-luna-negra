@@ -94,6 +94,10 @@ type Popup = {
 
 type Point = { x: number; y: number };
 
+// Onda de choque tipo explosión (muerte): un frente que se expande desde (x,y)
+// hasta cubrir bastante más que el tablero. Mucho más grande y agresivo que un ring.
+type Shockwave = { x: number; y: number; t: number; dur: number; rMax: number; color: number; lw: number };
+
 const REF_CELL = 28; // celda de referencia del prototipo; escala velocidades/tamaños
 
 export class JuiceFX {
@@ -120,6 +124,8 @@ export class JuiceFX {
   // Flash acotado a las filas limpiadas: bandas horizontales a lo ancho del tablero,
   // en la posición exacta de cada fila borrada, que suben y bajan rápido.
   private rowFlashes: { rows: number[]; t: number; dur: number; color: number; peak: number }[] = [];
+  // Ondas de choque activas (muerte): se expanden y se dibujan en overlayG cada frame.
+  private shockwaves: Shockwave[] = [];
   // Estela vertical de neón del hard drop: por cada columna ocupada, una barra que
   // va desde donde estaba la pieza hasta donde aterriza, y se desvanece.
   private dropTrails: { cols: number[]; top: number; bottom: number; t: number; dur: number; color: number; subtle?: boolean }[] = [];
@@ -365,6 +371,23 @@ export class JuiceFX {
     this.particles.push({ ring: true, x, y, r: 6, rMax: rMax * this.scale, life: 0.6, max: 0.6, color, lw: 4, vx: 0, vy: 0, size: 0, grav: 0, shape: 'rect', rot: 0, vr: 0 });
   }
 
+  /** Onda de choque tipo explosión (muerte): un frente que se expande desde (x,y)
+   * hasta cubrir bastante más que el tablero, con disco de presión + aro brillante
+   * que se adelgaza. Mucho más grande y agresivo que spawnRing. rMax por defecto ~1.7×
+   * la diagonal del tablero (barre toda el área de juego). */
+  spawnShockwave(x: number, y: number, color: number, opts: { rMax?: number; dur?: number; lw?: number } = {}): void {
+    const r = this.boardRect();
+    this.shockwaves.push({
+      x,
+      y,
+      t: 0,
+      dur: opts.dur ?? 0.85,
+      rMax: opts.rMax ?? Math.hypot(r.w, r.h) * 1.7,
+      color,
+      lw: (opts.lw ?? 10) * this.scale,
+    });
+  }
+
   spawnProjectile(from: Point, to: Point, cfg: { r: number; col: number }, onHit?: () => void): void {
     const dist = Math.hypot(to.x - from.x, to.y - from.y);
     const dur = Math.max(0.16, Math.min(0.42, dist / 1700));
@@ -423,6 +446,7 @@ export class JuiceFX {
     this.popup.sub.alpha = 0;
     this.rowFlashes = [];
     this.dropTrails = [];
+    this.shockwaves = [];
     this.particleG.clear();
     this.overlayG.clear();
   }
@@ -455,12 +479,46 @@ export class JuiceFX {
     this.overlayG.clear();
 
     this.drawOverlays(dt);
+    this.updateShockwaves(dt);
     this.drawRowFlashes(dt);
     this.updateDropTrails(dt);
     this.updateProjectiles(dt);
     this.updateParticles(dt);
     this.updatePopup(dt);
     this.updateTopOutCountdown(dt);
+  }
+
+  // Onda de choque de la muerte: frente que se expande y se apaga. Disco de presión
+  // tenue + aro cromático rezagado + borde blanco brillante. Se dibuja en overlayG
+  // (se limpia cada frame). El radio crece rápido y frena (ease-out agresivo).
+  private updateShockwaves(dt: number): void {
+    if (this.shockwaves.length === 0) return;
+    const g = this.overlayG;
+    const boost = this.reducedMotion ? 0.45 : 1;
+    for (let i = this.shockwaves.length - 1; i >= 0; i -= 1) {
+      const w = this.shockwaves[i];
+      w.t += dt;
+      const k = w.t / w.dur;
+      if (k >= 1) {
+        this.shockwaves.splice(i, 1);
+        continue;
+      }
+      const eased = 1 - Math.pow(1 - k, 2.6); // dispara y frena
+      const radius = w.rMax * eased;
+      const fade = Math.pow(1 - k, 1.2); // se apaga hacia el final
+      const lw = Math.max(1, w.lw * fade);
+      // disco de presión: relleno tenue detrás del frente
+      g.beginFill(w.color, 0.1 * fade * boost);
+      g.drawCircle(w.x, w.y, radius);
+      g.endFill();
+      // aro cromático interno (rezagado respecto del frente)
+      g.lineStyle(lw * 1.6, w.color, 0.45 * fade * boost);
+      g.drawCircle(w.x, w.y, radius * 0.9);
+      // frente brillante: el "muro" de presión
+      g.lineStyle(lw, 0xffffff, 0.85 * fade * boost);
+      g.drawCircle(w.x, w.y, radius);
+      g.lineStyle(0, 0, 0);
+    }
   }
 
   // Bandas blancas a lo ancho del tablero sobre cada fila limpiada (sube y baja

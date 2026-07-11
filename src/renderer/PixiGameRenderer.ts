@@ -23,12 +23,9 @@ const GRID_LINE = 0x2f3338;
 const GHOST_FILL = 0x07090b;
 const GHOST_LINE = 0x525a60;
 const GHOST_INSET_LINE = 0x262c31;
-// Animación de derrota (top out) estilo tetr.io: la pila se vuelve gris y colapsa
-// fila por fila de arriba hacia abajo mientras cae y se desvanece.
+// Animación de derrota (top out): la pila DETONA hacia afuera desde donde topeó,
+// con onda de choque, en vez de colapsar fila por fila. Ver drawDeathBoard.
 const DEATH_TOTAL_FRAMES = 104;
-const DEATH_BLOCK = 0x5b626b;
-const DEATH_BLOCK_LIGHT = 0x868d96;
-const DEATH_BLOCK_DARK = 0x2c3036;
 
 // Paleta del rediseño "Modo Relax": tarjetas redondeadas oscuras, acento turquesa
 // y tipografía clara/gris. Sustituye a los paneles angulares de borde blanco.
@@ -306,54 +303,110 @@ export class PixiGameRenderer {
     benchTime('pixi:drawHud', () => this.drawHud(state));
   }
 
-  // Pila gris que colapsa de arriba hacia abajo: cada fila se desvanece y cae con
-  // un retardo según su altura (las de arriba primero), más un flash inicial.
+  // Detonación estilo onda de choque: en vez de caer, la pila SALE DISPARADA hacia
+  // afuera desde el punto donde topeó. Cada bloque conserva su color real y arranca
+  // con un retardo proporcional a su distancia al origen, de modo que el "frente" de
+  // la onda barre el tablero (los bloques cercanos vuelan primero). La onda de energía
+  // (aro) la dibuja JuiceFX en su capa; aquí va la física de los bloques + el fogonazo.
   private drawDeathBoard(state: GameState): void {
     this.pieceLayer.clear();
-    const progress = Math.min(1, this.deathFrame / DEATH_TOTAL_FRAMES);
+    const frame = this.deathFrame;
     if (this.deathFrame < DEATH_TOTAL_FRAMES) this.deathFrame += 1;
+    const t = frame / 60; // segundos aprox @60fps
+
+    const cell = this.cell;
+    const boardW = this.boardColumns * cell;
+
+    // Origen de la detonación: centro horizontal, a la altura de la CIMA de la pila
+    // (donde moriste), para que la onda nazca de ahí y no del centro geométrico.
+    let topBoardY = this.visibleRows;
+    for (let y = 0; y < state.board.length; y += 1) {
+      if (state.board[y].some((c) => c !== null)) {
+        topBoardY = y - this.hiddenRows;
+        break;
+      }
+    }
+    const ox = this.boardX + boardW / 2;
+    const oy = this.boardY + Math.max(0, topBoardY) * cell;
+
+    // Velocidad del frente (px/s): controla el retardo con que cada bloque despega.
+    const waveSpeed = cell * 40;
+    const grav = cell * 30;
+    const lifeSpan = 1.1;
 
     state.board.forEach((row, y) => {
-      if (y < this.hiddenRows - this.topRows) return;
       const boardY = y - this.hiddenRows;
-      // Las filas superiores empiezan a colapsar antes que las inferiores.
-      const rowStart = (Math.max(0, boardY) / this.visibleRows) * 0.5;
-      const rowP = clamp01((progress - rowStart) / 0.5);
-      if (rowP >= 1) return;
-      const alpha = 1 - rowP;
-      const drop = rowP * rowP * this.cell * 7;
-      row.forEach((cell, x) => {
-        if (cell && this.isVisibleCell(x, boardY)) this.drawDeathBlock(x, boardY, drop, alpha);
+      if (boardY < -this.topRows) return;
+      row.forEach((cellType, x) => {
+        if (!cellType || !this.isVisibleCell(x, boardY)) return;
+        const px = this.boardX + x * cell + cell / 2;
+        const py = this.boardY + boardY * cell + cell / 2;
+        const dx = px - ox;
+        const dy = py - oy;
+        const dist = Math.hypot(dx, dy);
+        const lt = t - dist / waveSpeed; // tiempo desde que la onda golpeó ESTA celda
+        // Aleatoriedad ESTABLE por celda (no debe titilar entre frames).
+        const seed = x * 12.9898 + y * 78.233;
+        const rnd = (o: number): number => {
+          const s = Math.sin(seed + o) * 43758.5453;
+          return s - Math.floor(s);
+        };
+        if (lt <= 0) {
+          // La onda aún no llegó: bloque quieto con su color real.
+          this.drawExplodingBlock(px, py, cell, cellType, 1, 0);
+          return;
+        }
+        const alpha = 1 - lt / lifeSpan;
+        if (alpha <= 0) return;
+        // Dirección radial desde el origen + un abanico estable para que no salgan en
+        // línea perfecta. Las celdas en el origen usan un ángulo pseudo-aleatorio.
+        const nx = dist > 0.01 ? dx / dist : Math.cos(rnd(5) * 6.283);
+        const ny = dist > 0.01 ? dy / dist : Math.sin(rnd(5) * 6.283);
+        const ang = (rnd(2) - 0.5) * 0.7;
+        const ca = Math.cos(ang);
+        const sa = Math.sin(ang);
+        const rx = nx * ca - ny * sa;
+        const ry = nx * sa + ny * ca;
+        const speed = cell * (16 + rnd(3) * 18); // px/s
+        const upBias = cell * 6; // leve empuje hacia arriba: sensación de estallido
+        const ex = px + rx * speed * lt;
+        const ey = py + ry * speed * lt - upBias * lt + 0.5 * grav * lt * lt;
+        const rot = (rnd(4) - 0.5) * 10 * lt;
+        this.drawExplodingBlock(ex, ey, cell, cellType, Math.min(1, alpha * 1.4), rot);
       });
     });
 
-    // Flash blanco breve sobre el tablero al momento del impacto.
-    if (progress < 0.2) {
-      const flash = (1 - progress / 0.2) * 0.5;
+    // Fogonazo blanco breve sobre el tablero en el instante de la detonación.
+    if (t < 0.18) {
+      const flash = (1 - t / 0.18) * 0.55;
       this.effectLayer.beginFill(0xffffff, flash);
-      this.effectLayer.drawRect(this.boardX, this.boardY - this.topRows * this.cell, this.cell * this.boardColumns, this.cell * (this.visibleRows + this.topRows));
+      this.effectLayer.drawRect(this.boardX, this.boardY - this.topRows * this.cell, boardW, this.cell * (this.visibleRows + this.topRows));
       this.effectLayer.endFill();
     }
   }
 
-  private drawDeathBlock(boardX: number, boardY: number, dropPx: number, alpha: number): void {
-    const x = this.boardX + boardX * this.cell;
-    const y = this.boardY + boardY * this.cell + dropPx;
-    const size = this.cell;
-    const pad = Math.max(1, size * 0.045);
-    const inner = size - pad * 2;
-    const bevel = Math.max(1, inner * 0.16);
-
-    this.pieceLayer.beginFill(DEATH_BLOCK, alpha);
-    this.pieceLayer.lineStyle(Math.max(1, size * 0.04), DEATH_BLOCK_DARK, alpha);
-    this.pieceLayer.drawRect(x + pad, y + pad, inner, inner);
-    this.pieceLayer.endFill();
-
-    this.pieceLayer.lineStyle(0, 0, 0);
-    this.pieceLayer.beginFill(DEATH_BLOCK_LIGHT, alpha * 0.5);
-    this.pieceLayer.drawRect(x + pad, y + pad, inner, bevel);
-    this.pieceLayer.drawRect(x + pad, y + pad, bevel, inner);
-    this.pieceLayer.endFill();
+  // Un bloque de escombro: cuadrado rotado con el color real de la pieza + una cara
+  // superior levemente iluminada para que no sea un rectángulo plano. (cx, cy) es el
+  // CENTRO del bloque; rot en radianes.
+  private drawExplodingBlock(cx: number, cy: number, size: number, piece: PieceType, alpha: number, rot: number): void {
+    const color = (this.colorBlind ? PIECE_COLORS_COLORBLIND : PIECE_COLORS)[piece];
+    const g = this.pieceLayer;
+    const h = size * 0.46; // medio lado (un pelín menor que la celda)
+    const c = Math.cos(rot);
+    const s = Math.sin(rot);
+    const quad = (corners: number[][]): void => {
+      const pts = corners.map(([qx, qy]) => ({ x: cx + qx * c - qy * s, y: cy + qx * s + qy * c }));
+      g.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i += 1) g.lineTo(pts[i].x, pts[i].y);
+      g.closePath();
+    };
+    g.beginFill(color, alpha);
+    quad([[-h, -h], [h, -h], [h, h], [-h, h]]);
+    g.endFill();
+    // Franja superior iluminada.
+    g.beginFill(0xffffff, alpha * 0.18);
+    quad([[-h, -h], [h, -h], [h, -h * 0.5], [-h, -h * 0.5]]);
+    g.endFill();
   }
 
   // Invalida el inset cacheado de controles táctiles: lo llama main.ts cuando cambia el

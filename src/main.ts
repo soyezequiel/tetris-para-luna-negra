@@ -1470,6 +1470,7 @@ function syncOnlineDeathPhase(state: GameState): void {
     && performance.now() - deathState.onlineAnimStartedAt >= ONLINE_DEATH_STUDY_MS) {
     deathState.onlineCollapseStarted = true;
     renderer.playDeathAnimation();
+    juice.onDeathCollapse();
   }
 }
 
@@ -1506,6 +1507,7 @@ function syncSoloDeathPhase(state: GameState): void {
   if (!deathState.soloCollapseStarted && elapsed >= SOLO_DEATH_STUDY_MS) {
     deathState.soloCollapseStarted = true;
     renderer.playDeathAnimation(); // colapso del tablero, igual que online
+    juice.onDeathCollapse();
   }
   if (elapsed >= SOLO_DEATH_STUDY_MS + SOLO_DEATH_COLLAPSE_MS) deathState.soloSequenceDone = true;
 }

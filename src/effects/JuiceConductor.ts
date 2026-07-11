@@ -322,6 +322,24 @@ export class JuiceConductor {
     this.audio.enterSpectator();
   }
 
+  /** Momento en que el tablero DETONA: inicio de la fase de COLAPSO (no del estudio).
+   * Dispara la onda de choque de energía sobre la capa de juice, sincronizada con la
+   * explosión de bloques que hace el renderer en drawDeathBoard. Lo llama main.ts justo
+   * donde invoca renderer.playDeathAnimation(). El "GAME!" + oro ya salieron en onTopOut;
+   * esto es el estallido físico posterior. */
+  onDeathCollapse(): void {
+    // Origen: centro horizontal, hacia el tercio superior (donde suele topear la pila).
+    const ox = this.boardCenterRow().x;
+    const oy = this.fx.cellPoint(0, this.fx.rows * 0.34).y;
+    this.fx.addShake(34);
+    this.fx.flashBoard(0xffe6b0, 0.5, 0.3);
+    // Onda principal cálida + réplica interna blanca más corta y brillante.
+    this.fx.spawnShockwave(ox, oy, 0xffb24a, { dur: 0.9, lw: 12 });
+    this.fx.spawnShockwave(ox, oy, 0xffffff, { dur: 0.55, lw: 6 });
+    // Chispas radiales en el origen, por encima de los bloques que salen volando.
+    this.fx.spawnBurst(ox, oy, 70, 0xffd27a, { spd: 420, life: 0.9, grav: 200, size: 3, shape: 'spark', up: 30 });
+  }
+
   /** Fuentes de chispas cálidas saliendo de las 4 esquinas del tablero, en
    * pulsos escalonados, como los flares del final de ronda del video. */
   private fireCornerFountains(): void {
