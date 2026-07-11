@@ -485,6 +485,44 @@ const NOSTR_PRESENCE_REPUBLISH_MS = 120_000;
 let nostrPresenceLastStatus: PresenceStatus | null = null;
 let nostrPresenceLastPublishAt = 0;
 let nostrPresenceInFlight = false;
+
+// Persistimos el estado de presencia (última firma + status) en localStorage para que
+// SOBREVIVA a las recargas. Sin esto, cada apertura reinicia el throttle → re-firma la
+// presencia al abrir → salta el prompt de la extensión (nos2x/Alby) SIEMPRE, aunque el
+// evento anterior siga vigente (TTL 240s). Con el estado persistido, si el último evento
+// todavía está fresco (dentro de NOSTR_PRESENCE_REPUBLISH_MS) NO re-firmamos al abrir: la
+// presencia sigue "viva" con el evento anterior. Se re-firma recién cuando toca refrescar,
+// no por el mero hecho de abrir. Se llavea por pubkey para no heredar presencia ajena.
+const NOSTR_PRESENCE_STATE_KEY = 'tetra.nostrPresence.v1';
+let nostrPresenceStateLoaded = false;
+
+function loadNostrPresenceState(): void {
+  try {
+    const raw = localStorage.getItem(NOSTR_PRESENCE_STATE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw) as { pubkey?: string; status?: PresenceStatus; at?: number };
+    const mine = lunaState.identity?.pubkey?.trim().toLowerCase();
+    if (mine && s.pubkey === mine && typeof s.at === 'number') {
+      nostrPresenceLastStatus = s.status ?? null;
+      nostrPresenceLastPublishAt = s.at;
+    }
+  } catch {
+    // localStorage bloqueado / JSON corrupto: arrancamos sin estado (re-firma una vez).
+  }
+}
+
+function saveNostrPresenceState(): void {
+  try {
+    const pubkey = lunaState.identity?.pubkey?.trim().toLowerCase();
+    if (!pubkey) return;
+    localStorage.setItem(
+      NOSTR_PRESENCE_STATE_KEY,
+      JSON.stringify({ pubkey, status: nostrPresenceLastStatus, at: nostrPresenceLastPublishAt }),
+    );
+  } catch {
+    // Sin storage: el throttle solo vive esta sesión (vuelve el prompt al recargar).
+  }
+}
 // Tope de contactos que listamos en el selector de reto. Alto a propósito: mucha
 // gente sigue a cientos de cuentas y con 120 quedaban afuera (y el buscador no los
 // encontraba). fetchProfiles resuelve nombres/avatares en lotes, así que subirlo
@@ -3127,6 +3165,12 @@ function isPlayerActivelyPresent(): boolean {
 // molestar al firmante en cada latido. Best-effort.
 async function syncNostrPresence(): Promise<void> {
   if (!lunaState.identity || !isPlayerActivelyPresent() || nostrPresenceInFlight) return;
+  // Rehidrata el throttle persistido (una sola vez): si el último evento sigue fresco
+  // tras recargar, el chequeo `!stale` de abajo sale temprano y NO re-firmamos al abrir.
+  if (!nostrPresenceStateLoaded) {
+    nostrPresenceStateLoaded = true;
+    loadNostrPresenceState();
+  }
   const signer = getActiveSigner();
   if (!signer) return;
   const status: PresenceStatus = roomState.current ? 'in-game' : 'online';
@@ -3137,6 +3181,7 @@ async function syncNostrPresence(): Promise<void> {
     if (await publishPresence(signer, status)) {
       nostrPresenceLastStatus = status;
       nostrPresenceLastPublishAt = Date.now();
+      saveNostrPresenceState();
     }
   } finally {
     nostrPresenceInFlight = false;
@@ -3150,6 +3195,12 @@ function clearNostrPresence(): void {
   const signer = getActiveSigner();
   nostrPresenceLastStatus = null;
   nostrPresenceLastPublishAt = 0;
+  nostrPresenceStateLoaded = false;
+  try {
+    localStorage.removeItem(NOSTR_PRESENCE_STATE_KEY);
+  } catch {
+    // storage bloqueado: nada que limpiar
+  }
   if (signer) void clearPresenceEvent(signer);
 }
 
