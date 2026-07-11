@@ -1632,7 +1632,7 @@ Object.assign(window, {
           kind: 'room-link',
           slug: '',
           title: 'TETRA',
-          gameUrl: `${window.location.origin}/?lnRoom=${roomId}`,
+          gameUrl: `${window.location.origin}/?join=${roomId}`,
         });
         return `invitación simulada a ${roomId}`;
       },
@@ -2685,8 +2685,8 @@ async function bootstrapOnlineStartup(): Promise<void> {
     await bootstrapLunaNegraEntry();
     return;
   }
-  if (nextParams.get('lnRoom')?.trim()) {
-    await bootstrapLunaRoomLink(nextParams.get('lnRoom')!.trim(), nextParams);
+  if (nextParams.get('join')?.trim()) {
+    await bootstrapLunaRoomLink(nextParams.get('join')!.trim(), nextParams);
     return;
   }
   if (nextParams.get('join')?.trim()) {
@@ -2747,7 +2747,7 @@ async function bootstrapJoinLink(roomId: string): Promise<void> {
 
 // ─────────────── "Luna Room Link": sala hosteada por ESTE juego ───────────────
 // Estándar de enlace de invitación de Luna Negra (docs/luna-room-link.md; §5·bis de
-// la guía de integración). Un enlace `<este-juego>/?lnRoom=<id>[&lnInvite=<jwt>]`
+// la guía de integración). Un enlace `<este-juego>/?join=<id>[&lnInvite=<jwt>]`
 // entra a una sala PartyKit propia (la que ya maneja `?join=`), creada lazy al primer
 // acceso. Es DISTINTO del par `?inviteToken=`+`?room=` (salas hosteadas por Luna).
 //   • Pública (sin lnInvite): cualquiera con el enlace entra, con la identidad actual.
@@ -2800,7 +2800,7 @@ async function bootstrapLunaRoomLink(rawRoomId: string, params: URLSearchParams)
   reopenLoginGate();
 }
 
-// Entra a la sala `lnRoom`: se UNE si ya existe, o la CREA con ese id si no (host =
+// Entra a la sala del link `?join`: se UNE si ya existe, o la CREA con ese id si no (host =
 // el primero en entrar), como pide el estándar (la sala no pre-existe). A diferencia
 // de `joinOnlineRoom` (que solo se une y falla con "Room not found"), acá creamos la
 // sala PartyKit al vuelo. Espeja `createOnlineRoom` pero con el id fijo del enlace.
@@ -2859,7 +2859,7 @@ async function joinLunaRoomLink(roomId: string): Promise<void> {
 // Quita los parámetros de "Luna Room Link" (y el handoff de identidad) de la URL.
 function cleanLunaRoomLinkFromUrl(): void {
   const url = new URL(window.location.href);
-  url.searchParams.delete('lnRoom');
+  url.searchParams.delete('join');
   url.searchParams.delete('lnInvite');
   url.searchParams.delete('lnToken');
   url.searchParams.delete('lnOrigin');
@@ -3186,7 +3186,7 @@ async function acceptPendingLunaLaunchRequest(): Promise<void> {
     // con el mismo camino que un enlace abierto desde el DM, pero sólo después de
     // que el jugador acepta el popup.
     const params = new URLSearchParams({
-      lnRoom: request.normalizedRoomId,
+      join: request.normalizedRoomId,
       lnInvite: request.inviteToken,
     });
     await bootstrapLunaRoomLink(request.normalizedRoomId, params);
@@ -3460,7 +3460,7 @@ async function sendNostrChallenge(pubkey: string): Promise<void> {
     }
     const roomId = roomState.current.id;
     const friend = lunaState.challenge.friends.find((candidate) => candidate.pubkey === toPubkey);
-    // El reto ES un DM NIP-17 con el room link abierto (`?lnRoom=`): quien lo reciba
+    // El reto ES un DM NIP-17 con el room link abierto (`?join=`): quien lo reciba
     // entra a la sala con su identidad actual. Mandamos UN solo sobre (el del rival) con
     // una única firma; antes se firmaba también una auto-copia de historial, y con
     // firmantes NIP-07 esa 2ª firma colgaba el envío y el rival no recibía nada.
@@ -3633,8 +3633,8 @@ async function enterNostrChallengeRoom(challenge: ParsedChallenge): Promise<void
       onlineNetState.error = 'El reto apunta a otro origen y fue bloqueado.';
       return;
     }
-    // Aceptar ambos formatos: el estándar `?lnRoom=` (actual) y `?join=` (links viejos).
-    roomId = normalizeRoomId(url.searchParams.get('lnRoom') ?? url.searchParams.get('join') ?? roomId);
+    // Link de sala estándar: `?join=<id>`.
+    roomId = normalizeRoomId(url.searchParams.get('join') ?? roomId);
   } catch {
     onlineNetState.error = 'El reto trae un link de sala inválido.';
     return;
@@ -4979,7 +4979,7 @@ function openLightningWallet(lightningPayload: string): void {
   window.location.href = `lightning:${normalized.toUpperCase()}`;
 }
 
-// Link de invitación universal: usa el formato ESTÁNDAR de Luna Negra `?lnRoom=<sala>`
+// Link de invitación universal: usa el formato ESTÁNDAR de Luna Negra `?join=<sala>`
 // (mismo que emite la ficha de Luna) para ser consistente en todo el ecosistema.
 // bootstrapLunaRoomLink lo mete directo a la sala PartyKit (la misma que maneja
 // `?join=`), sirve para públicas y privadas mientras estén en lobby. Los links viejos
@@ -4989,7 +4989,7 @@ function buildRoomInviteLink(roomId: string): string {
   const url = new URL(window.location.href);
   url.search = '';
   url.hash = '';
-  url.searchParams.set('lnRoom', roomId);
+  url.searchParams.set('join', roomId);
   return url.toString();
 }
 

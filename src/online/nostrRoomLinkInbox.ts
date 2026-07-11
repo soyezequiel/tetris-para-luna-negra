@@ -1,6 +1,6 @@
 // Recepción de invitaciones "Luna Room Link" por DM Nostr: el cliente de Luna
 // Negra manda la invitación como DM NIP-04 (kind:4) con el texto "Te invito a
-// jugar … <url ?lnRoom=>" (ver friends-sidebar/inviteViaRoomLink en el repo de
+// jugar … <url ?join=>" (ver friends-sidebar/inviteViaRoomLink en el repo de
 // Luna). Su propio cliente lo detecta descifrando el DM y buscando el enlace
 // (`parseRoomLink` de lib/invite.ts); acá replicamos EXACTAMENTE esa detección
 // para que el TETRA abierto muestre el mismo popup sin depender del poll REST
@@ -20,7 +20,7 @@ export type RoomLinkInvite = {
   eventId: string;
   fromPubkey: string;
   roomId: string;
-  /** URL completa del enlace (`…?lnRoom=<roomId>`), ya validada same-origin. */
+  /** URL completa del enlace (`…?join=<roomId>`), ya validada same-origin. */
   url: string;
   /** Título del juego extraído del texto ("Te invito a jugar X…"), si vino. */
   title: string | null;
@@ -59,7 +59,7 @@ function persistSeen(seen: Set<string>): void {
 }
 
 /**
- * Busca en un texto arbitrario un enlace `?lnRoom=` que apunte a ESTE deploy
+ * Busca en un texto arbitrario un enlace `?join=` que apunte a ESTE deploy
  * (mismo origin). El check de origin es la diferencia con el parseRoomLink de
  * Luna (que abre cualquier juego en otra pestaña): acá "aceptar" une a una sala
  * del backend PROPIO, así que un enlace de otro juego no debe generar popup.
@@ -74,7 +74,7 @@ export function parseOwnRoomLink(
     try {
       const u = new URL(raw);
       if (origin && u.origin !== origin) continue;
-      const roomId = u.searchParams.get('lnRoom');
+      const roomId = u.searchParams.get('join');
       if (roomId && LN_ROOM_RE.test(roomId)) return { url: raw, roomId };
     } catch {
       /* no es una URL válida → seguir con la siguiente */

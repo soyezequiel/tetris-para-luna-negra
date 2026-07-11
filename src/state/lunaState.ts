@@ -69,7 +69,7 @@ export interface LunaState {
   launchPollInFlight: boolean;
   // Request de "entrar a sala" pendiente de confirmación del usuario.
   pendingLaunchRequest: PendingLunaLaunchRequest | null;
-  // "Luna Room Link" dirigido pendiente: llegó un `?lnRoom=&lnInvite=` para un npub
+  // "Luna Room Link" dirigido pendiente: llegó un `?join=&lnInvite=` para un npub
   // concreto pero todavía no hay una identidad Nostr que coincida. Se resuelve al
   // loguearse (maybeResumePendingRoomLink en applyLunaIdentity).
   pendingRoomLink: { roomId: string; toNpub: string } | null;
