@@ -495,6 +495,10 @@ let nostrPresenceInFlight = false;
 // no por el mero hecho de abrir. Se llavea por pubkey para no heredar presencia ajena.
 const NOSTR_PRESENCE_STATE_KEY = 'tetra.nostrPresence.v1';
 let nostrPresenceStateLoaded = false;
+// Se pone en true con el primer gesto del usuario (click/tecla). Hasta entonces NO
+// tocamos el firmante (presencia, bandeja) para no abrir el popup de la extensión al
+// cargar la página. Ver armNostrOnFirstGesture.
+let nostrUserGestureSeen = false;
 
 function loadNostrPresenceState(): void {
   try {
@@ -559,6 +563,19 @@ window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
   if (lunaState.identity && isPlayerActivelyPresent()) void syncNostrPresence();
 }, PRESENCE_TICK_MS);
+// No firmamos NADA con el firmante (presencia, bandeja de retos) hasta el PRIMER GESTO
+// del usuario: firmar/descifrar al abrir la página dispara el popup de la extensión
+// (nos2x/Alby) en cada apertura. Tras el primer click/tecla activamos presencia +
+// bandeja normalmente. En un login fresco el gesto ya ocurrió (el usuario cliqueó para
+// conectarse), así que no hay demora perceptible; solo protege la reapertura pasiva.
+const armNostrOnFirstGesture = (): void => {
+  if (nostrUserGestureSeen) return;
+  nostrUserGestureSeen = true;
+  void syncNostrPresence();
+  void ensureNostrChallengeInbox();
+};
+window.addEventListener('pointerdown', armNostrOnFirstGesture, { once: true });
+window.addEventListener('keydown', armNostrOnFirstGesture, { once: true });
 window.setInterval(() => {
   if (shouldAutoRefreshPublicRooms()) void refreshPublicRooms({ silent: true });
 }, ONLINE_ROOMS_AUTO_REFRESH_MS);
@@ -3176,6 +3193,10 @@ async function syncNostrPresence(): Promise<void> {
   const status: PresenceStatus = roomState.current ? 'in-game' : 'online';
   const stale = Date.now() - nostrPresenceLastPublishAt >= NOSTR_PRESENCE_REPUBLISH_MS;
   if (status === nostrPresenceLastStatus && !stale) return;
+  // Llegamos acá porque hay que FIRMAR (evento nuevo o vencido). No lo hacemos hasta el
+  // primer gesto del usuario: firmar al cargar abre el popup de la extensión. El gesto
+  // re-dispara este sync (armNostrOnFirstGesture). La presencia vigente ya salió arriba.
+  if (!nostrUserGestureSeen) return;
   nostrPresenceInFlight = true;
   try {
     if (await publishPresence(signer, status)) {
@@ -3547,6 +3568,10 @@ async function ensureNostrChallengeInbox(): Promise<void> {
     challengeInboxPubkey = null;
     return;
   }
+  // La bandeja desencripta gift-wraps/DMs entrantes CON el firmante (nip44/nip04): eso
+  // abre el popup de la extensión. No la arrancamos hasta el primer gesto del usuario;
+  // armNostrOnFirstGesture la vuelve a llamar entonces. (En login fresco el gesto ya pasó.)
+  if (!nostrUserGestureSeen) return;
   if (challengeInboxPubkey === identityPubkey || challengeInboxStarting) return;
   if (challengeInboxPubkey && challengeInboxPubkey !== identityPubkey) {
     stopChallengeInbox();
