@@ -125,7 +125,7 @@ import { loginWithSigner } from './online/nostrLogin';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
 import { startRoomLinkInviteInbox, stopRoomLinkInviteInbox, type RoomLinkInvite } from './online/nostrRoomLinkInbox';
-import { clearPresenceEvent, clearPresenceNowSync, publishPresence, type PresenceStatus } from './online/nostrPresence';
+import { clearPresenceNowSync, stopPresence, syncPresence } from './online/nostrPresence';
 import {
   NOSTR_BOARD_SURVIVAL,
   NOSTR_BOARD_WINS,
@@ -478,59 +478,15 @@ lunaState.trustedOrigin = loadTrustedLunaOrigin();
 // limpia vía pagehide/logout.
 const PRESENCE_TICK_MS = 10_000;
 const LUNA_LAUNCH_POLL_MS = 2_000;
-// Presencia Nostr (NIP-38): cada latido es una FIRMA (con un bunker NIP-46 puede
-// ser un prompt), así que la re-publicamos espaciada. Igual se dispara al toque
-// cuando cambia el estado (online↔in-game). Debe quedar bien por debajo de
-// PRESENCE_TTL_SEC (180s) aun estrangulado a ~1/min en segundo plano: re-firma
-// ~cada 40s visible / ~60s de fondo y el evento vive 180s. El throttle persistido
-// evita re-firmar al abrir si el último evento sigue fresco.
-const NOSTR_PRESENCE_REPUBLISH_MS = 40_000;
-let nostrPresenceLastStatus: PresenceStatus | null = null;
-let nostrPresenceLastPublishAt = 0;
-let nostrPresenceInFlight = false;
-
-// Persistimos el estado de presencia (última firma + status) en localStorage para que
-// SOBREVIVA a las recargas. Sin esto, cada apertura reinicia el throttle → re-firma la
-// presencia al abrir → salta el prompt de la extensión (nos2x/Alby) SIEMPRE, aunque el
-// evento anterior siga vigente (TTL 240s). Con el estado persistido, si el último evento
-// todavía está fresco (dentro de NOSTR_PRESENCE_REPUBLISH_MS) NO re-firmamos al abrir: la
-// presencia sigue "viva" con el evento anterior. Se re-firma recién cuando toca refrescar,
-// no por el mero hecho de abrir. Se llavea por pubkey para no heredar presencia ajena.
-const NOSTR_PRESENCE_STATE_KEY = 'tetra.nostrPresence.v1';
-let nostrPresenceStateLoaded = false;
+// La orquestación de la presencia (throttle de firma, throttle PERSISTIDO entre
+// recargas, heartbeat, clears) vive en el PresenceManager del SDK
+// (`nostr-game-protocol/ngp`), detrás del puerto online/nostrPresence.ts. Acá solo
+// queda decidir CUÁNDO sincronizar y con qué estado (online↔in-game).
 // Se pone en true con el primer gesto del usuario (click/tecla). Hasta entonces NO
 // arrancamos la bandeja de retos (descifrar DMs abre el popup de la extensión al
 // cargar). La PRESENCIA no espera el gesto: se anuncia al abrir el juego (decisión
 // de producto; con extensión puede promptar al cargar). Ver armNostrOnFirstGesture.
 let nostrUserGestureSeen = false;
-
-function loadNostrPresenceState(): void {
-  try {
-    const raw = localStorage.getItem(NOSTR_PRESENCE_STATE_KEY);
-    if (!raw) return;
-    const s = JSON.parse(raw) as { pubkey?: string; status?: PresenceStatus; at?: number };
-    const mine = lunaState.identity?.pubkey?.trim().toLowerCase();
-    if (mine && s.pubkey === mine && typeof s.at === 'number') {
-      nostrPresenceLastStatus = s.status ?? null;
-      nostrPresenceLastPublishAt = s.at;
-    }
-  } catch {
-    // localStorage bloqueado / JSON corrupto: arrancamos sin estado (re-firma una vez).
-  }
-}
-
-function saveNostrPresenceState(): void {
-  try {
-    const pubkey = lunaState.identity?.pubkey?.trim().toLowerCase();
-    if (!pubkey) return;
-    localStorage.setItem(
-      NOSTR_PRESENCE_STATE_KEY,
-      JSON.stringify({ pubkey, status: nostrPresenceLastStatus, at: nostrPresenceLastPublishAt }),
-    );
-  } catch {
-    // Sin storage: el throttle solo vive esta sesión (vuelve el prompt al recargar).
-  }
-}
 // Tope de contactos que listamos en el selector de reto. Alto a propósito: mucha
 // gente sigue a cientos de cuentas y con 120 quedaban afuera (y el buscador no los
 // encontraba). fetchProfiles resuelve nombres/avatares en lotes, así que subirlo
@@ -3094,8 +3050,8 @@ function clearLunaIdentity(): void {
   challengeInboxStarting = false;
   stopChallengeInbox();
   stopRoomLinkInviteInbox();
-  // Limpia la presencia NIP-38 mientras el firmante sigue activo (clearActiveSigner
-  // lo cierra a continuación), para no quedar "Jugando TETRA" hasta que caduque.
+  // Limpia la presencia NIP-38 para no quedar "Jugando TETRA" hasta que caduque
+  // (el manager firma el clear con su propio signer, capturado al crearse).
   clearNostrPresence();
   // Cierra y olvida el firmante Nostr (sesión 2.0) junto con la identidad.
   clearActiveSigner();
@@ -3191,49 +3147,25 @@ function isHttpOrigin(origin: string): boolean {
 // se va"). De fondo el navegador estrangula el tick a ~1/min y el TTL de 180s lo
 // absorbe. El cierre real limpia vía `pagehide` (clear pre-firmado) o logout.
 async function syncNostrPresence(): Promise<void> {
-  if (!lunaState.identity || nostrPresenceInFlight) return;
-  // Rehidrata el throttle persistido (una sola vez): si el último evento sigue fresco
-  // tras recargar, el chequeo `!stale` de abajo sale temprano y NO re-firmamos al abrir.
-  if (!nostrPresenceStateLoaded) {
-    nostrPresenceStateLoaded = true;
-    loadNostrPresenceState();
-  }
+  const pubkey = lunaState.identity?.pubkey?.trim().toLowerCase();
+  if (!pubkey) return;
   const signer = getActiveSigner();
   if (!signer) return;
-  const status: PresenceStatus = roomState.current ? 'in-game' : 'online';
-  const stale = Date.now() - nostrPresenceLastPublishAt >= NOSTR_PRESENCE_REPUBLISH_MS;
-  if (status === nostrPresenceLastStatus && !stale) return;
-  // Llegamos acá porque hay que FIRMAR (evento nuevo o vencido). La presencia se
-  // anuncia APENAS se abre el juego, con cualquier firmante: con extensión/bunker eso
-  // puede abrir el popup del firmante al cargar — es el costo elegido para figurar
-  // "En TETRA" desde el arranque (el throttle persistido evita re-firmar si el último
-  // evento sigue fresco). La bandeja de retos sí sigue esperando el primer gesto.
-  nostrPresenceInFlight = true;
-  try {
-    if (await publishPresence(signer, status)) {
-      nostrPresenceLastStatus = status;
-      nostrPresenceLastPublishAt = Date.now();
-      saveNostrPresenceState();
-    }
-  } finally {
-    nostrPresenceInFlight = false;
-  }
+  // La presencia se anuncia APENAS se abre el juego, con cualquier firmante: con
+  // extensión/bunker eso puede abrir el popup del firmante al cargar — es el costo
+  // elegido para figurar "En TETRA" desde el arranque (el throttle persistido del
+  // manager evita re-firmar si el último evento sigue fresco). La bandeja de retos
+  // sí sigue esperando el primer gesto.
+  syncPresence(signer, pubkey, roomState.current ? 'in-game' : 'online');
 }
 
-// Limpia la presencia Nostr al cerrar sesión (evento vacío + expiración inmediata),
-// para que "Jugando TETRA" desaparezca sin esperar el TTL. Debe llamarse ANTES de
-// clearActiveSigner() (necesita el firmante todavía activo).
+// Limpia la presencia Nostr al cerrar sesión (evento vacío + expiración holgada),
+// para que "Jugando TETRA" desaparezca sin esperar el TTL.
 function clearNostrPresence(): void {
-  const signer = getActiveSigner();
-  nostrPresenceLastStatus = null;
-  nostrPresenceLastPublishAt = 0;
-  nostrPresenceStateLoaded = false;
-  try {
-    localStorage.removeItem(NOSTR_PRESENCE_STATE_KEY);
-  } catch {
-    // storage bloqueado: nada que limpiar
-  }
-  if (signer) void clearPresenceEvent(signer);
+  // El manager firma el clear con SU signer (capturado al crearse), así que esto
+  // funciona aunque después venga clearActiveSigner(); también olvida el throttle
+  // persistido para que la próxima sesión re-anuncie desde cero.
+  void stopPresence();
 }
 
 async function syncLunaLaunchRequest(): Promise<void> {
