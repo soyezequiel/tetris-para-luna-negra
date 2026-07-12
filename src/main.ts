@@ -3227,6 +3227,20 @@ function clearNostrPresence(): void {
   if (signer) void clearPresenceEvent(signer);
 }
 
+// Limpia la presencia al OCULTAR/CERRAR el juego (no en logout): publica el clear
+// coord-anclado ya mismo para que la tienda deje de mostrarte "Jugando TETRA" en
+// segundos, sin esperar el TTL. A diferencia de clearNostrPresence NO olvida la
+// sesión ni borra el localStorage — solo resetea el throttle en memoria para que al
+// VOLVER a primer plano (visibilitychange) se re-publique la presencia de inmediato.
+function clearNostrPresenceAway(): void {
+  const signer = getActiveSigner();
+  if (!lunaState.identity || !signer) return;
+  nostrPresenceLastStatus = null; // fuerza re-publicar al volver a visible
+  nostrPresenceLastPublishAt = 0;
+  saveNostrPresenceState();
+  void clearPresenceEvent(signer);
+}
+
 async function syncLunaLaunchRequest(): Promise<void> {
   if (!lunaState.identity || onlineNetState.busy || lunaState.launchPollInFlight || lunaState.pendingLaunchRequest) return;
   lunaState.launchPollInFlight = true;
@@ -6839,6 +6853,12 @@ function syncOnlineVisibilityChange(): void {
   sound.setSfxSuspended(document.hidden);
   for (const layer of juiceLayers) layer.setSuspended(document.hidden);
   if (document.hidden) {
+    // Al ocultar/cerrar el juego USAMOS EL CLEAR ya mismo (no esperamos el TTL): la
+    // tienda deja de mostrarte "Jugando TETRA" en segundos. `visibilitychange` dispara
+    // con la página aún viva, así que el publish async del clear alcanza a salir (a
+    // diferencia de firmar en `beforeunload`). Antes el clear SOLO corría en logout, así
+    // que cerrar la pestaña dejaba la presencia colgada hasta caducar. Ver clearNostrPresenceAway.
+    clearNostrPresenceAway();
     syncOnlineBackground();
     return;
   }
