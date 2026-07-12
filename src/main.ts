@@ -3193,10 +3193,12 @@ async function syncNostrPresence(): Promise<void> {
   const status: PresenceStatus = roomState.current ? 'in-game' : 'online';
   const stale = Date.now() - nostrPresenceLastPublishAt >= NOSTR_PRESENCE_REPUBLISH_MS;
   if (status === nostrPresenceLastStatus && !stale) return;
-  // Llegamos acá porque hay que FIRMAR (evento nuevo o vencido). No lo hacemos hasta el
-  // primer gesto del usuario: firmar al cargar abre el popup de la extensión. El gesto
-  // re-dispara este sync (armNostrOnFirstGesture). La presencia vigente ya salió arriba.
-  if (!nostrUserGestureSeen) return;
+  // Llegamos acá porque hay que FIRMAR (evento nuevo o vencido). Con firmante de clave
+  // LOCAL firmamos en silencio (sin popup), así que anunciamos la presencia YA al abrir
+  // el juego, sin esperar el gesto. Con extensión/bunker (nip07/nip46) firmar al cargar
+  // abre el popup del firmante, así que ahí sí esperamos el primer gesto del usuario; el
+  // gesto re-dispara este sync (armNostrOnFirstGesture). La presencia vigente ya salió arriba.
+  if (!nostrUserGestureSeen && signer.method !== 'local') return;
   nostrPresenceInFlight = true;
   try {
     if (await publishPresence(signer, status)) {

@@ -76,7 +76,9 @@ export async function publishPresence(
  */
 export async function clearPresenceEvent(signer: LunaSigner): Promise<boolean> {
   try {
-    const evt = await buildPresenceClearEvent(signer);
+    // Con la coord anclada la tienda ve el clear al instante por su filtro #a
+    // (sin ella solo "dejaba de ver" la presencia y esperaba el TTL).
+    const evt = await buildPresenceClearEvent(signer, { gameCoord: TETRA_GAME_COORD });
     await Promise.any(getPool().publish(PUBLIC_WRITE_RELAYS, evt));
     return true;
   } catch {
