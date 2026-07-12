@@ -19,13 +19,16 @@ import {
   buildPresenceClearEvent,
 } from 'nostr-game-protocol/ngp';
 
-// Vida del estado sin re-latir. El heartbeat re-publica antes de que expire; si el
-// jugador se va (cierra/minimiza/logout) dejamos de latir y a los ~4 min Nostr lo
-// deja de mostrar como jugando. Más largo que el TTL REST (20s) a propósito: cada
-// re-publicación es una FIRMA (y con un bunker NIP-46, puede ser un prompt), así que
-// espaciamos los latidos para no molestar. El logout limpia de inmediato (ver
-// clearPresenceEvent).
-export const PRESENCE_TTL_SEC = 240;
+// Vida del estado sin re-latir = TIEMPO MÁXIMO que la tienda te sigue mostrando
+// "Jugando TETRA" tras cerrar/soltar el juego. El heartbeat re-publica antes de que
+// expire mientras la pestaña está visible; al cerrar/minimizar/cambiar de app
+// dejamos de latir (isPlayerActivelyPresent) y el evento caduca solo. Bajado de 240s
+// a 60s para que "deje de jugar" se note rápido: antes colgaba ~4 min. Debe ser
+// cómodamente mayor que NOSTR_PRESENCE_REPUBLISH_MS para no titilar mientras jugás.
+// Cada re-publicación es una FIRMA (con bunker NIP-46 puede promptar), pero el
+// throttle persistido evita re-firmar al abrir si el último evento sigue fresco.
+// El logout limpia de inmediato (ver clearPresenceEvent).
+export const PRESENCE_TTL_SEC = 60;
 
 export type PresenceStatus = 'in-game' | 'online';
 

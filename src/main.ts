@@ -478,10 +478,11 @@ lunaState.trustedOrigin = loadTrustedLunaOrigin();
 const PRESENCE_TICK_MS = 10_000;
 const LUNA_LAUNCH_POLL_MS = 2_000;
 // Presencia Nostr (NIP-38): cada latido es una FIRMA (con un bunker NIP-46 puede
-// ser un prompt), así que la re-publicamos bien espaciada. Igual se dispara al
-// toque cuando cambia el estado (online↔in-game). El evento caduca a los
-// PRESENCE_TTL_SEC (240s) si dejamos de latir.
-const NOSTR_PRESENCE_REPUBLISH_MS = 120_000;
+// ser un prompt), así que la re-publicamos espaciada. Igual se dispara al toque
+// cuando cambia el estado (online↔in-game). Debe ser menor que PRESENCE_TTL_SEC
+// (60s) con margen para no titilar: re-firma ~cada 40s y el evento vive 60s. El
+// throttle persistido evita re-firmar al abrir si el último evento sigue fresco.
+const NOSTR_PRESENCE_REPUBLISH_MS = 40_000;
 let nostrPresenceLastStatus: PresenceStatus | null = null;
 let nostrPresenceLastPublishAt = 0;
 let nostrPresenceInFlight = false;
