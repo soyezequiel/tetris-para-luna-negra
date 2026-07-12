@@ -20,16 +20,17 @@ import {
 } from 'nostr-game-protocol/ngp';
 import { buildPresenceClearTemplate } from 'nostr-game-protocol/ngp-core';
 
-// Vida del estado sin re-latir = TIEMPO MÁXIMO que la tienda te sigue mostrando
-// "Jugando TETRA" tras cerrar/soltar el juego. El heartbeat re-publica antes de que
-// expire mientras la pestaña está visible; al cerrar/minimizar/cambiar de app
-// dejamos de latir (isPlayerActivelyPresent) y el evento caduca solo. Bajado de 240s
-// a 60s para que "deje de jugar" se note rápido: antes colgaba ~4 min. Debe ser
-// cómodamente mayor que NOSTR_PRESENCE_REPUBLISH_MS para no titilar mientras jugás.
-// Cada re-publicación es una FIRMA (con bunker NIP-46 puede promptar), pero el
-// throttle persistido evita re-firmar al abrir si el último evento sigue fresco.
-// El logout limpia de inmediato (ver clearPresenceEvent).
-export const PRESENCE_TTL_SEC = 60;
+// Vida del estado sin re-latir. Es la RED DE SEGURIDAD si el clear del cierre no
+// llegó a salir (crash): fantasma acotado a ~3 min — el cierre normal lo baja al
+// instante el clear pre-firmado de `pagehide` (clearPresenceNowSync) y el logout
+// el suyo (clearPresenceEvent). NO puede ser menor: el heartbeat sigue corriendo
+// con la pestaña de fondo ("jugando" = juego ABIERTO, no en primer plano — si no,
+// mirar la tienda te bajaba en ~1 min), y los navegadores estrangulan los timers
+// ocultos a ~1 disparo/min; 180s tolera hasta dos latidos estrangulados/perdidos
+// sin titilar. Cada re-publicación es una FIRMA (con bunker NIP-46 puede promptar),
+// pero el throttle persistido evita re-firmar al abrir si el último evento sigue
+// fresco.
+export const PRESENCE_TTL_SEC = 180;
 
 export type PresenceStatus = 'in-game' | 'online';
 

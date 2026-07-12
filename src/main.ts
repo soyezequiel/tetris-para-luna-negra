@@ -472,16 +472,18 @@ let lunaBootstrapDone = false;
 // cierra. Es estado efímero de UI; el loop lo refleja en el próximo frame.
 let userMenuOpen = false;
 lunaState.trustedOrigin = loadTrustedLunaOrigin();
-// Cada cuánto miramos si hay que republicar la presencia, y SOLO mientras la
-// pestaña está visible: si el jugador cambia de app, minimiza o cierra el juego
-// dejamos de latir y el evento caduca solo.
+// Cada cuánto miramos si hay que republicar la presencia. Corre mientras el juego
+// esté ABIERTO (también con la pestaña de fondo — mirar la tienda no te baja); de
+// fondo el navegador lo estrangula a ~1/min y el TTL holgado lo absorbe. El cierre
+// limpia vía pagehide/logout.
 const PRESENCE_TICK_MS = 10_000;
 const LUNA_LAUNCH_POLL_MS = 2_000;
 // Presencia Nostr (NIP-38): cada latido es una FIRMA (con un bunker NIP-46 puede
 // ser un prompt), así que la re-publicamos espaciada. Igual se dispara al toque
-// cuando cambia el estado (online↔in-game). Debe ser menor que PRESENCE_TTL_SEC
-// (60s) con margen para no titilar: re-firma ~cada 40s y el evento vive 60s. El
-// throttle persistido evita re-firmar al abrir si el último evento sigue fresco.
+// cuando cambia el estado (online↔in-game). Debe quedar bien por debajo de
+// PRESENCE_TTL_SEC (180s) aun estrangulado a ~1/min en segundo plano: re-firma
+// ~cada 40s visible / ~60s de fondo y el evento vive 180s. El throttle persistido
+// evita re-firmar al abrir si el último evento sigue fresco.
 const NOSTR_PRESENCE_REPUBLISH_MS = 40_000;
 let nostrPresenceLastStatus: PresenceStatus | null = null;
 let nostrPresenceLastPublishAt = 0;
@@ -572,7 +574,7 @@ window.addEventListener('pagehide', (event) => {
 });
 window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
-  if (lunaState.identity && isPlayerActivelyPresent()) void syncNostrPresence();
+  if (lunaState.identity) void syncNostrPresence();
 }, PRESENCE_TICK_MS);
 // La BANDEJA de retos no arranca hasta el PRIMER GESTO del usuario: descifrar DMs al
 // abrir la página dispara el popup de la extensión (nos2x/Alby) en cada apertura. La
@@ -3178,20 +3180,18 @@ function isHttpOrigin(origin: string): boolean {
   return /^https?:\/\//.test(origin);
 }
 
-// El jugador "está jugando" solo si tiene el juego visible en primer plano. Si
-// minimiza, cambia de pestaña/app o cierra el juego dejamos de latir, y al
-// caducar el evento se lo deja de mostrar como jugando. Esto evita los falsos
-// positivos de "Jugando Tetris" con el juego abierto de fondo.
-function isPlayerActivelyPresent(): boolean {
-  return document.visibilityState === 'visible';
-}
-
 // Publica la presencia NIP-38 (kind:30315) firmada por el propio jugador, si hay
 // una sesión Nostr 2.0 (firmante activo). Sólo re-firma cuando cambia el estado o
 // cuando el último evento está por caducar (NOSTR_PRESENCE_REPUBLISH_MS), para no
 // molestar al firmante en cada latido. Best-effort.
+//
+// ⚠️ SIN gating por visibilidad, a propósito (se probó y estaba MAL): "jugando" =
+// el juego ABIERTO, no en primer plano. Con el latido atado a la pestaña visible,
+// mirar la tienda dejaba morir la presencia por TTL en ~1 min ("aparece un rato y
+// se va"). De fondo el navegador estrangula el tick a ~1/min y el TTL de 180s lo
+// absorbe. El cierre real limpia vía `pagehide` (clear pre-firmado) o logout.
 async function syncNostrPresence(): Promise<void> {
-  if (!lunaState.identity || !isPlayerActivelyPresent() || nostrPresenceInFlight) return;
+  if (!lunaState.identity || nostrPresenceInFlight) return;
   // Rehidrata el throttle persistido (una sola vez): si el último evento sigue fresco
   // tras recargar, el chequeo `!stale` de abajo sale temprano y NO re-firmamos al abrir.
   if (!nostrPresenceStateLoaded) {
@@ -6848,12 +6848,11 @@ function syncOnlineVisibilityChange(): void {
   sound.setSfxSuspended(document.hidden);
   for (const layer of juiceLayers) layer.setSuspended(document.hidden);
   if (document.hidden) {
-    // Ocultar NO es cerrar: acá solo dejamos de latir (isPlayerActivelyPresent) y la
-    // presencia vigente vive su TTL corto (60s) — una pestaña de fondo se apaga sola
-    // en ≤1 min. NO publicamos el clear acá: si limpiáramos al ocultar, mirar la
-    // tienda en otra pestaña te bajaría al instante y nunca podrías verte jugando.
-    // El cierre REAL sí limpia ya mismo: `pagehide` manda el clear pre-firmado
-    // (clearPresenceNowSync) y el logout usa clearNostrPresence.
+    // Ocultar NO es cerrar: la presencia NIP-38 sigue latiendo de fondo (su tick es
+    // global y el TTL holgado absorbe el estrangulado del navegador) — mirar la
+    // tienda en otra pestaña no te baja. El cierre REAL sí limpia ya mismo:
+    // `pagehide` manda el clear pre-firmado (clearPresenceNowSync) y el logout usa
+    // clearNostrPresence.
     syncOnlineBackground();
     return;
   }
