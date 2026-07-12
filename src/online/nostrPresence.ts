@@ -18,6 +18,7 @@ import {
   buildPresenceEvent as ngpBuildPresenceEvent,
   buildPresenceClearEvent,
 } from 'nostr-game-protocol/ngp';
+import { buildPresenceClearTemplate } from 'nostr-game-protocol/ngp-core';
 
 // Vida del estado sin re-latir = TIEMPO MÁXIMO que la tienda te sigue mostrando
 // "Jugando TETRA" tras cerrar/soltar el juego. El heartbeat re-publica antes de que
@@ -55,6 +56,14 @@ export async function buildPresenceEvent(
   });
 }
 
+// Clear PRE-FIRMADO de la última presencia publicada, listo para mandarse
+// SINCRÓNICAMENTE al cerrar la pestaña (`pagehide`): firmar en el unload no llega
+// (la firma es async y el navegador mata la página antes), pero un `ws.send` sobre
+// los sockets ya abiertos del pool suele salir. Se re-firma en cada publicación con
+// `created_at` = presencia + 1 para que gane la resolución del slot replaceable
+// `d:general`. Mismo patrón que el Ajedrez (presence.ts).
+let preparedClear: Event | null = null;
+
 /**
  * Firma y publica la presencia en los relays de escritura pública. Best-effort:
  * devuelve `false` si ningún relay aceptó o si el firmante falló (nunca lanza).
@@ -66,9 +75,38 @@ export async function publishPresence(
   try {
     const evt = await buildPresenceEvent(signer, status);
     await Promise.any(getPool().publish(PUBLIC_WRITE_RELAYS, evt));
+    // Pre-firmamos el clear correspondiente a ESTA presencia. Best-effort: si el
+    // firmante falla, queda el clear previo (peor caso: el TTL corto la baja solo).
+    try {
+      preparedClear = await signer.signEvent(
+        buildPresenceClearTemplate({
+          createdAt: evt.created_at + 1,
+          gameCoord: TETRA_GAME_COORD,
+        }),
+      );
+    } catch {
+      // sin clear pre-firmado: el cierre cae al TTL
+    }
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Limpieza SINCRÓNICA para el cierre de pestaña (`pagehide`): encola el envío del
+ * clear pre-firmado sin `await`, así "Jugando TETRA" desaparece ya al cerrar el
+ * juego en vez de esperar el TTL. Best-effort total: sin clear pre-firmado (nunca
+ * se publicó presencia, o el firmante no re-firmó) no hace nada.
+ */
+export function clearPresenceNowSync(): void {
+  const evt = preparedClear;
+  if (!evt) return;
+  preparedClear = null;
+  try {
+    for (const p of getPool().publish(PUBLIC_WRITE_RELAYS, evt)) p.catch(() => {});
+  } catch {
+    // pool caído en pleno cierre: el TTL corto la baja solo
   }
 }
 
@@ -78,6 +116,7 @@ export async function publishPresence(
  * Best-effort: no lanza.
  */
 export async function clearPresenceEvent(signer: LunaSigner): Promise<boolean> {
+  preparedClear = null; // la sesión se cierra: el clear fresco de abajo ya la pisa
   try {
     // Con la coord anclada la tienda ve el clear al instante por su filtro #a
     // (sin ella solo "dejaba de ver" la presencia y esperaba el TTL).
