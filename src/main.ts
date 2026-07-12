@@ -496,8 +496,9 @@ let nostrPresenceInFlight = false;
 const NOSTR_PRESENCE_STATE_KEY = 'tetra.nostrPresence.v1';
 let nostrPresenceStateLoaded = false;
 // Se pone en true con el primer gesto del usuario (click/tecla). Hasta entonces NO
-// tocamos el firmante (presencia, bandeja) para no abrir el popup de la extensión al
-// cargar la página. Ver armNostrOnFirstGesture.
+// arrancamos la bandeja de retos (descifrar DMs abre el popup de la extensión al
+// cargar). La PRESENCIA no espera el gesto: se anuncia al abrir el juego (decisión
+// de producto; con extensión puede promptar al cargar). Ver armNostrOnFirstGesture.
 let nostrUserGestureSeen = false;
 
 function loadNostrPresenceState(): void {
@@ -563,11 +564,10 @@ window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
   if (lunaState.identity && isPlayerActivelyPresent()) void syncNostrPresence();
 }, PRESENCE_TICK_MS);
-// No firmamos NADA con el firmante (presencia, bandeja de retos) hasta el PRIMER GESTO
-// del usuario: firmar/descifrar al abrir la página dispara el popup de la extensión
-// (nos2x/Alby) en cada apertura. Tras el primer click/tecla activamos presencia +
-// bandeja normalmente. En un login fresco el gesto ya ocurrió (el usuario cliqueó para
-// conectarse), así que no hay demora perceptible; solo protege la reapertura pasiva.
+// La BANDEJA de retos no arranca hasta el PRIMER GESTO del usuario: descifrar DMs al
+// abrir la página dispara el popup de la extensión (nos2x/Alby) en cada apertura. La
+// presencia NO espera el gesto (se anuncia al abrir el juego); acá solo re-sincronizamos
+// por si un prompt del firmante quedó pendiente. En un login fresco el gesto ya ocurrió.
 const armNostrOnFirstGesture = (): void => {
   if (nostrUserGestureSeen) return;
   nostrUserGestureSeen = true;
@@ -3193,12 +3193,11 @@ async function syncNostrPresence(): Promise<void> {
   const status: PresenceStatus = roomState.current ? 'in-game' : 'online';
   const stale = Date.now() - nostrPresenceLastPublishAt >= NOSTR_PRESENCE_REPUBLISH_MS;
   if (status === nostrPresenceLastStatus && !stale) return;
-  // Llegamos acá porque hay que FIRMAR (evento nuevo o vencido). Con firmante de clave
-  // LOCAL firmamos en silencio (sin popup), así que anunciamos la presencia YA al abrir
-  // el juego, sin esperar el gesto. Con extensión/bunker (nip07/nip46) firmar al cargar
-  // abre el popup del firmante, así que ahí sí esperamos el primer gesto del usuario; el
-  // gesto re-dispara este sync (armNostrOnFirstGesture). La presencia vigente ya salió arriba.
-  if (!nostrUserGestureSeen && signer.method !== 'local') return;
+  // Llegamos acá porque hay que FIRMAR (evento nuevo o vencido). La presencia se
+  // anuncia APENAS se abre el juego, con cualquier firmante: con extensión/bunker eso
+  // puede abrir el popup del firmante al cargar — es el costo elegido para figurar
+  // "En TETRA" desde el arranque (el throttle persistido evita re-firmar si el último
+  // evento sigue fresco). La bandeja de retos sí sigue esperando el primer gesto.
   nostrPresenceInFlight = true;
   try {
     if (await publishPresence(signer, status)) {
