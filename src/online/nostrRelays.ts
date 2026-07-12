@@ -26,7 +26,11 @@ export const DM_RELAYS = [
 // NIP-38 kind:30315; a futuro el marcador kind:31339). Es el subconjunto escribible
 // de PROFILE_RELAYS: quitamos relay.nostr.band (indexador de solo lectura que rechaza
 // escrituras) para no perder un slot de publicación en un relay que igual reindexa.
+// Incluye relay.lacrypta.ar (que Luna Negra LEE) para que el clear de cierre
+// aterrice también ahí: un target más reduce la chance de que un relay se quede
+// con el "on" viejo si su socket estaba reconectando en el `pagehide`.
 export const PUBLIC_WRITE_RELAYS = [
+  'wss://relay.lacrypta.ar',
   'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.primal.net',

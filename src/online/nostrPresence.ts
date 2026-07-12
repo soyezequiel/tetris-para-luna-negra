@@ -23,11 +23,13 @@ import {
 // Vida del estado sin re-latir. Es la RED DE SEGURIDAD si el clear del cierre no
 // llegó a salir (crash): fantasma acotado a ~3 min — el cierre normal lo baja al
 // instante el clear pre-firmado de `pagehide` (clearPresenceNowSync) y el logout
-// el suyo (stopPresence). NO puede ser menor: el heartbeat sigue corriendo con la
-// pestaña de fondo ("jugando" = juego ABIERTO, no en primer plano) y los
-// navegadores estrangulan los timers ocultos a ~1 disparo/min; 180s tolera hasta
-// dos latidos estrangulados/perdidos sin titilar.
-export const PRESENCE_TTL_SEC = 180;
+// el suyo (stopPresence). Es la RED DE SEGURIDAD si el clear de cierre no llegó:
+// acota el fantasma a este TTL. El heartbeat sigue corriendo con la pestaña de
+// fondo ("jugando" = juego ABIERTO, no en primer plano) y los navegadores
+// estrangulan los timers ocultos a ~1 disparo/min. 120s tolera UN latido
+// estrangulado/perdido sin titilar (180s toleraba dos): si aparece flicker mirando
+// la tienda con el juego abierto de fondo, subir a 150/180.
+export const PRESENCE_TTL_SEC = 120;
 
 export type PresenceStatus = 'in-game' | 'online';
 
