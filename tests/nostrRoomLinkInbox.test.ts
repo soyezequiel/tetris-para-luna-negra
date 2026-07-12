@@ -1,5 +1,5 @@
 // La invitación "Luna Room Link" llega como DM NIP-04 (kind:4) con el texto
-// "Te invito a jugar X en Luna Negra 🎮\n<url ?lnRoom=>" (sendDm del repo de
+// "Te invito a jugar X en Luna Negra 🎮\n<url ?join=>" (sendDm del repo de
 // Luna). Estos tests arman ESE evento real (cifrado NIP-04 incluido) y verifican
 // que la bandeja lo detecte igual que el cliente de Luna, filtrando por origin.
 import { describe, it, expect, vi } from 'vitest';
@@ -68,26 +68,26 @@ async function flushAsyncParsers(): Promise<void> {
 }
 
 describe('parseOwnRoomLink', () => {
-  it('detecta el enlace lnRoom del propio origin dentro del texto del DM', () => {
-    const text = `Te invito a jugar TETRA en Luna Negra 🎮\n${ORIGIN}/?lnRoom=AB2C`;
+  it('detecta el enlace join del propio origin dentro del texto del DM', () => {
+    const text = `Te invito a jugar TETRA en Luna Negra 🎮\n${ORIGIN}/?join=AB2C`;
     expect(parseOwnRoomLink(text, ORIGIN)).toEqual({
-      url: `${ORIGIN}/?lnRoom=AB2C`,
+      url: `${ORIGIN}/?join=AB2C`,
       roomId: 'AB2C',
     });
   });
 
   it('ignora enlaces de OTRO juego (origin distinto): no es una sala nuestra', () => {
-    const text = `Te invito a jugar Otro en Luna Negra 🎮\nhttps://otro-juego.example/?lnRoom=AB2C`;
+    const text = `Te invito a jugar Otro en Luna Negra 🎮\nhttps://otro-juego.example/?join=AB2C`;
     expect(parseOwnRoomLink(text, ORIGIN)).toBeNull();
   });
 
-  it('ignora textos sin URL o con lnRoom inválido', () => {
+  it('ignora textos sin URL o con join inválido', () => {
     expect(parseOwnRoomLink('hola, ¿jugamos?', ORIGIN)).toBeNull();
-    expect(parseOwnRoomLink(`${ORIGIN}/?lnRoom=${'X'.repeat(65)}`, ORIGIN)).toBeNull();
+    expect(parseOwnRoomLink(`${ORIGIN}/?join=${'X'.repeat(65)}`, ORIGIN)).toBeNull();
   });
 
-  it('elige la primera URL con lnRoom válido aunque haya otras antes', () => {
-    const text = `mirá ${ORIGIN}/ranking y vení: ${ORIGIN}/?lnRoom=Z9Z9 ya`;
+  it('elige la primera URL con join válido aunque haya otras antes', () => {
+    const text = `mirá ${ORIGIN}/ranking y vení: ${ORIGIN}/?join=Z9Z9 ya`;
     expect(parseOwnRoomLink(text, ORIGIN)?.roomId).toBe('Z9Z9');
   });
 });
@@ -95,7 +95,7 @@ describe('parseOwnRoomLink', () => {
 describe('bandeja de invitaciones room-link (DM kind:4)', () => {
   it('descifra el DM de Luna y entrega la invitación con sala, url y título', async () => {
     const { skLuna, signerMe, pubLuna, pubMe } = makePair();
-    const url = `${ORIGIN}/?lnRoom=QF3N`;
+    const url = `${ORIGIN}/?join=QF3N`;
     const dm = await buildLunaInviteDm(skLuna, pubMe, `Te invito a jugar TETRA en Luna Negra 🎮\n${url}`);
 
     const { invites, onInvite } = collectInvites();
@@ -126,7 +126,7 @@ describe('bandeja de invitaciones room-link (DM kind:4)', () => {
     // DM sin enlace de sala: charla normal, no invita.
     sub.handlers.onevent(await buildLunaInviteDm(skLuna, pubMe, 'hola! después jugamos'));
     // Invitación real, entregada dos veces (dos relays).
-    const dm = await buildLunaInviteDm(skLuna, pubMe, `entrá: ${ORIGIN}/?lnRoom=DUP1`);
+    const dm = await buildLunaInviteDm(skLuna, pubMe, `entrá: ${ORIGIN}/?join=DUP1`);
     sub.handlers.onevent(dm);
     sub.handlers.onevent(dm);
     await flushAsyncParsers();
@@ -143,7 +143,7 @@ describe('bandeja de invitaciones room-link (DM kind:4)', () => {
     const sub = subscriptions.at(-1)!;
 
     sub.handlers.onevent(
-      await buildLunaInviteDm(skLuna, pubMe, 'Te invito a jugar Otro en Luna Negra 🎮\nhttps://otro.example/?lnRoom=AJ3N'),
+      await buildLunaInviteDm(skLuna, pubMe, 'Te invito a jugar Otro en Luna Negra 🎮\nhttps://otro.example/?join=AJ3N'),
     );
     await flushAsyncParsers();
     stop();
