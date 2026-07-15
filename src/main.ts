@@ -2701,19 +2701,10 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
   const explicitBalLogin = params.get('lnBal') !== 'off'
     && Boolean(params.get('lnOrigin')?.trim())
     && nostrBal.hasLauncherContext();
-
-  if (explicitBalLogin) {
-    // La app arranca este async antes de terminar de evaluar todo main.ts. Este
-    // yield garantiza que el estado del login manual ya esté inicializado antes
-    // de resetearlo y cerrar la cuenta anterior.
-    await Promise.resolve();
-    balSessionActive = false;
-    await nostrBal.logout();
-    if (roomState.current) leaveOnlineRoom();
-    clearLunaIdentity();
-    loginGateDismissed = false;
-    clearLoginGateDismissed();
-  }
+  // No tocamos la sesión existente hasta conocer la pubkey que entrega BAL. Así
+  // un relanzamiento con la misma cuenta (o un BAL rechazado) no fuerza logout.
+  const previousIdentity = lunaState.identity ?? loadStoredLunaIdentity();
+  const previousPubkey = pubkeyForIdentity(previousIdentity);
 
   const signer = await connectNostrBal(
     () => {
@@ -2731,15 +2722,26 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
     { fresh: explicitBalLogin },
   );
 
-  if (!signer) {
-    if (!nostrBal.hasLauncherContext()) return 'fallback';
-    clearActiveSigner();
-    clearStoredLunaIdentity();
-    return 'blocked';
-  }
+  // Sin signer nuevo no hay base para cerrar ni reemplazar la cuenta actual.
+  if (!signer) return 'fallback';
 
-  balSessionActive = true;
+  let accountChanged = false;
   try {
+    const balPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    accountChanged = Boolean(
+      explicitBalLogin
+      && previousPubkey
+      && /^[0-9a-f]{64}$/.test(balPubkey)
+      && balPubkey !== previousPubkey,
+    );
+    if (accountChanged) {
+      if (roomState.current) leaveOnlineRoom();
+      clearLunaIdentity();
+      loginGateDismissed = false;
+      clearLoginGateDismissed();
+    }
+
+    balSessionActive = true;
     // `null` indica que el signer es transitorio: nunca se persisten bunker URI,
     // secrets ni claves efímeras recibidas mediante BAL.
     const identity = await loginWithSigner(signer, null);
@@ -2750,13 +2752,30 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
     return 'connected';
   } catch (error) {
     balSessionActive = false;
-    clearActiveSigner();
-    clearStoredLunaIdentity();
     await nostrBal.logout();
+    // Si ya habíamos confirmado el cambio de cuenta, la sesión anterior fue
+    // cerrada intencionalmente y no debe reaparecer. En cualquier otro fallo se
+    // conserva para que el bootstrap normal pueda restaurarla.
+    if (accountChanged) {
+      clearActiveSigner();
+      clearStoredLunaIdentity();
+    }
     lunaState.nostrLogin.error = error instanceof Error
       ? error.message
       : 'No se pudo iniciar sesión con Luna Negra';
-    return nostrBal.hasLauncherContext() ? 'blocked' : 'fallback';
+    return accountChanged ? 'blocked' : 'fallback';
+  }
+}
+
+function pubkeyForIdentity(identity: LunaIdentity | null): string | null {
+  const direct = identity?.pubkey?.trim().toLowerCase() ?? '';
+  if (/^[0-9a-f]{64}$/.test(direct)) return direct;
+  if (!identity?.npub) return null;
+  try {
+    const decoded = nip19.decode(identity.npub);
+    return decoded.type === 'npub' ? decoded.data : null;
+  } catch {
+    return null;
   }
 }
 
