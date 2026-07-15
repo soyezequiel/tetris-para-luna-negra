@@ -131,6 +131,16 @@ export function setActiveSigner(signer: LunaSigner, stored: StoredSigner): void 
   writeStoredSigner(stored);
 }
 
+/**
+ * Activa un firmante cuya sesión pertenece a un coordinador externo (BAL).
+ * A diferencia de los métodos propios del juego, no persiste credenciales ni una
+ * referencia al bunker: el launcher/SharedWorker es la única fuente de verdad.
+ */
+export function setTransientSigner(signer: LunaSigner): void {
+  setActive(signer);
+  writeStoredSigner(null);
+}
+
 export function clearActiveSigner(): void {
   const prev = active;
   setActive(null);

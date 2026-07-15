@@ -122,6 +122,7 @@ import {
   type UnsignedEvent,
 } from './online/nostrSigner';
 import { loginWithSigner } from './online/nostrLogin';
+import { nostrBal } from './online/nostrBal';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
 import { startRoomLinkInviteInbox, stopRoomLinkInviteInbox, type RoomLinkInvite } from './online/nostrRoomLinkInbox';
@@ -468,6 +469,9 @@ const ONLINE_ROOM_SESSION_KEY = 'stack40.onlineRoomSession.v1';
 const LOGIN_GATE_DISMISSED_KEY = 'stack40.loginGate.dismissed.v1';
 let loginGateDismissed = loadLoginGateDismissed();
 let lunaBootstrapDone = false;
+// La sesión BAL no se persiste en el juego: vive en Luna Negra/SharedWorker.
+// Este flag evita que un callback tardío del launcher borre un login posterior.
+let balSessionActive = false;
 // Desplegable del perfil (topbar): lo abre el clic en .dash-user y un clic fuera lo
 // cierra. Es estado efímero de UI; el loop lo refleja en el próximo frame.
 let userMenuOpen = false;
@@ -527,6 +531,7 @@ window.addEventListener('beforeunload', handleBeforeUnload);
 window.addEventListener('pagehide', (event) => {
   if (event.persisted) return;
   clearPresenceNowSync();
+  void nostrBal.logout();
 });
 window.setInterval(syncOnlineBackground, ONLINE_BACKGROUND_SYNC_MS);
 window.setInterval(() => {
@@ -2684,24 +2689,76 @@ function removeLunaNegraTokenFromUrl(): void {
 
 // ─────────────── Login SSO + amigos / presencia de Luna Negra ───────────────
 
-// Orquesta el arranque online: primero resuelve la sesión de Luna Negra (login
-// automático al abrir el juego desde Luna Negra), después atiende un invite token
-// (sala privada) o un link de invitación de amigo (?join=).
+type BalBootstrapResult = 'connected' | 'fallback' | 'blocked';
+
+/**
+ * Intenta BAL antes de cualquier sesión propia del juego. Si Luna abrió esta
+ * pestaña pero el handshake falla, no restauramos una identidad local que podría
+ * pertenecer a otra cuenta del launcher.
+ */
+async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
+  const signer = await nostrBal.connect(
+    () => {
+      if (!balSessionActive) return;
+      balSessionActive = false;
+      clearLunaIdentity();
+      loginGateDismissed = false;
+      clearLoginGateDismissed();
+    },
+    () => {
+      // El consentimiento se completa en el launcher; su estado queda disponible
+      // mediante nostrBal.getStatus() sin abrir un segundo modal en el juego.
+      console.info('[BAL] esperando autorización en Luna Negra');
+    },
+  );
+
+  if (!signer) {
+    if (!nostrBal.hasLauncherContext()) return 'fallback';
+    clearActiveSigner();
+    clearStoredLunaIdentity();
+    return 'blocked';
+  }
+
+  balSessionActive = true;
+  try {
+    // `null` indica que el signer es transitorio: nunca se persisten bunker URI,
+    // secrets ni claves efímeras recibidas mediante BAL.
+    const identity = await loginWithSigner(signer, null);
+    applyLunaIdentity(identity);
+    saveStoredLunaIdentity(identity);
+    void ensureLunaGameId();
+    void syncNostrPresence();
+    return 'connected';
+  } catch (error) {
+    balSessionActive = false;
+    clearActiveSigner();
+    clearStoredLunaIdentity();
+    await nostrBal.logout();
+    lunaState.nostrLogin.error = error instanceof Error
+      ? error.message
+      : 'No se pudo iniciar sesión con Luna Negra';
+    return nostrBal.hasLauncherContext() ? 'blocked' : 'fallback';
+  }
+}
+
+// Orquesta el arranque online: primero intenta BAL (login automático y seguro al
+// abrir desde Luna Negra), después restaura el login propio solo como fallback y
+// finalmente atiende invites o links de sala.
 async function bootstrapOnlineStartup(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   rememberTrustedLunaOriginFromStartup(params);
-  // Rehidrata el firmante Nostr 2.0 persistido (sesión por extensión/bunker/clave
-  // local). Best-effort y en paralelo: deja el signer en memoria para firmar
-  // features Nostr; no bloquea el arranque.
-  const signerRestore = restoreSigner();
-  await restoreLunaIdentity();
-  void signerRestore.then(() => {
-    void ensureNostrChallengeInbox();
-    // El syncNostrPresence del restore de identidad corrió ANTES de que el
-    // firmante estuviera listo (van en paralelo) y se salteó: republicamos ya,
-    // sin esperar el próximo latido de 10s, para figurar "jugando" al abrir.
-    void syncNostrPresence();
-  });
+  const balResult = await bootstrapBalIdentity();
+  if (balResult === 'fallback') {
+    // Rehidrata extensión/bunker/clave local solamente cuando BAL no aplica.
+    const signerRestore = restoreSigner();
+    await restoreLunaIdentity();
+    void signerRestore.then(() => {
+      void ensureNostrChallengeInbox();
+      // La identidad puede restaurarse antes que el firmante; republicamos cuando
+      // ambos ya están listos sin esperar el próximo latido de presencia.
+      void syncNostrPresence();
+    });
+  }
   // El arranque terminó: a partir de acá la puerta de login ya puede decidir si
   // mostrarse (sin flash) según haya o no identidad Nostr persistida.
   lunaBootstrapDone = true;
@@ -2981,6 +3038,12 @@ function loadStoredLunaIdentity(): LunaIdentity | null {
 }
 
 function saveStoredLunaIdentity(identity: LunaIdentity): void {
+  // La identidad BAL se reconstruye siempre desde el signer del launcher. No la
+  // dejamos como una sesión huérfana en una apertura futura sin SharedWorker.
+  if (balSessionActive) {
+    clearStoredLunaIdentity();
+    return;
+  }
   try {
     localStorage.setItem(LUNA_IDENTITY_KEY, JSON.stringify(identity));
   } catch {
@@ -3031,6 +3094,10 @@ function logOut(): void {
 }
 
 function clearLunaIdentity(): void {
+  if (balSessionActive) {
+    balSessionActive = false;
+    void nostrBal.logout({ forgetLauncher: true });
+  }
   lunaState.identity = null;
   lunaState.inviteNotice = null;
   lunaState.pendingLaunchRequest = null;

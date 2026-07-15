@@ -16,6 +16,7 @@ import {
   type BunkerPointer,
 } from 'nostr-tools/nip46';
 import { Nip46Client } from './nip46Client';
+import { NIP46_PERMS } from './nostrPermissions';
 import type { LunaSigner, StoredSigner } from './nostrSigner';
 
 // Relays donde cliente y firmante se encuentran para el handshake NIP-46.
@@ -30,27 +31,6 @@ export const NIP46_RELAYS = [
 
 // El QR expira a los 5 minutos sin respuesta.
 const QR_TIMEOUT_MS = 5 * 60_000;
-
-// Kinds que la app llega a firmar: 1=reseñas/comentarios, 3=contactos NIP-02,
-// 4=DM NIP-04, 13=seal NIP-17, 27235=login, 30315=presencia NIP-38,
-// 31339=marcador. Refleja las features 2.0 previstas. El 31337 es el kind
-// LEGACY del marcador (renumeración 31337 → 31339): se pre-autoriza mientras
-// dure la transición por si el paquete instalado todavía lo emite.
-const NIP46_SIGN_KINDS = [1, 3, 4, 13, 27235, 30315, 31339, 31337];
-
-// Permisos que pre-solicitamos al firmante en el URI nostrconnect://. Clave para
-// firmantes con confianza "media" (Primal): solo pre-autorizan EXACTAMENTE lo
-// declarado, y `sign_event` genérico no les alcanza para firmar un kind puntual
-// → se traba. Por eso pedimos el método genérico Y cada kind por separado.
-const NIP46_PERMS = [
-  'get_public_key',
-  'sign_event',
-  ...NIP46_SIGN_KINDS.map((k) => `sign_event:${k}`),
-  'nip04_encrypt',
-  'nip04_decrypt',
-  'nip44_encrypt',
-  'nip44_decrypt',
-];
 
 // ─── Wrappers a LunaSigner ────────────────────────────────────────────────
 

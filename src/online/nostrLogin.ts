@@ -9,7 +9,12 @@
 import { nip19 } from 'nostr-tools';
 import type { LunaIdentity } from './protocol';
 import { fetchProfile, profileName } from './nostrProfile';
-import { setActiveSigner, type LunaSigner, type StoredSigner } from './nostrSigner';
+import {
+  setActiveSigner,
+  setTransientSigner,
+  type LunaSigner,
+  type StoredSigner,
+} from './nostrSigner';
 
 function shortNpub(npub: string): string {
   return npub.length > 12 ? `${npub.slice(0, 8)}…${npub.slice(-4)}` : npub;
@@ -26,7 +31,7 @@ function shortNpub(npub: string): string {
  */
 export async function loginWithSigner(
   signer: LunaSigner,
-  stored: StoredSigner,
+  stored: StoredSigner | null,
 ): Promise<LunaIdentity> {
   const pubkey = (await signer.getPublicKey()).trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(pubkey)) {
@@ -49,7 +54,8 @@ export async function loginWithSigner(
 
   // Recién acá fijamos el firmante activo: si algo falló antes, no dejamos una
   // sesión a medias persistida.
-  setActiveSigner(signer, stored);
+  if (stored) setActiveSigner(signer, stored);
+  else setTransientSigner(signer);
 
   return { npub, pubkey, name, avatarUrl, gameId: null };
 }

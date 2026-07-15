@@ -26,8 +26,9 @@
     "@pixi/sprite": "^7.4.3",
     "@pixi/text": "^7.4.3",
     "jose": "^6.2.3",
+    "nostr-bal-browser-sdk": "github:soyezequiel/herramientas-nostr",
     "nostr-game-protocol": "github:soyezequiel/Nostr-Game-Protocol",
-    "nostr-tools": "^2.23.8",
+    "nostr-tools": "^2.23.12",
     "partyserver": "^0.5.8",
     "partysocket": "^1.2.0",
     "qrcode": "^1.5.4"
