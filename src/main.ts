@@ -122,7 +122,7 @@ import {
   type UnsignedEvent,
 } from './online/nostrSigner';
 import { loginWithSigner } from './online/nostrLogin';
-import { nostrBal } from './online/nostrBal';
+import { connectNostrBal, nostrBal } from './online/nostrBal';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
 import { startRoomLinkInviteInbox, stopRoomLinkInviteInbox, type RoomLinkInvite } from './online/nostrRoomLinkInbox';
@@ -2697,7 +2697,25 @@ type BalBootstrapResult = 'connected' | 'fallback' | 'blocked';
  * pertenecer a otra cuenta del launcher.
  */
 async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
-  const signer = await nostrBal.connect(
+  const params = new URLSearchParams(window.location.search);
+  const explicitBalLogin = params.get('lnBal') !== 'off'
+    && Boolean(params.get('lnOrigin')?.trim())
+    && nostrBal.hasLauncherContext();
+
+  if (explicitBalLogin) {
+    // La app arranca este async antes de terminar de evaluar todo main.ts. Este
+    // yield garantiza que el estado del login manual ya esté inicializado antes
+    // de resetearlo y cerrar la cuenta anterior.
+    await Promise.resolve();
+    balSessionActive = false;
+    await nostrBal.logout();
+    if (roomState.current) leaveOnlineRoom();
+    clearLunaIdentity();
+    loginGateDismissed = false;
+    clearLoginGateDismissed();
+  }
+
+  const signer = await connectNostrBal(
     () => {
       if (!balSessionActive) return;
       balSessionActive = false;
@@ -2710,6 +2728,7 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
       // mediante nostrBal.getStatus() sin abrir un segundo modal en el juego.
       console.info('[BAL] esperando autorización en Luna Negra');
     },
+    { fresh: explicitBalLogin },
   );
 
   if (!signer) {
