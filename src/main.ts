@@ -2701,6 +2701,7 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
   const explicitBalLogin = params.get('lnBal') !== 'off'
     && Boolean(params.get('lnOrigin')?.trim())
     && nostrBal.hasLauncherContext();
+  if (explicitBalLogin) removeBalLauncherOriginFromUrl();
   // No tocamos la sesión existente hasta conocer la pubkey que entrega BAL. Así
   // un relanzamiento con la misma cuenta (o un BAL rechazado) no fuerza logout.
   const previousIdentity = lunaState.identity ?? loadStoredLunaIdentity();
@@ -2765,6 +2766,15 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
       : 'No se pudo iniciar sesión con Luna Negra';
     return accountChanged ? 'blocked' : 'fallback';
   }
+}
+
+// `hasLauncherContext()` ya guardó el origen validado en sessionStorage. Desde
+// este punto BAL no necesita mantener `lnOrigin` visible en la barra ni en el
+// historial de la pestaña.
+function removeBalLauncherOriginFromUrl(): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('lnOrigin');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 }
 
 function pubkeyForIdentity(identity: LunaIdentity | null): string | null {
