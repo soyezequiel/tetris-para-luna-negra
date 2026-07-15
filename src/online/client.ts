@@ -38,6 +38,50 @@ export class OnlineApiError extends Error {
   }
 }
 
+type JoinOrCreateTransport = {
+  atomic: (request: JoinOrCreateRoomRequest) => Promise<OnlineRoomResponse>;
+  join: (request: JoinRoomRequest) => Promise<OnlineRoomResponse>;
+  create: (request: CreateRoomRequest) => Promise<OnlineRoomResponse>;
+  isAtomicUnsupported: (error: unknown) => boolean;
+};
+
+/** El Party anterior responde exactamente este error al recibir la acción nueva. */
+export function isUnknownJoinOrCreateAction(error: unknown): boolean {
+  return error instanceof OnlineApiError
+    && error.status === 400
+    && /unknown room action:\s*join-or-create/i.test(error.message);
+}
+
+/**
+ * Usa la operación atómica cuando existe y conserva compatibilidad durante un
+ * despliegue escalonado frontend/Worker. Sólo cae al protocolo viejo cuando el
+ * transporte confirma que no conoce la acción; los demás errores se propagan.
+ */
+export async function joinOrCreateRoomCompat(
+  request: JoinOrCreateRoomRequest,
+  transport: JoinOrCreateTransport,
+): Promise<OnlineRoomResponse> {
+  try {
+    return await transport.atomic(request);
+  } catch (error) {
+    if (!transport.isAtomicUnsupported(error)) throw error;
+  }
+
+  try {
+    return await transport.join(request);
+  } catch (error) {
+    if (!(error instanceof OnlineApiError) || error.status !== 404) throw error;
+  }
+
+  try {
+    return await transport.create(request);
+  } catch (error) {
+    // Dos primeros visitantes pueden intentar crear a la vez en el Worker viejo.
+    if (!(error instanceof OnlineApiError) || error.status !== 409) throw error;
+    return transport.join(request);
+  }
+}
+
 /**
  * Superficie del cliente online. La implementan tanto `OnlineClient` (HTTP, sobre
  * /api/rooms en Vercel) como `PartyOnlineClient` (WebSocket vía PartyKit). El juego
@@ -85,7 +129,15 @@ export class OnlineClient implements OnlineClientApi {
   }
 
   joinOrCreateRoom(request: JoinOrCreateRoomRequest): Promise<OnlineRoomResponse> {
-    return this.post('/join-or-create', request);
+    return joinOrCreateRoomCompat(request, {
+      atomic: (payload) => this.post('/join-or-create', payload),
+      join: (payload) => this.joinRoom(payload),
+      create: (payload) => this.createRoom(payload),
+      // En el backend HTTP anterior la ruta puede faltar (404/405). El mensaje
+      // de acción desconocida cubre también adaptadores que compartan dispatch.
+      isAtomicUnsupported: (error) => isUnknownJoinOrCreateAction(error)
+        || (error instanceof OnlineApiError && (error.status === 404 || error.status === 405)),
+    });
   }
 
   joinRoom(request: JoinRoomRequest): Promise<OnlineRoomResponse> {

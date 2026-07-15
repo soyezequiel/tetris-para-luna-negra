@@ -1,5 +1,11 @@
 import { PartySocket } from 'partysocket';
-import { OnlineApiError, OnlineClient, type OnlineClientApi } from './client.js';
+import {
+  isUnknownJoinOrCreateAction,
+  joinOrCreateRoomCompat,
+  OnlineApiError,
+  OnlineClient,
+  type OnlineClientApi,
+} from './client.js';
 import { createRoomCode } from './roomService.js';
 import {
   LOBBY_PARTY_ID,
@@ -153,7 +159,12 @@ export class PartyOnlineClient implements OnlineClientApi {
 
   async joinOrCreateRoom(request: JoinOrCreateRoomRequest): Promise<OnlineRoomResponse> {
     await this.ensureRoom(request.roomId);
-    return this.roomAction('join-or-create', request);
+    return joinOrCreateRoomCompat(request, {
+      atomic: (payload) => this.roomAction('join-or-create', payload),
+      join: (payload) => this.roomAction('join', payload),
+      create: (payload) => this.roomAction('create', payload),
+      isAtomicUnsupported: isUnknownJoinOrCreateAction,
+    });
   }
 
   async joinRoom(request: JoinRoomRequest): Promise<OnlineRoomResponse> {
