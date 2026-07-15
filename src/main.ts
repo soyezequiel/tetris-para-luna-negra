@@ -123,6 +123,7 @@ import {
 } from './online/nostrSigner';
 import { hydrateIdentityProfile, loginWithSigner } from './online/nostrLogin';
 import { connectNostrBal, nostrBal } from './online/nostrBal';
+import { markOnlineStartup, measureOnlineStartup } from './online/startupTiming';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
 import { startRoomLinkInviteInbox, stopRoomLinkInviteInbox, type RoomLinkInvite } from './online/nostrRoomLinkInbox';
@@ -472,6 +473,15 @@ let lunaBootstrapDone = false;
 // La sesión BAL no se persiste en el juego: vive en Luna Negra/SharedWorker.
 // Este flag evita que un callback tardío del launcher borre un login posterior.
 let balSessionActive = false;
+let balSignerStatus = nostrBal.getStatus();
+const unsubscribeBalStatus = nostrBal.subscribeStatus((status) => {
+  balSignerStatus = status;
+  // Fuerza un render inmediato del aviso aunque el resto del overlay no cambie.
+  overlayState.last = '';
+});
+let roomLinkCriticalPathDepth = 0;
+let deferredIdentityEnrichmentPubkey: string | null = null;
+let deferredProfileIdentity: LunaIdentity | null = null;
 // Desplegable del perfil (topbar): lo abre el clic en .dash-user y un clic fuera lo
 // cierra. Es estado efímero de UI; el loop lo refleja en el próximo frame.
 let userMenuOpen = false;
@@ -530,6 +540,7 @@ window.addEventListener('beforeunload', handleBeforeUnload);
 // maneja el TTL corto); el logout tiene su propio clear (clearNostrPresence).
 window.addEventListener('pagehide', (event) => {
   if (event.persisted) return;
+  unsubscribeBalStatus();
   clearPresenceNowSync();
   void nostrBal.logout();
 });
@@ -1956,6 +1967,10 @@ function handleOverlayClick(event: MouseEvent): void {
     void sendPerfReport();
     return;
   }
+  if (action === 'bal-launcher-focus') {
+    nostrBal.requestLauncherFocus();
+    return;
+  }
   if (action === 'online-challenge-open') {
     void openNostrChallengePicker();
     return;
@@ -2707,6 +2722,7 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
   const previousIdentity = lunaState.identity ?? loadStoredLunaIdentity();
   const previousPubkey = pubkeyForIdentity(previousIdentity);
 
+  markOnlineStartup('bal-start');
   const signer = await connectNostrBal(
     () => {
       if (!balSessionActive) return;
@@ -2728,6 +2744,8 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
   let accountChanged = false;
   try {
     const balPubkey = (await signer.getPublicKey()).trim().toLowerCase();
+    markOnlineStartup('bal-pubkey');
+    measureOnlineStartup('bal-connect', 'bal-start', 'bal-pubkey');
     accountChanged = Boolean(
       explicitBalLogin
       && previousPubkey
@@ -2748,8 +2766,8 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
     applyLunaIdentity(identity);
     saveStoredLunaIdentity(identity);
     hydrateLunaProfileInBackground(identity);
-    void ensureLunaGameId();
-    void syncNostrPresence();
+    markOnlineStartup('bal-ready');
+    measureOnlineStartup('bal-ready', 'bal-start', 'bal-ready');
     return 'connected';
   } catch (error) {
     balSessionActive = false;
@@ -2790,6 +2808,10 @@ function pubkeyForIdentity(identity: LunaIdentity | null): string | null {
 }
 
 function hydrateLunaProfileInBackground(identity: LunaIdentity): void {
+  if (roomLinkCriticalPathDepth > 0) {
+    deferredProfileIdentity = identity;
+    return;
+  }
   void hydrateIdentityProfile(identity).then((profiled) => {
     const current = lunaState.identity;
     if (!current?.pubkey || current.pubkey !== identity.pubkey) return;
@@ -2815,11 +2837,31 @@ function hydrateLunaProfileInBackground(identity: LunaIdentity): void {
 // finalmente atiende invites o links de sala.
 async function bootstrapOnlineStartup(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
+  const hasRoomLink = Boolean(params.get('join')?.trim());
+  if (hasRoomLink) {
+    beginRoomLinkCriticalPath();
+    markOnlineStartup('room-link-start');
+  }
+  try {
+    await bootstrapOnlineStartupFromParams(params);
+  } finally {
+    if (hasRoomLink) endRoomLinkCriticalPath();
+  }
+}
+
+async function bootstrapOnlineStartupFromParams(params: URLSearchParams): Promise<void> {
   rememberTrustedLunaOriginFromStartup(params);
   // La verificación JWKS puede requerir red en el primer acceso. La arrancamos
   // junto con BAL para que un room link dirigido no pague ambas esperas en serie.
   const roomInviteVerification = params.get('join')?.trim() && params.get('lnInvite')?.trim()
-    ? lunaSocialClient.verifyRoomInvite(params.get('lnInvite')!.trim())
+    ? (() => {
+        markOnlineStartup('invite-start');
+        return lunaSocialClient.verifyRoomInvite(params.get('lnInvite')!.trim()).then((result) => {
+          markOnlineStartup('invite-ready');
+          measureOnlineStartup('invite-verification', 'invite-start', 'invite-ready');
+          return result;
+        });
+      })()
     : null;
   // Marcamos el rechazo como observado mientras BAL termina; el await real y su
   // mensaje de error siguen manejándose dentro de bootstrapLunaRoomLink.
@@ -2830,10 +2872,8 @@ async function bootstrapOnlineStartup(): Promise<void> {
     const signerRestore = restoreSigner();
     restoreLunaIdentity();
     void signerRestore.then(() => {
-      void ensureNostrChallengeInbox();
-      // La identidad puede restaurarse antes que el firmante; republicamos cuando
-      // ambos ya están listos sin esperar el próximo latido de presencia.
-      void syncNostrPresence();
+      const identity = lunaState.identity;
+      if (identity) scheduleIdentityEnrichment(identity);
     });
   }
   // El arranque terminó: a partir de acá la puerta de login ya puede decidir si
@@ -2870,12 +2910,45 @@ async function bootstrapOnlineStartup(): Promise<void> {
 function restoreLunaIdentity(): void {
   const stored = loadStoredLunaIdentity();
   if (stored) applyLunaIdentity(stored);
-  if (!lunaState.identity) return;
-  // La identidad Nostr no trae gameId: completarlo para que invitar/apostar no
-  // queden gateados. Best-effort, no bloquea presencia.
-  void ensureLunaGameId();
   // El signer se restaura en paralelo y republica presencia al quedar listo.
   // La presencia nunca debe frenar el despacho de un room link.
+}
+
+function beginRoomLinkCriticalPath(): void {
+  roomLinkCriticalPathDepth += 1;
+}
+
+function endRoomLinkCriticalPath(): void {
+  roomLinkCriticalPathDepth = Math.max(0, roomLinkCriticalPathDepth - 1);
+  if (roomLinkCriticalPathDepth !== 0) return;
+  const identity = lunaState.identity;
+  const expected = deferredIdentityEnrichmentPubkey;
+  deferredIdentityEnrichmentPubkey = null;
+  if (identity && expected && (identity.pubkey || identity.npub) === expected) {
+    startIdentityEnrichment(identity);
+  }
+  const profileIdentity = deferredProfileIdentity;
+  deferredProfileIdentity = null;
+  if (profileIdentity) hydrateLunaProfileInBackground(profileIdentity);
+}
+
+function startIdentityEnrichment(identity: LunaIdentity): void {
+  if (lunaState.identity?.pubkey !== identity.pubkey) return;
+  void syncLunaLaunchRequest();
+  void ensureNostrChallengeInbox();
+  // Amigos, perfil funcional, gameId y presencia son importantes para la UI,
+  // pero no forman parte del camino crítico de autenticación/entrada a sala.
+  prefetchChallengeFriends();
+  void ensureLunaGameId();
+  void syncNostrPresence();
+}
+
+function scheduleIdentityEnrichment(identity: LunaIdentity): void {
+  if (roomLinkCriticalPathDepth > 0) {
+    deferredIdentityEnrichmentPubkey = identity.pubkey || identity.npub;
+    return;
+  }
+  startIdentityEnrichment(identity);
 }
 
 function applyLunaIdentity(identity: LunaIdentity): void {
@@ -2887,18 +2960,10 @@ function applyLunaIdentity(identity: LunaIdentity): void {
     avatarUrl: identity.avatarUrl ?? identityState.player.avatarUrl,
   });
   identityState.name = identityState.player.name;
-  void syncLunaLaunchRequest();
-  void ensureNostrChallengeInbox();
-  // Amigos listos ANTES de abrir "Retar amigo": la carga desde relays tarda
-  // segundos, así que arranca acá y el picker la encuentra hecha (o en curso).
-  prefetchChallengeFriends();
-  // Presencia 2.0 al toque tras el login (con signer ya activo); si el firmante
-  // todavía no está (restore en paralelo), el hook de bootstrapOnlineStartup o el
-  // próximo latido la cubren. El throttle interno evita firmar de más.
-  void syncNostrPresence();
   // Si había un "Luna Room Link" dirigido esperando a que se logueara la cuenta
   // invitada, entrar a la sala ahora que la identidad coincide.
   maybeResumePendingRoomLink();
+  scheduleIdentityEnrichment(identity);
 }
 
 async function bootstrapJoinLink(roomId: string): Promise<void> {
@@ -2978,8 +3043,10 @@ async function joinLunaRoomLink(roomId: string): Promise<void> {
     onlineNetState.error = 'Ya hay una acción online en curso.';
     return;
   }
+  beginRoomLinkCriticalPath();
   onlineNetState.busy = true;
   onlineNetState.error = null;
+  let joined = false;
   try {
     // Una persona solo puede tener una sala a la vez: si ya estaba en otra, la deja.
     await leaveCurrentRoomBeforeNew(roomId);
@@ -2992,35 +3059,28 @@ async function joinLunaRoomLink(roomId: string): Promise<void> {
       name: identityState.player.name,
       avatarUrl: identityState.player.avatarUrl,
     };
-    const create = (): Promise<OnlineRoomResponse> =>
-      onlineClient.createRoom({
-        ...who,
-        lunaGameId: lunaState.identity?.gameId ?? null,
-        visibility: 'private',
-        mode: 'custom',
-        matchType: 'battle',
-        ruleset: onlineRulesetPatch(),
-        rules: battleRulesFromSettings(inputSettings),
-      });
-    // Unirse; si no existe (404) la creamos; si dos entran a la vez (409) unirse.
-    const response = await onlineClient.joinRoom(who).catch((error) => {
-      if (error instanceof OnlineApiError && error.status === 404) {
-        return create().catch((createError) => {
-          if (createError instanceof OnlineApiError && createError.status === 409) {
-            return onlineClient.joinRoom(who);
-          }
-          throw createError;
-        });
-      }
-      throw error;
+    markOnlineStartup('room-join-start');
+    const response = await onlineClient.joinOrCreateRoom({
+      ...who,
+      lunaGameId: lunaState.identity?.gameId ?? null,
+      visibility: 'private',
+      mode: 'custom',
+      matchType: 'battle',
+      ruleset: onlineRulesetPatch(),
+      rules: battleRulesFromSettings(inputSettings),
     });
     syncOnlineClock(response.serverNowMs);
     enterOnlineRoom(response.room, 'roomLobby');
-    void syncNostrPresence();
+    markOnlineStartup('room-joined');
+    measureOnlineStartup('room-join', 'room-join-start', 'room-joined');
+    measureOnlineStartup('room-link-total', 'room-link-start', 'room-joined');
+    joined = true;
   } catch (error) {
     onlineNetState.error = onlineErrorText(error);
   } finally {
     onlineNetState.busy = false;
+    endRoomLinkCriticalPath();
+    if (joined) void syncNostrPresence();
   }
 }
 
@@ -3851,8 +3911,6 @@ async function ensureEphemeralNostrIdentity(nameHint?: string): Promise<boolean>
     applyLunaIdentity(identity);
     saveStoredLunaIdentity(identity);
     resetNostrLoginFlow();
-    void ensureLunaGameId();
-    void syncNostrPresence();
     return true;
   } catch (error) {
     lunaState.nostrLogin.error = error instanceof Error ? error.message : 'No se pudo crear la cuenta local';
@@ -3905,8 +3963,6 @@ async function finishNostrLogin(signer: LunaSigner, stored: StoredSigner): Promi
     saveStoredLunaIdentity(identity);
     hydrateLunaProfileInBackground(identity);
     resetNostrLoginFlow();
-    void ensureLunaGameId();
-    void syncNostrPresence();
   } catch (error) {
     lunaState.nostrLogin.error = error instanceof Error ? error.message : 'Error de login';
   } finally {
@@ -7102,6 +7158,7 @@ function renderOverlay(state: GameState): void {
   const gearIcon = gearOutlineIcon({ size: 20 });
   const html = `
     <div class="brand">TETRA${soloRelax ? '<span class="brand-sub">MODO RELAX</span>' : ''}</div>
+    ${renderBalStatusNotice()}
     ${soloRelax ? `<button class="gear-btn" type="button" data-ui-action="settings" aria-label="Ajustes" title="Ajustes">${gearIcon}</button>` : ''}
     ${soloRelax ? renderRelaxAudio() : ''}
     ${autoPlayState.accessGranted ? renderAutoPlayToggle() : ''}
@@ -7160,6 +7217,26 @@ function renderOverlay(state: GameState): void {
   }
   document.body.classList.toggle('online-spectating', isOnlineSpectating());
   if (appMode === 'replayPlayback' && replayState.playback) updateReplayOverlay(replayState.playback.snapshot());
+}
+
+function renderBalStatusNotice(): string {
+  const phase = balSignerStatus.phase;
+  if (phase !== 'connecting' && phase !== 'reconnecting' && phase !== 'awaiting_approval') return '';
+  const text = phase === 'awaiting_approval'
+    ? 'Aprobá el acceso en Luna Negra'
+    : phase === 'reconnecting'
+      ? 'Recuperando tu sesión de Luna Negra…'
+      : 'Conectando con Luna Negra…';
+  const focus = phase === 'awaiting_approval'
+    ? '<button type="button" class="bal-status-action" data-ui-action="bal-launcher-focus">Ir a Luna Negra</button>'
+    : '';
+  return `
+    <div class="bal-status-notice" role="status" aria-live="polite">
+      <span class="bal-status-dot" aria-hidden="true"></span>
+      <span>${text}</span>
+      ${focus}
+    </div>
+  `;
 }
 
 function renderAutoPlayToggle(): string { // TRUCO AUTOPLAY

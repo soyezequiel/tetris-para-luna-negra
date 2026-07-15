@@ -2,6 +2,7 @@ import type {
   AttackRequest,
   CreateRoomRequest,
   EliminateRequest,
+  JoinOrCreateRoomRequest,
   JoinRoomRequest,
   KickPlayerRequest,
   LeaveRoomRequest,
@@ -44,6 +45,7 @@ export class OnlineApiError extends Error {
  */
 export interface OnlineClientApi {
   createRoom(request: CreateRoomRequest): Promise<OnlineRoomResponse>;
+  joinOrCreateRoom(request: JoinOrCreateRoomRequest): Promise<OnlineRoomResponse>;
   joinRoom(request: JoinRoomRequest): Promise<OnlineRoomResponse>;
   leaveRoom(request: LeaveRoomRequest): Promise<LeaveRoomResponse>;
   kickPlayer(request: KickPlayerRequest): Promise<OnlineRoomResponse>;
@@ -80,6 +82,10 @@ export class OnlineClient implements OnlineClientApi {
 
   createRoom(request: CreateRoomRequest): Promise<OnlineRoomResponse> {
     return this.post('/create', request);
+  }
+
+  joinOrCreateRoom(request: JoinOrCreateRoomRequest): Promise<OnlineRoomResponse> {
+    return this.post('/join-or-create', request);
   }
 
   joinRoom(request: JoinRoomRequest): Promise<OnlineRoomResponse> {

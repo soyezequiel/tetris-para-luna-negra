@@ -313,6 +313,27 @@ test.describe('TETRA browser flows', () => {
     await expect(page.getByText(/ranking/i)).toHaveCount(0);
   });
 
+  test('enters a room link with one atomic request and preserves unrelated URL state', async ({ page }) => {
+    const requests = await mockOnlineApi(page);
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+      (window as any).__E2E__ = true;
+    });
+
+    await page.goto('/?join=LINK&transport=http&roomTheme=dark#game');
+    await expect(page.getByRole('heading', { name: 'TETRA' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.stack40?.getAppMode?.() ?? null)).toBe('roomLobby');
+    await expect(page.getByRole('heading', { name: 'LINK' })).toBeVisible();
+    expect(requests.joinOrCreateCount).toBe(1);
+    expect(new URL(page.url()).searchParams.get('join')).toBeNull();
+    expect(new URL(page.url()).searchParams.get('transport')).toBe('http');
+    expect(new URL(page.url()).searchParams.get('roomTheme')).toBe('dark');
+    expect(new URL(page.url()).hash).toBe('#game');
+    await expect.poll(() => page.evaluate(() => (
+      performance.getEntriesByName('tetra:online-startup:room-join').length
+    ))).toBe(1);
+  });
+
   test('keeps online text fields focused and treats R as text input', async ({ page }) => {
     await mockOnlineApi(page);
     await openFreshApp(page);
@@ -974,6 +995,7 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
     restartOnNextState: false,
     healthCount: 0,
     betRefreshCount: 0,
+    joinOrCreateCount: 0,
     lastReport: null,
   };
   let room = createMockRoom('ROOM', 'private', now);
@@ -1124,6 +1146,23 @@ async function mockOnlineApi(page: Page, options: MockOnlineApiOptions = {}): Pr
           serverNowMs: Date.now(),
         }),
       });
+      return;
+    }
+    if (path.endsWith('/join-or-create')) {
+      const body = route.request().postDataJSON() as MockCreateRequest;
+      requests.joinOrCreateCount += 1;
+      room = createMockRoom(
+        (body.roomId ?? 'ROOM').toUpperCase(),
+        body.visibility,
+        Date.now(),
+        body.playerId,
+        body.name,
+        body.mode,
+        body.rules,
+        body.matchType,
+        body.avatarUrl ?? null,
+      );
+      await fulfillRoom(route, room);
       return;
     }
     if (path.endsWith('/create')) {
@@ -1283,6 +1322,7 @@ type MockOnlineApiRequests = {
   restartOnNextState: boolean;
   healthCount: number;
   betRefreshCount: number;
+  joinOrCreateCount: number;
   lastReport: MockReportPayload | null;
 };
 
@@ -1585,6 +1625,7 @@ type MockPlayer = {
 };
 
 type MockCreateRequest = {
+  roomId?: string;
   playerId: string;
   name: string;
   avatarUrl?: string | null;

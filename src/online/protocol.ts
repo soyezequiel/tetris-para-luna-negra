@@ -268,6 +268,11 @@ export interface CreateRoomRequest {
   rules?: GameRules;
 }
 
+/** Entrada idempotente para enlaces: une si existe o crea si falta. */
+export interface JoinOrCreateRoomRequest extends CreateRoomRequest {
+  roomId: string;
+}
+
 export interface JoinRoomRequest {
   roomId: string;
   playerId: string;

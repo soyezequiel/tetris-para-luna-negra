@@ -30,6 +30,23 @@ describe('dispatchRoomAction', () => {
     expect(room?.status).toBe('countdown');
   });
 
+  it('join-or-create crea o une dentro de una única acción del Party', async () => {
+    const store = new MemoryRoomStore();
+    const first = await dispatchRoomAction(store, PARTY_ID, 'join-or-create', {
+      playerId: HOST_ID,
+      name: 'Host',
+      visibility: 'private',
+    });
+    const second = await dispatchRoomAction(store, PARTY_ID, 'join-or-create', {
+      playerId: GUEST_ID,
+      name: 'Guest',
+      visibility: 'private',
+    });
+
+    expect(first.room?.hostPlayerId).toBe(HOST_ID);
+    expect(second.room?.players.map((player) => player.id)).toEqual([HOST_ID, GUEST_ID]);
+  });
+
   it('responde state con el room actual y refresca presencia del que pollea', async () => {
     const store = new MemoryRoomStore();
     await dispatchRoomAction(store, PARTY_ID, 'create', { playerId: HOST_ID, name: 'Host', visibility: 'private' });

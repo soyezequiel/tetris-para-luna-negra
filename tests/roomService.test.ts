@@ -8,6 +8,7 @@ import {
   HOST_STALE_MS,
   HOST_UNREACHABLE_MS,
   isRoundReady,
+  joinOrCreateRoom,
   joinRoom,
   leaveRoom,
   listPublicRooms,
@@ -60,6 +61,40 @@ function eliminateRequest(room: OnlineRoom, playerId: string): EliminateRequest 
     elapsedFrames: 100,
   };
 }
+
+describe('joinOrCreateRoom', () => {
+  it('crea el enlace en la primera entrada y une las siguientes en una sola operación', async () => {
+    const store = new MemoryRoomStore();
+    const created = await joinOrCreateRoom(store, {
+      roomId: 'LINK',
+      playerId: HOST_ID,
+      name: 'Host',
+      visibility: 'private',
+      mode: 'custom',
+      matchType: 'battle',
+    });
+    const joined = await joinOrCreateRoom(store, {
+      roomId: 'LINK',
+      playerId: GUEST_ID,
+      name: 'Guest',
+      visibility: 'private',
+    });
+
+    expect(created.hostPlayerId).toBe(HOST_ID);
+    expect(joined.players.map((player) => player.id)).toEqual([HOST_ID, GUEST_ID]);
+  });
+
+  it('resuelve dos primeros visitantes concurrentes sin devolver 404 ni 409', async () => {
+    const store = new MemoryRoomStore();
+    await Promise.all([
+      joinOrCreateRoom(store, { roomId: 'RACE', playerId: HOST_ID, name: 'Host', visibility: 'private' }),
+      joinOrCreateRoom(store, { roomId: 'RACE', playerId: GUEST_ID, name: 'Guest', visibility: 'private' }),
+    ]);
+
+    const room = await store.getRoom('RACE');
+    expect(room?.players.map((player) => player.id).sort()).toEqual([GUEST_ID, HOST_ID].sort());
+  });
+});
 
 describe('room store optimistic locking', () => {
   it('rejects a save based on a stale read', async () => {

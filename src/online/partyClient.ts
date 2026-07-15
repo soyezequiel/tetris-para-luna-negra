@@ -16,6 +16,7 @@ import type {
   CreateBetRequest,
   CreateRoomRequest,
   EliminateRequest,
+  JoinOrCreateRoomRequest,
   JoinRoomRequest,
   KickPlayerRequest,
   LeaderboardResponse,
@@ -148,6 +149,11 @@ export class PartyOnlineClient implements OnlineClientApi {
       }
     }
     throw lastError instanceof Error ? lastError : new OnlineApiError('No se pudo crear la sala.', 503);
+  }
+
+  async joinOrCreateRoom(request: JoinOrCreateRoomRequest): Promise<OnlineRoomResponse> {
+    await this.ensureRoom(request.roomId);
+    return this.roomAction('join-or-create', request);
   }
 
   async joinRoom(request: JoinRoomRequest): Promise<OnlineRoomResponse> {

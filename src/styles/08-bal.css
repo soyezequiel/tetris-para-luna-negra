@@ -1,0 +1,45 @@
+.bal-status-notice {
+  position: absolute;
+  z-index: 30;
+  top: 18px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(92vw, 520px);
+  padding: 10px 13px;
+  border: 1px solid rgba(53, 214, 198, 0.34);
+  border-radius: 999px;
+  background: rgba(8, 16, 24, 0.92);
+  color: rgba(247, 247, 242, 0.92);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
+  font: 700 12px/1.2 "Exo 2", Arial, sans-serif;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.bal-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #35d6c6;
+  box-shadow: 0 0 12px rgba(53, 214, 198, 0.8);
+}
+
+.bal-status-action {
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: #35d6c6;
+  color: #081018;
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 620px) {
+  .bal-status-notice {
+    top: 66px;
+    white-space: nowrap;
+  }
+}

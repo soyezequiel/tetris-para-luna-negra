@@ -2,6 +2,7 @@ import type {
   AttackRequest,
   CreateRoomRequest,
   EliminateRequest,
+  JoinOrCreateRoomRequest,
   JoinRoomRequest,
   KickPlayerRequest,
   LeaveRoomRequest,
@@ -24,6 +25,7 @@ import {
   createRoom,
   eliminatePlayer,
   getRoomState,
+  joinOrCreateRoom,
   joinRoom,
   kickPlayer,
   leaveRoom,
@@ -100,6 +102,14 @@ export async function POST(request: Request): Promise<Response> {
       const joined = await joinRoom(getRoomStore(), await readJsonBody<JoinRoomRequest>(request));
       // El que entra después de creada la apuesta también participa: si todavía
       // no hubo depósitos, la apuesta se recrea incluyéndolo.
+      const room = await syncBetParticipants(joined);
+      return sendJson(200, { room, serverNowMs: Date.now() });
+    }
+    if (action === 'join-or-create') {
+      const joined = await joinOrCreateRoom(
+        getRoomStore(),
+        await readJsonBody<JoinOrCreateRoomRequest>(request),
+      );
       const room = await syncBetParticipants(joined);
       return sendJson(200, { room, serverNowMs: Date.now() });
     }

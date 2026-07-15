@@ -4,6 +4,7 @@ import {
   createRoom,
   eliminatePlayer,
   getRoomState,
+  joinOrCreateRoom,
   joinRoom,
   kickPlayer,
   leaveRoom,
@@ -24,6 +25,7 @@ import type {
   AttackRequest,
   CreateRoomRequest,
   EliminateRequest,
+  JoinOrCreateRoomRequest,
   JoinRoomRequest,
   KickPlayerRequest,
   LeaveRoomRequest,
@@ -53,6 +55,7 @@ import type {
 /** Acciones que un cliente puede pedirle al Party de una sala. */
 export type RoomAction =
   | 'create'
+  | 'join-or-create'
   | 'join'
   | 'leave'
   | 'kick'
@@ -125,6 +128,8 @@ export async function dispatchRoomAction(
   switch (action) {
     case 'create':
       return done(await createRoom(store, scoped<CreateRoomRequest>(), nowMs));
+    case 'join-or-create':
+      return done(await joinOrCreateRoom(store, scoped<JoinOrCreateRoomRequest>(), nowMs));
     case 'join':
       return done(await joinRoom(store, scoped<JoinRoomRequest>(), nowMs));
     case 'leave': {

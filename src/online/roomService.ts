@@ -2,6 +2,7 @@ import type {
   AttackRequest,
   CreateRoomRequest,
   EliminateRequest,
+  JoinOrCreateRoomRequest,
   JoinRoomRequest,
   KickPlayerRequest,
   LeaveRoomRequest,
@@ -169,6 +170,7 @@ function retryRoomConflicts<A extends unknown[], R>(mutation: (...args: A) => Pr
 // versión. Las funciones `*Once` releen la sala en cada intento.
 export const createRoom = retryRoomConflicts(createRoomOnce);
 export const enterLunaNegraRoom = retryRoomConflicts(enterLunaNegraRoomOnce);
+export const joinOrCreateRoom = retryRoomConflicts(joinOrCreateRoomOnce);
 export const joinRoom = retryRoomConflicts(joinRoomOnce);
 export const setPlayerReady = retryRoomConflicts(setPlayerReadyOnce);
 export const startRoom = retryRoomConflicts(startRoomOnce);
@@ -224,6 +226,19 @@ async function createRoomOnce(
   };
   await persistRoom(store, room);
   return room;
+}
+
+async function joinOrCreateRoomOnce(
+  store: RoomStore,
+  request: JoinOrCreateRoomRequest,
+  nowMs = Date.now(),
+): Promise<OnlineRoom> {
+  const roomId = normalizeRoomIdStrict(request.roomId);
+  if (await store.getRoom(roomId)) return joinRoomOnce(store, request, nowMs);
+
+  // Si dos primeros visitantes llegan juntos, el CAS hace reintentar toda esta
+  // operación. El segundo intento ya encuentra la sala y entra como invitado.
+  return createRoomOnce(store, { ...request, roomId }, nowMs);
 }
 
 export interface VerifiedLunaNegraInvite {

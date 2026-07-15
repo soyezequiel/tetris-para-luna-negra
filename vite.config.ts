@@ -29,6 +29,7 @@ const localApiHandlers = new Map<string, LocalApiModule>([
   ['/api/rooms/eliminate', roomsAction],
   ['/api/rooms/failover', roomsAction],
   ['/api/rooms/join', roomsAction],
+  ['/api/rooms/join-or-create', roomsAction],
   ['/api/rooms/kick', roomsAction],
   ['/api/rooms/leave', roomsAction],
   ['/api/rooms/luna-negra/enter', lunaNegraEnter],
@@ -74,6 +75,11 @@ export default defineConfig(({ mode }) => {
     if (process.env[key] === undefined) process.env[key] = value;
   }
   return {
+  resolve: {
+    // El SDK declara ambos como peers. Forzamos una sola implementación incluso
+    // cuando se consume desde Git o mediante un enlace local de desarrollo.
+    dedupe: ['nostr-game-protocol', 'nostr-tools'],
+  },
   // Por defecto Vite solo inyecta al cliente las env con prefijo `VITE_`. Agregamos
   // `gameCoord` para poder nombrar así la coordenada del juego (import.meta.env.gameCoord)
   // tanto en `.env` como en Vercel. El match es por prefijo, así que NO expone otras
