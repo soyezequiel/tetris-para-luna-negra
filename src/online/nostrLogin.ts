@@ -22,9 +22,8 @@ function shortNpub(npub: string): string {
 
 /**
  * Inicia sesión con el firmante elegido: resuelve la pubkey, deriva el npub y
- * trae nombre/avatar del perfil (kind:0, best-effort). Persiste el firmante para
- * rehidratar la sesión al recargar. Devuelve la identidad lista para
- * `applyLunaIdentity()`.
+ * activa el signer inmediatamente. El perfil kind:0 se hidrata aparte para que
+ * los relays lentos no agreguen hasta 3,5 segundos al ingreso.
  *
  * `gameId` queda null: en 2.0 la identidad no viene de la sesión de Luna. Las
  * features que lo requieren (invitar/apostar desde el panel) se habilitan aparte.
@@ -32,30 +31,33 @@ function shortNpub(npub: string): string {
 export async function loginWithSigner(
   signer: LunaSigner,
   stored: StoredSigner | null,
+  knownPubkey?: string,
 ): Promise<LunaIdentity> {
-  const pubkey = (await signer.getPublicKey()).trim().toLowerCase();
+  const pubkey = (knownPubkey ?? await signer.getPublicKey()).trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(pubkey)) {
     throw new Error('El firmante devolvió una pubkey inválida');
   }
   const npub = nip19.npubEncode(pubkey);
 
-  // Perfil best-effort: si los relays no responden, caemos a un nombre corto
-  // derivado del npub y sin avatar. No bloquea el login.
-  let name = shortNpub(npub);
-  let avatarUrl: string | null = null;
-  try {
-    const profile = await fetchProfile(pubkey);
-    const resolved = profileName(profile);
-    if (resolved) name = resolved.slice(0, 18);
-    if (profile?.picture) avatarUrl = profile.picture;
-  } catch {
-    /* sin perfil, usamos el fallback */
-  }
-
-  // Recién acá fijamos el firmante activo: si algo falló antes, no dejamos una
-  // sesión a medias persistida.
+  // Fijamos el firmante apenas la pubkey es válida. No esperamos ningún relay.
   if (stored) setActiveSigner(signer, stored);
   else setTransientSigner(signer);
 
-  return { npub, pubkey, name, avatarUrl, gameId: null };
+  return { npub, pubkey, name: shortNpub(npub), avatarUrl: null, gameId: null };
+}
+
+/** Completa nombre/avatar en segundo plano sin bloquear el inicio de sesión. */
+export async function hydrateIdentityProfile(identity: LunaIdentity): Promise<LunaIdentity> {
+  if (!identity.pubkey) return identity;
+  try {
+    const profile = await fetchProfile(identity.pubkey);
+    const resolved = profileName(profile);
+    return {
+      ...identity,
+      name: resolved ? resolved.slice(0, 18) : identity.name,
+      avatarUrl: profile?.picture || identity.avatarUrl,
+    };
+  } catch {
+    return identity;
+  }
 }

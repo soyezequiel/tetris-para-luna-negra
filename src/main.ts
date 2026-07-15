@@ -121,7 +121,7 @@ import {
   type StoredSigner,
   type UnsignedEvent,
 } from './online/nostrSigner';
-import { loginWithSigner } from './online/nostrLogin';
+import { hydrateIdentityProfile, loginWithSigner } from './online/nostrLogin';
 import { connectNostrBal, nostrBal } from './online/nostrBal';
 import { buildChallengeGiftWrap, publishChallenge, type ParsedChallenge } from './online/nostrChallenge';
 import { startChallengeInbox, stopChallengeInbox } from './online/nostrChallengeInbox';
@@ -2720,7 +2720,6 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
       // mediante nostrBal.getStatus() sin abrir un segundo modal en el juego.
       console.info('[BAL] esperando autorización en Luna Negra');
     },
-    { fresh: explicitBalLogin },
   );
 
   // Sin signer nuevo no hay base para cerrar ni reemplazar la cuenta actual.
@@ -2745,9 +2744,10 @@ async function bootstrapBalIdentity(): Promise<BalBootstrapResult> {
     balSessionActive = true;
     // `null` indica que el signer es transitorio: nunca se persisten bunker URI,
     // secrets ni claves efímeras recibidas mediante BAL.
-    const identity = await loginWithSigner(signer, null);
+    const identity = await loginWithSigner(signer, null, balPubkey);
     applyLunaIdentity(identity);
     saveStoredLunaIdentity(identity);
+    hydrateLunaProfileInBackground(identity);
     void ensureLunaGameId();
     void syncNostrPresence();
     return 'connected';
@@ -2789,17 +2789,46 @@ function pubkeyForIdentity(identity: LunaIdentity | null): string | null {
   }
 }
 
+function hydrateLunaProfileInBackground(identity: LunaIdentity): void {
+  void hydrateIdentityProfile(identity).then((profiled) => {
+    const current = lunaState.identity;
+    if (!current?.pubkey || current.pubkey !== identity.pubkey) return;
+    if (profiled.name === current.name && profiled.avatarUrl === current.avatarUrl) return;
+    const next = {
+      ...current,
+      name: profiled.name,
+      avatarUrl: profiled.avatarUrl,
+    };
+    lunaState.identity = next;
+    identityState.player = saveOnlinePlayer({
+      ...identityState.player,
+      name: next.name,
+      avatarUrl: next.avatarUrl ?? identityState.player.avatarUrl,
+    });
+    identityState.name = identityState.player.name;
+    saveStoredLunaIdentity(next);
+  });
+}
+
 // Orquesta el arranque online: primero intenta BAL (login automático y seguro al
 // abrir desde Luna Negra), después restaura el login propio solo como fallback y
 // finalmente atiende invites o links de sala.
 async function bootstrapOnlineStartup(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   rememberTrustedLunaOriginFromStartup(params);
+  // La verificación JWKS puede requerir red en el primer acceso. La arrancamos
+  // junto con BAL para que un room link dirigido no pague ambas esperas en serie.
+  const roomInviteVerification = params.get('join')?.trim() && params.get('lnInvite')?.trim()
+    ? lunaSocialClient.verifyRoomInvite(params.get('lnInvite')!.trim())
+    : null;
+  // Marcamos el rechazo como observado mientras BAL termina; el await real y su
+  // mensaje de error siguen manejándose dentro de bootstrapLunaRoomLink.
+  void roomInviteVerification?.catch(() => {});
   const balResult = await bootstrapBalIdentity();
   if (balResult === 'fallback') {
     // Rehidrata extensión/bunker/clave local solamente cuando BAL no aplica.
     const signerRestore = restoreSigner();
-    await restoreLunaIdentity();
+    restoreLunaIdentity();
     void signerRestore.then(() => {
       void ensureNostrChallengeInbox();
       // La identidad puede restaurarse antes que el firmante; republicamos cuando
@@ -2816,7 +2845,11 @@ async function bootstrapOnlineStartup(): Promise<void> {
     return;
   }
   if (nextParams.get('join')?.trim()) {
-    await bootstrapLunaRoomLink(nextParams.get('join')!.trim(), nextParams);
+    await bootstrapLunaRoomLink(
+      nextParams.get('join')!.trim(),
+      nextParams,
+      roomInviteVerification,
+    );
     return;
   }
   if (nextParams.get('join')?.trim()) {
@@ -2834,14 +2867,15 @@ async function bootstrapOnlineStartup(): Promise<void> {
 // El login lo hace el firmante en el navegador (ver online/nostrLogin.ts + el flujo
 // de la puerta de bienvenida); acá solo rehidratamos lo guardado en localStorage.
 // Presencia y amigos usan la API key del servidor, no una sesión del usuario.
-async function restoreLunaIdentity(): Promise<void> {
+function restoreLunaIdentity(): void {
   const stored = loadStoredLunaIdentity();
   if (stored) applyLunaIdentity(stored);
   if (!lunaState.identity) return;
   // La identidad Nostr no trae gameId: completarlo para que invitar/apostar no
   // queden gateados. Best-effort, no bloquea presencia.
   void ensureLunaGameId();
-  await syncNostrPresence();
+  // El signer se restaura en paralelo y republica presencia al quedar listo.
+  // La presencia nunca debe frenar el despacho de un room link.
 }
 
 function applyLunaIdentity(identity: LunaIdentity): void {
@@ -2883,7 +2917,11 @@ async function bootstrapJoinLink(roomId: string): Promise<void> {
 //   • Pública (sin lnInvite): cualquiera con el enlace entra, con la identidad actual.
 //   • Dirigida (con lnInvite): solo el npub autorizado; se valida el token offline y
 //     se exige login Nostr con esa cuenta si todavía no está.
-async function bootstrapLunaRoomLink(rawRoomId: string, params: URLSearchParams): Promise<void> {
+async function bootstrapLunaRoomLink(
+  rawRoomId: string,
+  params: URLSearchParams,
+  prefetchedVerification: ReturnType<LunaSocialClient['verifyRoomInvite']> | null = null,
+): Promise<void> {
   const roomId = normalizeRoomId(rawRoomId);
   const lnInvite = params.get('lnInvite')?.trim() ?? '';
   // Descartar tokens de la URL antes de nada (no dejar el enlace en el historial).
@@ -2904,7 +2942,7 @@ async function bootstrapLunaRoomLink(rawRoomId: string, params: URLSearchParams)
   // que el jugador sea el `toNpub` autorizado.
   let toNpub = '';
   try {
-    const { invite } = await lunaSocialClient.verifyRoomInvite(lnInvite);
+    const { invite } = await (prefetchedVerification ?? lunaSocialClient.verifyRoomInvite(lnInvite));
     if (invite && normalizeRoomId(invite.roomId) === roomId) toNpub = invite.toNpub;
   } catch {
     /* red/servicio caído → se trata como inválido abajo */
@@ -3865,6 +3903,7 @@ async function finishNostrLogin(signer: LunaSigner, stored: StoredSigner): Promi
     const identity = await loginWithSigner(signer, stored);
     applyLunaIdentity(identity);
     saveStoredLunaIdentity(identity);
+    hydrateLunaProfileInBackground(identity);
     resetNostrLoginFlow();
     void ensureLunaGameId();
     void syncNostrPresence();
